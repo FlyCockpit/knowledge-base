@@ -134,7 +134,7 @@ ignoredOptionalDependencies:
   - "@node-llama-cpp/mac-arm64-metal"
 catalog:
   # Binding pin: exact 3.22.2 within the 3.22.x line.
-  node-llama-cpp: 3.22.2
+  node-llama-cpp: 3.22.3
   pg: ^8.23.1
   "@babel/parser": 8.1.0
   dotenv: ^18.0.9
@@ -151,7 +151,7 @@ catalog:
   "@better-auth/oauth-provider": 1.7.18
   "@better-auth/cimd": 1.7.18
   "@modelcontextprotocol/server": 2.4.0
-  lucide-react: ^1.68.0
+  lucide-react: ^1.69.0
   next-themes: ^0.4.6
   react: ^19.3.1
   react-dom: ^19.3.1
@@ -166,12 +166,12 @@ catalog:
   "@types/react-dom": ^19.3.0
   tailwindcss: ^4.3.4
   typescript: ^7.0.2
-  vite: ^8.3.5
+  vite: ^8.3.6
   "@vitejs/plugin-react": ^6.2.1
   postcss: ^8.5.32
   "@tanstack/react-form": ^1.33.5
-  "@tanstack/react-query": ^5.106.0
-  "@tanstack/react-query-devtools": ^5.106.0
+  "@tanstack/react-query": ^5.106.1
+  "@tanstack/react-query-devtools": ^5.106.1
   "@tanstack/react-router": ^1.170.46
   "@tanstack/react-router-devtools": ^1.167.2
   "@tanstack/react-router-ssr-query": ^1.167.3
@@ -179,7 +179,7 @@ catalog:
   tsx: ^4.23.15
   vitest: ^5.1.0
   vitest-mock-extended: ^5.1.1
-  rate-limiter-flexible: ^11.2.4
+  rate-limiter-flexible: ^11.3.0
   nodemailer: ^10.3.1
   "@types/nodemailer": ^8.0.2
   bullmq: ^6.7.0
@@ -189,11 +189,11 @@ catalog:
   # SQLite index files (format v1). Exact pins; sqlite-vec matches the CLI's `=0.1.9`.
   better-sqlite3: 13.0.3
   sqlite-vec: 0.1.9
-  "@aws-sdk/client-s3": ^3.1161.0
-  i18next: ^26.7.1
-  react-i18next: ^17.1.12
+  "@aws-sdk/client-s3": ^3.1162.0
+  i18next: ^26.7.2
+  react-i18next: ^17.1.13
   i18next-browser-languagedetector: ^8.3.0
-  openai: ^7.50.0
+  openai: ^7.52.0
   "@anthropic-ai/sdk": ^1.5.0
   "qrcode.react": ^4.2.0
   "@fontsource-variable/roboto": ^5.3.0
