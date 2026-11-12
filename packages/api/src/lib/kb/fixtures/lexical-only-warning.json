@@ -1,0 +1,10 @@
+{
+  "$comment": "MCP text warning for a lexical-only search. The server (apps/server/src/mcp/tool-dispatch.ts) and kb mcp (apps/cli kb-local dispatch.rs) both read this file, so the two transports can't drift.",
+  "template": "Warning: knowledge base {kbId} was searched lexical-only (keyword matching) because {why}.",
+  "why": {
+    "NO_EMBEDDING_PROFILE": "no embedding model is selected; choose one in the knowledge base settings for semantic search",
+    "EMBEDDING_PROFILE_REVOKED": "its embedding provider was revoked; choose another in the knowledge base settings",
+    "SEMANTIC_INDEX_BUILDING": "its semantic index is still building; semantic ranking starts when the build completes",
+    "default": "its embedding model isn't available (disabled or not ready); check it in the knowledge base settings"
+  }
+}

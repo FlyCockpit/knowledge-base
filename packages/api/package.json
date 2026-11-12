@@ -1,0 +1,423 @@
+{
+  "name": "@knowledge-base/api",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./context": {
+      "default": "./src/context.ts"
+    },
+    "./routers/index": {
+      "default": "./src/routers/index.ts"
+    },
+    "./lib/push-subscription": {
+      "default": "./src/lib/push-subscription.ts"
+    },
+    "./lib/schemas": {
+      "default": "./src/lib/schemas.ts"
+    },
+    "./lib/slug": {
+      "default": "./src/lib/slug.ts"
+    },
+    "./lib/backup-freshness": {
+      "default": "./src/lib/backup-freshness.ts"
+    },
+    "./lib/ownership": {
+      "default": "./src/lib/ownership.ts"
+    },
+    "./lib/auth-token-retention": {
+      "default": "./src/lib/auth-token-retention.ts"
+    },
+    "./lib/two-factor-policy": {
+      "default": "./src/lib/two-factor-policy.ts"
+    },
+    "./lib/rate-limit-families": {
+      "default": "./src/lib/rate-limit-families.ts"
+    },
+    "./lib/kb/push-validation": {
+      "default": "./src/lib/kb/push-validation.ts"
+    },
+    "./lib/kb/logical-diff": {
+      "default": "./src/lib/kb/logical-diff.ts"
+    },
+    "./lib/kb/actors": {
+      "default": "./src/lib/kb/actors.ts"
+    },
+    "./lib/kb/git-version": {
+      "default": "./src/lib/kb/git-version.ts"
+    },
+    "./lib/kb/pr-merge": {
+      "default": "./src/lib/kb/pr-merge.ts"
+    },
+    "./lib/kb/lock": {
+      "default": "./src/lib/kb/lock.ts"
+    },
+    "./lib/kb/authority-lock": {
+      "default": "./src/lib/kb/authority-lock.ts"
+    },
+    "./lib/kb/write-capability": {
+      "default": "./src/lib/kb/write-capability.ts"
+    },
+    "./lib/kb/pr-conflict": {
+      "default": "./src/lib/kb/pr-conflict.ts"
+    },
+    "./lib/kb/argument-reasons": {
+      "default": "./src/lib/kb/argument-reasons.ts"
+    },
+    "./lib/kb/permissions": {
+      "default": "./src/lib/kb/permissions.ts"
+    },
+    "./lib/kb/principal": {
+      "default": "./src/lib/kb/principal.ts"
+    },
+    "./lib/kb/limits": {
+      "default": "./src/lib/kb/limits.ts"
+    },
+    "./lib/kb/quota": {
+      "default": "./src/lib/kb/quota.ts"
+    },
+    "./lib/kb/audit": {
+      "default": "./src/lib/kb/audit.ts"
+    },
+    "./lib/kb/private-ip": {
+      "default": "./src/lib/kb/private-ip.ts"
+    },
+    "./lib/kb/sealed-records": {
+      "default": "./src/lib/kb/sealed-records.ts"
+    },
+    "./lib/kb/sealed-reference": {
+      "default": "./src/lib/kb/sealed-reference.ts"
+    },
+    "./lib/kb/deploy-key": {
+      "default": "./src/lib/kb/deploy-key.ts"
+    },
+    "./lib/kb/ssh-url": {
+      "default": "./src/lib/kb/ssh-url.ts"
+    },
+    "./lib/kb/mirror": {
+      "default": "./src/lib/kb/mirror.ts"
+    },
+    "./lib/kb/model-artifact": {
+      "default": "./src/lib/kb/model-artifact.ts"
+    },
+    "./lib/kb/local-model": {
+      "default": "./src/lib/kb/local-model.ts"
+    },
+    "./lib/kb/qwen-runtime-config": {
+      "default": "./src/lib/kb/qwen-runtime-config.ts"
+    },
+    "./lib/kb/qwen-reembed": {
+      "default": "./src/lib/kb/qwen-reembed.ts"
+    },
+    "./lib/kb/envelope": {
+      "default": "./src/lib/kb/envelope.ts"
+    },
+    "./lib/kb/egress": {
+      "default": "./src/lib/kb/egress.ts"
+    },
+    "./lib/kb/jobs": {
+      "default": "./src/lib/kb/jobs.ts"
+    },
+    "./lib/kb/job-attempt": {
+      "default": "./src/lib/kb/job-attempt.ts"
+    },
+    "./lib/kb/kb-email": {
+      "default": "./src/lib/kb/kb-email.ts"
+    },
+    "./lib/kb/probe-consumer": {
+      "default": "./src/lib/kb/probe-consumer.ts"
+    },
+    "./lib/kb/dispatch": {
+      "default": "./src/lib/kb/dispatch.ts"
+    },
+    "./lib/kb/push-spool": {
+      "default": "./src/lib/kb/push-spool.ts"
+    },
+    "./lib/kb/git-read": {
+      "default": "./src/lib/kb/git-read.ts"
+    },
+    "./lib/kb/git-rollup": {
+      "default": "./src/lib/kb/git-rollup.ts"
+    },
+    "./lib/kb/git-write": {
+      "default": "./src/lib/kb/git-write.ts"
+    },
+    "./lib/kb/operation-intent": {
+      "default": "./src/lib/kb/operation-intent.ts"
+    },
+    "./lib/kb/retention": {
+      "default": "./src/lib/kb/retention.ts"
+    },
+    "./lib/kb/audit-map": {
+      "default": "./src/lib/kb/audit-map.ts"
+    },
+    "./lib/kb/recovery": {
+      "default": "./src/lib/kb/recovery.ts"
+    },
+    "./lib/kb/paths": {
+      "default": "./src/lib/kb/paths.ts"
+    },
+    "./lib/kb/assets": {
+      "default": "./src/lib/kb/assets.ts"
+    },
+    "./lib/kb/credential-query": {
+      "default": "./src/lib/kb/credential-query.ts"
+    },
+    "./lib/kb/asset-authz": {
+      "default": "./src/lib/kb/asset-authz.ts"
+    },
+    "./lib/kb/authorized-stream": {
+      "default": "./src/lib/kb/authorized-stream.ts"
+    },
+    "./lib/kb/asset-lineage": {
+      "default": "./src/lib/kb/asset-lineage.ts"
+    },
+    "./lib/kb/blob-store": {
+      "default": "./src/lib/kb/blob-store.ts"
+    },
+    "./lib/kb/asset-storage-offline": {
+      "default": "./src/lib/kb/asset-storage-offline.ts"
+    },
+    "./lib/kb/blob-store-s3": {
+      "default": "./src/lib/kb/blob-store-s3.ts"
+    },
+    "./lib/kb/asset-publication-state": {
+      "default": "./src/lib/kb/asset-publication-state.ts"
+    },
+    "./lib/kb/blob-store-disk": {
+      "default": "./src/lib/kb/blob-store-disk.ts"
+    },
+    "./lib/kb/cas": {
+      "default": "./src/lib/kb/cas.ts"
+    },
+    "./lib/kb/uploads": {
+      "default": "./src/lib/kb/uploads.ts"
+    },
+    "./lib/sniff-mime": {
+      "default": "./src/lib/sniff-mime.ts"
+    },
+    "./lib/kb/fixtures/lexical-only-warning.json": {
+      "default": "./src/lib/kb/fixtures/lexical-only-warning.json"
+    },
+    "./lib/kb/fixtures/media-bytes": {
+      "default": "./src/lib/kb/fixtures/media-bytes.ts"
+    },
+    "./lib/kb/fixtures/git-objects": {
+      "default": "./src/lib/kb/fixtures/git-objects.ts"
+    },
+    "./lib/kb/fixtures/near-limit-tree": {
+      "default": "./src/lib/kb/fixtures/near-limit-tree.ts"
+    },
+    "./lib/kb/manifest": {
+      "default": "./src/lib/kb/manifest.ts"
+    },
+    "./lib/kb/parse-markdown": {
+      "default": "./src/lib/kb/parse-markdown.ts"
+    },
+    "./lib/kb/validate-tree": {
+      "default": "./src/lib/kb/validate-tree.ts"
+    },
+    "./lib/kb/bases": {
+      "default": "./src/lib/kb/bases.ts"
+    },
+    "./lib/kb/branch-owner": {
+      "default": "./src/lib/kb/branch-owner.ts"
+    },
+    "./lib/kb/changes": {
+      "default": "./src/lib/kb/changes.ts"
+    },
+    "./lib/kb/changes-plan": {
+      "default": "./src/lib/kb/changes-plan.ts"
+    },
+    "./lib/kb/dream": {
+      "default": "./src/lib/kb/dream.ts"
+    },
+    "./lib/kb/pull-requests": {
+      "default": "./src/lib/kb/pull-requests.ts"
+    },
+    "./lib/kb/proposals": {
+      "default": "./src/lib/kb/proposals.ts"
+    },
+    "./lib/kb/documents-read": {
+      "default": "./src/lib/kb/documents-read.ts"
+    },
+    "./lib/kb/cursor": {
+      "default": "./src/lib/kb/cursor.ts"
+    },
+    "./lib/kb/attachment": {
+      "default": "./src/lib/kb/attachment.ts"
+    },
+    "./lib/kb/runtime": {
+      "default": "./src/lib/kb/runtime.ts"
+    },
+    "./lib/kb/errors": {
+      "default": "./src/lib/kb/errors.ts"
+    },
+    "./lib/kb/kb-lifecycle-intent": {
+      "default": "./src/lib/kb/kb-lifecycle-intent.ts"
+    },
+    "./lib/kb/shares": {
+      "default": "./src/lib/kb/shares.ts"
+    },
+    "./lib/kb/transfer": {
+      "default": "./src/lib/kb/transfer.ts"
+    },
+    "./lib/kb/account-removal": {
+      "default": "./src/lib/kb/account-removal.ts"
+    },
+    "./lib/kb/browser-conflict": {
+      "default": "./src/lib/kb/browser-conflict.ts"
+    },
+    "./lib/kb/protocol/catalog": {
+      "default": "./src/lib/kb/protocol/catalog.ts"
+    },
+    "./lib/kb/protocol/common": {
+      "default": "./src/lib/kb/protocol/common.ts"
+    },
+    "./lib/kb/protocol/diagnostics": {
+      "default": "./src/lib/kb/protocol/diagnostics.ts"
+    },
+    "./lib/kb/protocol/envelope": {
+      "default": "./src/lib/kb/protocol/envelope.ts"
+    },
+    "./lib/kb/exports": {
+      "default": "./src/lib/kb/exports.ts"
+    },
+    "./lib/kb/transfers": {
+      "default": "./src/lib/kb/transfers.ts"
+    },
+    "./lib/kb/providers": {
+      "default": "./src/lib/kb/providers.ts"
+    },
+    "./lib/kb/embed-client": {
+      "default": "./src/lib/kb/embed-client.ts"
+    },
+    "./lib/kb/embedder": {
+      "default": "./src/lib/kb/embedder.ts"
+    },
+    "./lib/kb/embed-breaker": {
+      "default": "./src/lib/kb/embed-breaker.ts"
+    },
+    "./lib/kb/plain-snippet": {
+      "default": "./src/lib/kb/plain-snippet.ts"
+    },
+    "./lib/kb/chunk": {
+      "default": "./src/lib/kb/chunk.ts"
+    },
+    "./lib/kb/redact-for-embed": {
+      "default": "./src/lib/kb/redact-for-embed.ts"
+    },
+    "./lib/kb/structured": {
+      "default": "./src/lib/kb/structured.ts"
+    },
+    "./lib/kb/structured-search": {
+      "default": "./src/lib/kb/structured-search.ts"
+    },
+    "./lib/kb/converter": {
+      "default": "./src/lib/kb/converter.ts"
+    },
+    "./lib/kb/fingerprint": {
+      "default": "./src/lib/kb/fingerprint.ts"
+    },
+    "./lib/kb/generations": {
+      "default": "./src/lib/kb/generations.ts"
+    },
+    "./lib/kb/query-embedding": {
+      "default": "./src/lib/kb/query-embedding.ts"
+    },
+    "./lib/kb/index-settings": {
+      "default": "./src/lib/kb/index-settings.ts"
+    },
+    "./lib/kb/index-status": {
+      "default": "./src/lib/kb/index-status.ts"
+    },
+    "./lib/kb/search": {
+      "default": "./src/lib/kb/search.ts"
+    },
+    "./lib/kb/sealed-resolve": {
+      "default": "./src/lib/kb/sealed-resolve.ts"
+    },
+    "./lib/mcp-token-access": {
+      "default": "./src/lib/mcp-token-access.ts"
+    },
+    "./lib/kb/protocol/reads": {
+      "default": "./src/lib/kb/protocol/reads.ts"
+    },
+    "./lib/kb/protocol/writes": {
+      "default": "./src/lib/kb/protocol/writes.ts"
+    },
+    "./lib/kb/protocol/fixtures.json": {
+      "default": "./src/lib/kb/protocol/fixtures.json"
+    },
+    "./lib/kb/protocol/schema.json": {
+      "default": "./src/lib/kb/protocol/schema.json"
+    },
+    "./lib/kb/builtin-model": {
+      "default": "./src/lib/kb/builtin-model.ts"
+    },
+    "./lib/kb/maintenance": {
+      "default": "./src/lib/kb/maintenance.ts"
+    },
+    "./lib/kb/index-file/reader-thread": {
+      "default": "./src/lib/kb/index-file/reader-thread.ts"
+    },
+    "./lib/kb/index-file/pool": {
+      "default": "./src/lib/kb/index-file/pool.ts"
+    },
+    "./lib/kb/index-file/testing": {
+      "default": "./src/lib/kb/index-file/testing.ts"
+    },
+    "./lib/kb/index-build": {
+      "default": "./src/lib/kb/index-build.ts"
+    },
+    "./lib/kb/asset-cache": {
+      "default": "./src/lib/kb/asset-cache.ts"
+    },
+    "./lib/kb/asset-storage-runtime": {
+      "default": "./src/lib/kb/asset-storage-runtime.ts"
+    },
+    "./lib/kb/asset-storage-mode": {
+      "default": "./src/lib/kb/asset-storage-mode.ts"
+    },
+    "./lib/kb/asset-storage-state": {
+      "default": "./src/lib/kb/asset-storage-state.ts"
+    },
+    "./lib/kb/asset-storage-lifecycle": {
+      "default": "./src/lib/kb/asset-storage-lifecycle.ts"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc -p tsconfig.check-types.json --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --testTimeout=30000 --hookTimeout=60000 --passWithNoTests"
+  },
+  "dependencies": {
+    "@orpc/client": "catalog:",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "@aws-sdk/client-s3": "catalog:",
+    "@knowledge-base/auth": "workspace:*",
+    "@knowledge-base/config": "workspace:*",
+    "@knowledge-base/db": "workspace:*",
+    "@knowledge-base/env": "workspace:*",
+    "@knowledge-base/mailer": "workspace:*",
+    "@knowledge-base/queue": "workspace:*",
+    "better-sqlite3": "catalog:",
+    "pg": "catalog:",
+    "rate-limiter-flexible": "catalog:",
+    "sqlite-vec": "catalog:",
+    "web-push": "^3.6.7",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/web-push": "^3.6.4",
+    "hono": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  }
+}

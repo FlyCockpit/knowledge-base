@@ -1,0 +1,165 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema-jsonc.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        // Invoked by scripts/backup.sh via `node`, not statically imported.
+        // Knip can't trace shell-script entry points, so declare it here.
+        "scripts/upload-backup-to-s3.mjs!",
+        "scripts/backup-heartbeat.mjs!",
+        "scripts/init-kb-volumes.mjs!",
+        // Spawned by backup.sh and its native offline coordinator role.
+        "scripts/lib/kb-backup.mjs!",
+        // Invoked by the server offline restore role.
+        "scripts/lib/kb-restore.mjs!",
+        // Invoked by docker-entrypoint.sh and the native offline storage role.
+        "scripts/lib/asset-storage-migration.mjs!",
+        // Invoked by scripts/docker-entrypoint.sh when KB_MASTER_KEY is set.
+        "scripts/lib/validate-kb-master-key.mjs!",
+        // Spawned by the migration runner.
+        "scripts/db/lib/prisma-owner.mjs!",
+        "scripts/db/**/*.mjs!",
+        "scripts/backup/**/*.mjs!",
+        "scripts/trufflehog-pr-scan.sh!",
+        // Piped into `node` inside the built images by scripts/image-smoke.sh.
+        "scripts/image-smoke-resolve.mjs!",
+        // Run by scripts/image-smoke.sh on the host against the HTTPS front.
+        "scripts/image-smoke-flows.mjs!",
+        // Structural destructive-operation scanner — invoked by policy-checks.sh.
+        "scripts/check-destructive-operations.mjs!",
+        // CAS ownership scanner is invoked by policy-checks.sh.
+        "scripts/check-cas-ownership.mjs!",
+        // Agent-rules gate (route exports / t() coverage / sitemap sync) —
+        // invoked by policy-checks.sh, not statically imported.
+        "scripts/check-agent-rules.ts!",
+        // Child Vitest config — passed dynamically to the I/O-guard fixture test.
+        "scripts/vitest-test-io-guard-fixture.config.ts!",
+        // KB integration Vitest config — passed dynamically to `pnpm test:kb`.
+        "vitest.kb.config.ts!",
+        // Supervised-lane Vitest globalSetup — named as a string by vitest.kb.config.ts.
+        "scripts/kb-supervised-vitest-setup.ts!"
+      ],
+      "ignoreBinaries": [
+        // Global local-dev CLI. Intentionally not listed in package.json.
+        "portless",
+        // Host toolchain for apps/server/native/kb-supervisor.c (not an npm package).
+        "make",
+        "cc",
+        // Linux host utility for the native build admission lock; not an npm binary.
+        "flock",
+        // Host toolchain: generates the disposable egress TLS fixture
+        // certificate (packages/test-utils/src/kb/egress.integration.test.ts).
+        "openssl",
+        // Approved/pinned age v1.3.2 and existing PG client fixture tools.
+        "age",
+        "age-keygen",
+        "pg_restore",
+        // GNU coreutils, not an npm binary: the opt-in quantization benchmark drops an index
+        // file's page cache with `dd iflag=nocache` (scripts/bench-index-quantization.mjs).
+        "dd",
+        // util-linux host utility: the opt-in cold-index diagnosis inspects page residency.
+        "fincore",
+        // POSIX host utility, not an npm binary: creates owned FIFO faults for
+        // the native Git cancellation tests in git-read.test.ts and mcp.integration.test.ts.
+        "mkfifo"
+      ],
+      "ignoreUnresolved": [
+        // False positive: scripts/theme-apply.ts passes this as the `shadcn -c`
+        // config path, not as a command or an import. knip <=6.26 classified it
+        // as a binary (it lived in `ignoreBinaries`); 6.27 reclassified it as an
+        // unresolved import, so the suppression moved here with it.
+        "apps/web"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "src/routes/**/*.tsx!",
+        "src/hooks/*.ts!",
+        "src/stores/*.ts!",
+        // Overflow primitive (WideContent). Not yet imported from a route;
+        // keep it as the documented horizontal-scroll container.
+        "src/components/wide-content.tsx!",
+        // Real-browser KB suite, run by `pnpm test:kb -- browser` (Playwright).
+        "playwright.kb.config.ts",
+        "tests/kb-browser.setup.ts",
+        // Runner prerequisite, invoked through dynamically assembled tsx arguments.
+        "tests/kb-browser.build.ts",
+        "tests/kb-viewer.harness.tsx",
+        "tests/kb-lifecycle.harness.tsx",
+        "tests/kb-pr.harness.tsx",
+        "tests/kb-settings.harness.tsx",
+        // Loaded from harness HTML and the session alias in kb-browser.setup.ts.
+        "tests/kb-mcp.harness.tsx",
+        "tests/kb-mcp-session.ts",
+        "tests/kb-*.spec.ts"
+      ],
+      "ignoreDependencies": [
+        // Imported only via PostCSS/Tailwind CSS pipeline, not statically.
+        "postcss",
+        // Consumed indirectly via `@orpc/client` + `createORPCClient`.
+        "@orpc/server",
+        // Toast primitive re-exported from @knowledge-base/ui.
+        "sileo",
+        // Optional peer of h3 2.x (pulled by TanStack Start); pinned here so the
+        // SSR/oRPC stack binds crossws 0.4.x instead of the 0.3.x h3 1.x dedupes
+        // to. No static import in source — it's a build/runtime transitive.
+        "crossws",
+        // Runtime deps of workspace packages the SSR bundle inlines
+        // (@knowledge-base/auth); the bundle imports them from this app's
+        // node_modules in the image. `pnpm smoke:image` checks the resolution.
+        "@better-auth/cimd",
+        "@better-auth/mcp"
+      ]
+    },
+    "apps/server": {
+      "entry": [
+        // Spawned under kb-supervisor by the fence integration suite.
+        "src/kb-process.client-fixture.ts!"
+      ]
+    },
+    "apps/worker": {
+      "entry": [
+        // Native full-batch test oracle, spawned under the parent-death guard.
+        "qwen-reference.fixture.mjs!",
+        // Built only by the entry-canary harness prerequisite.
+        "output-canary.config.ts!",
+        "src/lib/output-canary.fixture.ts!",
+        "src/lib/output-canary-child.fixture.ts!"
+      ]
+    },
+    "packages/ui": {
+      "entry": ["src/components/**/*.tsx", "src/styles/**/*.css"]
+    },
+    "packages/api": {
+      // sqlite-vec is loaded at run time with createRequire in
+      // src/lib/kb/index-file/sqlite.ts (the only native loader), not imported statically.
+      "ignoreDependencies": ["@orpc/client", "@orpc/openapi", "@orpc/zod", "sqlite-vec"]
+    },
+    "packages/db": {
+      // Dockerfile deploys this package to schema-runtime and links its S3 SDK
+      // into /app/node_modules for the root backup and offline asset scripts.
+      "ignoreDependencies": ["@prisma/client", "pg", "zod", "@aws-sdk/client-s3"]
+    },
+    "packages/test-utils": {
+      // Integration tests are invoked by `pnpm test:kb`, not this package's
+      // (absent) test script, so knip cannot see these workspace imports.
+      // Includes harness, schema, topology, fence, locks, and authority suites.
+      "entry": [
+        "src/kb/*.integration.test.ts",
+        // Spawned by the egress TLS fixture suite, not statically imported.
+        "src/kb/egress-tls-fixture.child.ts!",
+        // Spawned by the model transport integration test with a disposable CA.
+        "src/kb/model-tls-fixture.child.ts!",
+        // Spawned inside the disposable CIMD IPv6 TLS container, not imported.
+        "src/kb/cimd-tls-fixture.child.ts!",
+        // Spawned by the durable-jobs crash-barrier suite, not statically imported.
+        "src/kb/durable-dispatcher-crash.child.ts!",
+        // Spawned by the cache ownership/crash suite.
+        "src/kb/asset-storage.child.ts!",
+        // Spawned by the Qwen real-process suite (fake model child + parent stand-in).
+        "src/kb/fake-qwen.child.mjs!",
+        "src/kb/qwen-parent.child.ts!"
+      ]
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "items": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "knowledgeBases": "Knowledge bases",
+    "settings": "Settings",
+    "admin": "Admin"
+  },
+  "languageLabel": "Language",
+  "mainNav": {
+    "ariaLabel": "Main navigation"
+  },
+  "themeToggle": {
+    "label": "Toggle theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "userMenu": {
+    "myAccount": "My Account",
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "signOut": "Sign Out"
+  },
+  "sidebar": {
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
+  },
+  "titles": {
+    "knowledgeBase": "Knowledge base",
+    "signIn": "Sign in",
+    "signUp": "Create account",
+    "forgotPassword": "Forgot password",
+    "resetPassword": "Reset password",
+    "setPassword": "Set your password",
+    "verifyEmail": "Verify email",
+    "mcpConsent": "Authorize app"
+  },
+  "skipToContent": "Skip to content"
+}

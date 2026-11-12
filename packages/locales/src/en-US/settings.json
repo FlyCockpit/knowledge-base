@@ -1,0 +1,370 @@
+{
+  "navProfile": "Profile",
+  "navSecurity": "Security",
+  "navMcp": "MCP access",
+  "navProviders": "Embedding providers",
+  "title": "Settings",
+  "profile": {
+    "title": "Profile",
+    "description": "Manage your profile information",
+    "emailReadonly": "Email cannot be changed",
+    "saved": "Profile updated",
+    "saveError": "Couldn't update your profile. Try again.",
+    "operationalAlerts": "Email me about operational failures",
+    "operationalAlertsDescription": "Receive admin alerts when background jobs fail permanently.",
+    "notificationsSaved": "Notification preference updated",
+    "notificationsSaveError": "Couldn't update notification preference. Try again."
+  },
+  "security": {
+    "passwordTitle": "Password",
+    "passwordDescription": "Change the password you use to sign in.",
+    "passwordLoadError": "Couldn't load your password settings.",
+    "currentPasswordLabel": "Current password",
+    "newPasswordLabel": "New password",
+    "confirmPasswordLabel": "Confirm new password",
+    "passwordSessionRevocation": "After your password changes, every other device will be signed out. This device will stay signed in.",
+    "changePassword": "Change password",
+    "changingPassword": "Changing password…",
+    "passwordChangedSuccess": "Password changed. Other devices have been signed out.",
+    "currentPasswordMismatch": "Your current password doesn't match.",
+    "passwordChangeError": "Couldn't change your password. Try again.",
+    "twoFactorTitle": "Two-Factor Authentication",
+    "enabledDescription": "Two-factor authentication is enabled for your account",
+    "disabledDescription": "Add an extra layer of security to your account",
+    "enable2FA": "Enable Two-Factor Authentication",
+    "disable2FA": "Disable Two-Factor Authentication",
+    "confirmPasswordPrompt": "Confirm your password to set up two-factor authentication.",
+    "scanQrPrompt": "Scan this with your authenticator app",
+    "addKeyToApp": "Add this key to your authenticator app (Authy, Google Authenticator, etc.):",
+    "saveBackupCodes": "Save these backup codes in a safe place:",
+    "savedBackupCodes": "I've saved my backup codes",
+    "verifyPrompt": "Enter the 6-digit code from your authenticator app to verify setup.",
+    "verifyAndEnable": "Verify & Enable",
+    "couldNotStartSetup": "Couldn't start 2FA setup. Try again.",
+    "enabledSuccess": "Two-factor authentication enabled",
+    "disablePrompt": "Enter your password to disable two-factor authentication.",
+    "disable": "Disable 2FA",
+    "disabling": "Disabling…",
+    "couldNotDisable": "Couldn't disable 2FA. Try again.",
+    "disabledSuccess": "Two-factor authentication disabled"
+  },
+  "credentials": {
+    "tokensTitle": "Personal access tokens",
+    "appsTitle": "Connected apps",
+    "create": "Create token",
+    "createTitle": "Create a personal access token",
+    "createDescription": "Choose exactly what this token may do. Tools start on the Read preset; access type, knowledge base permissions and knowledge base creation stay unselected until you select them.",
+    "nameLabel": "Token name",
+    "expiryLabel": "Expiry",
+    "expiryHelp": "A dated token expires at most {{max}} days from now. A token with no expiry stays valid until you revoke it.",
+    "expiryDays_one": "{{count}} day",
+    "expiryDays_other": "{{count}} days",
+    "expiryCustom": "Custom date",
+    "expiryNone": "No expiry",
+    "expiryDateLabel": "Expiry date",
+    "expiryInvalid": "That expiry date isn't valid. Pick a date from tomorrow up to 365 days from now.",
+    "noExpiryWarning": "This token never expires. Prefer an expiry, or revoke it when you no longer need it.",
+    "createSubmit": "Create token",
+    "creating": "Creating…",
+    "createError": "The token was not created. Your selection may no longer be allowed — review it and try again.",
+    "secretOnce": "Copy this token now. It will not be shown again, and closing this dialog removes it from this page.",
+    "copySecret": "Copy token",
+    "done": "Done",
+    "kbsLoadError": "Couldn't load your knowledge bases.",
+    "listLoadError": "Couldn't load your credentials.",
+    "noTokens": "You have no personal access tokens.",
+    "noApps": "No apps are connected to your account.",
+    "revoke": "Revoke",
+    "editAccess": "Edit access",
+    "revoking": "Revoking…",
+    "revoked": "Revoked",
+    "revokeError": "The credential was not revoked. Try again.",
+    "revokeSuccess": "Credential revoked.",
+    "revokeTokenTitle": "Revoke this token?",
+    "revokeTokenDescription": "Anything using “{{name}}” loses access immediately. This can't be undone.",
+    "revokeGrantTitle": "Disconnect this app?",
+    "revokeGrantDescription": "“{{name}}” loses access immediately and must ask for approval again. This can't be undone.",
+    "revokeTypePrompt": "Type the name to confirm",
+    "copyConfirm": "Copy name",
+    "expires": "Expires {{date}}",
+    "neverExpires": "Never expires",
+    "approved": "Approved {{date}}",
+    "widenedOn": "Access widened on {{date}}",
+    "grantNoKbs": "No existing knowledge bases.",
+    "grantCreates": "May create knowledge bases, getting: {{bits}}",
+    "picker": {
+      "scopesLegend": "Access type",
+      "scopes": {
+        "read": "Read (mcp:read)",
+        "write": "Read and change (mcp:write)",
+        "offline": "Stay connected without signing in again (offline_access)",
+        "unknown": "Other: {{scope}}"
+      },
+      "toolsLegend": "Tools",
+      "toolsHint": "Choose which tools the agent can call. It only ever sees and uses these, in the knowledge bases you select below.",
+      "presets": {
+        "read": {
+          "label": "Read",
+          "description": "Search and read documents. Nothing can be changed."
+        },
+        "propose": {
+          "label": "Propose edits",
+          "description": "Read, edit documents and open pull requests. Pair it with Propose on each knowledge base so every change waits for review."
+        },
+        "direct": {
+          "label": "Direct edits",
+          "description": "Read, edit documents, manage assets and follow or close pull requests. With Write on a knowledge base, changes go straight to its main branch; with only Propose, they open a pull request."
+        },
+        "custom": {
+          "label": "Custom",
+          "description": "A custom set of tool groups. Review them under Advanced."
+        }
+      },
+      "showAdvanced": "Advanced: choose tool groups",
+      "hideAdvanced": "Hide tool groups",
+      "groupsLegend": "Tool groups",
+      "groups": {
+        "read": {
+          "label": "Read",
+          "description": "Search, list and read documents. Also needed for Git fetch and asset downloads."
+        },
+        "edit": {
+          "label": "Edit",
+          "description": "Create, update and delete documents, apply changes, and upload Markdown. Also needed for Git push."
+        },
+        "assets": {
+          "label": "Assets",
+          "description": "Upload, import, list and remove images and other assets."
+        },
+        "export": {
+          "label": "Export",
+          "description": "Prepare and download exports of a knowledge base."
+        },
+        "pull_requests": {
+          "label": "Pull requests",
+          "description": "List, open and review pull requests."
+        },
+        "index_admin": {
+          "label": "Index",
+          "description": "Check index status, rebuild the index and change the embedding profile."
+        },
+        "kb_admin": {
+          "label": "Knowledge base admin",
+          "description": "Create, rename and delete knowledge bases."
+        },
+        "sealed": {
+          "label": "Sealed values",
+          "description": "Resolve sealed references this credential was approved for."
+        }
+      },
+      "previewTitle": "What the agent will see",
+      "previewNoTools": "No tools from the selected groups.",
+      "previewSupporting": "Always callable, even when the tool list doesn't show them: {{tools}}",
+      "previewNoKbs": "Knowledge bases: none selected.",
+      "previewKbs": "Knowledge bases: {{names}}",
+      "previewCreated": "It also gets access to knowledge bases it creates.",
+      "previewNotes": {
+        "editWithoutAssets": "Edit without Assets: knowledge_changes_apply and uploads can't add or remove assets.",
+        "assetsWithoutEdit": "Assets without Edit: uploads accept assets only, not Markdown.",
+        "writeScopeMissing": "These tools change data and need the read-and-change access type, so the agent can't use them: {{tools}}",
+        "noEligibleKb": "No selected knowledge base has the permission these tools need, so the agent can't use them: {{tools}}",
+        "createNotAllowed": "knowledge_bases_create works only if creating knowledge bases is allowed."
+      },
+      "kbsLegend": "Knowledge bases",
+      "kbsHint": "Select each knowledge base and permission individually. Only permissions you hold are listed.",
+      "presetCapsBits": "The selected tool preset allows only these permissions: {{bits}}. Choose Custom under Advanced for others.",
+      "noKbs": "You don't have access to any knowledge bases yet.",
+      "kbUnavailable": "No longer available to you. You can only remove it from this connection.",
+      "removalOnly": "You no longer hold this permission. You can remove it, but not add it back.",
+      "emptyAcl": "No knowledge bases selected. This credential will not be able to open any existing knowledge base.",
+      "createLegend": "New knowledge bases",
+      "allowCreate": "Allow creating knowledge bases",
+      "allowCreateDescription": "The credential may create knowledge bases you own, and gets only the permissions chosen below on each one it creates.",
+      "allowCreateNeedsWrite": "Requires the read-and-change access type.",
+      "createdBitsLegend": "Permissions on knowledge bases it creates",
+      "bits": {
+        "read": {
+          "label": "Read",
+          "description": "Search and read documents and history."
+        },
+        "propose": {
+          "label": "Propose",
+          "description": "Suggest changes as pull requests. Cannot change the main branch directly."
+        },
+        "write": {
+          "label": "Write",
+          "description": "Change the main branch directly, without review."
+        },
+        "review": {
+          "label": "Review",
+          "description": "Review, merge or close pull requests. Does not allow editing documents directly."
+        },
+        "manage": {
+          "label": "Manage",
+          "description": "Full control of the knowledge base, including every other permission."
+        }
+      },
+      "issues": {
+        "scopeRequired": "Choose at least one access type.",
+        "toolGroupRequired": "Choose at least one tool group.",
+        "createNeedsRead": "Knowledge bases it creates must include Read.",
+        "createNeedsWriteScope": "Creating knowledge bases requires the read-and-change access type."
+      },
+      "previewNoUsableTools": "The agent can't use any of the selected tools yet. The notes below say what's missing.",
+      "kbBitName": "{{kb}}: {{bit}}"
+    },
+    "createUncertain": "We could not confirm whether “{{name}}” was created. The token list is being refreshed. Close this dialog, find any new token with that name, and revoke it before trying again: its secret cannot be recovered.",
+    "morePermissions": "More knowledge base permissions exist. Load more to inspect them.",
+    "toolGroupsSummary": "Tools: {{groups}}",
+    "edit": {
+      "title": "Edit access for “{{name}}”",
+      "description": "Widen or narrow what this connection may do. Changes apply to its next call; nothing is reissued.",
+      "loadError": "Couldn't load this connection's current permissions.",
+      "loadAll": "This connection has more knowledge base permissions. Load them all before editing.",
+      "oauthScopes": "An app's access type can't change here. To remove changes, turn off the write tool groups; to add Read and change, reconnect the app and approve it again.",
+      "save": "Save changes",
+      "saving": "Saving…",
+      "unchanged": "Nothing changed.",
+      "confirmTitle": "Confirm added access",
+      "confirmDescription": "The existing credential gains this access on its next call. Only widen a connection you still trust.",
+      "added": "Adding",
+      "removed": "Removing",
+      "changeGroup": "{{group}} tools",
+      "changeKb": "{{name}}: {{bits}}",
+      "changeCreate": "Creating knowledge bases",
+      "changeCreatedBits": "On knowledge bases it creates: {{bits}}",
+      "noExpiryWarning": "This token never expires. Prefer temporary access, which ends on its own, or a new token with an expiry instead of permanently widening one that never expires.",
+      "back": "Back",
+      "confirmSubmit": "Add access",
+      "saved": "Access updated. Reconnect the agent to refresh its tool list.",
+      "rejected": "The change was not saved. You may no longer hold some of this access, or the connection is no longer active.",
+      "rateLimited": "Too many changes. Wait a minute and try again.",
+      "error": "We couldn't confirm the change. Refresh the list to see the connection's current access.",
+      "changeCap_one": "Every knowledge base limited to: {{bits}} (narrows {{count}} knowledge base)",
+      "changeCap_other": "Every knowledge base limited to: {{bits}} (narrows {{count}} knowledge bases)",
+      "durationLegend": "How long",
+      "durations": {
+        "permanent": "Permanent",
+        "1h": "1 hour",
+        "1d": "1 day",
+        "7d": "7 days"
+      },
+      "permanentHint": "Changes stay until you edit the connection again.",
+      "temporaryHint": "Temporary access only adds. It ends on its own when the time is up, or when you end it early. The access type can't change temporarily.",
+      "temporaryLimit": "This connection already has {{max}} temporary grants active. End one before adding more temporary access.",
+      "temporaryIssues": {
+        "limit": "This connection already has {{max}} temporary grants active. End one first.",
+        "removes": "Temporary access can only add. Undo the removals, or choose Permanent to remove access.",
+        "needsWrite": "These tools change data, which needs the Read and change access type. Temporary access can't add it."
+      },
+      "temporaryConfirm": "This access ends on its own after {{duration}}. You can end it earlier from the connection list.",
+      "temporaryCreatedKbs": "Knowledge bases the agent creates during this time stay accessible to it after the temporary access ends.",
+      "savedTemporary": "Temporary access added. Reconnect the agent to refresh its tool list.",
+      "confirmChangesTitle": "Confirm changes",
+      "endsTemporary": "This also ends temporary access on this connection.",
+      "review": "Review changes",
+      "confirmStep": "Step 2 of 2 · Not saved yet"
+    },
+    "temporary": {
+      "title": "Temporary access",
+      "kbs_one": "{{count}} knowledge base",
+      "kbs_other": "{{count}} knowledge bases",
+      "endsIn": {
+        "days_one": "Ends in {{count}} day ({{date}})",
+        "days_other": "Ends in {{count}} days ({{date}})",
+        "hours_one": "Ends in {{count}} hour ({{date}})",
+        "hours_other": "Ends in {{count}} hours ({{date}})",
+        "minutes_one": "Ends in {{count}} minute ({{date}})",
+        "minutes_other": "Ends in {{count}} minutes ({{date}})"
+      },
+      "endNow": "End now",
+      "ending": "Ending…",
+      "ended": "Temporary access ended.",
+      "endError": "Temporary access was not ended. Try again."
+    },
+    "state": {
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "editAccessFor": "Edit access for {{name}}",
+    "revokeFor": "Revoke {{name}}",
+    "resetReviewTitle": "Review access after your password reset",
+    "resetReviewMessage": "Your password reset signed out every browser session, but these personal access tokens and connected apps still work. Revoke any you don't recognize, or revoke them all.",
+    "resetReviewNone": "Your password reset signed out every browser session. No personal access tokens or connected apps are active.",
+    "resetReviewLoadError": "Couldn't check which tokens and apps still work after your password reset.",
+    "revokeAll": "Revoke all",
+    "revokeAllTitle": "Revoke every token and connected app?",
+    "revokeAllDescription": "Every personal access token stops working and every connected app is disconnected immediately. Tools and agents that use them must be set up again. This can't be undone.",
+    "revokeAllTypePrompt": "Type “revoke all” to confirm",
+    "revokeAllConfirmToken": "revoke all",
+    "revokeAllSuccess": "All tokens and connected apps were revoked.",
+    "revokeAllError": "Some credentials were not revoked. Review the list and try again.",
+    "revokeAllCopyConfirm": "Copy confirmation text"
+  },
+  "providers": {
+    "title": "Embedding providers",
+    "description": "Your own OpenAI-compatible embedding endpoints. Endpoints and keys are write-only: they are never shown again after saving.",
+    "add": "Add provider",
+    "empty": "No providers yet.",
+    "listFailed": "Couldn't load your providers.",
+    "name": "Name",
+    "endpoint": "Endpoint URL",
+    "model": "Model",
+    "dimensions": "Dimensions",
+    "apiKey": "API key",
+    "apiKeyHint": "Used only to register this revision. It is never shown again.",
+    "save": "Save provider",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "createTitle": "Add embedding provider",
+    "createDescription": "Saving registers revision 1 and starts a probe.",
+    "probeTitle": "Probe {{name}} again",
+    "probeDescription": "A probe registers a new revision with the settings you enter now.",
+    "probe": "Probe again",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke {{name}}?",
+    "revokeDescription": "Its stored key is destroyed and pending builds that use it are cancelled.",
+    "revokePrompt": "Type REVOKE to confirm",
+    "revokeAction": "Revoke provider",
+    "revoking": "Revoking…",
+    "copyToken": "Copy confirmation text",
+    "revision": "Revision {{revision}}",
+    "line": "{{model}} · {{dimensions}} dimensions",
+    "status": {
+      "ready": "Ready",
+      "revoked": "Revoked",
+      "unavailable": "Not ready"
+    },
+    "probeState": {
+      "probing": "Probing…",
+      "ready": "Probe succeeded.",
+      "failed": "Probe failed.",
+      "timeout": "Probe timed out.",
+      "superseded": "A newer revision replaced this probe."
+    },
+    "probeReason": {
+      "revoked": "This provider was revoked.",
+      "provider_error": "The provider rejected or failed the test request.",
+      "worker_lost": "The probe worker stopped before finishing.",
+      "cancelled": "The probe was cancelled.",
+      "timeout": "The probe did not finish in time."
+    },
+    "probeProgress": "Sending a test request; failed attempts are retried for up to two minutes.",
+    "probeRetrying": "The last attempt failed: {{cause}} Retrying…",
+    "probeFailureLead": "Cause: {{cause}}",
+    "probeFailure": {
+      "unreachable": "Couldn't reach the endpoint (DNS, connection, TLS or timeout). Check the URL.",
+      "httpAuth": "The endpoint refused the API key (HTTP {{status}}).",
+      "httpStatus": "The endpoint returned HTTP {{status}}.",
+      "dimensionMismatch": "The model returned {{received}}-dimension vectors, but this provider is set to {{expected}}.",
+      "badResponse": "The endpoint's reply isn't an OpenAI-compatible embeddings response."
+    },
+    "errors": {
+      "denied": "This provider isn't available to you.",
+      "conflict": "This changed in the meantime. Reload and try again.",
+      "invalid": "Check the values and try again.",
+      "retry": "Couldn't complete this. Try again."
+    }
+  }
+}

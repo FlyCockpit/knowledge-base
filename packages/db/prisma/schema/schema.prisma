@@ -1,0 +1,16 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../generated"
+  moduleFormat    = "esm"
+  runtime         = "nodejs"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  // `pg_trgm` backs the GIN trigram indexes on the ILIKE-filtered columns
+  // (User.email/name). It ships in the official postgres:18.6-trixie image used by
+  // docker-compose.dev.yml, the test fixtures, and Dokploy. Prisma owns
+  // pg_trgm; the generation guard triggers are SQL-owned (packages/db/prisma/migrations/0_init).
+  extensions = [pg_trgm]
+}

@@ -1,0 +1,46 @@
+{
+  "home": {
+    "description": "Bases de conocimiento autoalojadas para personas y agentes."
+  },
+  "actions": {
+    "back": "Atrás",
+    "cancel": "Cancelar",
+    "clear": "Limpiar",
+    "close": "Cerrar",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "delete": "Eliminar",
+    "deleting": "Eliminando…",
+    "edit": "Editar",
+    "manage": "Administrar",
+    "reload": "Recargar",
+    "refresh": "Actualizar",
+    "retry": "Reintentar",
+    "save": "Guardar",
+    "saveChanges": "Guardar cambios",
+    "saving": "Guardando…",
+    "tryAgain": "Intentar de nuevo",
+    "loadMore": "Cargar más",
+    "loadingMore": "Cargando…"
+  },
+  "fileDrop": {
+    "ignored": "Ese archivo no se puede soltar aquí."
+  },
+  "filePrepare": {
+    "converted": "La foto se convirtió para poder subirla.",
+    "resized": "La foto se redimensionó para ajustarse al límite de subida.",
+    "flattened": "La imagen animada se convirtió en una imagen fija para ajustarse al límite de subida.",
+    "tooLarge": "Esta imagen supera los {{maxMb}} MB incluso después de comprimirla.",
+    "unreadable": "No se pudo leer esa imagen. Prueba con un JPEG, PNG, WebP o HEIC.",
+    "unsupported": "Ese tipo de archivo no se puede usar como imagen.",
+    "svg": "Los archivos SVG no se pueden subir como imágenes."
+  },
+  "loading": "Cargando…",
+  "somethingWentWrong": "Algo salió mal",
+  "help": {
+    "ariaLabel": "¿Qué significa esto?"
+  },
+  "breadcrumbs": {
+    "ariaLabel": "Ruta de navegación"
+  }
+}

@@ -1,0 +1,22 @@
+# The `xtask` pattern: project automation written in Rust instead of shell, so
+# it runs identically on Linux, macOS, and Windows and needs no extra tooling.
+# Invoke via the `cargo xtask` alias defined in `.cargo/config.toml`.
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version.workspace = true
+publish = false
+license = "Apache-2.0"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+# Never distribute the dev tool as a release artifact.
+[package.metadata.dist]
+dist = false

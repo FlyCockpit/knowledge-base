@@ -1,0 +1,21 @@
+{
+  "appSettingsLoadFailed": "No se pudieron cargar las configuraciones de la aplicación.",
+  "emptyDescription": "Las bases de conocimiento que poseas o que alguien comparta contigo aparecerán aquí.",
+  "emptyTitle": "Aún no hay bases de conocimiento",
+  "loadFailed": "No se pudo cargar el panel de control.",
+  "welcomeBack": "Bienvenido de vuelta, {{name}}",
+  "openKbs": "Ver bases de conocimiento",
+  "description": "Tus bases de conocimiento y accesos de un vistazo.",
+  "recent": "Bases de conocimiento",
+  "kpi": {
+    "owned": "Bases propias",
+    "shared": "Compartidas contigo",
+    "searchable": "Con índice de búsqueda",
+    "searchableHint": "de {{count}} que puedes abrir",
+    "tokens": "Tokens de acceso activos",
+    "manageTokens": "Administrar tokens",
+    "more": "{{count}}+",
+    "firstPage": "Contadas entre las primeras {{count}}",
+    "loading": "Cargando"
+  }
+}

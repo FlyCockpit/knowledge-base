@@ -1,0 +1,178 @@
+enum KnowledgeBaseState {
+  CREATING
+  ACTIVE
+  TOMBSTONED
+  REPAIR_REQUIRED
+}
+
+enum QuotaDimension {
+  OWNER_LIVE_KB
+  KB_BRANCH
+  KB_HISTORY_BYTES
+  KB_LINEAGE_BYTES
+  OWNER_LINEAGE_BYTES
+  DISK_VOLUME
+}
+
+enum QuotaReservationOutcome {
+  RESERVED
+  COMMITTED
+  RELEASED
+  EXPIRED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+// Authority, membership, quota reservations, and audit. SQL-owned checks and
+// the live owner+slug unique index live in prisma/migrations/0_init/migration.sql.
+/// SQLite index vector quantization (§1.4); frozen per generation at build time.
+enum IndexQuantization {
+  INT8
+  BINARY_INT8_RESCORE
+}
+
+model KnowledgeBase {
+  id                     String                @id @default(cuid(2))
+  createdAt              DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime              @default(now()) @updatedAt @db.Timestamptz(3)
+  ownerId                String?
+  owner                  User?                 @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  name                   String
+  slug                   String
+  description            String
+  state                  KnowledgeBaseState
+  defaultBranch          String                @default("main")
+  headSha                String?
+  metadataVersion        Int                   @default(1)
+  desiredEpoch           BigInt                @default(0)
+  sealedPolicyGeneration BigInt                @default(0)
+  profileProviderId      String?
+  profileVersion         Int?
+  profileRevision        ProviderRevision?     @relation("KbProfile", fields: [profileProviderId, profileVersion], references: [providerId, version], onDelete: Restrict)
+  activeGenerationId     String?
+  activeGeneration       IndexGeneration?      @relation("ActiveGeneration", fields: [id, activeGenerationId], references: [kbId, id], onDelete: Restrict, onUpdate: Restrict)
+  generations            IndexGeneration[]     @relation("GenerationOwner")
+  nextPrNumber           Int                   @default(1)
+  shares                 KbShare[]
+  invitations            ShareInvitation[]
+  transfers              KbTransfer[]
+  auditEvents            AuditEvent[]
+  operationIntents       OperationIntent[]
+  casPublications        CasPublication[]
+  branchOwners           BranchOwner[]
+  pullRequests           PullRequest[]
+  assetLineages          KbAssetLineage[]
+  stagedUploads          StagedUpload[]
+  exportArtifacts        ExportArtifact[]
+  sealedRecords          SealedRecord[]
+  mirrorRemote           KbRemote?
+  grantAcls              GrantKbAcl[]
+  grantElevationAcls     GrantElevationKbAcl[]
+  /// Last admitted search (query embedding). Orders built-in embedder re-embedding
+  /// after a runtime config change: most recently queried first.
+  lastQueriedAt          DateTime?             @db.Timestamptz(3)
+  qwenReembed            QwenReembed?
+  /// Vector quantization for the next index build (owner/manager setting, §1.9).
+  indexQuantization      IndexQuantization     @default(BINARY_INT8_RESCORE)
+  /// Owner-set chunk limit; null means `KB_LIMITS.indexChunksDefault`. Always read
+  /// through `effectiveChunkLimit()`, which clamps to the admin ceiling and bound.
+  indexChunkLimit        Int?
+
+  @@index([ownerId])
+  @@index([state])
+  @@map("knowledge_base")
+}
+
+model KbShare {
+  id                  String        @id @default(cuid(2))
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  kbId                String
+  knowledgeBase       KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  userId              String
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bits                String[]
+  /// Owner-set. False (default) means this share never yields a sealed-value
+  /// capability, whatever its bits. Reset to false whenever the share is (re)accepted.
+  includeSealedValues Boolean       @default(false)
+  revokedAt           DateTime?     @db.Timestamptz(3)
+
+  @@unique([kbId, userId], map: "kb_share_kb_user_unique")
+  @@index([userId])
+  @@map("kb_share")
+}
+
+model ShareInvitation {
+  id              String        @id @default(cuid(2))
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  kbId            String
+  knowledgeBase   KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  inviterUserId   String
+  inviter         User          @relation(fields: [inviterUserId], references: [id], onDelete: Restrict)
+  canonicalEmail  String
+  emailCiphertext String
+  requestId       String        @unique
+  idempotencyKey  String
+  bits            String[]
+  acceptedAt      DateTime?     @db.Timestamptz(3)
+  revokedAt       DateTime?     @db.Timestamptz(3)
+
+  @@unique([kbId, canonicalEmail], map: "share_invitation_kb_email_unique")
+  @@unique([inviterUserId, kbId, idempotencyKey], map: "share_invitation_inviter_kb_key_unique")
+  @@map("share_invitation")
+}
+
+model QuotaAccount {
+  id           String             @id @default(cuid(2))
+  dimension    QuotaDimension
+  subjectId    String
+  committed    BigInt             @default(0)
+  reserved     BigInt             @default(0)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
+  reservations QuotaReservation[]
+
+  @@unique([dimension, subjectId], map: "quota_account_dimension_subject")
+  @@map("quota_account")
+}
+
+model QuotaReservation {
+  id                 String                  @id @default(uuid())
+  accountId          String
+  account            QuotaAccount            @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  amount             BigInt
+  opId               String
+  expiresAt          DateTime                @db.Timestamptz(3)
+  outcome            QuotaReservationOutcome @default(RESERVED)
+  heldForPublication Boolean                 @default(false)
+  releasedAt         DateTime?               @db.Timestamptz(3)
+  createdAt          DateTime                @default(now()) @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@index([opId])
+  @@map("quota_reservation")
+}
+
+model AuditEvent {
+  id                  String         @id @default(cuid(2))
+  createdAt           DateTime       @default(now()) @db.Timestamptz(3)
+  opId                String
+  action              String
+  outcome             AuditOutcome
+  actorKey            String
+  actorUserIdSnapshot String
+  actorUserId         String?
+  actorUser           User?          @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  grantIdSnapshot     String?
+  kbId                String?
+  knowledgeBase       KnowledgeBase? @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  revision            String?
+  metadata            Json
+
+  @@unique([opId, action, outcome], map: "audit_event_op_action_outcome")
+  @@index([kbId])
+  @@index([actorUserId])
+  @@index([createdAt, id])
+  @@map("audit_event")
+}

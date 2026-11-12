@@ -1,0 +1,370 @@
+{
+  "navProfile": "Perfil",
+  "navSecurity": "Seguridad",
+  "navMcp": "Acceso MCP",
+  "navProviders": "Proveedores de embeddings",
+  "profile": {
+    "title": "Perfil",
+    "description": "Administra tu información de perfil",
+    "emailReadonly": "El correo electrónico no se puede cambiar",
+    "saved": "Perfil actualizado",
+    "saveError": "No se pudo actualizar tu perfil. Intenta de nuevo.",
+    "operationalAlerts": "Enviarme correos sobre fallas operativas",
+    "operationalAlertsDescription": "Recibe alertas de administración cuando los trabajos en segundo plano fallen permanentemente.",
+    "notificationsSaved": "Preferencia de notificaciones actualizada",
+    "notificationsSaveError": "No se pudo actualizar la preferencia de notificaciones. Intenta de nuevo."
+  },
+  "security": {
+    "twoFactorTitle": "Autenticación de Dos Factores",
+    "enabledDescription": "La autenticación de dos factores está habilitada en tu cuenta",
+    "disabledDescription": "Añade una capa extra de seguridad a tu cuenta",
+    "enable2FA": "Habilitar Autenticación de Dos Factores",
+    "disable2FA": "Deshabilitar Autenticación de Dos Factores",
+    "confirmPasswordPrompt": "Confirma tu contraseña para configurar la autenticación de dos factores.",
+    "addKeyToApp": "Añade esta clave a tu aplicación autenticadora (Authy, Google Authenticator, etc.):",
+    "saveBackupCodes": "Guarda estos códigos de respaldo en un lugar seguro:",
+    "savedBackupCodes": "He guardado mis códigos de respaldo",
+    "verifyPrompt": "Ingresa el código de 6 dígitos de tu aplicación autenticadora para verificar la configuración.",
+    "verifyAndEnable": "Verificar y Habilitar",
+    "couldNotStartSetup": "No se pudo iniciar la configuración de 2FA. Intenta de nuevo.",
+    "enabledSuccess": "Autenticación de dos factores habilitada",
+    "disablePrompt": "Ingresa tu contraseña para deshabilitar la autenticación de dos factores.",
+    "disable": "Deshabilitar 2FA",
+    "disabling": "Deshabilitando…",
+    "couldNotDisable": "No se pudo deshabilitar 2FA. Intenta de nuevo.",
+    "disabledSuccess": "Autenticación de dos factores deshabilitada",
+    "scanQrPrompt": "Escanea esto con tu aplicación de autenticación",
+    "passwordTitle": "Contraseña",
+    "passwordDescription": "Cambia la contraseña que usas para iniciar sesión.",
+    "passwordLoadError": "No se pudieron cargar tus configuraciones de contraseña.",
+    "currentPasswordLabel": "Contraseña actual",
+    "newPasswordLabel": "Nueva contraseña",
+    "confirmPasswordLabel": "Confirma la nueva contraseña",
+    "passwordSessionRevocation": "Después de que cambies tu contraseña, todos los demás dispositivos cerrarán sesión. Este dispositivo permanecerá con la sesión iniciada.",
+    "changePassword": "Cambiar contraseña",
+    "changingPassword": "Cambiando contraseña…",
+    "passwordChangedSuccess": "Contraseña cambiada. Los otros dispositivos han cerrado sesión.",
+    "currentPasswordMismatch": "Tu contraseña actual no coincide.",
+    "passwordChangeError": "No se pudo cambiar tu contraseña. Intenta de nuevo."
+  },
+  "title": "Configuración",
+  "credentials": {
+    "tokensTitle": "Tokens de acceso personal",
+    "appsTitle": "Aplicaciones conectadas",
+    "create": "Crear token",
+    "createTitle": "Crear un token de acceso personal",
+    "createDescription": "Elige exactamente qué puede hacer este token. Las herramientas empiezan con el conjunto Lectura; el tipo de acceso, los permisos de las bases de conocimiento y la creación de bases de conocimiento quedan sin seleccionar hasta que tú los selecciones.",
+    "nameLabel": "Nombre del token",
+    "expiryLabel": "Vencimiento",
+    "expiryHelp": "Un token con fecha vence como máximo {{max}} días a partir de hoy. Un token sin vencimiento sigue siendo válido hasta que lo revoques.",
+    "expiryDays_one": "{{count}} día",
+    "expiryDays_other": "{{count}} días",
+    "expiryCustom": "Fecha personalizada",
+    "expiryNone": "Sin vencimiento",
+    "expiryDateLabel": "Fecha de vencimiento",
+    "expiryInvalid": "Esa fecha de vencimiento no es válida. Elige una fecha entre mañana y 365 días a partir de hoy.",
+    "noExpiryWarning": "Este token nunca vence. Es preferible fijar un vencimiento, o revócalo cuando ya no lo necesites.",
+    "createSubmit": "Crear token",
+    "creating": "Creando…",
+    "createError": "No se creó el token. Es posible que tu selección ya no esté permitida; revísala e inténtalo de nuevo.",
+    "secretOnce": "Copia este token ahora. No se volverá a mostrar y al cerrar este cuadro se elimina de esta página.",
+    "copySecret": "Copiar token",
+    "done": "Listo",
+    "kbsLoadError": "No se pudieron cargar tus bases de conocimiento.",
+    "listLoadError": "No se pudieron cargar tus credenciales.",
+    "noTokens": "No tienes tokens de acceso personal.",
+    "noApps": "No hay aplicaciones conectadas a tu cuenta.",
+    "revoke": "Revocar",
+    "editAccess": "Editar acceso",
+    "revoking": "Revocando…",
+    "revoked": "Revocado",
+    "revokeError": "No se revocó la credencial. Inténtalo de nuevo.",
+    "revokeSuccess": "Credencial revocada.",
+    "revokeTokenTitle": "¿Revocar este token?",
+    "revokeTokenDescription": "Todo lo que use “{{name}}” pierde el acceso de inmediato. Esto no se puede deshacer.",
+    "revokeGrantTitle": "¿Desconectar esta aplicación?",
+    "revokeGrantDescription": "“{{name}}” pierde el acceso de inmediato y deberá pedir aprobación otra vez. Esto no se puede deshacer.",
+    "revokeTypePrompt": "Escribe el nombre para confirmar",
+    "copyConfirm": "Copiar nombre",
+    "expires": "Vence el {{date}}",
+    "neverExpires": "Nunca vence",
+    "approved": "Aprobada el {{date}}",
+    "widenedOn": "Acceso ampliado el {{date}}",
+    "grantNoKbs": "Ninguna base de conocimiento existente.",
+    "grantCreates": "Puede crear bases de conocimiento y recibe: {{bits}}",
+    "picker": {
+      "scopesLegend": "Tipo de acceso",
+      "scopes": {
+        "read": "Lectura (mcp:read)",
+        "write": "Lectura y cambios (mcp:write)",
+        "offline": "Seguir conectado sin volver a iniciar sesión (offline_access)",
+        "unknown": "Otro: {{scope}}"
+      },
+      "toolsLegend": "Herramientas",
+      "toolsHint": "Elige qué herramientas puede llamar el agente. Solo verá y usará estas, en las bases de conocimiento que selecciones abajo.",
+      "presets": {
+        "read": {
+          "label": "Lectura",
+          "description": "Buscar y leer documentos. No se puede cambiar nada."
+        },
+        "propose": {
+          "label": "Proponer ediciones",
+          "description": "Leer, editar documentos y abrir solicitudes de extracción. Combínalo con Proponer en cada base de conocimiento para que cada cambio espere revisión."
+        },
+        "direct": {
+          "label": "Ediciones directas",
+          "description": "Leer, editar documentos, administrar recursos y seguir o cerrar solicitudes de extracción. Con Escritura en una base de conocimiento, los cambios van directo a su rama principal; solo con Proponer, abren una solicitud de extracción."
+        },
+        "custom": {
+          "label": "Personalizado",
+          "description": "Un conjunto personalizado de grupos de herramientas. Revísalos en Opciones avanzadas."
+        }
+      },
+      "showAdvanced": "Opciones avanzadas: elegir grupos de herramientas",
+      "hideAdvanced": "Ocultar grupos de herramientas",
+      "groupsLegend": "Grupos de herramientas",
+      "groups": {
+        "read": {
+          "label": "Lectura",
+          "description": "Buscar, listar y leer documentos. También se necesita para Git fetch y para descargar recursos."
+        },
+        "edit": {
+          "label": "Edición",
+          "description": "Crear, actualizar y eliminar documentos, aplicar cambios y subir Markdown. También se necesita para Git push."
+        },
+        "assets": {
+          "label": "Recursos",
+          "description": "Subir, importar, listar y quitar imágenes y otros recursos."
+        },
+        "export": {
+          "label": "Exportación",
+          "description": "Preparar y descargar exportaciones de una base de conocimiento."
+        },
+        "pull_requests": {
+          "label": "Solicitudes de extracción",
+          "description": "Listar, abrir y revisar solicitudes de extracción."
+        },
+        "index_admin": {
+          "label": "Índice",
+          "description": "Consultar el estado del índice, reconstruirlo y cambiar el perfil de embeddings."
+        },
+        "kb_admin": {
+          "label": "Administración de bases de conocimiento",
+          "description": "Crear, renombrar y eliminar bases de conocimiento."
+        },
+        "sealed": {
+          "label": "Valores sellados",
+          "description": "Resolver las referencias selladas aprobadas para esta credencial."
+        }
+      },
+      "previewTitle": "Lo que verá el agente",
+      "previewNoTools": "No hay herramientas de los grupos seleccionados.",
+      "previewSupporting": "Siempre se pueden llamar, aunque la lista de herramientas no las muestre: {{tools}}",
+      "previewNoKbs": "Bases de conocimiento: ninguna seleccionada.",
+      "previewKbs": "Bases de conocimiento: {{names}}",
+      "previewCreated": "También obtiene acceso a las bases de conocimiento que cree.",
+      "previewNotes": {
+        "editWithoutAssets": "Edición sin Recursos: knowledge_changes_apply y las subidas no pueden agregar ni quitar recursos.",
+        "assetsWithoutEdit": "Recursos sin Edición: las subidas solo aceptan recursos, no Markdown.",
+        "writeScopeMissing": "Estas herramientas cambian datos y requieren el tipo de acceso de lectura y cambios, así que el agente no puede usarlas: {{tools}}",
+        "noEligibleKb": "Ninguna base de conocimiento seleccionada tiene el permiso que necesitan estas herramientas, así que el agente no puede usarlas: {{tools}}",
+        "createNotAllowed": "knowledge_bases_create solo funciona si se permite crear bases de conocimiento."
+      },
+      "kbsLegend": "Bases de conocimiento",
+      "kbsHint": "Selecciona cada base de conocimiento y cada permiso por separado. Solo se muestran los permisos que tienes.",
+      "presetCapsBits": "El conjunto de herramientas seleccionado solo permite estos permisos: {{bits}}. Elige Personalizado en Opciones avanzadas para otros.",
+      "noKbs": "Todavía no tienes acceso a ninguna base de conocimiento.",
+      "kbUnavailable": "Ya no está disponible para ti. Solo puedes quitarla de esta conexión.",
+      "removalOnly": "Ya no tienes este permiso. Puedes quitarlo, pero no volver a agregarlo.",
+      "emptyAcl": "No hay bases de conocimiento seleccionadas. Esta credencial no podrá abrir ninguna base de conocimiento existente.",
+      "createLegend": "Bases de conocimiento nuevas",
+      "allowCreate": "Permitir crear bases de conocimiento",
+      "allowCreateDescription": "La credencial puede crear bases de conocimiento a tu nombre y solo recibe en cada una los permisos elegidos abajo.",
+      "allowCreateNeedsWrite": "Requiere el tipo de acceso de lectura y cambios.",
+      "createdBitsLegend": "Permisos en las bases de conocimiento que cree",
+      "bits": {
+        "read": {
+          "label": "Lectura",
+          "description": "Buscar y leer documentos e historial."
+        },
+        "propose": {
+          "label": "Proponer",
+          "description": "Sugerir cambios como solicitudes de extracción. No puede cambiar la rama principal directamente."
+        },
+        "write": {
+          "label": "Escritura",
+          "description": "Cambiar la rama principal directamente, sin revisión."
+        },
+        "review": {
+          "label": "Revisión",
+          "description": "Revisar, fusionar o cerrar solicitudes de extracción. No permite editar documentos directamente."
+        },
+        "manage": {
+          "label": "Administrar",
+          "description": "Control total de la base de conocimiento, incluidos todos los demás permisos."
+        }
+      },
+      "issues": {
+        "scopeRequired": "Elige al menos un tipo de acceso.",
+        "toolGroupRequired": "Elige al menos un grupo de herramientas.",
+        "createNeedsRead": "Las bases de conocimiento que cree deben incluir Lectura.",
+        "createNeedsWriteScope": "Crear bases de conocimiento requiere el tipo de acceso de lectura y cambios."
+      },
+      "previewNoUsableTools": "El agente todavía no puede usar ninguna de las herramientas seleccionadas. Las notas de abajo indican qué falta.",
+      "kbBitName": "{{kb}}: {{bit}}"
+    },
+    "createUncertain": "No pudimos confirmar si se creó “{{name}}”. Se está actualizando la lista de tokens. Cierra este diálogo, busca cualquier token nuevo con ese nombre y revócalo antes de intentarlo de nuevo: su secreto no se puede recuperar.",
+    "morePermissions": "Hay más permisos de bases de conocimiento. Carga más para revisarlos.",
+    "toolGroupsSummary": "Herramientas: {{groups}}",
+    "edit": {
+      "title": "Editar el acceso de “{{name}}”",
+      "description": "Amplía o reduce lo que puede hacer esta conexión. Los cambios se aplican en su siguiente llamada; no se vuelve a emitir nada.",
+      "loadError": "No se pudieron cargar los permisos actuales de esta conexión.",
+      "loadAll": "Esta conexión tiene más permisos de bases de conocimiento. Cárgalos todos antes de editar.",
+      "oauthScopes": "El tipo de acceso de una aplicación no se puede cambiar aquí. Para quitar cambios, desactiva los grupos de herramientas de escritura; para agregar Lectura y cambios, vuelve a conectar la aplicación y apruébala de nuevo.",
+      "save": "Guardar cambios",
+      "saving": "Guardando…",
+      "unchanged": "No cambió nada.",
+      "confirmTitle": "Confirmar el acceso agregado",
+      "confirmDescription": "La credencial existente obtiene este acceso en su siguiente llamada. Amplía solo una conexión en la que todavía confíes.",
+      "added": "Se agrega",
+      "removed": "Se quita",
+      "changeGroup": "Herramientas de {{group}}",
+      "changeKb": "{{name}}: {{bits}}",
+      "changeCreate": "Crear bases de conocimiento",
+      "changeCreatedBits": "En las bases de conocimiento que cree: {{bits}}",
+      "noExpiryWarning": "Este token nunca vence. Es preferible un acceso temporal, que termina por sí solo, o un token nuevo con vencimiento, en lugar de ampliar de forma permanente uno que nunca vence.",
+      "back": "Atrás",
+      "confirmSubmit": "Agregar acceso",
+      "saved": "Acceso actualizado. Vuelve a conectar el agente para actualizar su lista de herramientas.",
+      "rejected": "No se guardó el cambio. Es posible que ya no tengas parte de este acceso o que la conexión ya no esté activa.",
+      "rateLimited": "Demasiados cambios. Espera un minuto e inténtalo de nuevo.",
+      "error": "No pudimos confirmar el cambio. Actualiza la lista para ver el acceso actual de la conexión.",
+      "changeCap_one": "Cada base de conocimiento limitada a: {{bits}} (reduce {{count}} base de conocimiento)",
+      "changeCap_other": "Cada base de conocimiento limitada a: {{bits}} (reduce {{count}} bases de conocimiento)",
+      "durationLegend": "Duración",
+      "durations": {
+        "permanent": "Permanente",
+        "1h": "1 hora",
+        "1d": "1 día",
+        "7d": "7 días"
+      },
+      "permanentHint": "Los cambios se mantienen hasta que vuelvas a editar la conexión.",
+      "temporaryHint": "El acceso temporal solo agrega. Termina por sí solo cuando se cumple el tiempo o cuando lo terminas antes. El tipo de acceso no puede cambiar de forma temporal.",
+      "temporaryLimit": "Esta conexión ya tiene {{max}} accesos temporales activos. Termina uno antes de agregar más acceso temporal.",
+      "temporaryIssues": {
+        "limit": "Esta conexión ya tiene {{max}} accesos temporales activos. Termina uno primero.",
+        "removes": "El acceso temporal solo puede agregar. Deshaz lo que quitaste o elige Permanente para quitar acceso.",
+        "needsWrite": "Estas herramientas cambian datos, lo que requiere el tipo de acceso de lectura y cambios. El acceso temporal no puede agregarlo."
+      },
+      "temporaryConfirm": "Este acceso termina por sí solo después de {{duration}}. Puedes terminarlo antes desde la lista de conexiones.",
+      "temporaryCreatedKbs": "Las bases de conocimiento que el agente cree durante este tiempo seguirán siendo accesibles para él después de que termine el acceso temporal.",
+      "savedTemporary": "Acceso temporal agregado. Vuelve a conectar el agente para actualizar su lista de herramientas.",
+      "confirmChangesTitle": "Confirmar cambios",
+      "endsTemporary": "Esto también termina el acceso temporal de esta conexión.",
+      "review": "Revisar cambios",
+      "confirmStep": "Paso 2 de 2 · Aún no se guarda"
+    },
+    "temporary": {
+      "title": "Acceso temporal",
+      "kbs_one": "{{count}} base de conocimiento",
+      "kbs_other": "{{count}} bases de conocimiento",
+      "endsIn": {
+        "days_one": "Termina en {{count}} día ({{date}})",
+        "days_other": "Termina en {{count}} días ({{date}})",
+        "hours_one": "Termina en {{count}} hora ({{date}})",
+        "hours_other": "Termina en {{count}} horas ({{date}})",
+        "minutes_one": "Termina en {{count}} minuto ({{date}})",
+        "minutes_other": "Termina en {{count}} minutos ({{date}})"
+      },
+      "endNow": "Terminar ahora",
+      "ending": "Terminando…",
+      "ended": "Acceso temporal terminado.",
+      "endError": "No se terminó el acceso temporal. Inténtalo de nuevo."
+    },
+    "state": {
+      "active": "Activo",
+      "expired": "Vencido",
+      "revoked": "Revocado"
+    },
+    "editAccessFor": "Editar acceso de {{name}}",
+    "revokeFor": "Revocar {{name}}",
+    "resetReviewTitle": "Revisa el acceso después de restablecer tu contraseña",
+    "resetReviewMessage": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador, pero estos tokens de acceso personal y apps conectadas siguen funcionando. Revoca los que no reconozcas o revócalos todos.",
+    "resetReviewNone": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador. No hay tokens de acceso personal ni apps conectadas activos.",
+    "resetReviewLoadError": "No se pudo comprobar qué tokens y apps siguen funcionando después de restablecer tu contraseña.",
+    "revokeAll": "Revocar todo",
+    "revokeAllTitle": "¿Revocar todos los tokens y apps conectadas?",
+    "revokeAllDescription": "Todos los tokens de acceso personal dejan de funcionar y todas las apps conectadas se desconectan de inmediato. Las herramientas y agentes que los usan deberán configurarse de nuevo. Esto no se puede deshacer.",
+    "revokeAllTypePrompt": "Escribe “revocar todo” para confirmar",
+    "revokeAllConfirmToken": "revocar todo",
+    "revokeAllSuccess": "Se revocaron todos los tokens y apps conectadas.",
+    "revokeAllError": "Algunas credenciales no se revocaron. Revisa la lista e inténtalo de nuevo.",
+    "revokeAllCopyConfirm": "Copiar texto de confirmación"
+  },
+  "providers": {
+    "title": "Proveedores de embeddings",
+    "description": "Tus propios endpoints de embeddings compatibles con OpenAI. Los endpoints y las claves son de solo escritura: nunca se vuelven a mostrar después de guardar.",
+    "add": "Agregar proveedor",
+    "empty": "Aún no hay proveedores.",
+    "listFailed": "No se pudieron cargar tus proveedores.",
+    "name": "Nombre",
+    "endpoint": "URL del endpoint",
+    "model": "Modelo",
+    "dimensions": "Dimensiones",
+    "apiKey": "Clave de API",
+    "apiKeyHint": "Se usa solo para registrar esta revisión. Nunca se vuelve a mostrar.",
+    "save": "Guardar proveedor",
+    "saving": "Guardando…",
+    "cancel": "Cancelar",
+    "createTitle": "Agregar proveedor de embeddings",
+    "createDescription": "Al guardar se registra la revisión 1 y se inicia una prueba.",
+    "probeTitle": "Probar {{name}} de nuevo",
+    "probeDescription": "Una prueba registra una nueva revisión con los valores que ingreses ahora.",
+    "probe": "Probar de nuevo",
+    "revoke": "Revocar",
+    "revokeTitle": "¿Revocar {{name}}?",
+    "revokeDescription": "Su clave guardada se destruye y las construcciones pendientes que la usan se cancelan.",
+    "revokePrompt": "Escribe REVOKE para confirmar",
+    "revokeAction": "Revocar proveedor",
+    "revoking": "Revocando…",
+    "copyToken": "Copiar texto de confirmación",
+    "revision": "Revisión {{revision}}",
+    "line": "{{model}} · {{dimensions}} dimensiones",
+    "status": {
+      "ready": "Listo",
+      "revoked": "Revocado",
+      "unavailable": "No listo"
+    },
+    "probeState": {
+      "probing": "Probando…",
+      "ready": "La prueba fue exitosa.",
+      "failed": "La prueba falló.",
+      "timeout": "La prueba excedió el tiempo de espera.",
+      "superseded": "Una revisión más reciente reemplazó esta prueba."
+    },
+    "probeReason": {
+      "revoked": "Este proveedor fue revocado.",
+      "provider_error": "El proveedor rechazó o no completó la solicitud de prueba.",
+      "worker_lost": "El proceso de prueba se detuvo antes de terminar.",
+      "cancelled": "La prueba se canceló.",
+      "timeout": "La prueba no terminó a tiempo."
+    },
+    "probeProgress": "Enviando una solicitud de prueba; los intentos fallidos se reintentan durante hasta dos minutos.",
+    "probeRetrying": "El último intento falló: {{cause}} Reintentando…",
+    "probeFailureLead": "Causa: {{cause}}",
+    "probeFailure": {
+      "unreachable": "No se pudo conectar con el endpoint (DNS, conexión, TLS o tiempo de espera). Revisa la URL.",
+      "httpAuth": "El endpoint rechazó la clave de API (HTTP {{status}}).",
+      "httpStatus": "El endpoint respondió con HTTP {{status}}.",
+      "dimensionMismatch": "El modelo devolvió vectores de {{received}} dimensiones, pero este proveedor está configurado con {{expected}}.",
+      "badResponse": "La respuesta del endpoint no es una respuesta de embeddings compatible con OpenAI."
+    },
+    "errors": {
+      "denied": "Este proveedor no está disponible para ti.",
+      "conflict": "Esto cambió mientras tanto. Recarga e inténtalo de nuevo.",
+      "invalid": "Revisa los valores e inténtalo de nuevo.",
+      "retry": "No se pudo completar. Inténtalo de nuevo."
+    }
+  }
+}

@@ -1,0 +1,212 @@
+packages:
+  - apps/*
+  - packages/*
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+# Excludes for packages that fail the 7-day minimum-age check on re-resolution.
+# All previous entries (devalue, react-doctor, oxlint + bindings, i18next) were
+# audited on 2026-05-27, and the brace-expansion carve-out for GHSA-mh99-v99m-4gvg
+# aged out on 2026-07-30. Live carve-outs are listed below; delete each once its
+# drop-after date passes (the fixed version is then ≥7 days old).
+# Security-fix carve-outs only.
+# Each entry MUST carry a `drop-after: YYYY-MM-DD` marker in its comment. That
+# date is enforced by `pnpm deps:check-excludes` (CI lint job) — once it passes,
+# the build fails until the entry is deleted. Without it a carve-out taken for a
+# one-week security window quietly becomes a permanent exemption from the gate.
+# Restore as a block sequence, never flow style — the checker only parses blocks:
+minimumReleaseAgeExclude:
+  # GHSA-fvxx-76fc-893x (revoked sessions still accepted with cookieCache) and
+  # GHSA-9hm7-xhfp-cx58 (genericOAuth treats an unverified email as verified):
+  # better-auth 1.7.18 (released 2026-11-05) is the newest fixed release and is
+  # <7 days old. Every @better-auth/* package moves in lockstep (one
+  # @better-auth/core), so each 1.7.18 package is carved out exactly.
+  # Owner-approved 2026-11-09.
+  # drop-after: 2026-11-12
+  - better-auth@1.7.18
+  - "@better-auth/core@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/telemetry@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/kysely-adapter@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/prisma-adapter@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/drizzle-adapter@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/memory-adapter@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/mongo-adapter@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/mcp@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/cimd@1.7.18" # drop-after: 2026-11-12
+  - "@better-auth/oauth-provider@1.7.18" # drop-after: 2026-11-12
+# Each selector lifts a transitive out of its vulnerable range. All target
+# versions pass the 7-day minimumReleaseAge gate; selectors are scoped tight so
+# unrelated majors are untouched.
+overrides:
+  # ci0 audit repairs: transitive consumers still permit these vulnerable versions.
+  # Keep the overrides until their upstream lower bounds include the fixes.
+  "node-llama-cpp>simple-git": ^4.0.1 # GHSA-x6jw-m9v5-85vh; v3 has no complete fix
+  braces@>=3 <4: 3.0.3 # No published fix; exact version receives the depth-guard patch below.
+  source-map-js@>=1 <1.2.2: ">=1.2.2 <2" # GHSA-68fv-2mgg-jv7q
+  hono@<4.13.7: ">=4.13.7 <5" # CVE-2026-54290 (CORS credential origin reflection)
+  picomatch@>=4 <4.0.4: ">=4.0.4" # CVE-2026-33671 (ReDoS via extglob)
+  defu@<6.1.5: ">=6.1.5" # CVE-2026-35209 (prototype pollution)
+  # GHSA-4c8g-83qw-93j6 (>=3.1.3), GHSA-v2hh-gcrm-f6hx (>=3.1.4), and
+  # GHSA-7p8r-x3mc-p8w7 (>=3.1.5) superseded the earlier CVE pins. Scoped to the v3 line only
+  # (v2 and v4 were never in the vulnerable range and v4 is a breaking major).
+  # Reached via ajv (prisma, react-doctor>conf).
+  fast-uri@>=3 <3.1.8: ">=3.1.8 <4"
+  undici@>=7 <7.29.1: ">=7.29.1 <8" # GHSA-4cwx-7wf7-3272 (cache disclosure)
+  ip-address@>=10 <10.7.4: ">=10.7.4 <11" # GHSA-mwp4-54f8-5fhr (SSRF), GHSA-rxp7-6hxx-x8q5 (quadratic zone parsing)
+  # GHSA-52cp-r559-cp3m (prototype pollution) and GHSA-5p4m-2wfm-xmqj
+  # (quadratic CPU) in the schema loader. Scoped to the v4 line; v3 and v5 consumers are untouched. Reached via
+  # @tanstack/start-plugin-core>xmlbuilder2.
+  js-yaml@>=4 <4.3.2: ">=4.3.2 <5"
+  # brace-expansion DoS: GHSA-3jxr-9vmj-r5cp + GHSA-mh99-v99m-4gvg, both only
+  # patched on the v5 line (>=5.0.9). Scoped to
+  # >=3 so no v2 consumer is force-upgraded: brace-expansion v5's CJS build
+  # exports { expand } instead of a callable default, which a v2 consumer cannot
+  # call. Reached via minimatch@11 (react-doctor>eslint, shadcn>ts-morph,
+  # vite-plugin-pwa>workbox-build>glob/filelist).
+  #
+  # As of the `filelist>minimatch` override below there is no minimatch v5 left
+  # in the tree, so this scoping currently protects nobody — it is kept because
+  # dropping it would force any FUTURE v2 consumer a dependency bump drags in
+  # onto an incompatible v5, and a range is cheaper than rediscovering that.
+  brace-expansion@>=3 <5.0.12: ">=5.0.12 <6"
+  # The last v2 consumer of brace-expansion was
+  # vite-plugin-pwa>workbox-build>...>ejs>jake>filelist>minimatch@5, and the v2
+  # line has no fix for GHSA-mh99-v99m-4gvg (2.1.2 is its final release, still in
+  # the advisory's <=5.0.7 range). filelist only calls `minimatch.match`, which
+  # minimatch 11 still exports from its CommonJS build, so lifting that one
+  # consumer to v11 removes the vulnerable v2 copy instead of suppressing it.
+  "filelist>minimatch": ^11.0.3
+  # GHSA-g3hv-75wg-m249 (globparts amplification): v7-v10 have no fix.
+  minimatch@>=7 <11.0.1: ">=11.0.3 <12"
+  # GHSA-3g3m-2fjr-6pw4 (AbortSignal cancellation bypass): workbox-build
+  # still permits glob ^11; v14 retains the named glob API it consumes.
+  glob@>=9 <14.0.2: ">=14.0.3 <15"
+  # CVE-2026-44635 (JSON-path injection) is patched in 0.28.17 (and every 0.29).
+  # Pinned EXACT to keep a single kysely in the tree: better-auth 1.7.18
+  # depends on `kysely ^0.28.17 || ^0.29.0`, and two copies of @better-auth/core split
+  # its types so a plugin stops being assignable to BetterAuthPlugin.
+  # kysely is only used transitively via better-auth here.
+  kysely: 0.29.6
+  # Reached via prisma>@prisma/studio-core>@visx/*, which still declare
+  # lodash ^4.17.21.
+  lodash@<4.18.0: ">=4.18.0" # GHSA-r5fr-rjxr-66jc (code injection via _.template)
+  # @vite-pwa/assets-generator declares sharp ^0.35.4 (GHSA-f88m-g3jw-g9cj, fixed
+  # in 0.35.0, is covered), but the libheif fix below needs 0.35.5. Scoped to the
+  # icon-generator consumers — the app's own sharp comes from the catalog.
+  "@vite-pwa/assets-generator>sharp": ^0.35.5
+  "sharp-ico>sharp": ^0.35.5 # GHSA-g89c-p67h-r497 (libheif) — vite-pwa icon generator chain
+blockExoticSubdeps: true
+dangerouslyAllowAllBuilds: false
+savePrefix: ""
+allowBuilds:
+  # tree-sitter-bash ships prebuilt tree-sitter-bash.wasm; the native binding is not needed.
+  tree-sitter-bash: false
+  "@prisma/engines": true
+  esbuild: true
+  lefthook: true
+  msgpackr-extract: true
+  msw: true
+  prisma: true
+  sharp: true
+  # better-sqlite3 13+ ships stock N-API prebuilts inside the package,
+  # with no patch or source build. Its binding.gyp would otherwise
+  # trigger an implicit node-gyp source build. sqlite-vec has no install script.
+  better-sqlite3: false
+  # Qwen child: prebuilt CPU binaries only; never a postinstall source build.
+  node-llama-cpp: false
+# Catalog: single-version deps shared across workspace packages.
+# Bump versions HERE, not in individual package.json files.
+# node-llama-cpp ships GPU/other-OS prebuilts as optional deps; the worker is
+# CPU-only Debian glibc, so only the CPU linux-x64/arm64
+# prebuilts may be installed.
+ignoredOptionalDependencies:
+  - "@node-llama-cpp/linux-x64-cuda"
+  - "@node-llama-cpp/linux-x64-cuda-ext"
+  - "@node-llama-cpp/linux-x64-vulkan"
+  - "@node-llama-cpp/linux-armv7l"
+  - "@node-llama-cpp/linux-riscv64"
+  - "@node-llama-cpp/win-x64"
+  - "@node-llama-cpp/win-arm64"
+  - "@node-llama-cpp/win-x64-cuda"
+  - "@node-llama-cpp/win-x64-cuda-ext"
+  - "@node-llama-cpp/win-x64-vulkan"
+  - "@node-llama-cpp/mac-x64"
+  - "@node-llama-cpp/mac-arm64-metal"
+catalog:
+  # Binding pin: exact 3.22.2 within the 3.22.x line.
+  node-llama-cpp: 3.22.2
+  pg: ^8.23.1
+  "@babel/parser": 8.1.0
+  dotenv: ^18.0.9
+  zod: ^4.6.7
+  "@types/node": ^26.6.6
+  hono: ^4.13.16
+  "@hono/node-server": ^2.1.6
+  "@orpc/server": ^1.16.1
+  "@orpc/openapi": ^1.16.1
+  "@orpc/zod": ^1.16.1
+  better-auth: 1.7.18
+  "@better-auth/core": 1.7.18
+  "@better-auth/mcp": 1.7.18
+  "@better-auth/oauth-provider": 1.7.18
+  "@better-auth/cimd": 1.7.18
+  "@modelcontextprotocol/server": 2.4.0
+  lucide-react: ^1.68.0
+  next-themes: ^0.4.6
+  react: ^19.3.1
+  react-dom: ^19.3.1
+  sileo: ^0.1.6
+  "@prisma/client": ^7.10.1
+  # Keep the Prisma CLI in lockstep with @prisma/client above — they must match.
+  # Consumed by packages/db via `catalog:`.
+  prisma: ^7.10.1
+  "@orpc/client": ^1.16.1
+  "@orpc/tanstack-query": ^1.16.1
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
+  tailwindcss: ^4.3.4
+  typescript: ^7.0.2
+  vite: ^8.3.5
+  "@vitejs/plugin-react": ^6.2.1
+  postcss: ^8.5.32
+  "@tanstack/react-form": ^1.33.5
+  "@tanstack/react-query": ^5.106.0
+  "@tanstack/react-query-devtools": ^5.106.0
+  "@tanstack/react-router": ^1.170.46
+  "@tanstack/react-router-devtools": ^1.167.2
+  "@tanstack/react-router-ssr-query": ^1.167.3
+  "@tanstack/react-start": ^1.169.4
+  tsx: ^4.23.15
+  vitest: ^5.1.0
+  vitest-mock-extended: ^5.1.1
+  rate-limiter-flexible: ^11.2.4
+  nodemailer: ^10.3.1
+  "@types/nodemailer": ^8.0.2
+  bullmq: ^6.7.0
+  ioredis: ^6.0.0
+  tsdown: ^0.23.5
+  sharp: ^0.35.5
+  # SQLite index files (format v1). Exact pins; sqlite-vec matches the CLI's `=0.1.9`.
+  better-sqlite3: 13.0.3
+  sqlite-vec: 0.1.9
+  "@aws-sdk/client-s3": ^3.1161.0
+  i18next: ^26.7.1
+  react-i18next: ^17.1.12
+  i18next-browser-languagedetector: ^8.3.0
+  openai: ^7.50.0
+  "@anthropic-ai/sdk": ^1.5.0
+  "qrcode.react": ^4.2.0
+  "@fontsource-variable/roboto": ^5.3.0
+  "tailwind-merge": ^3.7.0
+  # The only Markdown renderer (React elements, no raw HTML). Exact pins.
+  react-markdown: 10.1.0
+  remark-gfm: 4.0.1
+patchedDependencies:
+  braces@3.0.3: patches/braces@3.0.3.patch
+
+auditConfig:
+  ignoreGhsas:
+    # GHSA-vfj7-8cjw-p6xm is fixed by the pinned parse/AST depth-guard patch,
+    # not upstream 3.0.3. deps:check-security-patches fails on an unpatched
+    # resolution or changed patch and executes rejection + compatibility probes.
+    - GHSA-vfj7-8cjw-p6xm

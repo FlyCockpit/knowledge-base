@@ -1,0 +1,88 @@
+enum KbRemoteState {
+  DISCONNECTED
+  PENDING
+  ACTIVE
+}
+
+enum DeployKeyState {
+  PENDING
+  ACTIVE
+  RETIRED
+  DESTROYED
+}
+
+enum MirrorAttemptState {
+  QUEUED
+  RESERVED
+  COMPLETED
+  FAILED
+  UNKNOWN
+  CANCELLED
+}
+
+/// One-way push mirror of main. remoteVersion only increases (disconnect, activation);
+/// the row survives disconnect so a version is never reused. activeKeyId/pendingKeyId are
+/// same-KB DeployKeyVersion ids (every access filters by kbId; Prisma cannot express a
+/// nullable composite FK here).
+model KbRemote {
+  kbId          String             @id
+  knowledgeBase KnowledgeBase      @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  remoteVersion Int                @default(0)
+  state         KbRemoteState      @default(DISCONNECTED)
+  activeKeyId   String?
+  pendingKeyId  String?
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime           @default(now()) @updatedAt @db.Timestamptz(3)
+  keys          DeployKeyVersion[]
+
+  @@map("kb_remote")
+}
+
+/// Generated Ed25519 deploy key bound to one exact canonical URL + approved host keys.
+/// ciphertext holds only the 32-byte private seed, AES-GCM with AAD
+/// (deploy-key, kbId, remoteVersion, keyVersion); NULL once DESTROYED.
+model DeployKeyVersion {
+  id            String          @id @default(cuid(2))
+  kbId          String
+  remote        KbRemote        @relation(fields: [kbId], references: [kbId], onDelete: Restrict)
+  keyVersion    Int
+  remoteVersion Int
+  url           String
+  hostKeys      String[]
+  publicKey     String
+  fingerprint   String
+  ciphertext    String?
+  state         DeployKeyState  @default(PENDING)
+  createdBy     String
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  activatedAt   DateTime?       @db.Timestamptz(3)
+  retiredAt     DateTime?       @db.Timestamptz(3)
+  destroyedAt   DateTime?       @db.Timestamptz(3)
+  attempts      MirrorAttempt[]
+
+  @@unique([kbId, keyVersion])
+  @@unique([kbId, id])
+  @@map("kb_deploy_key_version")
+}
+
+/// A push attempt pins actor, remoteVersion, key and main SHA; it never adopts a newer
+/// URL or key. Created only by the worker executor chunk; reservation is a CAS.
+model MirrorAttempt {
+  id            String             @id @db.Uuid
+  kbId          String
+  keyId         String
+  key           DeployKeyVersion   @relation(fields: [kbId, keyId], references: [kbId, id], onDelete: Restrict)
+  remoteVersion Int
+  actorKey      String
+  actorUserId   String
+  mainSha       String
+  state         MirrorAttemptState @default(QUEUED)
+  resultCode    String?
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  reservedAt    DateTime?          @db.Timestamptz(3)
+  finishedAt    DateTime?          @db.Timestamptz(3)
+
+  @@index([kbId, state])
+  @@index([kbId, createdAt, id])
+  @@map("kb_mirror_attempt")
+}

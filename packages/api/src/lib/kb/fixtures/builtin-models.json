@@ -1,0 +1,66 @@
+{
+  "models": [
+    {
+      "modelId": "qwen3-embedding-0.6b-q8_0",
+      "fileName": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+      "sizeBytes": 639150592,
+      "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+      "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf",
+      "dimensions": 1024,
+      "architecture": "qwen3",
+      "pooling": "LAST",
+      "poolingType": 3,
+      "causal": true,
+      "batchTokens": 512,
+      "queryPrefix": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ",
+      "documentPrefix": "",
+      "addBos": false,
+      "addEos": true,
+      "bosTokenId": 151643,
+      "eosTokenId": 151643,
+      "contextTiers": [1024, 2048, 4096, 8192],
+      "memory": {
+        "baseMiB": 1024,
+        "tokenMiB": 0,
+        "quadraticMiB": 0
+      }
+    },
+    {
+      "modelId": "embeddinggemma-2-q8_0",
+      "fileName": "embeddinggemma-2-Q8_0.gguf",
+      "sizeBytes": 309855456,
+      "sha256": "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+      "url": "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf",
+      "dimensions": 768,
+      "architecture": "gemma-embedding2",
+      "pooling": "MEAN",
+      "poolingType": 1,
+      "causal": false,
+      "batchTokens": "full-input",
+      "queryPrefix": "task: search result | query: ",
+      "documentPrefix": "title: none | text: ",
+      "addBos": true,
+      "addEos": true,
+      "bosTokenId": 2,
+      "eosTokenId": 1,
+      "contextTiers": [1024, 2048, 4096, 8192],
+      "memory": {
+        "baseMiB": 990,
+        "tokenMiB": 0.132,
+        "quadraticMiB": 4.1961669921875e-6
+      }
+    }
+  ],
+  "defaultModel": "embeddinggemma-2-q8_0",
+  "defaultContext": 1024,
+  "downloadHosts": [
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "cas-bridge.xethub.hf.co",
+    "us.aws.cdn.hf.co"
+  ],
+  "maxRedirects": 5,
+  "qwenKvElementsPerToken": 28672,
+  "contextPadding": 256,
+  "contextExtra": 1
+}

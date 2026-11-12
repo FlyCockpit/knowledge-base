@@ -1,0 +1,922 @@
+{
+  "serialization": [
+    {
+      "name": "fixture-alpha",
+      "upsert": {
+        "id": "alpha-note",
+        "type": "concept",
+        "title": "Alpha",
+        "body": "Deterministic dream body.\n",
+        "citations": [
+          {
+            "label": "b",
+            "target": "https://example.test/b"
+          },
+          {
+            "label": "a",
+            "target": "https://example.test/a"
+          }
+        ],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Alpha\"\nprovenance: dream\ncitations:\n  - label: \"a\"\n    target: \"https://example.test/a\"\n  - label: \"b\"\n    target: \"https://example.test/b\"\n---\nDeterministic dream body.\n"
+    },
+    {
+      "name": "fixture-beta-null-title",
+      "upsert": {
+        "id": "beta-note",
+        "type": "concept",
+        "title": null,
+        "body": "Second upsert.",
+        "citations": [],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"beta-note\"\ntype: \"concept\"\nprovenance: dream\n---\nSecond upsert."
+    },
+    {
+      "name": "json-escapes",
+      "upsert": {
+        "id": "esc-1",
+        "type": "type: \"weird\"",
+        "title": "Say \"hi\" \\ a\rb\tc   é 😀",
+        "body": "Body with \"quotes\" and \\ backslash\n\ttab\r\nend",
+        "citations": [
+          {
+            "label": "l\"1",
+            "target": "https://example.test/?q=\"x\"&y=\\z"
+          }
+        ],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"esc-1\"\ntype: \"type: \\\"weird\\\"\"\ntitle: \"Say \\\"hi\\\" \\\\ a\\rb\\tc   é 😀\"\nprovenance: dream\ncitations:\n  - label: \"l\\\"1\"\n    target: \"https://example.test/?q=\\\"x\\\"&y=\\\\z\"\n---\nBody with \"quotes\" and \\ backslash\n\ttab\r\nend"
+    },
+    {
+      "name": "utf16-citation-order",
+      "upsert": {
+        "id": "order-1",
+        "type": "concept",
+        "title": "T",
+        "body": "Body.\n",
+        "citations": [
+          {
+            "label": "～",
+            "target": "b"
+          },
+          {
+            "label": "😀",
+            "target": "a"
+          },
+          {
+            "label": "same",
+            "target": "z"
+          },
+          {
+            "label": "same",
+            "target": "é"
+          },
+          {
+            "label": "same",
+            "target": "A"
+          }
+        ],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"order-1\"\ntype: \"concept\"\ntitle: \"T\"\nprovenance: dream\ncitations:\n  - label: \"same\"\n    target: \"A\"\n  - label: \"same\"\n    target: \"z\"\n  - label: \"same\"\n    target: \"é\"\n  - label: \"😀\"\n    target: \"a\"\n  - label: \"～\"\n    target: \"b\"\n---\nBody.\n"
+    },
+    {
+      "name": "numeric-id-and-type",
+      "upsert": {
+        "id": "123",
+        "type": "123",
+        "title": null,
+        "body": "",
+        "citations": [],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"123\"\ntype: \"123\"\nprovenance: dream\n---\n"
+    },
+    {
+      "name": "max-id-chars",
+      "upsert": {
+        "id": "a0_-z9",
+        "type": "concept",
+        "title": "",
+        "body": "# Heading\n\nParagraph with [link](concepts/x.md).\n",
+        "citations": [],
+        "provenance": "dream"
+      },
+      "markdown": "---\nid: \"a0_-z9\"\ntype: \"concept\"\ntitle: \"\"\nprovenance: dream\n---\n# Heading\n\nParagraph with [link](concepts/x.md).\n"
+    }
+  ],
+  "digests": [
+    {
+      "name": "fixture-unsorted-sessions",
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "sourceSessionIds": [
+        "00000000-0000-4000-8000-00000000000a",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "title": "Dream: nightly\nconsolidation",
+      "opDigest": "sha256:b82a54864f04d6bcb61b1801d8452c9f639f89643dd42a6853e2ea514cdb7309",
+      "sourceDigest": "sha256:6a55a5519354277aafae1e97817c45140af24999dd9721979126b0a3672cbdc7",
+      "commitMessage": "Dream: nightly consolidation\n\nKb-Op-Digest: sha256:b82a54864f04d6bcb61b1801d8452c9f639f89643dd42a6853e2ea514cdb7309\nKb-Source-Digest: sha256:6a55a5519354277aafae1e97817c45140af24999dd9721979126b0a3672cbdc7"
+    },
+    {
+      "name": "empty-dream",
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": []
+      },
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "title": "Nothing new",
+      "opDigest": "sha256:b5d05c82ee4c2b9618f9c254d72ef4a1999a8ff0537a6d0ce70def1b9e22fde3",
+      "sourceDigest": "sha256:24eee1f53fba88c1123fcca4d02c5e47de99cad94e5c77efac950db0c02aabcc",
+      "commitMessage": "Nothing new\n\nKb-Op-Digest: sha256:b5d05c82ee4c2b9618f9c254d72ef4a1999a8ff0537a6d0ce70def1b9e22fde3\nKb-Source-Digest: sha256:24eee1f53fba88c1123fcca4d02c5e47de99cad94e5c77efac950db0c02aabcc"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "new-ids-direct",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "applied",
+        "changedPaths": ["concepts/alpha-note.md", "concepts/beta-note.md"],
+        "files": [
+          {
+            "op": "create",
+            "path": "concepts/alpha-note.md",
+            "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Alpha\"\nprovenance: dream\ncitations:\n  - label: \"a\"\n    target: \"https://example.test/a\"\n  - label: \"b\"\n    target: \"https://example.test/b\"\n---\nDeterministic dream body.\n"
+          },
+          {
+            "op": "create",
+            "path": "concepts/beta-note.md",
+            "markdown": "---\nid: \"beta-note\"\ntype: \"concept\"\nprovenance: dream\n---\nSecond upsert."
+          }
+        ]
+      }
+    },
+    {
+      "name": "new-ids-proposed",
+      "permission": "propose",
+      "seed": [],
+      "sourceSessionIds": [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002"
+      ],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "proposed",
+        "changedPaths": ["concepts/alpha-note.md", "concepts/beta-note.md"],
+        "files": [
+          {
+            "op": "create",
+            "path": "concepts/alpha-note.md",
+            "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Alpha\"\nprovenance: dream\ncitations:\n  - label: \"a\"\n    target: \"https://example.test/a\"\n  - label: \"b\"\n    target: \"https://example.test/b\"\n---\nDeterministic dream body.\n"
+          },
+          {
+            "op": "create",
+            "path": "concepts/beta-note.md",
+            "markdown": "---\nid: \"beta-note\"\ntype: \"concept\"\nprovenance: dream\n---\nSecond upsert."
+          }
+        ]
+      }
+    },
+    {
+      "name": "existing-id-keeps-path",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "notes/alpha.md",
+          "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Old\"\nprovenance: dream\n---\nOld dream.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "applied",
+        "changedPaths": ["notes/alpha.md", "concepts/beta-note.md"],
+        "files": [
+          {
+            "op": "replace",
+            "path": "notes/alpha.md",
+            "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Alpha\"\nprovenance: dream\ncitations:\n  - label: \"a\"\n    target: \"https://example.test/a\"\n  - label: \"b\"\n    target: \"https://example.test/b\"\n---\nDeterministic dream body.\n"
+          },
+          {
+            "op": "create",
+            "path": "concepts/beta-note.md",
+            "markdown": "---\nid: \"beta-note\"\ntype: \"concept\"\nprovenance: dream\n---\nSecond upsert."
+          }
+        ]
+      }
+    },
+    {
+      "name": "identical-upsert-noop",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "concepts/alpha-note.md",
+          "markdown": "---\nid: \"alpha-note\"\ntype: \"concept\"\ntitle: \"Alpha\"\nprovenance: dream\ncitations:\n  - label: \"a\"\n    target: \"https://example.test/a\"\n  - label: \"b\"\n    target: \"https://example.test/b\"\n---\nDeterministic dream body.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "noop",
+        "changedPaths": [],
+        "files": []
+      }
+    },
+    {
+      "name": "empty-dream-noop",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": []
+      },
+      "expect": {
+        "kind": "noop",
+        "changedPaths": [],
+        "files": []
+      }
+    },
+    {
+      "name": "empty-dream-noop-no-sources",
+      "permission": "propose",
+      "seed": [],
+      "sourceSessionIds": [],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": []
+      },
+      "expect": {
+        "kind": "noop",
+        "changedPaths": [],
+        "files": []
+      }
+    },
+    {
+      "name": "human-provenance-protected",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "notes/locked.md",
+          "markdown": "---\nid: \"locked\"\ntype: \"concept\"\ntitle: \"Human\"\nprovenance: human\n---\nHuman text.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "fresh",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "locked",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "FORBIDDEN"
+      }
+    },
+    {
+      "name": "absent-provenance-protected",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "legacy.md",
+          "markdown": "---\nid: \"legacy\"\ntype: \"concept\"\ntitle: \"Human\"\n---\nHuman text.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "legacy",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "FORBIDDEN"
+      }
+    },
+    {
+      "name": "other-provenance-protected",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "robot.md",
+          "markdown": "---\nid: \"robot\"\ntype: \"concept\"\ntitle: \"Human\"\nprovenance: robot\n---\nHuman text.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "robot",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "FORBIDDEN"
+      }
+    },
+    {
+      "name": "duplicate-ids",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "dup",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "dup",
+            "type": "concept",
+            "title": "T",
+            "body": "Other.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "secret-eighth-upsert",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "s1",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s2",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s3",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s4",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s5",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s6",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s7",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          },
+          {
+            "id": "s8",
+            "type": "concept",
+            "title": "T",
+            "body": "leaked sk-proj-abcdefghijklmnopqrstuvwxyz here\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "secret-in-citation",
+      "permission": "propose",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "cite",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [
+              {
+                "label": "auth",
+                "target": "Authorization: Bearer synthetic-token-0123456789"
+              }
+            ],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "secret-in-model",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "p",
+          "model": "sk-proj-abcdefghijklmnopqrstuvwxyz"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "m1",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "sealed-reference-rejected",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "sealed",
+            "type": "concept",
+            "title": "T",
+            "body": "value {{sealed:v1:knowledge_base:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222}}\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "missing-sources",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": [],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "duplicate-sources",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "invalid-source-id",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["not-a-uuid"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "alpha-note",
+            "type": "concept",
+            "title": "Alpha",
+            "body": "Deterministic dream body.\n",
+            "citations": [
+              {
+                "label": "b",
+                "target": "https://example.test/b"
+              },
+              {
+                "label": "a",
+                "target": "https://example.test/a"
+              }
+            ],
+            "provenance": "dream"
+          },
+          {
+            "id": "beta-note",
+            "type": "concept",
+            "title": null,
+            "body": "Second upsert.",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "new-id-path-taken",
+      "permission": "write",
+      "seed": [
+        {
+          "path": "concepts/taken.md",
+          "markdown": "No front matter here.\n"
+        }
+      ],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "taken",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "CONFLICT"
+      }
+    },
+    {
+      "name": "invalid-id",
+      "permission": "write",
+      "seed": [],
+      "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+      "dream": {
+        "model": {
+          "provider": "fixture-provider",
+          "model": "fixture-model"
+        },
+        "redactionApplied": true,
+        "upserts": [
+          {
+            "id": "Bad.Id",
+            "type": "concept",
+            "title": "T",
+            "body": "Body.\n",
+            "citations": [],
+            "provenance": "dream"
+          }
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

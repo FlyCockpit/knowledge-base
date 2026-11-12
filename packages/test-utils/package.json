@@ -1,0 +1,40 @@
+{
+  "name": "@knowledge-base/test-utils",
+  "license": "Apache-2.0",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./kb": {
+      "default": "./src/kb/index.ts"
+    }
+  },
+  "dependencies": {
+    "@knowledge-base/api": "workspace:*",
+    "@knowledge-base/auth": "workspace:*",
+    "@knowledge-base/db": "workspace:*",
+    "@knowledge-base/env": "workspace:*",
+    "@knowledge-base/queue": "workspace:*",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "pg": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:",
+    "better-auth": "catalog:",
+    "@modelcontextprotocol/server": "catalog:",
+    "hono": "catalog:",
+    "@hono/node-server": "catalog:",
+    "jose": "6.2.15",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

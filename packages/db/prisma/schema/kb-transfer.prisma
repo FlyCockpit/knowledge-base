@@ -1,0 +1,29 @@
+enum KbTransferState {
+  PENDING
+  ACCEPTED
+  CANCELLED
+}
+
+model KbTransfer {
+  id              String          @id @default(cuid(2))
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+  kbId            String
+  knowledgeBase   KnowledgeBase   @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  fromUserId      String
+  fromUser        User            @relation("KbTransferFrom", fields: [fromUserId], references: [id], onDelete: Restrict)
+  toUserId        String
+  toUser          User            @relation("KbTransferTo", fields: [toUserId], references: [id], onDelete: Restrict)
+  metadataVersion Int
+  state           KbTransferState @default(PENDING)
+  requestId       String          @unique
+  idempotencyKey  String
+  formerOwnerBits String[]        @default([])
+  acceptedAt      DateTime?       @db.Timestamptz(3)
+  cancelledAt     DateTime?       @db.Timestamptz(3)
+
+  @@unique([fromUserId, kbId, idempotencyKey], map: "kb_transfer_owner_kb_key_unique")
+  @@index([kbId, state])
+  @@index([toUserId])
+  @@map("kb_transfer")
+}

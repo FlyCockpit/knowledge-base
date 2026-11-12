@@ -1,0 +1,6 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -71,2 +71,3 @@
+ [dependencies.llama-cpp-sys-2]
+ version = "0.1.160"
++default-features = false

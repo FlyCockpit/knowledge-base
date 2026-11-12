@@ -1,0 +1,38 @@
+{
+  "name": "@knowledge-base/queue",
+  "license": "Apache-2.0",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "exports": {
+    "./consumer-health": "./src/consumer-health.ts",
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./retention": "./src/retention.ts",
+    "./connection": {
+      "default": "./src/connection.ts"
+    },
+    "./jobs": {
+      "default": "./src/jobs.ts"
+    },
+    "./ensure-job": {
+      "default": "./src/ensure-job.ts"
+    }
+  },
+  "dependencies": {
+    "@knowledge-base/env": "workspace:*",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "name": "@knowledge-base/auth",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./ban": {
+      "default": "./src/ban.ts"
+    },
+    "./roles": {
+      "default": "./src/roles.ts"
+    },
+    "./two-factor-policy": {
+      "default": "./src/two-factor-policy.ts"
+    },
+    "./user-creation-policy": {
+      "default": "./src/user-creation-policy.ts"
+    },
+    "./account-deletion-policy": {
+      "default": "./src/account-deletion-policy.ts"
+    },
+    "./bootstrap": {
+      "default": "./src/bootstrap.ts"
+    },
+    "./email": {
+      "default": "./src/email.ts"
+    },
+    "./mcp-config": {
+      "default": "./src/mcp-config.ts"
+    },
+    "./mcp-tool-groups": {
+      "default": "./src/mcp-tool-groups.ts"
+    },
+    "./mcp-cimd": {
+      "default": "./src/mcp-cimd.ts"
+    },
+    "./mcp-grant": {
+      "default": "./src/mcp-grant.ts"
+    },
+    "./mcp-consent": {
+      "default": "./src/mcp-consent.ts"
+    },
+    "./mcp-refresh": {
+      "default": "./src/mcp-refresh.ts"
+    },
+    "./mcp-plugins": {
+      "default": "./src/mcp-plugins.ts"
+    },
+    "./device-approval": {
+      "default": "./src/device-approval.ts"
+    },
+    "./session-authority": {
+      "default": "./src/session-authority.ts"
+    },
+    "./sealed-recipient": {
+      "default": "./src/sealed-recipient.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@knowledge-base/db": "workspace:*",
+    "@knowledge-base/env": "workspace:*",
+    "@knowledge-base/mailer": "workspace:*",
+    "better-auth": "catalog:",
+    "zod": "catalog:",
+    "@better-auth/core": "catalog:",
+    "@better-auth/mcp": "catalog:",
+    "@better-auth/oauth-provider": "catalog:",
+    "@better-auth/cimd": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@knowledge-base/mailer",
+  "license": "Apache-2.0",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./kb-invitation": {
+      "default": "./src/templates/kb-invitation.ts"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@knowledge-base/env": "workspace:*",
+    "nodemailer": "catalog:"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/nodemailer": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

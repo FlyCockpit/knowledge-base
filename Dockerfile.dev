@@ -1,0 +1,85 @@
+# Dockerfile.dev — thin image for the port-parameterized local dev stack used
+# by agents (see docker-compose.agent.yml).
+#
+# Source is bind-mounted at runtime; this image only provides the node + pnpm
+# toolchain. Dependencies are installed at container start into named volumes
+# that are scoped per compose project, so multi-agent runs do not collide.
+#
+# The container is launched with `user: "${HOST_UID}:${HOST_GID}"` from compose
+# so that files written to the bind-mounted source tree (turbo cache, vite
+# cache, generated prisma client, dist output, etc.) end up owned by the host
+# user rather than root. Every path the runtime needs to write to is created
+# here with world-writable perms so any UID works.
+#
+# NOT a production image. Use the root Dockerfile for that.
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+  openssl \
+  ca-certificates \
+  procps \
+  git \
+  openssh-client \
+  libgomp1 \
+  gcc \
+  g++ \
+  cmake \
+  patch \
+  curl \
+  make \
+  libc6-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY apps/worker/src/native/child-guard.c /opt/kb-child-guard.c
+RUN gcc -std=c11 -Wall -Wextra -Werror -O2 -D_GNU_SOURCE \
+    -o /usr/local/bin/kb-child-guard /opt/kb-child-guard.c \
+  && rm /opt/kb-child-guard.c
+
+# The pnpm toolchain (npm-installed Corepack under /usr/local/lib/node_modules,
+# corepack shims in $PNPM_HOME, the sha512-verified wrapper
+# and the native binary pnpm 12 fetches on first use, both in $COREPACK_HOME)
+# is installed here as root at build time and stays root-owned and
+# read/execute-only: the runtime UID runs it but can neither replace it nor
+# download it. Only the mutable paths are world-writable: the pnpm store
+# ($PNPM_HOME/store, PNPM_STORE_DIR in compose), $HOME (pnpm/node caches and
+# state) and the node_modules mount points. `pnpm docker:check-copy` enforces
+# the canonical step and the mutable-path allowlist; dev-docker.sh re-checks
+# the whole toolchain tree offline as the runtime UID.
+ENV PNPM_HOME=/pnpm
+ENV COREPACK_HOME=/opt/corepack
+ENV PATH="$PNPM_HOME:$PATH"
+
+# Canonical pnpm toolchain step (see Dockerfile). Keep the build HOME at /root
+# so npm caches stay outside the runtime-writable HOME; Corepack uses /opt/corepack.
+RUN npm install --global --no-fund --no-audit corepack@0.36.0 && mkdir -p "$PNPM_HOME" && corepack enable --install-directory "$PNPM_HOME" pnpm && corepack prepare pnpm@12.17.0+sha512.b8d223ebec04b580a89ed206daa71d1bccb6a1ee1d52efa95cc3b0db75271561df8f0d8e2c43add39c5ec08018af7a8a95108e7090f95a29f88727b7a40fd53d --activate && test "$(pnpm --version)" = "12.17.0"
+
+ENV HOME=/home/agent
+
+# Pre-create every node_modules mount point listed in docker-compose.agent.yml.
+# A fresh named volume mounted on a path that exists in the image is seeded
+# with that path's perms — pre-creating these dirs with a+rwX is what lets
+# the non-root container user write to them on first boot. Under the
+# read-only toolchain only $PNPM_HOME/store is writable. (Stale volumes
+# from older root-owned runs need `pnpm dev:docker <port> --reset` once to
+# pick up the new perms.)
+RUN mkdir -p \
+    /app/node_modules \
+    /app/apps/web/node_modules \
+    /app/apps/server/node_modules \
+    /app/apps/worker/node_modules \
+    /app/packages/api/node_modules \
+    /app/packages/auth/node_modules \
+    /app/packages/config/node_modules \
+    /app/packages/db/node_modules \
+    /app/packages/env/node_modules \
+    /app/packages/i18n-translate/node_modules \
+    /app/packages/mailer/node_modules \
+    /app/packages/queue/node_modules \
+    /app/packages/test-utils/node_modules \
+    /app/packages/ui/node_modules \
+    "$PNPM_HOME/store" "$HOME" \
+  && chmod -R a+rwX /app "$PNPM_HOME/store" "$HOME"
+# Everything pnpm needs is installed above; never let corepack fetch at runtime.
+ENV COREPACK_ENABLE_NETWORK=0
+
+WORKDIR /app

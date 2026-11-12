@@ -1,0 +1,3 @@
+{
+  "extends": "@knowledge-base/config/tsconfig.base.json"
+}

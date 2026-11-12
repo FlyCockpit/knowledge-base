@@ -1,0 +1,13 @@
+{
+  "subject": "Scheduled data deletion completed",
+  "heading": "Scheduled data was deleted",
+  "body": "A delayed database migration deleted retired data.",
+  "migration": "Migration",
+  "deletedAt": "Deleted at (UTC)",
+  "effects": "Deleted data",
+  "unknownEffects": "See this migration’s contract.sql for details.",
+  "backup": "Encrypted recovery bundle",
+  "noBackup": "No bundle identity was recorded.",
+  "note": "Migration note",
+  "recovery": "If this was unexpected, stop further changes and follow docs/backup-restore.md with the recorded encrypted KB bundle. Restore to an isolated database and data volume first to recover only what you need. A full restore of the live instance also rewinds newer Postgres, Git and file-store changes."
+}

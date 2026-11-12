@@ -1,0 +1,14 @@
+{
+  "extends": "@knowledge-base/config/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "node"],
+    "rootDirs": ["."],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@locales/*": ["../../packages/locales/src/*"],
+      "@knowledge-base/ui/*": ["../../packages/ui/src/*"]
+    }
+  }
+}

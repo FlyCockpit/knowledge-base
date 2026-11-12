@@ -1,0 +1,143 @@
+{
+  "comment": "Shared by sensitive-text.test.ts and kb-local sensitive_text.rs. Each case's text is parts.join(\"\"); the split keeps token-shaped literals out of secret scanners. `redacted` is the expected redactSensitiveSubstrings output. `repeatedPrefixes` are adversarial inputs: each unit is repeated until the text reaches a fixed size, and every matcher must stay linear on them (both suites assert a time bound).",
+  "positive": [
+    {
+      "name": "aws access key id",
+      "parts": ["key AKIA", "IOSFODNN7EXAMPLE end"],
+      "redacted": "key [redacted] end"
+    },
+    {
+      "name": "aws temporary access key id",
+      "parts": ["ASIA", "Y34FZKBOKMUTVV7A"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "aws secret key in env assignment",
+      "parts": ["AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "aws secret key in ini file",
+      "parts": ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY\n"],
+      "redacted": "[redacted]\n"
+    },
+    {
+      "name": "aws secret key in cli json output",
+      "parts": ["{\"SecretAccessKey\": \"wJalrXUtnFEMI/K7MDENG+", "bPxRfiCYEXAMPLEKEY\"}"],
+      "redacted": "{\"[redacted]\"}"
+    },
+    {
+      "name": "github classic personal access token",
+      "parts": ["token ghp", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789 ok"],
+      "redacted": "token [redacted] ok"
+    },
+    {
+      "name": "github oauth token",
+      "parts": ["gho", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "github user-to-server token",
+      "parts": ["ghu", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "github server-to-server token",
+      "parts": ["ghs", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "github refresh token",
+      "parts": ["ghr", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "github fine-grained token",
+      "parts": ["github", "_pat_11ABCDEFG0123456789abc_DEFGHIJKLMNOPQRSTUVWXYZabcdefghij"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "slack bot token",
+      "parts": ["SLACK=xox", "b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"],
+      "redacted": "SLACK=[redacted]"
+    },
+    {
+      "name": "slack user token",
+      "parts": ["xox", "p-123456789012-123456789012-1234567890123-0123456789abcdef"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "slack app-level token",
+      "parts": ["xox", "a-2-A0123456789-0123456789"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "slack refresh token",
+      "parts": ["xox", "r-0123456789abcdef"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "slack session token",
+      "parts": ["xox", "s-0123456789abcdef"],
+      "redacted": "[redacted]"
+    },
+    {
+      "name": "google api key",
+      "parts": ["maps key: AIza", "SyA1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU_v"],
+      "redacted": "maps key: [redacted]"
+    }
+  ],
+  "negative": [
+    { "name": "plain prose about aws", "parts": ["Rotate your AWS access keys every 90 days."] },
+    { "name": "akia prefix inside a word", "parts": ["XAKIA", "IOSFODNN7EXAMPLE"] },
+    { "name": "akia id too short", "parts": ["AKIA", "IOSFODNN7EXAMP"] },
+    { "name": "akia id too long", "parts": ["AKIA", "IOSFODNN7EXAMPLEX"] },
+    { "name": "akia id with lowercase", "parts": ["AKIA", "iosfodnn7example"] },
+    { "name": "word starting with asia", "parts": ["ASIAN cuisine and ASIATIC lilies"] },
+    {
+      "name": "secret key keyword without value",
+      "parts": ["Set aws_secret_access_key in ~/.aws/credentials"]
+    },
+    { "name": "secret key placeholder", "parts": ["AWS_SECRET_ACCESS_KEY=<your-secret-key>"] },
+    { "name": "secret key value too short", "parts": ["aws_secret_access_key = abc123"] },
+    {
+      "name": "forty base64 characters without the keyword",
+      "parts": ["wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY"]
+    },
+    { "name": "github prefix in prose", "parts": ["the ghp", "_ prefix marks a classic token"] },
+    { "name": "github token too short", "parts": ["ghp", "_abc123"] },
+    {
+      "name": "github prefix inside a word",
+      "parts": ["xghp", "_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"]
+    },
+    { "name": "github pat prefix in prose", "parts": ["a github", "_pat_ token starts like this"] },
+    { "name": "slack prefix in prose", "parts": ["tokens start with xox", "b- or xox", "p-"] },
+    { "name": "slack unknown kind", "parts": ["xox", "z-0123456789abcdef"] },
+    { "name": "word containing aiza", "parts": ["Aizawa is a family name"] },
+    { "name": "google key too short", "parts": ["AIza", "SyA1bC2dE3"] }
+  ],
+  "repeatedPrefixes": [
+    { "name": "google prefix with dash", "unit": ["AIza", "-"] },
+    {
+      "name": "google prefix then long key run",
+      "unit": ["AIza", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+    },
+    { "name": "slack prefix", "unit": ["xox", "b-"] },
+    { "name": "github prefix", "unit": ["gh", "p_"] },
+    { "name": "github fine-grained prefix", "unit": ["github", "_pat_-"] },
+    { "name": "openai-style prefix", "unit": ["sk-"] },
+    { "name": "aws access key id prefix", "unit": ["AKIA", " "] },
+    { "name": "aws temporary key id prefix", "unit": ["ASIA0"] },
+    { "name": "aws secret key name", "unit": ["aws_secret_access_key = "] },
+    { "name": "aws secret key name in json", "unit": ["\"SecretAccessKey\": \""] },
+    { "name": "bearer keyword", "unit": ["Bearer "] },
+    { "name": "bearer with letter-only tokens", "unit": ["bearer abcdefghij "] },
+    { "name": "authorization header name", "unit": ["Authorization: "] },
+    { "name": "authorization with bearer", "unit": ["authorization=Bearer "] },
+    { "name": "unclosed private key header", "unit": ["-----BEGIN PRIV", "ATE KEY-----"] },
+    {
+      "name": "private key header with mismatched end",
+      "unit": ["-----BEGIN RSA PRIV", "ATE KEY-----\n-----END EC PRIV", "ATE KEY-----\n"]
+    }
+  ]
+}

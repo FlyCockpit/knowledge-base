@@ -1,0 +1,66 @@
+# Nightly self-tests for the template's own tooling: the checkers, hooks, and
+# scripts that guard this repo, rather than the repo's product code. These
+# verify the guards themselves still catch what they claim to catch.
+#
+# This workflow is the ONLY per-interval home for the tooling self-tests:
+# PR checks run the enforcement legs (the checkers themselves) but not their
+# self-tests, so a checker that breaks through an indirect dependency bump
+# (node, tsx, glob semantics) is surfaced here within a day even on a quiet
+# default branch. `pnpm verify` at release time runs them once more before
+# anything ships. The exception is `template:remove:test`, which runs only
+# here and in `release.yml`: it regenerates a pruned workspace's lockfile
+# with `pnpm install --offline`, so it needs the pnpm metadata mirror a full
+# install populates.
+#
+# `pnpm verify:tooling` is exactly the set of steps that were split out of
+# `pnpm verify` when it was split into the fast pre-handoff gate
+# (`pnpm verify:fast`) and the full CI/release gate (`pnpm verify`).
+name: Nightly tooling self-tests
+
+on:
+  schedule:
+    # 03:30 UTC — quiet hour, off the top of the hour to dodge cron congestion.
+    - cron: "30 3 * * *"
+  # Manual trigger for testing the workflow or re-running a failure outside the
+  # schedule.
+  workflow_dispatch:
+
+# Least-privilege token: the self-tests only read the repo.
+permissions:
+  contents: read
+
+# One nightly run at a time; a superseded scheduled run is cancelled.
+concurrency:
+  group: nightly-tooling
+  cancel-in-progress: true
+
+jobs:
+  tooling-self-tests:
+    name: Tooling self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+        with:
+          # The TruffleHog wrapper self-test compares HEAD with its parent.
+          fetch-depth: 2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Everything below is offline and DB/Redis-free: policy-checker fixture
+      # runs, the Claude hook deny-rule suite, the trufflehog filter's stubbed
+      # CLI tests, and the Dokploy config / template-removal test bundles.
+      - name: Run tooling self-tests
+        run: pnpm verify:tooling

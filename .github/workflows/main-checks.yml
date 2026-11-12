@@ -1,0 +1,91 @@
+# Post-merge integration lane. Unit-only `pnpm gate` stays on PR checks and
+# remains Docker-free; this workflow inventories every non-model suite against
+# disposable Postgres/Redis fixtures.
+name: Main checks
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-checks
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      kb-suites: ${{ steps.kb-suites.outputs.json }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: kb-suites
+        run: |
+          node --input-type=module -e '
+            import { SUITES, assertSuiteCoverage } from "./scripts/test-kb.mjs";
+            assertSuiteCoverage();
+            console.log("json=" + JSON.stringify(Object.entries(SUITES).filter(([, config]) => !config.qwenModel).map(([suite, config]) => ({suite, browser: Boolean(config.playwright)}))));
+          ' >> "$GITHUB_OUTPUT"
+
+  kb-integration:
+    name: KB integration tests (${{ matrix.suite }})
+    needs: setup
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.kb-suites) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.suite == 'deployment' && 45 || 25 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Both models have a separate required x64/arm64 lane in kb-model-smoke.yml.
+      - name: Install Chromium and its system dependencies
+        if: matrix.browser
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: KB integration suite
+        run: pnpm test:kb -- ${{ matrix.suite }}
+
+      - name: Upload redacted fixture logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kb-test-artifacts-${{ matrix.suite }}
+          path: /tmp/kb-test-artifacts/*.log
+          if-no-files-found: ignore
+
+  kb-integration-gate:
+    name: KB integration tests
+    needs: [setup, kb-integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every registered suite
+        env:
+          SETUP: ${{ needs.setup.result }}
+          RESULT: ${{ needs.kb-integration.result }}
+        run: test "$SETUP" = success && test "$RESULT" = success

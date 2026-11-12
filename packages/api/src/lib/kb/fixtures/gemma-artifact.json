@@ -1,0 +1,27 @@
+{
+  "modelId": "embeddinggemma-2-q8_0",
+  "fileName": "embeddinggemma-2-Q8_0.gguf",
+  "sizeBytes": 309855456,
+  "sha256": "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+  "url": "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf",
+  "dimensions": 768,
+  "pooling": "MEAN",
+  "queryPrefix": "task: search result | query: ",
+  "addBos": true,
+  "addEos": true,
+  "eosTokenId": 1,
+  "contextTiers": [1024, 2048, 4096, 8192],
+  "memoryEstimates": {
+    "1024": 1184437896,
+    "2048": 1340013020,
+    "4096": 1678845674,
+    "8192": 2467240608
+  },
+  "allowedHosts": [
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "cas-bridge.xethub.hf.co",
+    "us.aws.cdn.hf.co"
+  ],
+  "maxRedirects": 5
+}

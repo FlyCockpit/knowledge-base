@@ -1,0 +1,349 @@
+# Mandatory real-model lane for both built-in embedders.
+#
+# Runs `pnpm test:kb -- qwen-model` on ACTUAL x64 and arm64 runners: the
+# checksum-verified Qwen and Gemma GGUFs (cached by SHA-256, a tampered cache fails
+# verification and is never re-saved), real child load/embed/query, and the
+# built Node26-slim worker image for that runner's native architecture.
+#
+# `pnpm gate` never downloads weights; these explicit lanes acquire and verify
+# them. No path filters: the required `qwen-model-smoke` status is
+# reported on every push/PR/tag, and it is green only when BOTH architecture
+# legs succeeded and uploaded matching evidence — a skipped, cancelled or
+# missing leg cannot be called release-ready.
+name: KB model smoke
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kb-model-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QWEN_SHA256: 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+  QWEN_FILE: Qwen3-Embedding-0.6B-Q8_0.gguf
+  QWEN_URL: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf
+  GEMMA_SHA256: 2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135
+  GEMMA_FILE: embeddinggemma-2-Q8_0.gguf
+  GEMMA_URL: https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf
+
+jobs:
+  smoke:
+    name: qwen-model (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            # GitHub has no `ubuntu-latest` label for arm64 runners; pin the
+            # newest GA arm64 image explicitly.
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Keyed by the pinned SHA only; restore never trusts the bytes.
+      - name: Restore model cache
+        id: model-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen-gguf-sha256-${{ env.QWEN_SHA256 }}
+
+      - name: Verify cached model (tampered cache fails)
+        if: steps.model-cache.outputs.cache-hit == 'true'
+        run: node scripts/test-qwen-image.mjs --verify-only "${{ runner.temp }}/qwen-model/${QWEN_FILE}"
+
+      - name: Download model on cache miss
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/qwen-model"
+          curl --fail --location --proto '=https' --max-redirs 5 --retry 3 \
+            -o "${{ runner.temp }}/qwen-model/${QWEN_FILE}" "${QWEN_URL}"
+          node scripts/test-qwen-image.mjs --verify-only "${{ runner.temp }}/qwen-model/${QWEN_FILE}"
+
+      # Saved only after verification succeeded on a miss.
+      - name: Save model cache
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen-gguf-sha256-${{ env.QWEN_SHA256 }}
+
+      - name: Restore Gemma cache
+        id: gemma-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gemma-model
+          key: gemma-gguf-sha256-${{ env.GEMMA_SHA256 }}
+
+      - name: Verify cached Gemma
+        if: steps.gemma-cache.outputs.cache-hit == 'true'
+        run: node scripts/test-qwen-image.mjs --verify-gemma "${{ runner.temp }}/gemma-model/${GEMMA_FILE}"
+
+      - name: Download Gemma on cache miss
+        if: steps.gemma-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/gemma-model"
+          curl --fail --location --proto '=https' --max-redirs 5 --retry 3 \
+            -o "${{ runner.temp }}/gemma-model/${GEMMA_FILE}" "${GEMMA_URL}"
+          node scripts/test-qwen-image.mjs --verify-gemma "${{ runner.temp }}/gemma-model/${GEMMA_FILE}"
+
+      - name: Save verified Gemma cache
+        if: steps.gemma-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gemma-model
+          key: gemma-gguf-sha256-${{ env.GEMMA_SHA256 }}
+
+      - name: Restore pinned native build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/worker/native/build
+          key: embedding-native-${{ matrix.arch }}-node26-${{ hashFiles('packages/api/src/lib/kb/fixtures/embedding-runtime.json', 'scripts/build-embedding-runtime.mjs') }}
+
+      - name: Build and install the pinned CPU runtime (max three jobs)
+        run: node scripts/build-embedding-runtime.mjs --install
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build cached Node26 worker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.worker
+          target: runner
+          load: true
+          tags: kb-worker-embedding-smoke:ci
+          cache-from: type=gha,scope=embedding-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=embedding-${{ matrix.arch }}
+
+      - name: Real-model lane (host child + Node26-slim image)
+        env:
+          KB_QWEN_IMAGE: kb-worker-embedding-smoke:ci
+          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/gemma-model/${{ env.GEMMA_FILE }}
+          KB_GEMMA_EVIDENCE_OUT: ${{ runner.temp }}/gemma-evidence-${{ matrix.arch }}.json
+          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/qwen-model/${{ env.QWEN_FILE }}
+          KB_QWEN_EVIDENCE_OUT: ${{ runner.temp }}/qwen-evidence-${{ matrix.arch }}.json
+        run: pnpm test:kb -- qwen-model
+
+      - name: Upload Gemma evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gemma-evidence-${{ matrix.arch }}
+          path: ${{ runner.temp }}/gemma-evidence-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qwen-evidence-${{ matrix.arch }}
+          path: ${{ runner.temp }}/qwen-evidence-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+      - name: Remove smoke image
+        if: always()
+        run: docker image rm kb-worker-embedding-smoke:ci || true
+
+  rust-smoke:
+    name: rust-model (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # No `ubuntu-latest` label exists for arm64 runners.
+          - runner: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          # The shipped static musl release binaries (apps/cli/ci/
+          # musl-builder.Dockerfile), driven by the same host test harness.
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          # No `ubuntu-latest` label exists for arm64 runners; the static binary
+          # does not depend on the runner image, so the 24.04 arm64 image serves.
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 3
+      CMAKE_BUILD_PARALLEL_LEVEL: 3
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - name: macOS CPU prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm libomp cmake
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+      - name: Restore checksum-keyed weights
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/rust-models
+          key: rust-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+      - name: Acquire and verify both pinned models
+        run: |
+          mkdir -p "${{ runner.temp }}/rust-models"
+          for kind in GEMMA QWEN; do
+            file_var="${kind}_FILE"; url_var="${kind}_URL"; hash_var="${kind}_SHA256"
+            dest="${{ runner.temp }}/rust-models/${!file_var}"
+            if [ ! -f "$dest" ]; then
+              curl --fail --location --proto '=https' --max-redirs 5 --retry 3 -o "$dest" "${!url_var}"
+            fi
+            if command -v sha256sum >/dev/null; then
+              printf '%s  %s\n' "${!hash_var}" "$dest" | sha256sum --check
+            else
+              printf '%s  %s\n' "${!hash_var}" "$dest" | shasum -a 256 --check
+            fi
+          done
+      - name: Fetch every platform dependency
+        run: cargo fetch --locked
+      - name: Build real Rust CPU executable
+        if: ${{ !endsWith(matrix.target, '-musl') }}
+        run: |
+          cargo build --locked -p kb
+          echo "KB_MODEL_EXECUTABLE=$PWD/target/debug/kb${{ runner.os == 'Windows' && '.exe' || '' }}" >> "$GITHUB_ENV"
+      # The release configuration: static musl, llama.cpp with OpenMP, built in
+      # the digest-pinned Alpine builder. The host-built test harness then
+      # spawns this binary as the real `kb embed-worker`.
+      - name: Build static musl executable in the pinned builder
+        if: ${{ endsWith(matrix.target, '-musl') }}
+        run: |
+          set -euo pipefail
+          docker build --pull -f ci/musl-builder.Dockerfile -t kb-musl-builder:smoke ci
+          mkdir -p "$RUNNER_TEMP/musl-target" "$RUNNER_TEMP/musl-cargo"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target \
+            -e CARGO_BUILD_JOBS -e CMAKE_BUILD_PARALLEL_LEVEL \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/musl-target:/target" \
+            -v "$RUNNER_TEMP/musl-cargo:/cargo-home" -w /src/apps/cli kb-musl-builder:smoke \
+            cargo build --locked --profile dist -p kb --target ${{ matrix.target }}
+          # The toolchain that built the executable (the host rustc/cmake recorded
+          # below only built the test harness).
+          {
+            echo 'KB_MUSL_TOOLCHAIN<<EOF'
+            docker run --rm kb-musl-builder:smoke sh -c 'rustc -V; gcc --version | head -1; cmake --version | head -1; apk info -v 2>/dev/null | grep -E "^(musl|gcc|libgomp|libstdc\+\+)-[0-9]"'
+            echo EOF
+          } >> "$GITHUB_ENV"
+          bin="$RUNNER_TEMP/musl-target/${{ matrix.target }}/dist/kb"
+          headers="$(readelf -lW "$bin")"
+          dynamic="$(readelf -dW "$bin")"
+          if grep -q INTERP <<<"$headers" || grep -q '(NEEDED)' <<<"$dynamic"; then
+            echo "::error::$bin is not fully static"; exit 1
+          fi
+          grep -aq 'libgomp: ' "$bin"
+          echo "KB_MODEL_EXECUTABLE=$bin" >> "$GITHUB_ENV"
+      - name: Execute native store durability and process regression checks
+        if: ${{ !endsWith(matrix.target, '-musl') }}
+        run: cargo test --locked -p kb-local --lib --test store --test model_download --test qwen_process -- --test-threads=1
+      # The same checks compiled for musl, in the builder (the shipped libc).
+      # The one skipped test injects fsync EIO with LD_PRELOAD, which a static
+      # binary cannot load; it runs on the GNU legs.
+      - name: Execute native store durability and process regression checks (musl)
+        if: ${{ endsWith(matrix.target, '-musl') }}
+        run: |
+          set -euo pipefail
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target \
+            -e CARGO_BUILD_JOBS -e CMAKE_BUILD_PARALLEL_LEVEL \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/musl-target:/target" \
+            -v "$RUNNER_TEMP/musl-cargo:/cargo-home" -w /src/apps/cli kb-musl-builder:smoke \
+            cargo test --locked -p kb-local --target ${{ matrix.target }} --lib --test store --test model_download --test qwen_process \
+              -- --test-threads=1 --skip native_initialization_file_and_directory_fsync_eio_prevents_publication_and_retry_succeeds
+          docker image rm kb-musl-builder:smoke
+      - name: Explicit real-model selection must execute all three tests (both models + retrieval)
+        env:
+          TMPDIR: ${{ runner.temp }}
+          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.GEMMA_FILE }}
+          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.QWEN_FILE }}
+        run: |
+          cargo test --locked -p kb-local --test qwen_model -- --ignored --test-threads=1 2>&1 | tee "${{ runner.temp }}/rust-model-evidence.txt"
+          grep -Eq 'test result: ok\. 3 passed; 0 failed' "${{ runner.temp }}/rust-model-evidence.txt"
+      - name: Record actual architecture and compiler
+        run: |
+          rustc -vV >> "${{ runner.temp }}/rust-model-evidence.txt"
+          cmake --version >> "${{ runner.temp }}/rust-model-evidence.txt"
+          uname -a >> "${{ runner.temp }}/rust-model-evidence.txt"
+          echo "executable: ${{ matrix.target }} $KB_MODEL_EXECUTABLE" >> "${{ runner.temp }}/rust-model-evidence.txt"
+          if [ -n "${KB_MUSL_TOOLCHAIN:-}" ]; then printf '%s\n' "$KB_MUSL_TOOLCHAIN" >> "${{ runner.temp }}/rust-model-evidence.txt"; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-model-${{ matrix.target }}
+          path: ${{ runner.temp }}/rust-model-evidence.txt
+          if-no-files-found: error
+
+  # The single required status. Mark `qwen-model-smoke` required in branch
+  # protection and release preflight.
+  required:
+    name: qwen-model-smoke
+    if: always()
+    needs: [smoke, rust-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Every matrix leg succeeded
+        run: |
+          if [ "${{ needs.smoke.result }}" != "success" ] || [ "${{ needs.rust-smoke.result }}" != "success" ]; then
+            echo "qwen-model smoke result: ${{ needs.smoke.result }} (skipped/cancelled/failed legs are not release-ready)"
+            exit 1
+          fi
+
+      - name: Download evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "*-evidence-*"
+          path: evidence
+          merge-multiple: true
+
+      - name: Both architectures reported valid evidence
+        run: |
+          node scripts/test-qwen-image.mjs --check-evidence evidence/qwen-evidence-x64.json:x64 evidence/qwen-evidence-arm64.json:arm64
+          node scripts/test-qwen-image.mjs --check-gemma-evidence evidence/gemma-evidence-x64.json:x64 evidence/gemma-evidence-arm64.json:arm64

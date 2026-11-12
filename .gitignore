@@ -1,0 +1,94 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+dist
+build
+apps/web/dev-dist
+apps/cli/target/
+*.tsbuildinfo
+
+# Environment variables. Match every `.env*` variant — `.env.production`,
+# `.env.staging`, `.env.render` all hold real credentials and none of them
+# match a narrower `.env` / `.env*.local` pair. Committed files opt back in.
+.env*
+!.env.example
+!.env.docker.defaults
+
+# Agent dev-docker port state (written by scripts/dev-docker.sh)
+.agent-ports.json
+
+# Agent dev-docker per-project node_modules bind mounts (see
+# docker-compose.agent.yml). Created by scripts/dev-docker.sh, wiped on
+# `pnpm dev:docker:down`. Never commit.
+.docker-volumes/
+
+# IDEs and editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+.pnpm-store*
+
+# Database backups
+backups/
+
+# Generated deployment artifacts — produced on demand by `pnpm dokploy:config`;
+# regenerate instead of committing.
+/docker-compose.dokploy.yml
+
+# Turbo
+.turbo
+.nx
+
+# Testing
+coverage
+.nyc_output
+
+# Misc
+*.tgz
+.cache
+tmp
+temp
+
+# Local scratch / agent-harness working directories (not shipped).
+# Product, access-matrix and hosting documentation in docs/ is committed.
+/.cockpit/
+/.agents/
+/.codex/
+/.playwright-cli/
+.firecrawl/
+
+# Claude Code project settings are personal. `pnpm run setup` (or
+# `pnpm claude:hooks:install`) generates .claude/settings.json from the tracked
+# scripts/claude-hooks/settings.json; the hook rules themselves live in scripts/.
+.claude/
+
+# Built Linux supervisor (source is apps/server/native/kb-supervisor.c).
+/apps/server/native/kb-supervisor
+
+# Reproducible CPU embedding addon (cached in CI, never source-controlled).
+/apps/worker/native/build/
+
+# Model weights and encrypted backup bundles stay local.
+*.gguf
+*.age
+# Tiny upstream vocabulary fixture required by the vendored binding.
+!/apps/cli/vendor/llama-cpp-2/src/gguf/ggml-vocab-bert-bge.gguf

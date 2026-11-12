@@ -1,0 +1,118 @@
+enum IndexGenerationState {
+  PENDING
+  BUILDING
+  INDEXING
+  COMPLETE
+  FAILED
+  SUPERSEDED
+  /// Retention removed every generation_document row and the index file;
+  /// the row stays as a tombstone so a signed cursor fails INVALID_CURSOR.
+  PURGED
+}
+
+enum GenerationDocumentState {
+  INDEXED
+  EMPTY
+  SKIPPED_REDACTED
+}
+
+/// Snapshot identity is immutable; execution attempts and accounting are fenced.
+model IndexGeneration {
+  id                  String                  @id @default(cuid(2))
+  kbId                String
+  knowledgeBase       KnowledgeBase           @relation("GenerationOwner", fields: [kbId], references: [id], onDelete: Restrict)
+  activeFor           KnowledgeBase[]         @relation("ActiveGeneration")
+  jobId               String                  @unique
+  job                 DurableJob              @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  epoch               BigInt
+  commitSha           String
+  /// The pinned embedding profile. All four are null together for a lexical-only (FTS5)
+  /// generation of a KB without a usable embedding profile (the guard trigger enforces it).
+  providerId          String?
+  providerVersion     Int?
+  providerRevision    ProviderRevision?       @relation(fields: [providerId, providerVersion], references: [providerId, version], onDelete: Restrict)
+  fingerprint         String?
+  dimensions          Int?
+  attempt             Int                     @default(1)
+  state               IndexGenerationState    @default(PENDING)
+  documentCount       Int
+  chunkCount          Int
+  errorCode           String?
+  createdAt           DateTime                @default(now()) @db.Timestamptz(3)
+  /// Set by the generation guard trigger (never by callers) when the row enters
+  /// SUPERSEDED or FAILED; cleared on retry. Retention measures its TTLs from here.
+  retiredAt           DateTime?               @db.Timestamptz(3)
+  /// DISK_VOLUME reservations of the live BUILDING attempt (index file bytes). Released, never
+  /// committed; non-empty only while BUILDING (guard trigger I1).
+  quotaReservationIds String[]                @default([])
+  documents           GenerationDocument[]
+  queryRequests       QueryEmbeddingRequest[]
+  leases              GenerationLease[]
+
+  @@unique([kbId, id])
+  @@unique([kbId, epoch])
+  @@index([state, retiredAt])
+  @@map("index_generation")
+}
+
+enum QueryEmbeddingState {
+  PENDING
+  RUNNING
+  READY
+  DELIVERED
+  CANCELLED
+  DEADLINE_EXCEEDED
+  INDEX_UNAVAILABLE
+  /// Closed because the embedder failed or the request's profile was lost. The only
+  /// closure a search may degrade to its keyword arm; every other closure is an integrity failure.
+  EMBEDDING_UNAVAILABLE
+}
+
+/// Transient encrypted data; retention must delete by scrubAt, including after crashes.
+model QueryEmbeddingRequest {
+  id               String              @id
+  job              DurableJob          @relation(fields: [id], references: [id], onDelete: Cascade)
+  kbId             String
+  generationId     String
+  generation       IndexGeneration     @relation(fields: [kbId, generationId], references: [kbId, id], onDelete: Restrict)
+  actorKey         String
+  userId           String
+  principal        Json
+  snapshot         Json
+  queryCiphertext  String?
+  resultCiphertext String?
+  state            QueryEmbeddingState @default(PENDING)
+  deadline         DateTime            @db.Timestamptz(3)
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  scrubAt          DateTime            @db.Timestamptz(3)
+  lease            GenerationLease?
+
+  @@index([userId, deadline])
+  @@index([scrubAt])
+  @@map("query_embedding_request")
+}
+
+model GenerationLease {
+  requestId    String                @id
+  request      QueryEmbeddingRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  generationId String
+  generation   IndexGeneration       @relation(fields: [generationId], references: [id], onDelete: Restrict)
+  expiresAt    DateTime              @db.Timestamptz(3)
+
+  @@index([generationId, expiresAt])
+  @@map("generation_lease")
+}
+
+model GenerationDocument {
+  generationId        String
+  generation          IndexGeneration         @relation(fields: [generationId], references: [id], onDelete: Restrict)
+  path                String
+  blobSha             String
+  contentHash         String
+  originalWindowCount Int
+  retainedWindowCount Int
+  state               GenerationDocumentState
+
+  @@id([generationId, path])
+  @@map("generation_document")
+}

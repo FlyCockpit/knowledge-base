@@ -1,0 +1,380 @@
+enum McpGrantKind {
+  PAT
+  OAUTH
+}
+
+/// One durable MCP authority generation. The id is a random UUID minted per
+/// generation and is never reused: revocation writes a permanent tombstone
+/// (revokedAt) and nothing clears it. The actor snapshot and the
+/// (actor, client, reference) identity survive account deletion; only the
+/// live user FK is nulled. Grants, their ACLs, and consumer sealed grants are
+/// authority records and are never cascaded away.
+model McpGrant {
+  id                   String                @id @db.Uuid
+  createdAt            DateTime              @default(now()) @db.Timestamptz(3)
+  actorUserIdSnapshot  String
+  userId               String?
+  user                 User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  kind                 McpGrantKind
+  clientId             String
+  referenceId          String
+  scopes               String[]
+  /// Tool groups this connection may call (canonical order, never empty).
+  /// Validated on every write and fails closed at admission.
+  toolGroups           String[]
+  allowCreate          Boolean               @default(false)
+  createdKbBits        String[]
+  revokedAt            DateTime?             @db.Timestamptz(3)
+  revokeReason         String?
+  /// Last in-place widening through the owner's control plane (mcpGrants.updateMine).
+  widenedAt            DateTime?             @db.Timestamptz(3)
+  acl                  GrantKbAcl[]
+  elevations           McpGrantElevation[]
+  consentIntents       ConsentIntent[]
+  personalToken        McpPersonalToken?
+  sealedConsumerGrants SealedConsumerGrant[]
+
+  @@unique([actorUserIdSnapshot, clientId, referenceId], map: "mcp_grant_actor_client_reference")
+  @@index([userId, revokedAt])
+  @@map("mcp_grant")
+}
+
+/// The ONLY stored per-KB ACL for tokens. Expanded bits; effective authority
+/// is always this ceiling intersected with live owner/share bits.
+model GrantKbAcl {
+  grantId       String        @db.Uuid
+  grant         McpGrant      @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  kbId          String
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  bits          String[]
+  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@id([grantId, kbId])
+  @@index([kbId])
+  @@map("grant_kb_acl")
+}
+
+/// Temporary access layered on a grant (owner control plane, mcpGrants.updateMine
+/// with a duration). Effective authority is the base grant united with every
+/// elevation where revokedAt IS NULL AND expiresAt > the database clock, read
+/// live by admission and every lock-held recheck, so expiry needs no sweeper.
+/// It never adds scopes. Authority records: never deleted, never cascaded;
+/// expired and ended rows stay as history.
+model McpGrantElevation {
+  id                      String                @id @db.Uuid
+  grantId                 String                @db.Uuid
+  grant                   McpGrant              @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  createdAt               DateTime              @default(now()) @db.Timestamptz(3)
+  expiresAt               DateTime              @db.Timestamptz(3)
+  /// End now (mcpGrants.endElevationMine). Permanent; nothing clears it.
+  revokedAt               DateTime?             @db.Timestamptz(3)
+  /// Groups added beyond the base grant (canonical order; may be empty).
+  toolGroups              String[]
+  allowCreate             Boolean               @default(false)
+  createdKbBits           String[]
+  createdByUserIdSnapshot String
+  acl                     GrantElevationKbAcl[]
+
+  @@index([grantId, revokedAt, expiresAt])
+  @@map("mcp_grant_elevation")
+}
+
+/// Per-KB bits an elevation adds (expanded). Mirrors GrantKbAcl; the effective
+/// ceiling is still intersected with live owner/share bits.
+model GrantElevationKbAcl {
+  elevationId   String            @db.Uuid
+  elevation     McpGrantElevation @relation(fields: [elevationId], references: [id], onDelete: Restrict)
+  kbId          String
+  knowledgeBase KnowledgeBase     @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  bits          String[]
+
+  @@id([elevationId, kbId])
+  @@index([kbId])
+  @@map("grant_elevation_kb_acl")
+}
+
+/// Human-minted personal access token. Holds only the lookup prefix, the
+/// secret digest, its grant reference, a scope ceiling snapshot and expiry
+/// (NULL = never expires, an explicit human choice at mint).
+/// Never a second ACL, never the raw secret.
+model McpPersonalToken {
+  id             String    @id @default(cuid(2))
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  userIdSnapshot String
+  userId         String?
+  user           User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name           String
+  lookupPrefix   String
+  secretDigest   String
+  grantId        String    @unique @db.Uuid
+  grant          McpGrant  @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  scopes         String[]
+  resource       String
+  expiresAt      DateTime? @db.Timestamptz(3)
+  lastUsedAt     DateTime? @db.Timestamptz(3)
+  revokedAt      DateTime? @db.Timestamptz(3)
+
+  @@unique([lookupPrefix], map: "mcp_personal_token_lookup_prefix")
+  @@unique([secretDigest], map: "mcp_personal_token_secret_digest")
+  @@index([userId, revokedAt, expiresAt])
+  @@map("mcp_personal_token")
+}
+
+/// App-owned durable transaction and immutable approval receipt. Never cascades
+/// with provider artifacts; grant tombstones remain authoritative after expiry.
+model ConsentIntent {
+  id                  String    @id @default(cuid(2))
+  referenceId         String    @unique
+  nonce               String    @unique @db.Uuid
+  sessionDigest       String
+  queryDigest         String
+  actorUserIdSnapshot String
+  userId              String?
+  user                User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clientId            String
+  redirectUri         String
+  resource            String
+  scopes              String[]
+  selection           Json?
+  grantId             String?   @db.Uuid
+  grant               McpGrant? @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt           DateTime  @db.Timestamptz(3)
+  approvedAt          DateTime? @db.Timestamptz(3)
+
+  @@unique([sessionDigest, queryDigest])
+  @@index([grantId])
+  @@index([approvedAt, grantId, expiresAt])
+  @@map("consent_intent")
+}
+
+// Better Auth OAuth/JWT 1.7.4 adapter model names and resource linkage.
+// allowedScopes is Json? because the provider writes null for an unrestricted
+// resource; Prisma native lists cannot represent that runtime value.
+model OauthClient {
+  id                               String                @id @default(cuid(2))
+  clientId                         String                @unique
+  clientSecret                     String?
+  clientDiscoveryId                String?
+  disabled                         Boolean?              @default(false)
+  skipConsent                      Boolean?
+  enableEndSession                 Boolean?
+  subjectType                      String?
+  scopes                           String[]
+  clientCredentialsScopes          String[]              @default([])
+  userId                           String?
+  user                             User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt                        DateTime?             @default(now()) @db.Timestamptz(3)
+  updatedAt                        DateTime?             @default(now()) @updatedAt @db.Timestamptz(3)
+  name                             String?
+  uri                              String?
+  icon                             String?
+  contacts                         String[]
+  tos                              String?
+  policy                           String?
+  softwareId                       String?
+  softwareVersion                  String?
+  softwareStatement                String?
+  redirectUris                     String[]
+  postLogoutRedirectUris           String[]
+  backchannelLogoutUri             String?
+  backchannelLogoutSessionRequired Boolean?
+  tokenEndpointAuthMethod          String?
+  applicationType                  String?
+  jwks                             String?
+  jwksUri                          String?
+  grantTypes                       String[]
+  responseTypes                    String[]
+  requirePKCE                      Boolean?
+  dpopBoundAccessTokens            Boolean?              @default(false)
+  referenceId                      String?
+  metadata                         Json?
+  clientResources                  OauthClientResource[]
+  oauthRefreshTokens               OauthRefreshToken[]
+  oauthAccessTokens                OauthAccessToken[]
+  oauthConsents                    OauthConsent[]
+
+  @@index([userId])
+  @@map("oauth_client")
+}
+
+model OauthResource {
+  id                            String                @id @default(cuid(2))
+  identifier                    String                @unique
+  name                          String
+  accessTokenTtl                Int?
+  refreshTokenTtl               Int?
+  signingAlgorithm              String?
+  signingKeyId                  String?
+  allowedScopes                 Json?
+  customClaims                  Json?
+  dpopBoundAccessTokensRequired Boolean?              @default(false)
+  disabled                      Boolean?              @default(false)
+  createdAt                     DateTime?             @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime?             @default(now()) @updatedAt @db.Timestamptz(3)
+  policyVersion                 Int?                  @default(1)
+  metadata                      Json?
+  clientResources               OauthClientResource[]
+
+  @@map("oauth_resource")
+}
+
+model OauthClientResource {
+  id         String        @id @default(cuid(2))
+  clientId   String
+  client     OauthClient   @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  resourceId String
+  resource   OauthResource @relation(fields: [resourceId], references: [identifier], onDelete: Cascade)
+  metadata   Json?
+  createdAt  DateTime?     @default(now()) @db.Timestamptz(3)
+
+  @@unique([clientId, resourceId])
+  @@index([clientId])
+  @@index([resourceId])
+  @@map("oauth_client_resource")
+}
+
+model OauthRefreshToken {
+  id                      String             @id @default(cuid(2))
+  token                   String             @unique
+  clientId                String
+  client                  OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  sessionId               String?
+  session                 Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  userId                  String
+  user                    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId             String?
+  authorizationCodeId     String?
+  resources               String[]
+  requestedUserInfoClaims String[]
+  expiresAt               DateTime           @db.Timestamptz(3)
+  createdAt               DateTime           @default(now()) @db.Timestamptz(3)
+  revoked                 DateTime?          @db.Timestamptz(3)
+  rotatedAt               DateTime?          @db.Timestamptz(3)
+  rotationReplayResponse  String?
+  rotationReplayExpiresAt DateTime?          @db.Timestamptz(3)
+  authTime                DateTime?          @db.Timestamptz(3)
+  confirmation            Json?
+  scopes                  String[]
+  oauthAccessTokens       OauthAccessToken[]
+
+  @@index([clientId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([authorizationCodeId])
+  @@map("oauth_refresh_token")
+}
+
+model OauthAccessToken {
+  id                      String             @id @default(cuid(2))
+  token                   String             @unique
+  clientId                String
+  client                  OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  sessionId               String?
+  session                 Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  userId                  String?
+  user                    User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId             String?
+  authorizationCodeId     String?
+  resources               String[]
+  requestedUserInfoClaims String[]
+  refreshId               String?
+  refresh                 OauthRefreshToken? @relation(fields: [refreshId], references: [id], onDelete: Cascade)
+  expiresAt               DateTime           @db.Timestamptz(3)
+  createdAt               DateTime           @default(now()) @db.Timestamptz(3)
+  revoked                 DateTime?          @db.Timestamptz(3)
+  confirmation            Json?
+  scopes                  String[]
+
+  @@index([clientId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([authorizationCodeId])
+  @@index([refreshId])
+  @@index([expiresAt])
+  @@map("oauth_access_token")
+}
+
+model OauthConsent {
+  id                      String      @id @default(cuid(2))
+  clientId                String
+  client                  OauthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId                  String?
+  user                    User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId             String?
+  resources               String[]
+  requestedUserInfoClaims String[]
+  scopes                  String[]
+  createdAt               DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime    @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_consent")
+}
+
+model OauthClientAssertion {
+  id        String   @id @default(cuid(2))
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("oauth_client_assertion")
+}
+
+model Jwks {
+  id         String    @id @default(cuid(2))
+  publicKey  String
+  privateKey String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime? @db.Timestamptz(3)
+  alg        String?
+  crv        String?
+
+  @@map("jwks")
+}
+
+/// Better Auth device plugin storage. deviceCode is mapped to this digest field;
+/// the plaintext is returned only by start and is never a browser credential.
+model DeviceCode {
+  id               String    @id @default(cuid(2))
+  deviceCodeDigest String    @unique
+  userCode         String    @unique
+  userId           String?
+  expiresAt        DateTime  @db.Timestamptz(3)
+  status           String
+  lastPolledAt     DateTime? @db.Timestamptz(3)
+  pollingInterval  Int?
+  clientId         String?
+  scope            String?
+  /// Optional CLI public recipient descriptor, immutable once registered/claimed.
+  recipientKey     Json?
+
+  @@index([expiresAt])
+  @@map("device_code")
+}
+
+/// App-owned immutable human intent, separate from disposable plugin artifacts.
+/// No plaintext device secret or PAT is retained, including after consumption.
+model DeviceApproval {
+  id                  String    @id @default(cuid(2))
+  deviceCodeDigest    String    @unique
+  userCode            String
+  clientId            String
+  nonce               String    @unique @db.Uuid
+  sessionDigest       String
+  actorUserIdSnapshot String
+  userId              String?
+  user                User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  resource            String
+  selection           Json?
+  patExpiresAt        DateTime? @db.Timestamptz(3)
+  decision            String    @default("pending")
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt           DateTime  @db.Timestamptz(3)
+  approvedAt          DateTime? @db.Timestamptz(3)
+  consumedAt          DateTime? @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("device_approval")
+}

@@ -1,0 +1,40 @@
+{
+  "description": "Golden kb attachment identity vectors: UUIDv5(NAMESPACE_URL 6ba7b811-9dad-11d1-80b4-00c04fd430c8, b\"flycockpit/knowledge-attachment/v1\\0<remote|local>\\0\" + locator). Derived independently with Python uuid.uuid5.",
+  "vectors": [
+    {
+      "kind": "remote",
+      "origin": "https://kb.example.test",
+      "kbId": "abcdefghijklmnopqrstuvwx",
+      "locator": "https://kb.example.test/mcp#kb=abcdefghijklmnopqrstuvwx",
+      "namespace": "324f3efc-7ebb-5d2a-acc0-2df192e6313a"
+    },
+    {
+      "kind": "remote",
+      "origin": "https://kb.example.test",
+      "kbId": "zyxwvutsrqponmlkjihgfedc",
+      "locator": "https://kb.example.test/mcp#kb=zyxwvutsrqponmlkjihgfedc",
+      "namespace": "a8149046-e574-5d10-a1bb-2c510f8e6d82"
+    },
+    {
+      "kind": "remote",
+      "origin": "https://kb2.example.test",
+      "kbId": "abcdefghijklmnopqrstuvwx",
+      "locator": "https://kb2.example.test/mcp#kb=abcdefghijklmnopqrstuvwx",
+      "namespace": "443ecc10-ad26-5d3d-977c-09acaee5532e"
+    },
+    {
+      "kind": "remote",
+      "origin": "http://127.0.0.1:3000",
+      "kbId": "abcdefghijklmnopqrstuvwx",
+      "locator": "http://127.0.0.1:3000/mcp#kb=abcdefghijklmnopqrstuvwx",
+      "namespace": "163393e1-0172-5914-a3fb-1c8736b7c768"
+    },
+    {
+      "kind": "local",
+      "storeUuid": "00000000-0000-4000-8000-0000000000aa",
+      "kbId": "abcdefghijklmnopqrstuvwx",
+      "locator": "kb-local://00000000-0000-4000-8000-0000000000aa/abcdefghijklmnopqrstuvwx",
+      "namespace": "43d8c86a-c67c-534d-97ff-674409d2cf3b"
+    }
+  ]
+}

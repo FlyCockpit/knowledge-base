@@ -1,0 +1,10 @@
+// Durable first-admin bootstrap singleton. Completion is sticky: deleting the
+// chosen user nulls the FK and never reopens bootstrap.
+model BootstrapState {
+  id          String    @id
+  completedAt DateTime? @db.Timestamptz(3)
+  userId      String?   @unique
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("bootstrap_state")
+}

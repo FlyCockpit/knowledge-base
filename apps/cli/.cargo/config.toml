@@ -1,0 +1,4 @@
+# Enables `cargo xtask ...` as a shortcut for `cargo run -p xtask --`.
+# This is the standard "xtask" convention for project automation in Rust.
+[alias]
+xtask = "run --quiet --package xtask --"

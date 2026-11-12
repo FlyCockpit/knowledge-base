@@ -1,0 +1,53 @@
+# Hooks validate the installed tree. Install once before committing; parallel
+# pnpm jobs must never auto-install and race the Prisma postinstall generator.
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,tsx,js,jsx,json,css}"
+      run: pnpm_config_verify_deps_before_run=false pnpm biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files} && git add {staged_files}
+      stage_fixed: true
+      fail_text: |
+        Biome check failed (lint/format).
+        Fix: run `pnpm check` to auto-fix and see remaining issues, or `pnpm lint` to list them.
+        Then `git add` the changes and commit again.
+        Do not skip hooks. Fix the issue and commit again. CI runs the same checks.
+    prisma-validate:
+      glob: "packages/db/prisma/**/*.prisma"
+      run: pnpm_config_verify_deps_before_run=false pnpm db:validate
+      fail_text: |
+        Prisma schema validation failed.
+        Fix: run `pnpm db:validate` to see the error, then correct the schema files in `packages/db/prisma/schema/`.
+        Do not skip hooks. Fix the issue and commit again. CI runs the same checks.
+    prisma-query-casts:
+      glob: "*.{ts,tsx,mts,cts}"
+      run: pnpm_config_verify_deps_before_run=false pnpm policy:prisma-query-casts
+      fail_text: |
+        Prisma query-cast policy failed.
+        Fix the reported projection/result typing issue, then stage the change and commit again.
+        Run `pnpm lint` for the same local policy feedback. CI enforces this policy too.
+        Do not skip hooks. Fix the issue and commit again. CI runs the same checks.
+    sync-agent-docs:
+      glob: "AGENTS.md"
+      run: pnpm_config_verify_deps_before_run=false pnpm sync:agent-docs && git add CLAUDE.md .github/copilot-instructions.md
+      stage_fixed: true
+      fail_text: |
+        Agent docs sync failed.
+        Fix: run `pnpm sync:agent-docs` manually and inspect the output.
+        Ensure the generated agent-doc mirrors (CLAUDE.md, .github/copilot-instructions.md) are writable, then commit again.
+        Do not skip hooks. Fix the issue and commit again. CI runs the same checks.
+    policy-checks:
+      run: bash scripts/policy-checks.sh
+      fail_text: |
+        Policy checks failed (grep guardrails from AGENTS.md).
+        Fix: run `pnpm policy:checks` and address the reported violation.
+        Do not skip hooks. Fix the issue and commit again. CI runs the same checks.
+
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm_config_verify_deps_before_run=false pnpm turbo check-types --concurrency=2 && pnpm_config_verify_deps_before_run=false pnpm check-types:scripts
+      fail_text: |
+        TypeScript check failed — the push was stopped (nothing was pushed).
+        Fix: run `pnpm check-types`, resolve the errors, commit the fix,
+        then push again. CI runs the same check and would have blocked the PR.

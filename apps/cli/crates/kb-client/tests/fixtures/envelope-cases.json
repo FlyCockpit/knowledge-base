@@ -1,0 +1,517 @@
+{
+  "$comment": "MCP 2026-07-28 per-request _meta envelope cases: issue = the SDK's first validateEnvelopeMeta issue {key, problem}, null when valid. Shared by kb-client (Rust) and the TS SDK check.",
+  "cases": [
+    {
+      "name": "minimal",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+      },
+      "issue": null
+    },
+    {
+      "name": "full valid",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "experimental": {
+            "x": {}
+          },
+          "sampling": {
+            "context": {},
+            "tools": {}
+          },
+          "elicitation": {
+            "form": {
+              "applyDefaults": true
+            },
+            "url": {}
+          },
+          "roots": {
+            "listChanged": true
+          },
+          "extensions": {
+            "e": {
+              "a": 1
+            }
+          },
+          "tasks": 5,
+          "future": 7
+        },
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "title": "C",
+          "version": "1",
+          "websiteUrl": "https://x",
+          "description": "d",
+          "icons": [
+            {
+              "src": "a.png",
+              "mimeType": "image/png",
+              "sizes": ["16x16"],
+              "theme": "dark"
+            }
+          ],
+          "extra": 1
+        },
+        "io.modelcontextprotocol/logLevel": "warning",
+        "progressToken": 7,
+        "vendor/x": {
+          "anything": true
+        }
+      },
+      "issue": null
+    },
+    {
+      "name": "string progress token",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": "t"
+      },
+      "issue": null
+    },
+    {
+      "name": "empty elicitation",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {}
+        }
+      },
+      "issue": null
+    },
+    {
+      "name": "missing capabilities",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities",
+        "problem": "missing"
+      }
+    },
+    {
+      "name": "version not a string",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": 20260728,
+        "io.modelcontextprotocol/clientCapabilities": {}
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/protocolVersion",
+        "problem": "Invalid input: expected string, received number"
+      }
+    },
+    {
+      "name": "capabilities not an object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": 5
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities",
+        "problem": "Invalid input: expected object, received number"
+      }
+    },
+    {
+      "name": "capabilities array",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": []
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities",
+        "problem": "Invalid input: expected object, received array"
+      }
+    },
+    {
+      "name": "elicitation not an object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": 5
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.elicitation",
+        "problem": "Invalid input: expected object, received number"
+      }
+    },
+    {
+      "name": "elicitation form not an object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {
+            "form": "x"
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.elicitation.form",
+        "problem": "Invalid input: expected object, received string"
+      }
+    },
+    {
+      "name": "elicitation applyDefaults",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {
+            "form": {
+              "applyDefaults": "yes"
+            }
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.elicitation.form.applyDefaults",
+        "problem": "Invalid input: expected boolean, received string"
+      }
+    },
+    {
+      "name": "elicitation url",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": {
+            "url": 1
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.elicitation.url",
+        "problem": "Invalid input: expected record, received number"
+      }
+    },
+    {
+      "name": "sampling not an object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "sampling": true
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.sampling",
+        "problem": "Invalid input: expected object, received boolean"
+      }
+    },
+    {
+      "name": "sampling context",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "sampling": {
+            "context": "x"
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.sampling.context",
+        "problem": "Invalid input: expected record, received string"
+      }
+    },
+    {
+      "name": "roots listChanged",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "roots": {
+            "listChanged": 1
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.roots.listChanged",
+        "problem": "Invalid input: expected boolean, received number"
+      }
+    },
+    {
+      "name": "roots null",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "roots": null
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.roots",
+        "problem": "Invalid input: expected object, received null"
+      }
+    },
+    {
+      "name": "experimental not a record",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "experimental": []
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.experimental",
+        "problem": "Invalid input: expected record, received array"
+      }
+    },
+    {
+      "name": "experimental member",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "experimental": {
+            "x": 5
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.experimental.x",
+        "problem": "Invalid input: expected record, received number"
+      }
+    },
+    {
+      "name": "extensions member",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "extensions": {
+            "x": "y"
+          }
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientCapabilities.extensions.x",
+        "problem": "Invalid input: expected record, received string"
+      }
+    },
+    {
+      "name": "clientInfo not an object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": 5
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo",
+        "problem": "Invalid input: expected object, received number"
+      }
+    },
+    {
+      "name": "clientInfo missing name",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "version": "1"
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.name",
+        "problem": "Invalid input: expected string, received undefined"
+      }
+    },
+    {
+      "name": "clientInfo missing version",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c"
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.version",
+        "problem": "Invalid input: expected string, received undefined"
+      }
+    },
+    {
+      "name": "clientInfo title",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "version": "1",
+          "title": 1
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.title",
+        "problem": "Invalid input: expected string, received number"
+      }
+    },
+    {
+      "name": "clientInfo icons not an array",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "version": "1",
+          "icons": {}
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.icons",
+        "problem": "Invalid input: expected array, received object"
+      }
+    },
+    {
+      "name": "clientInfo icon src",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "version": "1",
+          "icons": [{}]
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.icons.0.src",
+        "problem": "Invalid input: expected string, received undefined"
+      }
+    },
+    {
+      "name": "clientInfo icon theme",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "version": "1",
+          "icons": [
+            {
+              "src": "a",
+              "theme": "blue"
+            }
+          ]
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.icons.0.theme",
+        "problem": "Invalid option: expected one of \"light\"|\"dark\""
+      }
+    },
+    {
+      "name": "clientInfo websiteUrl",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "c",
+          "version": "1",
+          "websiteUrl": 5
+        }
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo.websiteUrl",
+        "problem": "Invalid input: expected string, received number"
+      }
+    },
+    {
+      "name": "logLevel garbage",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/logLevel": "garbage"
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/logLevel",
+        "problem": "Invalid option: expected one of \"debug\"|\"info\"|\"notice\"|\"warning\"|\"error\"|\"critical\"|\"alert\"|\"emergency\""
+      }
+    },
+    {
+      "name": "logLevel number",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/logLevel": 3
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/logLevel",
+        "problem": "Invalid option: expected one of \"debug\"|\"info\"|\"notice\"|\"warning\"|\"error\"|\"critical\"|\"alert\"|\"emergency\""
+      }
+    },
+    {
+      "name": "progress token fraction",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": 1.5
+      },
+      "issue": {
+        "key": "progressToken",
+        "problem": "Invalid input"
+      }
+    },
+    {
+      "name": "progress token object",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": {}
+      },
+      "issue": {
+        "key": "progressToken",
+        "problem": "Invalid input"
+      }
+    },
+    {
+      "name": "first issue in schema order",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {
+          "elicitation": 5
+        },
+        "io.modelcontextprotocol/clientInfo": 5,
+        "io.modelcontextprotocol/logLevel": "garbage"
+      },
+      "issue": {
+        "key": "io.modelcontextprotocol/clientInfo",
+        "problem": "Invalid input: expected object, received number"
+      }
+    },
+    {
+      "name": "progress token max safe integer",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": 9007199254740991
+      },
+      "issue": null
+    },
+    {
+      "name": "progress token 2^53",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": 9007199254740992
+      },
+      "issue": {
+        "key": "progressToken",
+        "problem": "Too big: expected int to be <=9007199254740991"
+      }
+    },
+    {
+      "name": "progress token min safe integer",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": -9007199254740991
+      },
+      "issue": null
+    },
+    {
+      "name": "progress token -2^53",
+      "meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "progressToken": -9007199254740992
+      },
+      "issue": {
+        "key": "progressToken",
+        "problem": "Too small: expected int to be >=-9007199254740991"
+      }
+    }
+  ]
+}

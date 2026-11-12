@@ -1,0 +1,7 @@
+{
+  "nodeLlamaCpp": "3.22.2",
+  "release": "v0.7.0",
+  "commit": "620d2225cc436ab0b001e3200e590e3b286ef9ab",
+  "sourceUrl": "https://github.com/ggml-org/llama.cpp/archive/refs/tags/v0.7.0.tar.gz",
+  "sourceSha256": "55d67acf3ad2ad747a9bbeb75f9f0e173dbcc0d1753a471038a90c819421c5e1"
+}

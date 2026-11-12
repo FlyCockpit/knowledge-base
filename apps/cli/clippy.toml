@@ -1,0 +1,5 @@
+# clippy configuration. The `unwrap_used` lint (see Cargo.toml `[lints.clippy]`)
+# is a guardrail for production code, but `.unwrap()`/`.expect()` are normal and
+# fine in tests — these settings keep the guardrail without nagging your tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

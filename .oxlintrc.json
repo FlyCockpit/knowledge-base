@@ -1,0 +1,115 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["@shadcn/lint"],
+  "categories": {
+    "correctness": "off"
+  },
+  "rules": {},
+  "ignorePatterns": [
+    "**/node_modules/",
+    "**/dist/",
+    "**/dev-dist/",
+    "**/build/",
+    "**/coverage/",
+    "**/generated/",
+    "**/target/",
+    "**/routeTree.gen.ts",
+    ".turbo/",
+    ".output/",
+    ".tanstack/",
+    ".docker-volumes/",
+    ".pnpm-store/"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "apps/server/src/**",
+        "apps/worker/src/**",
+        "packages/api/src/**",
+        "packages/auth/src/**",
+        "packages/queue/src/**",
+        "packages/mailer/src/**",
+        "packages/db/src/**",
+        "packages/env/src/**",
+        "packages/locales/src/**",
+        "packages/i18n-translate/src/**",
+        "packages/db/prisma/seed.ts"
+      ],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "console",
+            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+          }
+        ],
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "stdout",
+            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+          },
+          {
+            "object": "process",
+            "property": "stderr",
+            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+          },
+          {
+            "object": "globalThis",
+            "property": "console",
+            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+          },
+          {
+            "object": "globalThis",
+            "property": "process",
+            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "console",
+                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+              },
+              {
+                "name": "node:console",
+                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+              },
+              {
+                "name": "process",
+                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+              },
+              {
+                "name": "node:process",
+                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+              }
+            ]
+          }
+        ],
+        "no-console": "error"
+      }
+    },
+    {
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.integration.test.ts",
+        "**/fixtures/**",
+        "**/*.fixture.ts",
+        "**/*-fixture.ts",
+        "apps/server/src/kb-process.client-fixture.ts",
+        "packages/env/src/log.ts",
+        "packages/env/src/service-output.ts"
+      ],
+      "rules": {
+        "no-restricted-globals": "off",
+        "no-restricted-properties": "off",
+        "no-restricted-imports": "off",
+        "no-console": "off"
+      }
+    }
+  ]
+}

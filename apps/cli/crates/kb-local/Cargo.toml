@@ -1,0 +1,100 @@
+# On-device knowledge-base backend for `kb mcp --root <store>`: the
+# managed multi-KB store (durable `state.sqlite` registry, owner-only managed
+# paths, OS file locks). Like kb-client it never depends on the CLI package.
+[package]
+name = "kb-local"
+version = "1.0.0"
+edition = "2024"
+publish = false
+rust-version.workspace = true
+description = "Local managed knowledge-base store for the kb CLI"
+authors = ["FlyCockpit LLC"]
+license = "Apache-2.0"
+repository = "https://github.com/FlyCockpit/knowledge-base"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Shared kb/1 scalars (KbId, Uuid), error codes and the attachment identity
+# algorithm — one implementation for local and remote.
+kb-client = { path = "../kb-client", version = "1.0.0" }
+# Durable local registry. `bundled` compiles the pinned SQLite amalgamation
+# (no system libsqlite3 drift across macOS/Linux/Windows release targets).
+rusqlite = { version = "0.41.1", features = ["bundled", "hooks"] }
+# sqlite-vec is statically linked; it is registered only in sqlite_vec.rs.
+sqlite-vec = "=0.1.9"
+# OS RNG for the store UUID, owner principal and KB IDs (already in the tree
+# through rustls/kb-client).
+ring = "0.17.14"
+# Canonical `.assets/manifest.json` parsing (already in the tree through
+# kb-client; same JSON semantics the manifest canonical-bytes check needs).
+# Correct rounding must happen while decoding, before scalar comparison.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+# Bundled SQLite; same NFC metadata normalization as the server.
+unicode-normalization = "0.1.26"
+# Page-cursor base64url encoding (already in the tree through kb-client).
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+zeroize = { version = "1.9.1", features = ["serde"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio = { version = "1.54.1", features = ["rt", "net", "sync", "time", "macros", "io-std", "io-util"] }
+llama-cpp-2 = { version = "=0.1.160", default-features = false, features = ["openmp"] }
+
+# Only the pinned native backend and its required platform features.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring-core = "=1.0.1"
+zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring-core = "=1.0.1"
+apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
+
+
+[target.'cfg(unix)'.dependencies]
+# `O_NOFOLLOW`/`O_DIRECTORY` values differ per Unix target; libc is already in
+# the tree. The audited child-only fd handoff lives in locks.rs.
+libc = "0.2.191"
+
+[target.'cfg(windows)'.dependencies]
+keyring-core = "=1.0.1"
+windows-native-keyring-store = { version = "=1.1.0", default-features = false }
+# Windows-only audited process/ACL boundary; no cross-platform FFI.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# Drive the actual timeout after embedder admission, independent of fixture IO.
+tokio = { version = "1.54.1", features = ["test-util"] }
+
+[[bin]]
+name = "kb-model-fixture"
+path = "tests/support/model_fixture.rs"
+test = false
+
+[[bin]]
+name = "kb-test-owner"
+path = "tests/support/test_owner.rs"
+test = false
+
+[[bin]]
+name = "kb-parity-fixture"
+path = "tests/support/parity_fixture.rs"
+test = false
+
+# Never shipped as its own release artifact.
+[package.metadata.dist]
+dist = false
+
+[lints.rust]
+# Audited OS boundaries (child fd handoff, Windows process/ACL) and the static sqlite-vec registration.
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "allow"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"

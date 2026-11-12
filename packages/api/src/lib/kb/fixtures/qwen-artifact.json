@@ -1,0 +1,27 @@
+{
+  "modelId": "qwen3-embedding-0.6b-q8_0",
+  "fileName": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+  "sizeBytes": 639150592,
+  "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+  "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf",
+  "dimensions": 1024,
+  "pooling": "LAST",
+  "queryPrefix": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ",
+  "addBos": false,
+  "addEos": true,
+  "eosTokenId": 151643,
+  "contextTiers": [1024, 2048, 4096, 8192],
+  "memoryEstimates": {
+    "1024": 1220542464,
+    "2048": 1337982976,
+    "4096": 1572864000,
+    "8192": 2042626048
+  },
+  "allowedHosts": [
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "cas-bridge.xethub.hf.co",
+    "us.aws.cdn.hf.co"
+  ],
+  "maxRedirects": 5
+}

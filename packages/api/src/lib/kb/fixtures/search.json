@@ -1,0 +1,43 @@
+{
+  "description": "Golden hybrid corpus. Fixture embedder: normalize([1 + count(alpha), 1 + count(beta)]). Fused RRF = sum over arms (vector first) of 1/(60 + rank), rank starting at 1; ties break by bytewise path then chunkIndex. Replies carry it normalized: RRF * 61 / 2 (L-25).",
+  "documents": {
+    "a.md": "alpha alpha alpha\n",
+    "b.md": "beta beta\n",
+    "c.md": "alpha beta\n",
+    "d.md": "gamma delta\n",
+    "e.md": "gamma delta\n",
+    "notes/ünï.md": "---\nid: unicode-doc\ncitations:\n  - label: Safe\n    target: https://example.invalid/a\n  - label: Inert\n    target: \"javascript:alert(1)\"\n---\nGröße 😀 naïve ![img](../media/img.png) beta beta beta omega\n"
+  },
+  "assets": [
+    {
+      "path": "media/img.png",
+      "hash": "sha256:0f0e0d0c0b0a09080706050403020100f0e0d0c0b0a090807060504030201000",
+      "size": 4,
+      "mime": "image/png"
+    }
+  ],
+  "queries": [
+    {
+      "query": "alpha",
+      "expected": [
+        { "path": "a.md", "chunkIndex": 0, "vectorRank": 1, "ftsRank": 1 },
+        { "path": "c.md", "chunkIndex": 0, "vectorRank": 2, "ftsRank": 2 },
+        { "path": "d.md", "chunkIndex": 0, "vectorRank": 3, "ftsRank": null },
+        { "path": "e.md", "chunkIndex": 0, "vectorRank": 4, "ftsRank": null },
+        { "path": "b.md", "chunkIndex": 0, "vectorRank": 5, "ftsRank": null },
+        { "path": "notes/ünï.md", "chunkIndex": 0, "vectorRank": 6, "ftsRank": null }
+      ]
+    },
+    {
+      "query": "omega",
+      "expected": [
+        { "path": "notes/ünï.md", "chunkIndex": 0, "vectorRank": 6, "ftsRank": 1 },
+        { "path": "c.md", "chunkIndex": 0, "vectorRank": 1, "ftsRank": null },
+        { "path": "d.md", "chunkIndex": 0, "vectorRank": 2, "ftsRank": null },
+        { "path": "e.md", "chunkIndex": 0, "vectorRank": 3, "ftsRank": null },
+        { "path": "b.md", "chunkIndex": 0, "vectorRank": 4, "ftsRank": null },
+        { "path": "a.md", "chunkIndex": 0, "vectorRank": 5, "ftsRank": null }
+      ]
+    }
+  ]
+}

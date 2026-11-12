@@ -1,0 +1,18 @@
+// Typechecks the repo-maintenance scripts in `scripts/`.
+//
+// These are NOT a pnpm workspace member (deliberately — they are run directly
+// from the root, not built or published), which means `turbo check-types` never
+// sees them: turbo only fans out to workspace members. Without this project,
+// ~2,600 lines that generate .env files, handle secrets, and gate CI had no
+// typecheck at all. `pnpm check-types` runs this after the turbo pass.
+{
+  "extends": "@knowledge-base/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Most scripts run through tsx; policy scripts use Node's direct TypeScript
+    // execution. Imports therefore follow the selected runtime and may use
+    // either explicit `.js` specifiers or `.ts` specifiers.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["scripts/**/*.ts"]
+}

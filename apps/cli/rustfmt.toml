@@ -1,0 +1,4 @@
+# Formatting is enforced in CI (`cargo fmt --check`). Only stable-channel
+# options are used here so `cargo fmt` works without nightly.
+edition = "2024"
+max_width = 100

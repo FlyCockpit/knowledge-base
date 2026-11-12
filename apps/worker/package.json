@@ -1,0 +1,41 @@
+{
+  "name": "worker",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/output.ts",
+  "exports": {
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "dev": "make -C ../server/native -j2 && node --import tsx src/output.ts --fenced",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
+    "check-types": "tsc --noEmit",
+    "build": "tsdown",
+    "start": "node dist/index.mjs --fenced"
+  },
+  "dependencies": {
+    "@knowledge-base/api": "workspace:*",
+    "@knowledge-base/auth": "workspace:*",
+    "@knowledge-base/db": "workspace:*",
+    "@knowledge-base/env": "workspace:*",
+    "@knowledge-base/mailer": "workspace:*",
+    "@knowledge-base/queue": "workspace:*",
+    "better-sqlite3": "catalog:",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "node-llama-cpp": "catalog:",
+    "sharp": "catalog:",
+    "sqlite-vec": "catalog:"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  }
+}

@@ -1,0 +1,171 @@
+model User {
+  id                      String              @id @default(cuid(2))
+  createdAt               DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  name                    String
+  email                   String
+  emailVerified           Boolean             @default(false)
+  image                   String?
+  // Better-Auth's admin plugin stores role as a string and supports arbitrary
+  // custom roles plus comma-separated multi-role values. Do not narrow this to
+  // a Prisma enum unless you also drop those Better-Auth capabilities.
+  role                    String              @default("user")
+  // Preferred UI locale (BCP 47 tag). Synced into the i18n detection chain
+  // ahead of localStorage / navigator so a signed-in user's choice follows
+  // them across devices. Stored as String (not enum) because the supported-
+  // locale set evolves outside the schema; new locales are added in
+  // apps/web/src/i18n/config.ts without a Prisma migration.
+  locale                  String              @default("en-US")
+  banned                  Boolean?
+  banReason               String?
+  banExpires              DateTime?           @db.Timestamptz(3)
+  twoFactorEnabled        Boolean?
+  // When forced 2FA first applied to this user (promotion to admin, or the
+  // policy turned on for their population). NULL: measured from createdAt.
+  // The enrollment grace runs from this instant (packages/auth/src/two-factor-policy.ts).
+  twoFactorGraceStartedAt DateTime?           @db.Timestamptz(3)
+  // Bumped only by the user_authority_version trigger (prisma/migrations/0_init/migration.sql)
+  // whenever an authority-relevant column or credential changes; the session
+  // cookie cache is bound to it (packages/auth/src/session-authority.ts).
+  authorityVersion        Int                 @default(0)
+  operationalAlerts       Boolean             @default(true)
+  sessions                Session[]
+  accounts                Account[]
+  twoFactors              TwoFactor[]
+  pushSubscriptions       PushSubscription[]
+  bootstrapState          BootstrapState?
+  knowledgeBases          KnowledgeBase[]
+  kbShares                KbShare[]
+  shareInvitations        ShareInvitation[]
+  kbTransfersFrom         KbTransfer[]        @relation("KbTransferFrom")
+  kbTransfersTo           KbTransfer[]        @relation("KbTransferTo")
+  auditEvents             AuditEvent[]
+  operationIntents        OperationIntent[]
+  kbAssetLineages         KbAssetLineage[]
+  stagedUploads           StagedUpload[]
+  embeddingProviders      EmbeddingProvider[]
+  sealedRecords           SealedRecord[]
+  deviceApprovals         DeviceApproval[]
+  consentIntents          ConsentIntent[]
+  oauthClients            OauthClient[]
+  oauthRefreshTokens      OauthRefreshToken[]
+  oauthAccessTokens       OauthAccessToken[]
+  oauthConsents           OauthConsent[]
+  mcpGrants               McpGrant[]
+  mcpPersonalTokens       McpPersonalToken[]
+
+  @@unique([email])
+  @@index([role])
+  // Trigram GIN for the ILIKE substring filters in `users.list`
+  // (`email`/`name` contains). The btree from @@unique([email]) only serves
+  // exact/prefix matches. Needs the `pg_trgm` extension declared on the
+  // datasource in schema.prisma.
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("user")
+}
+
+model Session {
+  id                   String              @id @default(cuid(2))
+  createdAt            DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime            @default(now()) @updatedAt @db.Timestamptz(3)
+  expiresAt            DateTime            @db.Timestamptz(3)
+  token                String
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  impersonatedBy       String?
+  activeOrganizationId String?
+  oauthRefreshTokens   OauthRefreshToken[]
+  oauthAccessTokens    OauthAccessToken[]
+
+  @@unique([token])
+  @@index([userId])
+  // Backs the daily expired-token sweep (`reap-expired-auth-tokens`), which
+  // selects id pages by `expiresAt < now`. Matches Verification.
+  @@index([expiresAt])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid(2))
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  scope                 String?
+  password              String?
+  // Better Auth scopes account identity by (issuer, accountId). Credential
+  // accounts use `local:credential`; OIDC/SSO accounts store the provider's
+  // trusted issuer.
+  issuer                String    @default("local:credential")
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid(2))
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verification")
+}
+
+model TwoFactor {
+  id                      String    @id @default(cuid(2))
+  createdAt               DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+  secret                  String
+  backupCodes             String
+  verified                Boolean   @default(true)
+  // Better Auth 1.7.4 two-factor lockout state (plugins/two-factor/schema): the adapter's
+  // schema check refuses every auth write until these columns exist.
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime? @db.Timestamptz(3)
+  userId                  String
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@map("two_factor")
+}
+
+model AppSetting {
+  // `key` is the natural primary key — every read/write looks rows up by it,
+  // so a separate cuid `id` would be dead weight. Deliberately deviates from
+  // the repo's "every model has an id" rule for this single-column lookup table.
+  key       String   @id
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  value     String
+
+  @@map("app_setting")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid(2))
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscription")
+}

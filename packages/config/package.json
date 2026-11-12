@@ -1,0 +1,30 @@
+{
+  "name": "@knowledge-base/config",
+  "license": "Apache-2.0",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./egress-address": {
+      "default": "./src/egress-address.ts"
+    },
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./biome.json": "./biome.json",
+    "./postcss.config.mjs": "./postcss.config.mjs",
+    "./locales": {
+      "default": "./src/locales.ts"
+    },
+    "./orpc-batch": {
+      "default": "./src/orpc-batch.ts"
+    },
+    "./theme-init": {
+      "default": "./src/theme-init.ts"
+    }
+  },
+  "files": [
+    "tsconfig.base.json",
+    "biome.json",
+    "postcss.config.mjs",
+    "src"
+  ]
+}

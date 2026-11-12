@@ -1,0 +1,46 @@
+{
+  "home": {
+    "description": "Self-hosted knowledge bases for people and agents."
+  },
+  "actions": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "close": "Close",
+    "copy": "Copy",
+    "copied": "Copied",
+    "delete": "Delete",
+    "deleting": "Deleting…",
+    "edit": "Edit",
+    "manage": "Manage",
+    "reload": "Reload",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "save": "Save",
+    "saveChanges": "Save changes",
+    "saving": "Saving…",
+    "tryAgain": "Try again",
+    "loadMore": "Load more",
+    "loadingMore": "Loading…"
+  },
+  "fileDrop": {
+    "ignored": "That file can't be dropped here."
+  },
+  "filePrepare": {
+    "converted": "Converted the photo so it can be uploaded.",
+    "resized": "Resized the photo to fit the upload limit.",
+    "flattened": "Animated image was converted to a still so it fits the upload limit.",
+    "tooLarge": "This image is larger than {{maxMb}} MB even after compression.",
+    "unreadable": "Couldn't read that image. Try a JPEG, PNG, WebP, or HEIC.",
+    "unsupported": "That file type can't be used as an image.",
+    "svg": "SVG files can't be uploaded as images."
+  },
+  "loading": "Loading…",
+  "somethingWentWrong": "Something went wrong",
+  "help": {
+    "ariaLabel": "What does this mean?"
+  },
+  "breadcrumbs": {
+    "ariaLabel": "Breadcrumb"
+  }
+}

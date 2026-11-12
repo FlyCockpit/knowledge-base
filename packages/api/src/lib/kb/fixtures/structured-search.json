@@ -1,0 +1,559 @@
+{
+  "description": "Golden exact structured-filter corpus shared by the TS server and the local Rust backend. Commit timestamp is fixed to commitTimestamp; documents without valid_from use it. Queryless results order by bytewise path then table row index (row-less hits sort first per document); each item is the containing chunk plus the exact stored row. Hybrid cases use the search.json fixture embedder normalize([1 + count(alpha), 1 + count(beta)]) and score = sum over arms (vector first) of 1/(60 + rank).",
+  "commitTimestamp": "2026-03-01T00:00:00Z",
+  "documents": {
+    "people.md": "---\ntype: roster\ntitle: Straße Team\ntags: [work, café]\nvalid_from: \"2026-01-01T00:00:00Z\"\n---\nalpha roster for Ada\n\n| name | age | active | note |\n|---|---|---|---|\n| Ada | 36 | true | null |\n| Bob | 36 | false | \"x\" |\n| Cy | \"36\" | true | plain |\n",
+    "plans.md": "---\ntype: roster\ntitle: Plans\ntags: [work]\nvalid_from: \"2026-06-01T00:00:00.5Z\"\n---\n| name | age | active |\n|---|---|---|\n| Ada | 40 | false |\n",
+    "prose.md": "alpha beta prose without tables\n",
+    "empty.md": "",
+    "notes/ünï.md": "---\ntype: note\ntitle: ÜBER Notes\ntags: [Café]\nvalid_from: \"2025-12-31T23:59:59.999999999Z\"\n---\nflag table\n\n| k | v |\n|---|---|\n| flag | true |\n| flag | 1 |\n"
+  },
+  "structured": [
+    {
+      "name": "same-row AND",
+      "input": {
+        "structured": [
+          {
+            "column": "name",
+            "equals": "Ada"
+          },
+          {
+            "column": "age",
+            "equals": 36
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "conditions on different rows never combine",
+      "input": {
+        "structured": [
+          {
+            "column": "name",
+            "equals": "Ada"
+          },
+          {
+            "column": "active",
+            "equals": false
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 40,
+            "active": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "JSON null",
+      "input": {
+        "structured": [
+          {
+            "column": "note",
+            "equals": null
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "JSON number",
+      "input": {
+        "structured": [
+          {
+            "column": "age",
+            "equals": 36
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        },
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Bob",
+            "age": 36,
+            "active": false,
+            "note": "x"
+          }
+        }
+      ]
+    },
+    {
+      "name": "JSON string is not a number",
+      "input": {
+        "structured": [
+          {
+            "column": "age",
+            "equals": "36"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Cy",
+            "age": "36",
+            "active": true,
+            "note": "plain"
+          }
+        }
+      ]
+    },
+    {
+      "name": "JSON boolean",
+      "input": {
+        "structured": [
+          {
+            "column": "active",
+            "equals": true
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        },
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Cy",
+            "age": "36",
+            "active": true,
+            "note": "plain"
+          }
+        }
+      ]
+    },
+    {
+      "name": "boolean true is not 1",
+      "input": {
+        "structured": [
+          {
+            "column": "v",
+            "equals": true
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "k": "flag",
+            "v": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "number 1 is not true",
+      "input": {
+        "structured": [
+          {
+            "column": "v",
+            "equals": 1
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "k": "flag",
+            "v": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "string true is not boolean",
+      "input": {
+        "structured": [
+          {
+            "column": "v",
+            "equals": "true"
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "name": "unknown column",
+      "input": {
+        "structured": [
+          {
+            "column": "missing",
+            "equals": null
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "name": "row predicates skip row-less and empty documents",
+      "input": {
+        "structured": [
+          {
+            "column": "name",
+            "equals": "Ada"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        },
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 40,
+            "active": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "title Unicode casefold ß",
+      "input": {
+        "title": "STRASSE"
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "title Unicode casefold Ü",
+      "input": {
+        "title": "über"
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "title substring",
+      "input": {
+        "title": "an"
+      },
+      "expected": [
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "tag exact membership",
+      "input": {
+        "tags": ["café"]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "tag is case-sensitive",
+      "input": {
+        "tags": ["Café"]
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "all tags required",
+      "input": {
+        "tags": ["work", "café"]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "tag shared",
+      "input": {
+        "tags": ["work"]
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        },
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "after inclusive, before exclusive; commit time without valid_from",
+      "input": {
+        "timestamp": {
+          "after": "2026-01-01T00:00:00Z",
+          "before": "2026-06-01T00:00:00.5Z"
+        }
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        },
+        {
+          "path": "prose.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "after inclusive at fractional boundary",
+      "input": {
+        "timestamp": {
+          "after": "2026-06-01T00:00:00.500Z"
+        }
+      },
+      "expected": [
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "before exclusive at nanosecond boundary",
+      "input": {
+        "timestamp": {
+          "before": "2026-01-01T00:00:00Z"
+        }
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "one nanosecond later includes the boundary document",
+      "input": {
+        "timestamp": {
+          "before": "2026-01-01T00:00:00.000000001Z"
+        }
+      },
+      "expected": [
+        {
+          "path": "notes/ünï.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        },
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "type exact",
+      "input": {
+        "type": "roster"
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        },
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "matchedRow": null
+        }
+      ]
+    },
+    {
+      "name": "type is case-sensitive",
+      "input": {
+        "type": "Roster"
+      },
+      "expected": []
+    },
+    {
+      "name": "type and row",
+      "input": {
+        "type": "roster",
+        "structured": [
+          {
+            "column": "name",
+            "equals": "Zed"
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "name": "conflicting same-column conditions",
+      "input": {
+        "structured": [
+          {
+            "column": "age",
+            "equals": 36
+          },
+          {
+            "column": "age",
+            "equals": 40
+          }
+        ]
+      },
+      "expected": []
+    }
+  ],
+  "hybrid": [
+    {
+      "name": "row filter inside both arms",
+      "input": {
+        "query": "Ada",
+        "structured": [
+          {
+            "column": "name",
+            "equals": "Ada"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "vectorRank": 1,
+          "ftsRank": 1,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 40,
+            "active": false
+          }
+        },
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "vectorRank": 2,
+          "ftsRank": 2,
+          "matchedRow": {
+            "name": "Ada",
+            "age": 36,
+            "active": true,
+            "note": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "document filter inside both arms",
+      "input": {
+        "query": "alpha",
+        "type": "roster"
+      },
+      "expected": [
+        {
+          "path": "people.md",
+          "chunkIndex": 0,
+          "vectorRank": 1,
+          "ftsRank": 1,
+          "matchedRow": null
+        },
+        {
+          "path": "plans.md",
+          "chunkIndex": 0,
+          "vectorRank": 2,
+          "ftsRank": null,
+          "matchedRow": null
+        }
+      ]
+    }
+  ]
+}

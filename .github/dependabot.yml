@@ -1,0 +1,83 @@
+version: 2
+
+# Supply-chain guardrail: `cooldown.default-days` makes Dependabot ignore recent
+# releases when opening version-update PRs. npm is set to 7 days so Dependabot
+# does not open PRs before pnpm's `minimumReleaseAge` gate can accept them; the
+# other ecosystems use 3 days as a lightweight compromised-release buffer. Notes:
+#   - Cooldown applies to VERSION updates only. Dependabot SECURITY updates are
+#     NOT delayed, so a real CVE fix still lands immediately.
+#   - With grouped updates, cooldown is evaluated per dependency: a too-young
+#     package is simply held back and folded into a later PR; the rest of the
+#     group still ships on schedule.
+#   - If a security fix is newer than 7 days, temporarily add it to
+#     pnpm-workspace.yaml `minimumReleaseAgeExclude` with the advisory and
+#     removal date, then remove the exclusion once it ages past the gate.
+
+updates:
+  # GitHub Actions — keeps SHA-pinned actions current. Dependabot rewrites the
+  # SHA in the `uses:` and updates the trailing `# vN` comment so the pin
+  # pattern stays readable in PR diffs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Docker base images: one digest-pinned node:26-trixie-slim reference in
+  # every stage of Dockerfile, Dockerfile.worker and
+  # Dockerfile.dev (Dependabot bumps them together). Test fixtures read the
+  # reference from Dockerfile (packages/test-utils/src/kb/node-image.mjs) and
+  # `pnpm docker:check-copy` fails if any stage drifts. Scans every Dockerfile
+  # under the repo root.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+
+  # Compose service images at the repository root.
+  - package-ecosystem: docker-compose
+    directory: /
+    target-branch: main
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      compose-images:
+        patterns: ["*"]
+
+  # Cargo — covers the companion Rust CLI workspace (`apps/cli`). Remove this
+  # block if you remove the CLI (apps/cli/AGENTS.md).
+  - package-ecosystem: cargo
+    directory: /apps/cli
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      cargo-minor:
+        update-types: ["minor", "patch"]
+
+  # npm — covers package.json files across the pnpm workspace.
+  #
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]

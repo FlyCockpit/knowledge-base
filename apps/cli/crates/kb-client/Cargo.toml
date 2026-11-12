@@ -1,0 +1,64 @@
+# Reusable kb/1 protocol types for the `kb` CLI and future hosts (Cockpit).
+# This crate must never depend on the CLI package or its UI/argument crates:
+# `tests/contract.rs` checks the resolved dependency graph for back-edges.
+[package]
+name = "kb-client"
+version = "1.0.0"
+edition = "2024"
+publish = false
+rust-version.workspace = true
+description = "Typed kb/1 protocol contract for knowledge-base MCP clients"
+authors = ["FlyCockpit LLC"]
+license = "Apache-2.0"
+repository = "https://github.com/FlyCockpit/knowledge-base"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+# Correctly rounded IEEE-754 decimals, matching JSON.parse for filter inputs
+# and scalar rows/responses even when this crate is built without kb-local.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+# NFC/NFKC checks for the kb/1 path normalizer and case-fold keys; the TS
+# reference normalizer (`packages/api/src/lib/kb/paths.ts`) uses the same forms.
+unicode-normalization = "0.1.26"
+# Stateless MCP HTTP transport. rustls only, no default features:
+# no cookie jar, no system proxy, no decompression, no HTTP/2 negotiation
+# surprises. `rustls-no-provider` + the direct `rustls` dependency select the
+# `ring` provider explicitly (reqwest's `rustls` feature would pull aws-lc-rs,
+# which needs a C/cmake toolchain), mirroring ws-model-proxy's CLI.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Awaitable cancellation/deadlines and CPU-only encoding/decoding offload.
+tokio = { version = "1.54.1", features = ["rt", "sync", "time", "macros", "io-util"] }
+# Host adapters. `ring` is already in the tree through rustls; it
+# provides SHA-1 (UUIDv5 attachment identity, Git blob SHAs), SHA-256, HKDF,
+# AES-256-GCM and the OS RNG. `ring` has no static X25519 private keys, so the
+# long-lived sealed recipient key uses x25519-dalek (`static_secrets`).
+ring = "0.17.14"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+# Wipes owned bearer tokens, decrypted sealed literals and derived keys on drop.
+zeroize = "1.9.1"
+# Canonical (strict padding, zero trailing bits) envelope field decoding.
+base64 = "0.23.1"
+
+[dev-dependencies]
+# Hand-rolled loopback HTTP fixtures for the transport tests.
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "test-util"] }
+
+# Never shipped as its own release artifact.
+[package.metadata.dist]
+dist = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "allow"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"

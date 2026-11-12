@@ -1,0 +1,73 @@
+# Local development services — Postgres + Valkey + a mailpit mail sink
+# Credentials match .env.example defaults so no extra config is needed.
+# Raw `pnpm dev` / `pnpm dev:raw` starts separate server and worker processes.
+#
+# Usage:
+#   pnpm dev:services          # start in background
+#   docker compose -f docker-compose.dev.yml down   # stop
+#   docker compose -f docker-compose.dev.yml down -v # stop + delete data
+
+name: knowledge-base-dev
+
+services:
+  postgres:
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    container_name: knowledge-base-dev-postgres
+    environment:
+      POSTGRES_DB: knowledge_base
+      POSTGRES_USER: postgres
+      # DEV ONLY — do not use this password in production.
+      POSTGRES_PASSWORD: password
+    ports:
+      # Bind to loopback only. A bare "5432:5432" binds 0.0.0.0 and, because
+      # Docker writes its own iptables rules ahead of ufw/firewalld, would
+      # expose Postgres to the public internet on a VPS — with the dev password
+      # below — even behind a closed host firewall. localhost dev is unaffected.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - knowledge_base_dev_postgres_pg18:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    container_name: knowledge-base-dev-redis
+    ports:
+      # Loopback only — see the postgres note above. Valkey has no auth here, so
+      # a 0.0.0.0 binding on a VPS is an open, unauthenticated data store.
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - knowledge_base_dev_redis:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Local mail sink — captures every outgoing email (signup verification,
+  # password reset, 2FA codes) so the real flows work offline with zero
+  # credentials. `pnpm run setup` points .env at it (SMTP_HOST=localhost,
+  # SMTP_PORT=1025); read captured mail at http://localhost:8025. Set real
+  # SMTP_* values in .env to send through a provider instead — the app
+  # switches over with no other change.
+  mailpit:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    container_name: knowledge-base-dev-mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # Loopback only — see the postgres note above.
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+
+volumes:
+  knowledge_base_dev_postgres_pg18:
+  knowledge_base_dev_redis:

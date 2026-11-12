@@ -1,0 +1,13 @@
+{
+  "subject": "Se completó la eliminación programada de datos",
+  "heading": "Se eliminaron datos programados",
+  "body": "Una migración diferida de la base de datos eliminó datos retirados.",
+  "migration": "Migración",
+  "deletedAt": "Fecha de eliminación (UTC)",
+  "effects": "Datos eliminados",
+  "unknownEffects": "Consulta contract.sql de esta migración para ver los detalles.",
+  "backup": "Paquete de recuperación cifrado",
+  "noBackup": "No se registró la identidad de un paquete.",
+  "note": "Nota de la migración",
+  "recovery": "Si no esperabas este cambio, detén los cambios y sigue docs/backup-restore.md con el paquete cifrado de KB registrado. Primero restaura en una base de datos y un volumen de datos aislados para recuperar solo lo necesario. Restaurar toda la instancia activa también revierte cambios posteriores de Postgres, Git y archivos."
+}

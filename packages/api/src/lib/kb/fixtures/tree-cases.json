@@ -1,0 +1,317 @@
+{
+  "validMinimal": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "duplicateDocumentId": {
+    "files": {
+      "index.md": "---\nid: shared\n---\n\none\n",
+      "docs/two.md": "---\nid: shared\n---\n\ntwo\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "manifestPathCollision": {
+    "files": {
+      "index.md": "# x\n",
+      "assets.md": "# assets\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[{\"path\":\"assets.md\",\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"size\":1,\"mime\":\"text/plain\"}]}\n"
+    }
+  },
+  "forbiddenControlInBody": {
+    "files": {
+      "index.md": "# x\n\u0001\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "yamlDuplicateKey": {
+    "files": {
+      "index.md": "---\nid: one\nid: two\n---\n\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "citationsShape": {
+    "files": {
+      "index.md": "---\ncitations:\n  - label: cite\n    target: https://example.com\n---\n\nok\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "crlfBody": {
+    "files": {
+      "index.md": "---\ntitle: crlf\n---\n\r\nline\r\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "unicodePath": {
+    "files": {
+      "index.md": "# root\n",
+      "docs/über.md": "# ü\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "multibyteFrontmatter": {
+    "files": {
+      "index.md": "---\ntitle: über\ntopic: 😊\n---\n\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "yamlCommentsAndBlocks": {
+    "files": {
+      "index.md": "---\n# comment\ntitle: ok # trailing\ndesc: |\n  one\n  two\ntags: [\"a,b\", c]\n---\nx\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "sigmaCaseCollision": {
+    "files": {
+      "index.md": "# root\n",
+      "docs/Σ.md": "# upper sigma\n",
+      "docs/ς.md": "# final sigma\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "sharpSCaseCollision": {
+    "files": {
+      "index.md": "# root\n",
+      "Straße.md": "# sharp s\n",
+      "STRAẞE.md": "# capital sharp s\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "yamlQuotedKeyDuplicate": {
+    "files": {
+      "index.md": "---\nid: first\n\"id\": second\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "assetsNestedBlob": {
+    "files": {
+      "index.md": "# root\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/notes.md": "# notes\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "flowCitations": {
+    "files": {
+      "index.md": "---\ncitations:\n  - {label: cite, target: https://example.com}\n---\n\nok\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "numericDocumentId": {
+    "files": {
+      "index.md": "---\nid: 1e3\n---\n\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "greekCasefoldCollision": {
+    "files": {
+      "index.md": "# root\n",
+      "ᾀ.md": "# precomposed ypogegrammeni\n",
+      "ἀι.md": "# decomposed ypogegrammeni\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "sealedInComment": {
+    "files": {
+      "index.md": "---\n# {{sealed:v1:knowledge_base:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222}}\ntitle: x\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "sealedInQuotedKey": {
+    "files": {
+      "index.md": "---\n\"{{sealed:v1:knowledge_base:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222}}\": v\ntitle: x\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "foldedLeadingBlankDuplicateId": {
+    "files": {
+      "index.md": "---\nid: >-\n\n  shared\n---\none\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "docs/two.md": "---\nid: \"\\nshared\"\n---\ntwo\n"
+    }
+  },
+  "hexadecimalDocumentId": {
+    "files": {
+      "index.md": "---\nid: 0x10\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "octalDocumentId": {
+    "files": {
+      "index.md": "---\nid: 0o20\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "indentationlessCitations": {
+    "files": {
+      "index.md": "---\ncitations:\n- label: cite\n  target: https://example.com\nid: document\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "nestedFlowArrays": {
+    "files": {
+      "index.md": "---\nrows: [[[[[[[[[value]]]]]]]]]\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "cherokeeCaseCollision": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "Ꭰ.md": "# uppercase\n",
+      "ꭰ.md": "# lowercase\n"
+    }
+  },
+  "cherokeeUppercaseVariantCollision": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "Ᏸ.md": "# uppercase\n",
+      "ᏸ.md": "# lowercase\n"
+    }
+  },
+  "escapedOutOfRangeCodepoint": {
+    "files": {
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "index.md": "---\nid: \"a\\U00110000b\"\n---\nbody\n"
+    }
+  },
+  "escapedDel": {
+    "files": {
+      "index.md": "---\nid: \"a\\u007fb\"\n---\nbody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n"
+    }
+  },
+  "nonPortablePath0": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/q?.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath1": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      " lead.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath2": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/trailing .md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath3": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/trailing.md ": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath4": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d./note.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath5": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d /note.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath6": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/ lead.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath7": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a<b.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath8": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a>b.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath9": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a:b.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath10": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a\"b.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath11": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a|b.md": "# Invalid path\n"
+    }
+  },
+  "nonPortablePath12": {
+    "files": {
+      "index.md": "# Title\n\nBody\n",
+      ".gitignore": "# kb managed\n",
+      ".assets/manifest.json": "{\"version\":1,\"entries\":[]}\n",
+      "d/a*b.md": "# Invalid path\n"
+    }
+  }
+}

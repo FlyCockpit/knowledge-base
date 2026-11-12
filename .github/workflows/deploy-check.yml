@@ -1,0 +1,50 @@
+# Optional deploy confirmation. After every push to the default branch, waits
+# until the deployed app's /ready reports this commit and is ready
+# (`pnpm deploy:check`, scripts/deploy-check.mjs). A failed run means the merge
+# did NOT go live: GitHub emails the person who merged, and the run log says
+# what the app was serving instead.
+#
+# Off until you set ONE repository variable (Settings → Secrets and variables →
+# Actions → Variables):
+#
+#   DEPLOY_CHECK_URL   the development origin that auto-deploys main, e.g. https://dev.example.com
+#
+# Production uses manually deployed release/<sha> tags; check it explicitly with deploy:check.
+# Optional: DEPLOY_CHECK_TIMEOUT (seconds, default 1800) for slow VPS builds.
+# The check reads the public /ready endpoint only; it needs no secrets.
+name: Deploy check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push supersedes the check for an older commit.
+concurrency:
+  group: deploy-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Wait for the deploy of this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 125
+    if: vars.DEPLOY_CHECK_URL != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+      - name: Wait for the app to serve this commit
+        env:
+          DEPLOY_CHECK_URL: ${{ vars.DEPLOY_CHECK_URL }}
+          DEPLOY_CHECK_TIMEOUT: ${{ vars.DEPLOY_CHECK_TIMEOUT || '1800' }}
+          COMMIT: ${{ github.sha }}
+        run: node scripts/deploy-check.mjs "$DEPLOY_CHECK_URL" --commit "$COMMIT" --timeout "$DEPLOY_CHECK_TIMEOUT"

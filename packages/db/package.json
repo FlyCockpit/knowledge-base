@@ -1,0 +1,62 @@
+{
+  "name": "@knowledge-base/db",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./seed": {
+      "default": "./prisma/seed.ts"
+    },
+    "./client": {
+      "default": "./prisma/generated/client.ts"
+    },
+    "./authority-lock": {
+      "default": "./src/authority-lock.ts"
+    },
+    "./prisma-adapter": {
+      "default": "./src/prisma-adapter.ts"
+    },
+    "./instance-heartbeat": {
+      "default": "./src/instance-heartbeat.ts"
+    },
+    "./data-deletion-notices": {
+      "default": "./src/data-deletion-notices.ts"
+    }
+  },
+  "scripts": {
+    "db:seed": "bash ../../scripts/assert-local-database.sh db:seed && prisma db seed",
+    "db:generate": "prisma generate",
+    "db:validate": "prisma validate && prisma format && prisma format --check",
+    "check-types": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:studio": "bash ../../scripts/assert-local-database.sh db:studio && prisma studio",
+    "db:migrate": "node ../../scripts/db/migrate.mjs",
+    "db:migrate:apply": "node ../../scripts/db/apply.mjs",
+    "db:migrate:rebase": "node ../../scripts/db/rebase.mjs",
+    "db:reset:local": "node ../../scripts/db/reset-local.mjs",
+    "db:worktree": "node ../../scripts/db/worktree.mjs",
+    "db:check-migrations": "node ../../scripts/db/check-migrations.mjs",
+    "db:test-migrations": "node ../../scripts/db/test-migrations.mjs",
+    "db:test-unit": "node --test ../../scripts/db/*.test.mjs ../../scripts/db/lib/*.test.mjs",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "catalog:",
+    "@knowledge-base/env": "workspace:*",
+    "dotenv": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:",
+    "prisma": "catalog:",
+    "@aws-sdk/client-s3": "catalog:"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

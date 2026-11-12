@@ -1,0 +1,247 @@
+enum KbAssetLineageSource {
+  UPLOAD
+  IMPORT
+}
+
+enum StagedUploadKind {
+  MARKDOWN
+  ASSET
+}
+
+enum StagedUploadState {
+  WRITING
+  READY
+  CONSUMED
+  EXPIRED
+  ABORTED
+}
+
+/// Actor-bound resumable upload before CAS/manifest consumption. TTL 1h.
+model StagedUpload {
+  id                  String            @id @default(uuid()) @db.Uuid
+  kbId                String
+  knowledgeBase       KnowledgeBase     @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  actorKey            String
+  actorUserIdSnapshot String
+  actorUserId         String?
+  actorUser           User?             @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  kind                StagedUploadKind
+  declaredSize        Int
+  declaredHash        String
+  declaredMime        String
+  offset              Int               @default(0)
+  /// Rolling sha256 hex (no prefix) persisted after each durable frame.
+  rollingHashHex      String            @default("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+  reservationIds      String[]
+  expiresAt           DateTime          @db.Timestamptz(3)
+  readyExpiresAt      DateTime?         @db.Timestamptz(3)
+  state               StagedUploadState @default(WRITING)
+  finishResponse      Json?
+  /// Publication ownership survives expiry/crash; cleared only by finalize or unpublished abort.
+  reservedByOpId      String?           @db.Uuid
+  consumedByOpId      String?           @db.Uuid
+  /// Null until the staging file is confirmed unlinked (or was never created) after a terminal
+  /// state transition. The sweep retries reclaim for any terminal row where this stays null,
+  /// so a failed/EIO unlink cannot strand a file forever.
+  stagingReclaimedAt  DateTime?         @db.Timestamptz(3)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([kbId, state])
+  @@index([expiresAt, state])
+  @@index([readyExpiresAt, state])
+  @@index([state, stagingReclaimedAt])
+  @@map("staged_upload")
+}
+
+enum CasPublicationState {
+  PENDING
+  FINALIZED
+  ABORTED
+}
+
+/// Owns held quota before any file effect. Recovery aborts pending attempts under the KB gate.
+model CasPublication {
+  id             String              @id @default(uuid())
+  kbId           String
+  knowledgeBase  KnowledgeBase       @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  reservationIds String[]
+  state          CasPublicationState @default(PENDING)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  finishedAt     DateTime?           @db.Timestamptz(3)
+
+  @@index([state, kbId, id])
+  @@map("cas_publication")
+}
+
+/// Global immutable content catalog. Hash alone confers no KB permission.
+model AssetBlob {
+  hash       String           @id
+  size       Int
+  mime       String
+  verifiedAt DateTime         @default(now()) @db.Timestamptz(3)
+  lineages   KbAssetLineage[]
+
+  @@map("asset_blob")
+}
+
+/// Per-KB authorization to reference a blob in manifests. Retained forever.
+model KbAssetLineage {
+  kbId                String
+  hash                String
+  createdAt           DateTime             @default(now()) @db.Timestamptz(3)
+  actorKey            String
+  actorUserIdSnapshot String
+  actorUserId         String?
+  actorUser           User?                @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  source              KbAssetLineageSource
+  sourceKbId          String?
+  sourceRev           String?
+  knowledgeBase       KnowledgeBase        @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  assetBlob           AssetBlob            @relation(fields: [hash], references: [hash], onDelete: Restrict)
+
+  @@unique([kbId, hash], map: "kb_asset_lineage_kb_hash_unique")
+  @@index([hash])
+  @@map("kb_asset_lineage")
+}
+
+enum ExportArtifactState {
+  WRITING
+  READY
+  ABORTED
+  /// The download completed and was acknowledged (or its grace window
+  /// expired); the artifact is deleted and its slot released.
+  DOWNLOADED
+}
+
+/// Private immutable ZIP and indefinite prepare receipt. Actor identity is a retained snapshot.
+model ExportArtifact {
+  id                  String              @id @db.Uuid
+  kbId                String
+  knowledgeBase       KnowledgeBase       @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  actorKey            String
+  actorUserIdSnapshot String
+  kind                String
+  idempotencyKey      String
+  requestHash         String
+  rev                 String
+  size                Int?
+  contentHash         String?
+  fileIdentity        String?
+  frameHashes         String[]            @default([])
+  offset              Int                 @default(0)
+  reservationIds      String[]
+  expiresAt           DateTime            @db.Timestamptz(3)
+  deadlineAt          DateTime            @db.Timestamptz(3)
+  state               ExportArtifactState
+  reclaimedAt         DateTime?           @db.Timestamptz(3)
+  /// When the last frame was first served. It starts the grace window:
+  /// `expiresAt` becomes this + 10 minutes, and frames stay readable (and the
+  /// slot held) until the client acknowledges or the window expires.
+  downloadCompletedAt DateTime?           @db.Timestamptz(3)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([actorKey, kbId, idempotencyKey])
+  @@index([state, expiresAt])
+  @@index([reclaimedAt, id])
+  @@map("export_artifact")
+}
+
+// S3 cache metadata is byte ownership, never authorization or a blob catalog.
+enum AssetCacheStatus {
+  FILLING
+  READY
+  INVALID
+  EVICTING
+}
+
+enum AssetStorageRole {
+  SERVER
+  WORKER
+}
+
+enum AssetRetainedStatus {
+  PENDING
+  DURABLE
+}
+
+model AssetCacheState {
+  /// Actual filesystem identity plus the assets root device/inode.
+  id                String            @id
+  storageGeneration String            @db.Uuid
+  configuration     String
+  effectiveLimit    BigInt
+  chargedBytes      BigInt            @default(0)
+  fetchSequence     BigInt            @default(0)
+  entries           AssetCacheEntry[]
+  owners            AssetCacheOwner[]
+
+  @@map("asset_cache_state")
+}
+
+model AssetCacheOwner {
+  epoch   String           @id @db.Uuid
+  cacheId String
+  cache   AssetCacheState  @relation(fields: [cacheId], references: [id], onDelete: Restrict)
+  role    AssetStorageRole
+  retired Boolean          @default(false)
+  pins    AssetCachePin[]
+
+  @@index([cacheId, role, retired])
+  @@map("asset_cache_owner")
+}
+
+model AssetCacheEntry {
+  cacheId           String
+  cache             AssetCacheState  @relation(fields: [cacheId], references: [id], onDelete: Restrict)
+  hash              String
+  incarnation       String           @unique @db.Uuid
+  size              Int
+  state             AssetCacheStatus
+  fillOwner         String           @db.Uuid
+  tempName          String
+  /// Fingerprint recorded before any payload write; null means uncertain ownership.
+  device            String?
+  inode             String?
+  mtimeNs           String?
+  ctimeNs           String?
+  /// Set before link is attempted; cleanup always checks both recorded aliases.
+  tempDirectory     String?
+  finalDirectory    String?
+  finalAlias        Boolean          @default(false)
+  cleanupAttempt    String?          @db.Uuid
+  cleanupOwner      String?          @db.Uuid
+  quotaReservations String[]
+  lastFetchSequence BigInt           @default(0)
+  pins              AssetCachePin[]
+
+  @@id([cacheId, hash])
+  @@unique([cacheId, tempName])
+  // Victim order (including C collation) and recovery keyset indexes are SQL-owned.
+  @@index([cacheId, state, hash])
+  @@map("asset_cache_entry")
+}
+
+model AssetCachePin {
+  id          String          @id @db.Uuid
+  incarnation String          @db.Uuid
+  entry       AssetCacheEntry @relation(fields: [incarnation], references: [incarnation], onDelete: Restrict)
+  ownerEpoch  String          @db.Uuid
+  owner       AssetCacheOwner @relation(fields: [ownerEpoch], references: [epoch], onDelete: Restrict)
+
+  @@index([incarnation])
+  @@index([ownerEpoch, id])
+  @@map("asset_cache_pin")
+}
+
+/// Historical generations remain inventory evidence; P5/P6 define activation.
+model AssetRetainedObject {
+  storageGeneration String              @db.Uuid
+  locator           String
+  hash              String
+  size              Int
+  state             AssetRetainedStatus @default(PENDING)
+
+  @@id([storageGeneration, locator, hash])
+  @@map("asset_retained_object")
+}

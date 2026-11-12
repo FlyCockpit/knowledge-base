@@ -1,0 +1,1477 @@
+{
+  "description": "R2-27 plain-text citation snippets shared by the server (plain-snippet.ts plainSnippet) and the CLI (kb-local citation.rs plain_snippet). `cases`: a raw snippet and its exact plain text; the second part is generated over a Markdown-heavy alphabet (deterministic xorshift seed) to pin both implementations to the same output. Code contents are literal. Ambiguous unpaired delimiters are preserved; clippedCases exercises formatting the full available source before the 240-scalar citation limit.",
+  "cases": [
+    {
+      "input": "# Postgres failover Run `pg_isready` first, then **promote** the replica.",
+      "plain": "Postgres failover Run pg_isready first, then promote the replica."
+    },
+    {
+      "input": "## Links See [the runbook](https://example.invalid/a) and ![diagram](d.png)",
+      "plain": "Links See the runbook and diagram"
+    },
+    {
+      "input": "| name | count | |---|---| | Ada | 2 |",
+      "plain": "name count Ada 2"
+    },
+    {
+      "input": "> quoted _emphasis_ and ~~gone~~ <br> ```sql select",
+      "plain": "quoted emphasis and gone select"
+    },
+    {
+      "input": "- first item - second",
+      "plain": "first item - second"
+    },
+    {
+      "input": "snake_case_name stays; 3.14 * 2 = 6.28",
+      "plain": "snake_case_name stays; 3.14 * 2 = 6.28"
+    },
+    {
+      "input": "C# and F# 2-3 a-b",
+      "plain": "C# and F# 2-3 a-b"
+    },
+    {
+      "input": "",
+      "plain": ""
+    },
+    {
+      "input": "####### seven hashes stay",
+      "plain": "####### seven hashes stay"
+    },
+    {
+      "input": "a ### b #x# c",
+      "plain": "a b #x# c"
+    },
+    {
+      "input": ":---: --- *** ___ ---x",
+      "plain": "---x"
+    },
+    {
+      "input": ">> deep quote",
+      "plain": "deep quote"
+    },
+    {
+      "input": ">>x not a quote",
+      "plain": ">>x not a quote"
+    },
+    {
+      "input": "* bullet *em* **strong** ***both***",
+      "plain": "bullet em strong both"
+    },
+    {
+      "input": "``code `with` ticks`` and `one` ```` four",
+      "plain": "code `with` ticks and one four"
+    },
+    {
+      "input": "unclosed **bold and *italic",
+      "plain": "unclosed **bold and *italic"
+    },
+    {
+      "input": "__dunder__ _under_ x_y_z _a_b_ (_paren_)",
+      "plain": "dunder under x_y_z a_b (paren)"
+    },
+    {
+      "input": "émphasis _éte_ naïve_word_ ü_ber_",
+      "plain": "émphasis éte naïve_word_ ü_ber_"
+    },
+    {
+      "input": "[ref][1] [label](u) [a [b](c) [](x) ![](y)",
+      "plain": "ref label a [b [](x)"
+    },
+    {
+      "input": "<a href=\"x\">tag</a> < not a tag > <3 </b>",
+      "plain": "tag < not a tag > <3"
+    },
+    {
+      "input": "tabs\tand nbsp　ideographic  spaces",
+      "plain": "tabs and nbsp ideographic spaces"
+    },
+    {
+      "input": "line\nbreak *em\nspan* ok",
+      "plain": "line break em span ok"
+    },
+    {
+      "input": "trailing cut **bold te…",
+      "plain": "trailing cut **bold te…"
+    },
+    {
+      "input": "～ ~~strike~~~ ~single~",
+      "plain": "～ strike~ ~single~"
+    },
+    {
+      "input": "emoji 😀 *😀* _😀_ `😀`",
+      "plain": "emoji 😀 😀 😀 😀"
+    },
+    {
+      "input": "﻿bom start",
+      "plain": "bom start"
+    },
+    {
+      "input": "+ plus bullet",
+      "plain": "plus bullet"
+    },
+    {
+      "input": "- ",
+      "plain": ""
+    },
+    {
+      "input": "|||",
+      "plain": ""
+    },
+    {
+      "input": "#",
+      "plain": ""
+    },
+    {
+      "input": "a | b",
+      "plain": "a b"
+    },
+    {
+      "input": "_é_ and _ā̆_",
+      "plain": "é and ā̆"
+    },
+    {
+      "input": "naïve ॐ_कि_ mark",
+      "plain": "naïve ॐ_कि_ mark"
+    },
+    {
+      "input": "run `**hello**` now",
+      "plain": "run **hello** now"
+    },
+    {
+      "input": "…<br>```#…_>1)/😀word```",
+      "plain": "… #…_>1)/😀word"
+    },
+    {
+      "input": "!])_`- ",
+      "plain": "!])_-"
+    },
+    {
+      "input": "éb)[x]",
+      "plain": "éb)[x]"
+    },
+    {
+      "input": "x_(_b+…](+\n",
+      "plain": "x_(_b+…](+"
+    },
+    {
+      "input": "_>)a😀bb:`[",
+      "plain": "_>)a😀bb:["
+    },
+    {
+      "input": " ##",
+      "plain": ""
+    },
+    {
+      "input": "::<br>!*`(",
+      "plain": ":: !*("
+    },
+    {
+      "input": "aé1~~[x]*> -word",
+      "plain": "aé1~~[x]*> -word"
+    },
+    {
+      "input": "_\n",
+      "plain": "_"
+    },
+    {
+      "input": "]<br>]",
+      "plain": "] ]"
+    },
+    {
+      "input": " _x](é~~",
+      "plain": "_x](é~~"
+    },
+    {
+      "input": "__ >~~](__##**",
+      "plain": "_ >~~](_##**"
+    },
+    {
+      "input": "\n(é>",
+      "plain": "(é>"
+    },
+    {
+      "input": "…<br>~~\nx_<a`word]**`",
+      "plain": "… ~~ x_<aword]**"
+    },
+    {
+      "input": " word+[",
+      "plain": "word+["
+    },
+    {
+      "input": "](<br>b [x]``` 1--- ",
+      "plain": "]( b [x] 1---"
+    },
+    {
+      "input": "*",
+      "plain": "*"
+    },
+    {
+      "input": "*__😀b😀---word#",
+      "plain": "*__😀b😀---word#"
+    },
+    {
+      "input": "_x<**[x]a:#```|<//",
+      "plain": "_x<**[x]a:# |<//"
+    },
+    {
+      "input": " a-__-__  ",
+      "plain": "a--"
+    },
+    {
+      "input": "|_x>",
+      "plain": "_x>"
+    },
+    {
+      "input": "word😀_x",
+      "plain": "word😀_x"
+    },
+    {
+      "input": "~~---]---…_x",
+      "plain": "~~---]---…_x"
+    },
+    {
+      "input": ")é ! …| [",
+      "plain": ")é ! … ["
+    },
+    {
+      "input": "x_(>[:|#/##",
+      "plain": "x_(>[: #/##"
+    },
+    {
+      "input": "_>```<br>:(\n…b",
+      "plain": "_> <br>:( …b"
+    },
+    {
+      "input": "!/__:-…<x_ b ",
+      "plain": "!/_:-…<x b"
+    },
+    {
+      "input": "`>|word```]`**…word",
+      "plain": ">|word```]**…word"
+    },
+    {
+      "input": "😀 <|/",
+      "plain": "😀 < /"
+    },
+    {
+      "input": "|_x---<1**:](-é>",
+      "plain": "_x---<1**:](-é>"
+    },
+    {
+      "input": "[x]",
+      "plain": "[x]"
+    },
+    {
+      "input": "-x_ **(\na><__**",
+      "plain": "-x_ ( a><__"
+    },
+    {
+      "input": "**](#### é<:< )*",
+      "plain": "*](#### é<:< )"
+    },
+    {
+      "input": "~~1+ <br>+```[x] )",
+      "plain": "~~1+ + [x] )"
+    },
+    {
+      "input": "]x_>*!word_x](",
+      "plain": "]x_>*!word_x]("
+    },
+    {
+      "input": ")---[x]…",
+      "plain": ")---[x]…"
+    },
+    {
+      "input": "------__😀word*##>`[1>-",
+      "plain": "------__😀word*##>[1>-"
+    },
+    {
+      "input": "\n*>/<br>>",
+      "plain": "*>/ >"
+    },
+    {
+      "input": "  >#word:<",
+      "plain": ">#word:<"
+    },
+    {
+      "input": ")**```_a]<)*!+```",
+      "plain": ")** ]<)*!+"
+    },
+    {
+      "input": "-é\n>|",
+      "plain": "-é >"
+    },
+    {
+      "input": "[ (##**--- 😀",
+      "plain": "[ (##**--- 😀"
+    },
+    {
+      "input": ")![1~~wordx_|",
+      "plain": ")![1~~wordx_"
+    },
+    {
+      "input": "](",
+      "plain": "]("
+    },
+    {
+      "input": "+]:1 #",
+      "plain": "+]:1"
+    },
+    {
+      "input": "\n _x]([1](*(_",
+      "plain": "x]([1](*("
+    },
+    {
+      "input": "## ",
+      "plain": ""
+    },
+    {
+      "input": ")\n\n-----b",
+      "plain": ") -----b"
+    },
+    {
+      "input": "\n/~~##word-`*…: >",
+      "plain": "/~~##word-*…: >"
+    },
+    {
+      "input": "##/>é-(`__|*/",
+      "plain": "##/>é-(__|*/"
+    },
+    {
+      "input": ":]_x:_x```",
+      "plain": ":]_x:_x"
+    },
+    {
+      "input": ":x_a é",
+      "plain": ":x_a é"
+    },
+    {
+      "input": "/_ [_x_](_x~~",
+      "plain": "/_ [x](_x~~"
+    },
+    {
+      "input": "b[[a]…**x_",
+      "plain": "b[[a]…**x_"
+    },
+    {
+      "input": "](>__```[x]([x]>-------",
+      "plain": "](>__ [x]([x]>-------"
+    },
+    {
+      "input": "]__1>",
+      "plain": "]__1>"
+    },
+    {
+      "input": "…",
+      "plain": "…"
+    },
+    {
+      "input": "~~x_\n ](#](\nx_)",
+      "plain": "~~x_ ](#]( x_)"
+    },
+    {
+      "input": ">```+_x:word](",
+      "plain": "+_x:word]("
+    },
+    {
+      "input": " *(>|",
+      "plain": "*(>"
+    },
+    {
+      "input": "b ",
+      "plain": "b"
+    },
+    {
+      "input": "**)word😀 )é:[x][",
+      "plain": "**)word😀 )é:[x]["
+    },
+    {
+      "input": "x_:!|",
+      "plain": "x_:!"
+    },
+    {
+      "input": "wordb_<br>|é <_!",
+      "plain": "wordb_ é <_!"
+    },
+    {
+      "input": "|--->1b",
+      "plain": "--->1b"
+    },
+    {
+      "input": "_x```!1_x[x]## )__x_`**é",
+      "plain": "_x !1_x[x]## )__x_`**é"
+    },
+    {
+      "input": "[x][x]+>\n >[x]#",
+      "plain": "x+> >[x]#"
+    },
+    {
+      "input": "---##|>",
+      "plain": "---## >"
+    },
+    {
+      "input": "\n1---<br>x_-<br>b---+_",
+      "plain": "1--- x_- b---+_"
+    },
+    {
+      "input": "```##>",
+      "plain": "##>"
+    },
+    {
+      "input": "_x\n😀|x_ ##__]1a",
+      "plain": "_x 😀 x_ ##__]1a"
+    },
+    {
+      "input": "**\n [<<br>__[x]__",
+      "plain": "** [< [x]"
+    },
+    {
+      "input": "x_…---",
+      "plain": "x_…---"
+    },
+    {
+      "input": "__é>~~é",
+      "plain": "__é>~~é"
+    },
+    {
+      "input": "*",
+      "plain": "*"
+    },
+    {
+      "input": ">… …word\n/-:---(+",
+      "plain": ">… …word /-:---(+"
+    },
+    {
+      "input": "]<`/[x]  ",
+      "plain": "]</[x]"
+    },
+    {
+      "input": "-+ ]",
+      "plain": "-+ ]"
+    },
+    {
+      "input": "]*_*__<#(word>",
+      "plain": "]_<#(word>"
+    },
+    {
+      "input": "## **/```-",
+      "plain": "**/"
+    },
+    {
+      "input": "`>`word***1 |<:****",
+      "plain": ">word1 <:*"
+    },
+    {
+      "input": "😀* \n)````~~1__",
+      "plain": "😀* ) ~~1__"
+    },
+    {
+      "input": "|#| ",
+      "plain": ""
+    },
+    {
+      "input": ">é",
+      "plain": ">é"
+    },
+    {
+      "input": "**[>1\n++```_(b!",
+      "plain": "**[>1 ++ (b!"
+    },
+    {
+      "input": "<br>|é#",
+      "plain": "é#"
+    },
+    {
+      "input": ":",
+      "plain": ":"
+    },
+    {
+      "input": "<br>**",
+      "plain": "**"
+    },
+    {
+      "input": "_[~~#[##- [< ",
+      "plain": "_[~~#[##- [<"
+    },
+    {
+      "input": "<br>)é éa>- ",
+      "plain": ")é éa>-"
+    },
+    {
+      "input": "a/-#_x| ",
+      "plain": "a/-#_x"
+    },
+    {
+      "input": "`",
+      "plain": ""
+    },
+    {
+      "input": ">…",
+      "plain": ">…"
+    },
+    {
+      "input": "x_](\n_x[x]x_*>  ][",
+      "plain": "x_]( x[x]x*> ]["
+    },
+    {
+      "input": "!__---* word",
+      "plain": "!__---* word"
+    },
+    {
+      "input": "/~~_xword__`~~** ",
+      "plain": "/~~xword_~~**"
+    },
+    {
+      "input": "-x_##",
+      "plain": "-x_##"
+    },
+    {
+      "input": "[",
+      "plain": "["
+    },
+    {
+      "input": "b<br>éa",
+      "plain": "b éa"
+    },
+    {
+      "input": "**a >](a|```😀\n[x]\n-",
+      "plain": "**a >](a 😀 [x] -"
+    },
+    {
+      "input": "   /~~wordb-`",
+      "plain": "/~~wordb-"
+    },
+    {
+      "input": ")<br>é\n]!**…****a:",
+      "plain": ") é ]!…**a:"
+    },
+    {
+      "input": "[é---b#",
+      "plain": "[é---b#"
+    },
+    {
+      "input": "**`:x_",
+      "plain": "**:x_"
+    },
+    {
+      "input": "|",
+      "plain": ""
+    },
+    {
+      "input": "… +",
+      "plain": "… +"
+    },
+    {
+      "input": "+##__",
+      "plain": "+##__"
+    },
+    {
+      "input": "](1| -_x##!> ---1---1",
+      "plain": "](1 -_x##!> ---1---1"
+    },
+    {
+      "input": "`[x][)",
+      "plain": "[x][)"
+    },
+    {
+      "input": "[x]1] (!~~_-_x```|_",
+      "plain": "[x]1] (!~~_-_x |_"
+    },
+    {
+      "input": "…+```/ /<#*…]",
+      "plain": "…+ / /<#*…]"
+    },
+    {
+      "input": "*_x*é",
+      "plain": "_xé"
+    },
+    {
+      "input": ">[```**|",
+      "plain": ">[ **|"
+    },
+    {
+      "input": "](---é ```😀~~\n)]😀",
+      "plain": "](---é 😀~~ )]😀"
+    },
+    {
+      "input": "é\n---##",
+      "plain": "é ---##"
+    },
+    {
+      "input": "---",
+      "plain": ""
+    },
+    {
+      "input": "… >",
+      "plain": "… >"
+    },
+    {
+      "input": "<br>](1````1a__+ ]",
+      "plain": "](1 + ]"
+    },
+    {
+      "input": "````",
+      "plain": ""
+    },
+    {
+      "input": " --- |😀",
+      "plain": "😀"
+    },
+    {
+      "input": ">**##<br>| ---word`/",
+      "plain": ">**## ---word/"
+    },
+    {
+      "input": "-|word😀 _😀[",
+      "plain": "word😀 _😀["
+    },
+    {
+      "input": "~~\n*",
+      "plain": "~~ *"
+    },
+    {
+      "input": "\né]~~##[x]]()>]``` ---",
+      "plain": "é]~~##[x]]()>] ---"
+    },
+    {
+      "input": " wordé",
+      "plain": "wordé"
+    },
+    {
+      "input": "<br>",
+      "plain": ""
+    },
+    {
+      "input": "+",
+      "plain": "+"
+    },
+    {
+      "input": "/(-",
+      "plain": "/(-"
+    },
+    {
+      "input": "b--- __",
+      "plain": "b--- __"
+    },
+    {
+      "input": "  a>](-",
+      "plain": "a>](-"
+    },
+    {
+      "input": ">##|)<br>|__[x]a___](",
+      "plain": ">## ) [x]a_]("
+    },
+    {
+      "input": "|!-word",
+      "plain": "!-word"
+    },
+    {
+      "input": ">",
+      "plain": ">"
+    },
+    {
+      "input": "a*>",
+      "plain": "a*>"
+    },
+    {
+      "input": "1:__`**_ (```:😀",
+      "plain": "1:__**_ (```:😀"
+    },
+    {
+      "input": "]_x~~…(>/word :",
+      "plain": "]_x~~…(>/word :"
+    },
+    {
+      "input": "_>[x]#worda",
+      "plain": "_>[x]#worda"
+    },
+    {
+      "input": " 1\n",
+      "plain": "1"
+    },
+    {
+      "input": "1>",
+      "plain": "1>"
+    },
+    {
+      "input": ">[]((**…[ ",
+      "plain": ">[]((**…["
+    },
+    {
+      "input": "\nb#é_ x_<_xa",
+      "plain": "b#é_ x_<_xa"
+    },
+    {
+      "input": "_x",
+      "plain": "_x"
+    },
+    {
+      "input": "```1**# __a",
+      "plain": "**# __a"
+    },
+    {
+      "input": ">`|)!>…ba_x",
+      "plain": ">|)!>…ba_x"
+    },
+    {
+      "input": "/b…-----```[-\n",
+      "plain": "/b…----- [-"
+    },
+    {
+      "input": ")(](**(## ##<br>>!a` ",
+      "plain": ")(](**(## >!a"
+    },
+    {
+      "input": "é ##|\n##* |_x<br> ",
+      "plain": "é ##* _x"
+    },
+    {
+      "input": "<br>…)[x]é",
+      "plain": "…)[x]é"
+    },
+    {
+      "input": "a",
+      "plain": "a"
+    },
+    {
+      "input": ">word+-:[<<br>~~] ",
+      "plain": ">word+-:[< ~~]"
+    },
+    {
+      "input": "](<b",
+      "plain": "](<b"
+    },
+    {
+      "input": "_x+😀<br>é ",
+      "plain": "_x+😀 é"
+    },
+    {
+      "input": "~~|…1\nb",
+      "plain": "~~ …1 b"
+    },
+    {
+      "input": "!*#1 <  )a**_",
+      "plain": "!#1 < )a*_"
+    },
+    {
+      "input": "](` **>##",
+      "plain": "]( **>##"
+    },
+    {
+      "input": "é]__+`",
+      "plain": "é]__+"
+    },
+    {
+      "input": "word1😀",
+      "plain": "word1😀"
+    },
+    {
+      "input": "#)]---1---~~`1__",
+      "plain": "#)]---1---~~1__"
+    },
+    {
+      "input": "`---```#😀+_x ~~\n> ",
+      "plain": "---```#😀+_x ~~ >"
+    },
+    {
+      "input": ":é*+<br>_x**~~``` >>",
+      "plain": ":é+ _x*~~ >>"
+    },
+    {
+      "input": "_>##",
+      "plain": "_>##"
+    },
+    {
+      "input": " ]__/word#```[ <br><br>",
+      "plain": "]__/word# [ <br><br>"
+    },
+    {
+      "input": ">",
+      "plain": ">"
+    },
+    {
+      "input": "+__+x_](",
+      "plain": "+_+x]("
+    },
+    {
+      "input": ">```/",
+      "plain": "/"
+    },
+    {
+      "input": "\n``` ##+**/ ",
+      "plain": "##+**/"
+    },
+    {
+      "input": "]x_->>|)_",
+      "plain": "]x_->> )_"
+    },
+    {
+      "input": "-  x_##  _x",
+      "plain": "x_## _x"
+    },
+    {
+      "input": "b_x<)](!__``` ",
+      "plain": "b_x<)](!__"
+    },
+    {
+      "input": "```1)_<<|x_b**",
+      "plain": ")_<<|x_b**"
+    },
+    {
+      "input": "|",
+      "plain": ""
+    },
+    {
+      "input": "_[ ((:",
+      "plain": "_[ ((:"
+    },
+    {
+      "input": "😀 **<br>)é",
+      "plain": "😀 ** )é"
+    },
+    {
+      "input": "+",
+      "plain": "+"
+    },
+    {
+      "input": " -/##\n____ +",
+      "plain": "-/## +"
+    },
+    {
+      "input": "!<br>…aword<br>[x]>` )`1a",
+      "plain": "! …aword [x]> )1a"
+    },
+    {
+      "input": "b_```_~~)",
+      "plain": "b_ ~~)"
+    },
+    {
+      "input": "word:+  |  ]",
+      "plain": "word:+ ]"
+    },
+    {
+      "input": "##]( *[x]…---x_/x_```b1",
+      "plain": "##]( *[x]…---x_/x_"
+    },
+    {
+      "input": "---😀>)x_[)_",
+      "plain": "---😀>)x_[)_"
+    },
+    {
+      "input": "b](<br> ",
+      "plain": "b]("
+    },
+    {
+      "input": "word_x_😀`~~1---…```(",
+      "plain": "word_x_😀~~1---…```("
+    },
+    {
+      "input": "_(##\n[ ",
+      "plain": "_(## ["
+    },
+    {
+      "input": "___#*##!x_<br>_x [##-",
+      "plain": "_#*##!x_ _x [##-"
+    },
+    {
+      "input": "😀_+\n|~~x_##-+[x]<br><br>",
+      "plain": "😀_+ ~~x_##-+[x]"
+    },
+    {
+      "input": "[x]|/](]a(_x)>",
+      "plain": "[x] /](]a(_x)>"
+    },
+    {
+      "input": "|__",
+      "plain": "__"
+    },
+    {
+      "input": ":",
+      "plain": ":"
+    },
+    {
+      "input": "-[---[",
+      "plain": "-[---["
+    },
+    {
+      "input": "_x!~~**1---|: *",
+      "plain": "_x!~~**1--- : *"
+    },
+    {
+      "input": "|--->)*>_x [x]",
+      "plain": "--->)*>_x [x]"
+    },
+    {
+      "input": "___)--- !word>---",
+      "plain": "_)--- !word>---"
+    },
+    {
+      "input": "**)1##:",
+      "plain": "**)1##:"
+    },
+    {
+      "input": ">#<br>---",
+      "plain": ">#"
+    },
+    {
+      "input": "é```<[x]",
+      "plain": "é <[x]"
+    },
+    {
+      "input": "[/+-<br>__#``` é…",
+      "plain": "[/+- __# é…"
+    },
+    {
+      "input": " ```[x_>…a|a<br>😀",
+      "plain": "[x_>…a|a<br>😀"
+    },
+    {
+      "input": " ##) )_x]… :x_<a",
+      "plain": "##) )x]… :x<a"
+    },
+    {
+      "input": "[~~word ##```*[x]",
+      "plain": "[~~word *[x]"
+    },
+    {
+      "input": "```/",
+      "plain": "/"
+    },
+    {
+      "input": "**1](1](é###__x/",
+      "plain": "**1](1](é###__x/"
+    },
+    {
+      "input": "---!<br>+: : ) > (",
+      "plain": "---! +: : ) > ("
+    },
+    {
+      "input": "[",
+      "plain": "["
+    },
+    {
+      "input": "/) ---",
+      "plain": "/)"
+    },
+    {
+      "input": "+)a/",
+      "plain": "+)a/"
+    },
+    {
+      "input": "<br>1>1##[```\n…",
+      "plain": "1>1##[ …"
+    },
+    {
+      "input": " ```é<[1-\n >+---/#",
+      "plain": "é<[1- >+---/#"
+    },
+    {
+      "input": "  :<br>](<a-",
+      "plain": ": ](<a-"
+    },
+    {
+      "input": "]<br><br>word/]( *~~/",
+      "plain": "] word/]( *~~/"
+    },
+    {
+      "input": "é[1[[x] /word…:]`b",
+      "plain": "é[1[[x] /word…:]b"
+    },
+    {
+      "input": "+😀<_]…<br>",
+      "plain": "+😀<_]…"
+    },
+    {
+      "input": ">```|>##",
+      "plain": "|>##"
+    },
+    {
+      "input": "*```>:`a]+```__+x_**",
+      "plain": ">:`a]+ _+x**"
+    },
+    {
+      "input": "b",
+      "plain": "b"
+    },
+    {
+      "input": ">_~~](é",
+      "plain": ">_~~](é"
+    },
+    {
+      "input": "**",
+      "plain": "**"
+    },
+    {
+      "input": "[x]<br>",
+      "plain": "[x]"
+    },
+    {
+      "input": "!b……a<)word```[x]<😀>😀",
+      "plain": "!b……a<)word [x]<😀>😀"
+    },
+    {
+      "input": "[x]1>\n",
+      "plain": "[x]1>"
+    },
+    {
+      "input": ">…😀1```#1bword])1/ ",
+      "plain": ">…😀1 #1bword])1/"
+    },
+    {
+      "input": ">",
+      "plain": ">"
+    },
+    {
+      "input": " :](",
+      "plain": ":]("
+    },
+    {
+      "input": "b \n[**~~>##\n__b ",
+      "plain": "b [**~~>## __b"
+    },
+    {
+      "input": ")__)<br> !word+1 ##a",
+      "plain": ")__) !word+1 ##a"
+    },
+    {
+      "input": "! bb>",
+      "plain": "! bb>"
+    },
+    {
+      "input": "__b :",
+      "plain": "__b :"
+    },
+    {
+      "input": "-#:<br>>](",
+      "plain": "-#: >]("
+    },
+    {
+      "input": "\n_#>---\n x_>##…a>",
+      "plain": "_#>--- x_>##…a>"
+    },
+    {
+      "input": "worda](b*[ ) 1word)<",
+      "plain": "worda](b*[ ) 1word)<"
+    },
+    {
+      "input": "_x<br>[x]**b",
+      "plain": "_x [x]**b"
+    },
+    {
+      "input": "## ](]…----<-…",
+      "plain": "](]…----<-…"
+    },
+    {
+      "input": "a<[]é#-é/ ##",
+      "plain": "a<[]é#-é/"
+    },
+    {
+      "input": "]",
+      "plain": "]"
+    },
+    {
+      "input": "])>\n_x!:",
+      "plain": "])> _x!:"
+    },
+    {
+      "input": "a|",
+      "plain": "a"
+    },
+    {
+      "input": "/<br>**",
+      "plain": "/ **"
+    },
+    {
+      "input": "```>😀( ",
+      "plain": ">😀("
+    },
+    {
+      "input": "__-<br>a(😀b-](|",
+      "plain": "__- a(😀b-]("
+    },
+    {
+      "input": "__",
+      "plain": "__"
+    },
+    {
+      "input": "x_~~",
+      "plain": "x_~~"
+    },
+    {
+      "input": "é",
+      "plain": "é"
+    },
+    {
+      "input": " ````",
+      "plain": ""
+    },
+    {
+      "input": "éx_<br>#_xb](1…(\n <br>",
+      "plain": "éx_ #_xb](1…("
+    },
+    {
+      "input": "a```+1word --->aax_|~~!",
+      "plain": "a +1word --->aax_|~~!"
+    },
+    {
+      "input": "  é <br> ",
+      "plain": "é"
+    },
+    {
+      "input": "<",
+      "plain": "<"
+    },
+    {
+      "input": "__`+1/[x]>😀a `",
+      "plain": "__+1/[x]>😀a"
+    },
+    {
+      "input": "__)/_x**`",
+      "plain": "__)/_x**"
+    },
+    {
+      "input": "b\n!<---word)|\n>)](<br>)",
+      "plain": "b !<---word) >)]( )"
+    },
+    {
+      "input": "(1><",
+      "plain": "(1><"
+    },
+    {
+      "input": " :|----)**:\n<br>",
+      "plain": ": ----)**:"
+    },
+    {
+      "input": " ",
+      "plain": ""
+    },
+    {
+      "input": "~~---::1😀",
+      "plain": "~~---::1😀"
+    },
+    {
+      "input": ")1---**#/<~~`😀-_[x]##",
+      "plain": ")1---**#/<~~😀-_[x]##"
+    },
+    {
+      "input": "](>",
+      "plain": "](>"
+    },
+    {
+      "input": " ---<## #_x:",
+      "plain": "---<## #_x:"
+    },
+    {
+      "input": "word😀_x-",
+      "plain": "word😀_x-"
+    },
+    {
+      "input": " ",
+      "plain": ""
+    },
+    {
+      "input": ")---…é `---a[x]`<br>!1*",
+      "plain": ")---…é ---a[x] !1*"
+    },
+    {
+      "input": " !__[__",
+      "plain": "!["
+    },
+    {
+      "input": "```(a (x_[+[é<|",
+      "plain": "(a (x_[+[é<|"
+    },
+    {
+      "input": "*/__)`[x]>)[",
+      "plain": "*/__)[x]>)["
+    },
+    {
+      "input": ":<br>word-`_[\n_xb-",
+      "plain": ": word-_[ _xb-"
+    },
+    {
+      "input": "a…*>word 😀",
+      "plain": "a…*>word 😀"
+    },
+    {
+      "input": "-+~~é`+[```**+",
+      "plain": "-+~~é+[```**+"
+    },
+    {
+      "input": "[x])|b>~~>",
+      "plain": "[x]) b>~~>"
+    },
+    {
+      "input": "__x_+  ]```_x*!é[x]~~1",
+      "plain": "_x+ ] *!é[x]~~1"
+    },
+    {
+      "input": "\nwordé~~| :` `>+x_…",
+      "plain": "wordé~~ : >+x_…"
+    },
+    {
+      "input": "1##😀😀… word`<br>+é](",
+      "plain": "1##😀😀… word<br>+é]("
+    },
+    {
+      "input": "`-__<br>`+ é1~~ <br>]",
+      "plain": "-__<br>+ é1~~ ]"
+    },
+    {
+      "input": "*!**😀]\n",
+      "plain": "!*😀]"
+    },
+    {
+      "input": "##aword>é[x] …[*|x_",
+      "plain": "##aword>é[x] …[* x_"
+    },
+    {
+      "input": "a* [x]|*~~__1!+>",
+      "plain": "a* [x] *~~__1!+>"
+    },
+    {
+      "input": " <__```---)+*<---)<br>](`",
+      "plain": "<__ )+*<---)<br>](`"
+    },
+    {
+      "input": "]a_`|b]->](b+##>",
+      "plain": "]a_|b]->](b+##>"
+    },
+    {
+      "input": ">!##>a😀> >",
+      "plain": ">!##>a😀> >"
+    },
+    {
+      "input": "<br> 1```!  word  **+é",
+      "plain": "1 ! word **+é"
+    },
+    {
+      "input": "`##`x_",
+      "plain": "##x_"
+    },
+    {
+      "input": "```](~~😀b<a](-/(",
+      "plain": "](~~😀b<a](-/("
+    },
+    {
+      "input": " # word`😀x_:```---_xa",
+      "plain": "word😀x_:```---_xa"
+    },
+    {
+      "input": "[x] (_1>*]…##",
+      "plain": "[x] (_1>*]…##"
+    },
+    {
+      "input": "`>[*b([x]!",
+      "plain": ">[*b([x]!"
+    },
+    {
+      "input": "/(!]*",
+      "plain": "/(!]*"
+    },
+    {
+      "input": "((",
+      "plain": "(("
+    },
+    {
+      "input": "b 😀1x_> éwordé[",
+      "plain": "b 😀1x_> éwordé["
+    },
+    {
+      "input": "*]1",
+      "plain": "*]1"
+    },
+    {
+      "input": " *word:",
+      "plain": "*word:"
+    },
+    {
+      "input": "1!+é|<-#   x_",
+      "plain": "1!+é <-# x_"
+    },
+    {
+      "input": "__** a_x](~~ `##",
+      "plain": "__** a_x](~~ ##"
+    },
+    {
+      "input": "😀word[x]",
+      "plain": "😀word[x]"
+    },
+    {
+      "input": "é#>😀 …\n<[](",
+      "plain": "é#>😀 … <[]("
+    },
+    {
+      "input": "(  😀**](<[](/",
+      "plain": "( 😀**](<[](/"
+    },
+    {
+      "input": "\n____-)…",
+      "plain": "__-)…"
+    },
+    {
+      "input": " >\n-+>(**",
+      "plain": "-+>(**"
+    },
+    {
+      "input": "##!(__(+<br>**",
+      "plain": "##!(__(+ **"
+    },
+    {
+      "input": "]([",
+      "plain": "](["
+    },
+    {
+      "input": "_😀x_><br>",
+      "plain": "😀x>"
+    },
+    {
+      "input": "…b<+!:",
+      "plain": "…b<+!:"
+    },
+    {
+      "input": "---//```_x_a\n+",
+      "plain": "---// +"
+    },
+    {
+      "input": "](+ +#a[x_!b---/**",
+      "plain": "](+ +#a[x_!b---/**"
+    },
+    {
+      "input": "A cut-off **bold span",
+      "plain": "A cut-off **bold span"
+    },
+    {
+      "input": "A cut-off *italic span",
+      "plain": "A cut-off *italic span"
+    },
+    {
+      "input": "bold tail*",
+      "plain": "bold tail*"
+    },
+    {
+      "input": "3.14 * 2 = 6.28",
+      "plain": "3.14 * 2 = 6.28"
+    },
+    {
+      "input": "Use `*.md` to select Markdown files.",
+      "plain": "Use *.md to select Markdown files."
+    },
+    {
+      "input": "Run printf \"%s\" file*",
+      "plain": "Run printf \"%s\" file*"
+    },
+    {
+      "input": "Use *.md to select Markdown files.",
+      "plain": "Use *.md to select Markdown files."
+    },
+    {
+      "input": "file*",
+      "plain": "file*"
+    },
+    {
+      "input": "`**literal** *literal* _literal_ <tag> | *.md file*`",
+      "plain": "**literal** *literal* _literal_ <tag> | *.md file*"
+    },
+    {
+      "input": "Use `` `*.md` `` here.",
+      "plain": "Use `*.md` here."
+    },
+    {
+      "input": "```sh\nprintf \"%s\" file*\n```",
+      "plain": "printf \"%s\" file*"
+    },
+    {
+      "input": "Use `*.md to select",
+      "plain": "Use *.md to select"
+    },
+    {
+      "input": "Literal \u00000\u0000 then `*.md`.",
+      "plain": "Literal \u00000\u0000 then *.md."
+    },
+    {
+      "input": "\u0000`*.md`",
+      "plain": "\u0000*.md"
+    },
+    {
+      "input": "`*.md`\u0000`file*`",
+      "plain": "*.md\u0000file*"
+    },
+    {
+      "input": "\u0000<em></em>\u0000:`file*`",
+      "plain": "\u0000 \u0000:file*"
+    }
+  ],
+  "clippedCases": [
+    {
+      "input": "A cut-off **bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span**",
+      "plain": "A cut-off bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span bold span…"
+    },
+    {
+      "input": "A cut-off *italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span*",
+      "plain": "A cut-off italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span italic span i…"
+    },
+    {
+      "input": "Use `*.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file*`",
+      "plain": "Use *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md file* *.md…"
+    }
+  ],
+  "maxCitationSourceScalars": 1264,
+  "stressCases": [
+    {
+      "name": "unclosed brackets",
+      "unit": "[",
+      "repeat": 2097148,
+      "tail": "text",
+      "plainUnit": "[",
+      "plainTail": "text",
+      "snippet": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[…",
+      "head": "",
+      "plainHead": ""
+    },
+    {
+      "name": "unclosed images",
+      "unit": "![",
+      "repeat": 1048574,
+      "tail": "text",
+      "plainUnit": "![",
+      "plainTail": "text",
+      "snippet": "![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![![!…",
+      "head": "",
+      "plainHead": ""
+    },
+    {
+      "name": "unclosed link targets",
+      "unit": "[x](",
+      "repeat": 524287,
+      "tail": "text",
+      "plainUnit": "[x](",
+      "plainTail": "text",
+      "snippet": "[x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]([x]…",
+      "head": "",
+      "plainHead": ""
+    },
+    {
+      "name": "unclosed reference targets",
+      "unit": "[",
+      "repeat": 2097144,
+      "tail": "text",
+      "plainUnit": "[",
+      "plainTail": "text",
+      "snippet": "[x][[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[…",
+      "head": "[x][",
+      "plainHead": "[x]["
+    },
+    {
+      "name": "many code spans",
+      "unit": "`*.md`x",
+      "repeat": 299592,
+      "tail": "text",
+      "plainUnit": "*.mdx",
+      "plainTail": "text",
+      "snippet": "*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.mdx*.md…",
+      "head": "",
+      "plainHead": ""
+    }
+  ]
+}

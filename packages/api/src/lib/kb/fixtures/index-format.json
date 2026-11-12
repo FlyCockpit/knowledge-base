@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "readableFormats": [1],
+  "vecVersion": "v0.1.9",
+  "pageSize": 4096,
+  "sliceRows": 65536,
+  "ftsSliceRows": 262144,
+  "pragmas": ["PRAGMA page_size=4096", "PRAGMA journal_mode=DELETE", "PRAGMA synchronous=OFF"],
+  "statements": [
+    "CREATE TABLE documents(path TEXT PRIMARY KEY, blob_sha TEXT NOT NULL, content_hash TEXT NOT NULL, document_id TEXT, state TEXT NOT NULL CHECK(state IN('INDEXED','EMPTY','SKIPPED_REDACTED')), original_window_count INTEGER NOT NULL, source_json TEXT NOT NULL, metadata_json TEXT NOT NULL, rows_json TEXT NOT NULL) STRICT",
+    "CREATE TABLE chunks(id INTEGER PRIMARY KEY, path TEXT NOT NULL REFERENCES documents(path), chunk_index INTEGER NOT NULL, start_token INTEGER NOT NULL, end_token INTEGER NOT NULL, start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL, text TEXT NOT NULL, snippet TEXT NOT NULL, CHECK(start_token<end_token AND start_byte<end_byte), UNIQUE(path,chunk_index)) STRICT",
+    "CREATE TABLE chunk_hash(id INTEGER PRIMARY KEY REFERENCES chunks(id), h BLOB NOT NULL CHECK(length(h)=32)) STRICT",
+    "CREATE VIRTUAL TABLE chunk_fts USING fts5(text, content='chunks', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
+    "CREATE TABLE meta(format INTEGER NOT NULL CHECK(format=1), generation_id TEXT NOT NULL, kb_id TEXT NOT NULL, commit_sha TEXT NOT NULL, fingerprint TEXT NOT NULL, dimensions INTEGER NOT NULL CHECK(dimensions BETWEEN 1 AND 2000), quantization TEXT NOT NULL CHECK(quantization IN('int8','binary_int8_rescore')), int8_scale REAL NOT NULL CHECK(int8_scale>0), document_count INTEGER NOT NULL, chunk_count INTEGER NOT NULL, vec_version TEXT NOT NULL, host_snapshot TEXT NOT NULL) STRICT"
+  ],
+  "vectorStatements": {
+    "int8": [
+      "CREATE VIRTUAL TABLE chunk_vec USING vec0(slice integer partition key, embedding int8[{dims}] distance_metric=cosine)"
+    ],
+    "binary_int8_rescore": [
+      "CREATE TABLE chunk_bits(id INTEGER PRIMARY KEY, b BLOB NOT NULL) STRICT",
+      "CREATE TABLE chunk_int8(id INTEGER PRIMARY KEY, e BLOB NOT NULL) STRICT"
+    ]
+  },
+  "lexicalMetaStatement": "CREATE TABLE meta(format INTEGER NOT NULL CHECK(format=1), generation_id TEXT NOT NULL, kb_id TEXT NOT NULL, commit_sha TEXT NOT NULL, fingerprint TEXT CHECK(fingerprint IS NULL), dimensions INTEGER CHECK(dimensions IS NULL), quantization TEXT CHECK(quantization IS NULL), int8_scale REAL CHECK(int8_scale IS NULL), document_count INTEGER NOT NULL, chunk_count INTEGER NOT NULL, vec_version TEXT NOT NULL, host_snapshot TEXT NOT NULL) STRICT",
+  "vectorReuse": {
+    "minReusedFraction": 0.5
+  }
+}

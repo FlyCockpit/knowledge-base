@@ -1,0 +1,9 @@
+{
+  "body": "Hola {{name}}, un administrador creó una cuenta para ti. Elige tu contraseña con el botón de abajo; eso también confirma tu dirección de correo.",
+  "cta": "Elegir tu contraseña",
+  "emailLabel": "Correo electrónico",
+  "expiry": "Este enlace funciona una sola vez y vence en {{hours}} horas. Si ya venció, pide al administrador que te envíe una nueva invitación.",
+  "heading": "Has sido invitado",
+  "ignoreFooter": "Si no esperabas esta invitación, puedes ignorar este correo de forma segura.",
+  "subject": "Has sido invitado"
+}

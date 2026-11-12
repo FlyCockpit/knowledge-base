@@ -1,0 +1,46 @@
+/// Immutable identity/version. Revocation clears ciphertext permanently; the row is retained.
+model SealedRecord {
+  namespace     String                @db.Uuid
+  recordId      String                @db.Uuid
+  kbId          String
+  knowledgeBase KnowledgeBase         @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  ownerId       String?
+  owner         User?                 @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  ownerSnapshot String
+  version       Int                   @default(1)
+  ciphertext    String?
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+  revokedAt     DateTime?             @db.Timestamptz(3)
+  grants        SealedConsumerGrant[]
+
+  @@id([namespace, recordId])
+  @@index([kbId, namespace, recordId])
+  @@index([ownerSnapshot])
+  @@map("sealed_record")
+}
+
+/// Exact immutable human approval. consumerId is the exact PAT grant ID.
+/// Only PATs (including CLI device-flow PATs); local-store approvals live on-device.
+/// For pat consumers grantId == consumerId and references the permanent McpGrant
+/// generation (RESTRICT): a revoked grant stays a tombstone, so the approval stays bound to
+/// that exact revoked ID and can never be re-pointed at a new generation.
+model SealedConsumerGrant {
+  namespace          String       @db.Uuid
+  recordId           String       @db.Uuid
+  record             SealedRecord @relation(fields: [namespace, recordId], references: [namespace, recordId], onDelete: Restrict)
+  consumerKind       String
+  consumerId         String
+  recipientKeyId     String       @db.Uuid
+  recipientPublicKey String
+  grantId            String?      @db.Uuid
+  grant              McpGrant?    @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  authorizerId       String
+  /// Inputs accept UTC seconds with at most three fractional digits, without rounding.
+  expiresAt          DateTime     @db.Timestamptz(3)
+  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@id([namespace, recordId, consumerKind, consumerId, recipientKeyId])
+  @@index([authorizerId])
+  @@index([grantId])
+  @@map("sealed_consumer_grant")
+}

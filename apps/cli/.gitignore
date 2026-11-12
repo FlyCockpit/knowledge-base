@@ -1,0 +1,15 @@
+# Rust build artifacts
+/target/
+
+# Backups of `cargo` may produce these
+**/*.rs.bk
+*.pdb
+
+# Local environment / editor noise
+.DS_Store
+*.swp
+.env
+.env.local
+
+# dist scratch output (release artifacts are uploaded, not committed)
+/dist-output/

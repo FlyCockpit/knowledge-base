@@ -1,0 +1,66 @@
+.git
+# Build identity only; exclude objects, config, remotes and logs. Runtime copies no .git.
+!.git/HEAD
+!.git/packed-refs
+!.git/refs/heads
+!.git/refs/heads/**
+.gitignore
+.env
+.env.*
+**/.env
+**/.env.*
+*.md
+!THIRD-PARTY-LICENSES.md
+.vscode
+.idea
+.claude
+.playwright-cli
+
+# Dependency stores
+node_modules
+**/node_modules
+.pnpm-store
+.pnpm-store*
+
+# Rust CLI — not part of the container images; keeping it out of the build
+# context stops CLI-only changes from busting Docker layer caches.
+apps/cli
+
+# Build outputs and generated artifacts
+dist
+**/dist
+build
+**/build
+coverage
+**/coverage
+packages/db/prisma/generated
+
+# Local database dumps stay out of the build context.
+backups
+**/backups
+
+# Local framework/tool caches
+.turbo
+**/.turbo
+.cache
+**/.cache
+.vite
+**/.vite
+.next
+**/.next
+.astro
+**/.astro
+apps/web/.tanstack
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Host-built supervisor links the host glibc (newer than node:26-trixie-slim). The
+# native image stage recompiles from kb-supervisor.c against image libc.
+apps/server/native/kb-supervisor
+apps/worker/native/build
+
+# Model weights must never enter the build context or image layers.
+*.gguf
+**/*.gguf
+models
+**/models/*.gguf

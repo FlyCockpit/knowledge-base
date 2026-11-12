@@ -1,0 +1,18 @@
+# typos-cli configuration — catches spelling mistakes in code, comments, and
+# docs. Run locally with: typos   (install: cargo install typos-cli)
+
+[files]
+extend-exclude = [
+    "Cargo.lock",
+    "target/",
+    "*.svg",
+    "*.png",
+]
+
+[default]
+# Rust Unicode escapes (`\u{13ba}`) are code points, not words.
+extend-ignore-re = ["\\\\u\\{[0-9a-fA-F]+\\}"]
+
+[default.extend-words]
+# Words/acronyms the checker shouldn't "correct". Map a word to itself.
+kb = "kb"

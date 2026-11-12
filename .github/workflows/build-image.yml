@@ -1,0 +1,97 @@
+name: Build container images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the default branch should cancel any in-progress build for an
+# older commit.
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token: this workflow only reads the repo. If you add a push
+# step targeting GHCR, also add `packages: write` here.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: server
+            dockerfile: ./Dockerfile
+          - name: worker
+            dockerfile: ./Dockerfile.worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Compute apt cache-bust date
+        id: apt-date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # Build the image defined by the repo-root Dockerfile but do NOT push it.
+      # The consumer of this template should add a push step (or a follow-up
+      # workflow) targeting their own registry — see the note at the bottom.
+      # `load: true` puts the built image in the local Docker daemon so the
+      # subsequent Trivy step can scan it by tag.
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: |
+            ${{ github.event.repository.name }}-${{ matrix.name }}:${{ github.sha }}
+            ${{ github.event.repository.name }}-${{ matrix.name }}:latest
+          build-args: |
+            APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          provenance: false
+
+      - name: Reclaim ephemeral Buildx cache before Trivy
+        run: |
+          set -euo pipefail
+          docker buildx prune -f --max-used-space 512MB || docker builder prune -f
+
+      # Trivy scans the built image for HIGH/CRITICAL CVEs in the base OS
+      # packages and node_modules. `ignore-unfixed: true` skips CVEs that have
+      # no patch available so we don't fail builds on advisories the user
+      # cannot resolve. Drop that flag if you want to fail on those too.
+      - name: Scan ${{ matrix.name }} image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          # Pin the Trivy binary explicitly; the action default (v0.70.0) lags.
+          version: v0.76.2
+          image-ref: ${{ github.event.repository.name }}-${{ matrix.name }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+  # Runs the production images (Dockerfile + Dockerfile.worker) behind a Caddy
+  # `tls internal` front: SSR login page, bare-import resolution inside the
+  # images, OAuth DCR, the MCP 401 challenge and in-process OAuth key
+  # verification. Same script as `pnpm smoke:image` locally.
+  image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Smoke production images
+        run: bash scripts/image-smoke.sh 3443
+
+# Validation only; versioned GHCR publishing lives in .github/workflows/release.yml.

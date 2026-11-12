@@ -1,0 +1,20 @@
+{
+  "shareInvite": {
+    "subject": "Te invitaron a una base de conocimiento",
+    "heading": "Te invitaron a una base de conocimiento",
+    "body": "{{inviter}} te invitó a la base de conocimiento \"{{kb}}\". Abre el enlace de abajo e inicia sesión con esta dirección de correo para aceptar.",
+    "cta": "Aceptar invitación",
+    "signupHint": "¿Eres nuevo? Primero crea una cuenta con esta dirección de correo; después volverás a la invitación.",
+    "signupCta": "Crear una cuenta"
+  },
+  "transferOffer": {
+    "subject": "Te ofrecieron la propiedad de una base de conocimiento",
+    "heading": "Oferta de propiedad",
+    "body": "{{inviter}} ofreció transferirte la propiedad de la base de conocimiento \"{{kb}}\". Abre el enlace de abajo para revisarla y aceptarla.",
+    "cta": "Revisar oferta",
+    "signupHint": "",
+    "signupCta": ""
+  },
+  "fallbackLabel": "Si el botón no funciona, copia este enlace en tu navegador:",
+  "ignoreFooter": "Si no esperabas este correo, puedes ignorarlo de forma segura."
+}

@@ -1,0 +1,164 @@
+[
+  {
+    "name": "complex-sequence-key",
+    "yaml": "[a, b]: x",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "complex-map-key",
+    "yaml": "{a: b}: x",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "explicit-key",
+    "yaml": "? a: b",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "flow-complex-key",
+    "yaml": "k: {[a, b]: x}",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "flow-explicit-key",
+    "yaml": "k: {? a: b}",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "reserved-at",
+    "yaml": "k: [@x]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "reserved-backtick",
+    "yaml": "k: [`x]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "nested-opener",
+    "yaml": "k: [a[b]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "nested-map-opener",
+    "yaml": "k: [a{b]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "block-reserved-at",
+    "yaml": "k: @x",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "block-closer",
+    "yaml": "k: ]x",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "sequence-indicator",
+    "yaml": "k: [- x]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "flow-colon",
+    "yaml": "k: [a: b]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "quoted-complex-keys",
+    "yaml": "\"[a, b]\": x\n\"? a\": b",
+    "value": {
+      "[a, b]": "x",
+      "? a": "b"
+    }
+  },
+  {
+    "name": "quoted-flow-indicators",
+    "yaml": "k: [\"@x\", \"a[b\", \"`x\", \"? a\", \"- x\"]",
+    "value": {
+      "k": ["@x", "a[b", "`x", "? a", "- x"]
+    }
+  },
+  {
+    "name": "block-punctuation",
+    "yaml": "k: a[b],{c}@d`e\n?key: a:b\n-dash: value",
+    "value": {
+      "k": "a[b],{c}@d`e",
+      "?key": "a:b",
+      "-dash": "value"
+    }
+  },
+  {
+    "name": "plain-flow-punctuation",
+    "yaml": "k: [a@b, x`y, ?question, -dash, http://example.invalid]",
+    "value": {
+      "k": ["a@b", "x`y", "?question", "-dash", "http://example.invalid"]
+    }
+  },
+  {
+    "name": "empty-default",
+    "yaml": "",
+    "value": {}
+  },
+  {
+    "name": "flow-comment",
+    "yaml": "k: [a #comment]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "comment-key",
+    "yaml": "a #comment: x",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "unseparated-flow-colon",
+    "yaml": "k: {a:b}",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "unseparated-numeric-flow-colon",
+    "yaml": "k: {a:1}",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "flow-colon-keys-and-quoted-key",
+    "yaml": "k: {a:b: c, \"quoted\":1, array:[1]}",
+    "value": {
+      "k": {
+        "a:b": "c",
+        "quoted": 1,
+        "array": [1]
+      }
+    }
+  },
+  {
+    "name": "plain-hash-punctuation",
+    "yaml": "a#b: value\nk: [a#b]",
+    "value": {
+      "a#b": "value",
+      "k": ["a#b"]
+    }
+  },
+  {
+    "name": "empty-flow-sequence-entry",
+    "yaml": "k: [,]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "repeated-flow-sequence-comma",
+    "yaml": "k: [a,,b]",
+    "error": "MARKDOWN_YAML"
+  },
+  {
+    "name": "legitimate-empty-flow-and-trailing-comma",
+    "yaml": "k: {empty: , other: null, array: [], trailing: [a,],}",
+    "value": {
+      "k": {
+        "empty": null,
+        "other": null,
+        "array": [],
+        "trailing": ["a"]
+      }
+    }
+  }
+]

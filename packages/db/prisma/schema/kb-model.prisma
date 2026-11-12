@@ -1,0 +1,120 @@
+enum LocalModelState {
+  DISABLED
+  DOWNLOADING
+  READY
+  FAILED
+}
+
+/// Built-in local embedding model lifecycle. One singleton for the active selection. `epoch` increments on enable/disable and native identity
+/// activation; worker
+/// progress and READY transitions CAS on it so a late download never activates.
+/// The server reads status here only; it never mounts the model volume.
+model LocalModel {
+  id                     String          @id
+  /// Active selection. Fresh singleton creation selects Gemma, disabled at 1K.
+  modelId                String          @default("embeddinggemma-2-q8_0")
+  pendingModelId         String?
+  state                  LocalModelState @default(DISABLED)
+  epoch                  Int             @default(0)
+  bytesDownloaded        BigInt          @default(0)
+  errorCode              String?
+  jobId                  String?         @unique
+  job                    DurableJob?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  /// Live DISK_VOLUME quota reservations for the in-flight download; released
+  /// or committed exactly once in the same transaction that clears this list.
+  quotaReservationIds    String[]        @default([])
+  readyAt                DateTime?       @db.Timestamptz(3)
+  updatedAt              DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
+  /// Admin runtime config: context length and K/V cache types. Part of
+  /// the SYSTEM_BUILTIN fingerprint; descriptor batches (Qwen 512, Gemma full
+  /// input) and flash attention are fixed.
+  contextTokens          Int             @default(1024)
+  kvKeyType              String          @default("f16")
+  kvValueType            String          @default("f16")
+  /// Increments on every runtime config change; re-embedding rows carry it.
+  configEpoch            Int             @default(0)
+  /// Identity of the runtime actually probed; NULL on pre-upgrade installations.
+  runtimeIdentity        String?
+  /// Durable target identity; claim/renew/settlement must match the worker binary.
+  pendingRuntimeIdentity String?
+  /// Largest child VmHWM observed under the CURRENT config (reset on change).
+  peakRssBytes           BigInt?
+  /// Memory budget the worker reported: cgroup limit, else host MemTotal.
+  memoryBudgetBytes      BigInt?
+  memoryAvailableBytes   BigInt?
+  memoryBudgetSource     String?
+  memoryReportedAt       DateTime?       @db.Timestamptz(3)
+  /// A requested runtime config awaiting its worker load probe. The
+  /// active config above is untouched until the probe succeeds.
+  pendingContextTokens   Int?
+  pendingKvKeyType       String?
+  pendingKvValueType     String?
+  /// Increments on every new request or settlement; claims and outcomes CAS on it.
+  probeEpoch             Int             @default(0)
+  /// The worker probing the pending config and how (EXCLUSIVE = serving
+  /// stopped: search is lexical-only while the claim is live).
+  probeMode              QwenProbeMode?
+  probeOwner             String?
+  probeLeaseUntil        DateTime?       @db.Timestamptz(3)
+  /// The last rejected config and its fixed error code; cleared by the next request.
+  configError            Json?
+  /// "Remove": the epoch of a disabled model whose downloaded weights the
+  /// worker deletes at its next cleanup (Disable keeps them). Cleared once done;
+  /// enabling bumps the epoch, which voids a pending request.
+  removeRequestedEpoch   Int?
+
+  @@map("kb_local_model")
+}
+
+/// Where a runtime config load probe runs.
+enum QwenProbeMode {
+  SIDE_BY_SIDE
+  EXCLUSIVE
+}
+
+enum QwenReembedState {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// Sequential re-embedding after a built-in runtime config change: one
+/// row per attached KB. Rows of older config epochs are history, not progress.
+model QwenReembed {
+  kbId          String           @id
+  knowledgeBase KnowledgeBase    @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  configEpoch   Int
+  state         QwenReembedState
+  /// Snapshot of knowledge_base.lastQueriedAt at enqueue: a stable order
+  /// (most recently queried first) for the whole run.
+  lastQueriedAt DateTime?        @db.Timestamptz(3)
+  updatedAt     DateTime         @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([state, configEpoch])
+  @@map("kb_qwen_reembed")
+}
+
+/// Deployment-wide single slot: the ONE re-embedding build in flight.
+/// A row, not a process lock, so it survives worker restarts; the build itself
+/// is an ordinary durable INDEX_KB job.
+model QwenReembedLease {
+  id           String   @id
+  kbId         String?
+  generationId String?
+  configEpoch  Int      @default(0)
+  updatedAt    DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@map("kb_qwen_reembed_lease")
+}
+
+/// Exclusive ownership of the worker model volume across worker replacement:
+/// a heartbeated lease; an expired lease (crashed/replaced worker) is taken over.
+model ModelVolumeLease {
+  id         String   @id
+  owner      String
+  fence      Int      @default(1)
+  leaseUntil DateTime @db.Timestamptz(3)
+
+  @@map("kb_model_volume_lease")
+}

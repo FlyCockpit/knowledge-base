@@ -1,0 +1,279 @@
+# Continuous integration for the companion Rust CLI (`apps/cli`).
+# Every job runs cargo from `apps/cli`; the Node/pnpm checks live in
+# pr-checks.yml. Release builds live in release.yml; this file is
+# hand-maintained.
+#
+# Removing the CLI? Delete this file along with apps/cli — see
+# apps/cli/AGENTS.md.
+name: CLI CI
+
+# Path filters must name every input the Cargo workspace builds or tests
+# against: all of apps/cli (including crates/kb-client and crates/kb-local), plus the canonical kb/1
+# protocol artifacts and path normalizer that kb-client embeds and parity-tests
+# (`packages/api/src/lib/kb/protocol/**`, `paths.ts`, shared fixtures) and the
+# kb-local drift-checked constants (`limits.ts`, `cursor.ts`, `fingerprint.ts`). A stale
+# filter silently skips checks. The contract tests read every workflow to guard
+# cargo fetch ordering, so the entire workflow directory is an input. Tag pushes ignore path filters.
+on:
+  push:
+    branches: [main]
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
+    paths:
+      - "apps/cli/**"
+      - "packages/api/src/lib/kb/protocol/**"
+      - "packages/api/src/lib/kb/paths.ts"
+      - "packages/api/src/lib/kb/limits.ts"
+      - "packages/api/src/lib/kb/cursor.ts"
+      - "packages/api/src/lib/kb/fingerprint.ts"
+      - "packages/api/src/lib/kb/embed-breaker.ts"
+      - "packages/api/src/lib/kb/fixtures/**"
+      - "packages/api/src/lib/kb/index-file/format.ts"
+      - "packages/api/src/lib/kb/index-file/writer.ts"
+      - "packages/api/src/lib/kb/local-model.ts"
+      - "packages/test-utils/src/kb/*reference.json"
+      - "packages/test-utils/src/kb/embedding-normalization.json"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "apps/cli/**"
+      - "packages/api/src/lib/kb/protocol/**"
+      - "packages/api/src/lib/kb/paths.ts"
+      - "packages/api/src/lib/kb/limits.ts"
+      - "packages/api/src/lib/kb/cursor.ts"
+      - "packages/api/src/lib/kb/fingerprint.ts"
+      - "packages/api/src/lib/kb/embed-breaker.ts"
+      - "packages/api/src/lib/kb/fixtures/**"
+      - "packages/api/src/lib/kb/index-file/format.ts"
+      - "packages/api/src/lib/kb/index-file/writer.ts"
+      - "packages/api/src/lib/kb/local-model.ts"
+      - "packages/test-utils/src/kb/*reference.json"
+      - "packages/test-utils/src/kb/embedding-normalization.json"
+      - ".github/workflows/**"
+  schedule:
+    # Check RustSec advisories regularly without making unrelated PRs flaky.
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+# Least-privilege by default.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: cli-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/cli
+
+env:
+  CARGO_TERM_COLOR: always
+  # Treat all warnings as errors across the whole workspace.
+  RUSTFLAGS: "-D warnings"
+  CARGO_BUILD_JOBS: 3
+  CMAKE_BUILD_PARALLEL_LEVEL: 3
+
+jobs:
+  # ── Tests on every OS we ship to ────────────────────────────────────────────
+  test:
+    name: test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - name: Native CPU build prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm libomp cmake
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+      # Offline cargo metadata inspects every target, including non-host crates.
+      - run: cargo fetch --locked
+      - run: node --test scripts/test-clean.test.mjs
+      - run: node scripts/test-clean.mjs cargo test --workspace --all-targets --locked
+      - name: Real SQLite FTS5 and sqlite-vec generations
+        run: node scripts/test-clean.mjs cargo test -p kb-local --test index --test index_recovery --locked
+      # Every native platform selects the real adapter; no mock or skipped lane.
+      - name: Native Linux/macOS disposable keystore smoke
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: bash scripts/native-keystore-smoke.sh
+      - name: Native Windows disposable account smoke
+        if: runner.os == 'Windows'
+        run: |
+          cargo build -p kb --locked
+          cargo test -p kb-local --test providers actual_native_ --locked -- --ignored --test-threads=1
+      # `--all-targets` skips doctests; run them explicitly.
+      - run: node scripts/test-clean.mjs cargo test --workspace --doc --locked
+
+  # ── Formatting ──────────────────────────────────────────────────────────────
+  fmt:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  # ── Lint (warnings are errors via RUSTFLAGS) ────────────────────────────────
+  clippy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - name: Native CPU build prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm libomp cmake
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+      - run: cargo clippy --workspace --all-targets --all-features --locked
+
+  # ── Minimum Supported Rust Version: full test lane on the pinned toolchain ──
+  msrv:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    # New compiler lints shouldn't fail the MSRV lane; compilation and tests do.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep in sync with `[workspace.package] rust-version` in apps/cli/Cargo.toml.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: "1.96.1"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - name: Native CPU build prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm libomp cmake
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+      # Offline cargo metadata inspects every target, including non-host crates.
+      - run: cargo fetch --locked
+      - run: node --test scripts/test-clean.test.mjs
+      - run: node scripts/test-clean.mjs cargo test --workspace --all-targets --locked
+      - run: node scripts/test-clean.mjs cargo test --workspace --doc --locked
+
+  # ── Release targets not covered by the native test matrix still compile ────
+  # dist-workspace.toml ships aarch64/x86_64 Linux GNU, aarch64/x86_64 macOS
+  # and x86_64 Windows MSVC; the test matrix runs natively on x86_64 Linux,
+  # arm64 macOS and x86_64 Windows. No silent platform drops.
+  targets:
+    name: check (${{ matrix.target }})
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # No `ubuntu-latest` label exists for arm64 runners.
+          - os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - name: Native CPU build prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm libomp cmake
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+      - run: cargo fetch --locked
+      - run: cargo check --workspace --all-targets --locked --target ${{ matrix.target }}
+      - name: Real SQLite on remaining release architecture
+        run: node scripts/test-clean.mjs cargo test -p kb-local --test index --test index_recovery --locked --target ${{ matrix.target }}
+
+  # ── Supply chain: licenses, bans, and sources ───────────────────────────────
+  # Keep deterministic policy checks blocking on PRs. RUSTSEC advisories run in
+  # the scheduled job below so new disclosures do not break unrelated PRs.
+  deny:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check bans licenses sources
+          arguments: --config apps/cli/deny.toml
+          manifest-path: apps/cli/Cargo.toml
+
+  # ── RustSec advisories ─────────────────────────────────────────────────────
+  advisories:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories
+          arguments: --config apps/cli/deny.toml
+          manifest-path: apps/cli/Cargo.toml
+
+  # ── Agent docs are in sync with apps/cli/AGENTS.md ──────────────────────────
+  docs-drift:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (2026-10-16)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/cli -> target
+      - run: cargo xtask sync-docs --check
+
+  # ── Spell check (scoped to apps/cli by its typos.toml) ──────────────────────
+  typos:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: typos-cli
+      - run: typos
+
+  # ── Project policy greps (things the compiler/clippy can't see) ─────────────
+  # Secret scanning for the whole repo (TruffleHog) runs in pr-checks.yml.
+  policy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash scripts/policy-checks.sh

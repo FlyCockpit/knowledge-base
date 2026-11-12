@@ -1,0 +1,52 @@
+enum OperationIntentPhase {
+  PREPARED
+  COMMITTING
+  FINALIZED
+  ABORTED
+}
+
+/// Durable publication journal: one logical Git ref effect per reserved intent.
+model OperationIntent {
+  opId       String    @id @default(uuid()) @db.Uuid
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+
+  kbId          String?
+  knowledgeBase KnowledgeBase? @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  /// KB_CREATE reserves this id before the KnowledgeBase row exists.
+  reservedKbId  String?
+
+  actorKey            String
+  actorUserIdSnapshot String
+  actorUserId         String?
+  actorUser           User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  operation      String
+  idempotencyKey String
+  requestHash    String
+
+  phase OperationIntentPhase @default(PREPARED)
+
+  refName String?
+  oldRef  String?
+  newRef  String?
+
+  preparedDelta  Json?
+  responseBody   Json?
+  resultRevision String?
+  resultStatus   String?
+
+  publishNonce String
+  abortReason  String?
+
+  /// Retention compacted `preparedDelta` to its integrity projection after 30 days.
+  /// Identity, hash, revision/status and the replay response are kept forever.
+  compactedAt DateTime? @db.Timestamptz(3)
+
+  @@unique([actorKey, kbId, operation, idempotencyKey], map: "operation_intent_actor_kb_op_key")
+  @@index([kbId, phase])
+  @@index([phase, createdAt])
+  @@index([compactedAt, createdAt])
+  @@map("operation_intent")
+}

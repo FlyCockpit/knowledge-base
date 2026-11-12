@@ -1,0 +1,65 @@
+enum BranchOwnerPurpose {
+  USER
+  AUTO_PR
+}
+
+enum PullRequestStatus {
+  OPEN
+  CONFLICT
+  CLOSED
+  MERGED
+}
+
+/// Reserved proposal branches (`refs/heads/pr/<n>`) and user-owned branches.
+model BranchOwner {
+  kbId          String
+  refName       String
+  ownerActorKey String
+  purpose       BranchOwnerPurpose
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  pullRequests  PullRequest[]
+
+  @@id([kbId, refName])
+  @@index([kbId, ownerActorKey])
+  @@map("branch_owner")
+}
+
+model PullRequest {
+  kbId              String
+  number            Int
+  title             String
+  sourceBranch      String
+  targetBranch      String            @default("main")
+  baseSha           String
+  headSha           String
+  targetSha         String
+  status            PullRequestStatus
+  authorActorKey    String
+  version           Int               @default(1)
+  mergeCommitSha    String?
+  mergedByActorKey  String?
+  isAutoPr          Boolean           @default(false)
+  dreamMetadata     Json?
+  /// Main head the OPEN/CONFLICT status was last computed against;
+  /// NULL = not yet checked for the current head. Reads recheck when main moved.
+  mergeCheckedSha   String?
+  mergeCheckedKey   String?
+  /// The main epoch (knowledge_base.desiredEpoch) of that check: a result is
+  /// replaced only by one computed against the same or a newer epoch.
+  mergeCheckedEpoch BigInt?
+  /// Conflicts with main this PR recorded and has not resolved: typed
+  /// items {path, kind: document|asset, baseSha}. Non-empty = CONFLICT and
+  /// never mergeable; each proposal resolving some advances it.
+  pendingConflicts  Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Restrict)
+  branchOwner   BranchOwner   @relation(fields: [kbId, sourceBranch], references: [kbId, refName], onDelete: Restrict)
+
+  @@unique([kbId, number])
+  @@index([kbId, status])
+  @@map("pull_request")
+}

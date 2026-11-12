@@ -1,0 +1,110 @@
+# docker-compose.image-smoke.yml — production-image smoke graph, driven only
+# by scripts/image-smoke.sh (`pnpm smoke:image`). It runs the images built from
+# Dockerfile and Dockerfile.worker with NODE_ENV=production behind a Caddy
+# `tls internal` HTTPS front, the shape a real deployment has (production mode
+# refuses http:// origins). Ephemeral: the script always ends with `down -v`.
+#
+# Secrets are generated per run by the script and passed in the environment;
+# nothing here is reusable outside this throwaway graph.
+
+x-runtime-env: &runtime-env
+  DATABASE_URL: postgresql://postgres:smoke@postgres:5432/knowledge_base
+  REDIS_URL: redis://redis:6379
+  KB_DATA_ROOT: /var/lib/knowledge-base
+  KB_MASTER_KEY: ${KB_MASTER_KEY:?run via scripts/image-smoke.sh}
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?run via scripts/image-smoke.sh}
+  # The public origin is the Caddy front. The server container cannot reach it
+  # (localhost inside the container is not Caddy): the smoke relies on that to
+  # prove OAuth verification never fetches its own public origin.
+  BETTER_AUTH_URL: https://localhost:${SMOKE_PORT:?run via scripts/image-smoke.sh}
+  # Production signup is closed except for this bootstrap admin, whom the
+  # smoke signs up (verified through mailpit), as a fresh deployment would.
+  ADMIN_EMAIL: admin@example.test
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  SMTP_FROM: noreply@example.test
+  KB_ASSET_S3_ENABLED: "false"
+  BACKUP_ENABLED: "false"
+
+services:
+  postgres:
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    tmpfs:
+      - /var/lib/postgresql:rw,noexec,nosuid,size=512m
+    environment:
+      POSTGRES_DB: knowledge_base
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: smoke
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  redis:
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    command: ["valkey-server", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # REST API for reading verification mail; ephemeral loopback host port.
+      - "127.0.0.1::8025"
+
+  server:
+    image: ${SMOKE_SERVER_IMAGE:?run via scripts/image-smoke.sh}
+    environment:
+      <<: *runtime-env
+      SERVER_PORT: "3000"
+      # Ephemeral database: the server is the schema leader.
+      MIGRATE_ON_START: "true"
+    volumes:
+      - kb-data:/var/lib/knowledge-base
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: ${SMOKE_WORKER_IMAGE:?run via scripts/image-smoke.sh}
+    environment:
+      <<: *runtime-env
+      MIGRATE_ON_START: "false"
+    volumes:
+      - kb-data:/var/lib/knowledge-base
+    tmpfs:
+      - /run/kb-mirror:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=0700
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
+    environment:
+      SMOKE_PORT: ${SMOKE_PORT}
+    command:
+      - sh
+      - -c
+      - |
+        printf 'https://localhost:%s {\n  tls internal\n  reverse_proxy server:3000\n}\n' "$$SMOKE_PORT" > /etc/caddy/Caddyfile
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    ports:
+      # Loopback only; the published port equals the in-container listener so
+      # the Host header matches BETTER_AUTH_URL exactly.
+      - "127.0.0.1:${SMOKE_PORT}:${SMOKE_PORT}"
+    depends_on:
+      - server
+
+volumes:
+  kb-data:

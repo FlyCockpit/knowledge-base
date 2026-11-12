@@ -1,0 +1,20 @@
+{
+  "appUpdateAvailable": "Una nueva versión está disponible. Recargando…",
+  "badRequest": "Esa solicitud no era válida.",
+  "conflict": "Eso entra en conflicto con un registro existente.",
+  "couldNotCopy": "No se pudo copiar — por favor selecciona y copia manualmente.",
+  "forbidden": "No tienes acceso a esto.",
+  "generic": "Algo no funcionó. Intenta de nuevo.",
+  "notFound": "Eso no se encontró.",
+  "pageDescription": "{{appName}} es una aplicación web",
+  "rateLimited": "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
+  "rateLimitedWithSeconds": "Demasiados intentos. Inténtalo de nuevo en {{seconds}} segundos.",
+  "rootError": "Esta página no cargó. Intenta de nuevo o recarga.",
+  "serverError": "Algo no funcionó de nuestra parte. Inténtalo de nuevo en un momento.",
+  "sessionEnded": "Tu sesión ha terminado. Inicia sesión de nuevo.",
+  "pageNotFound": {
+    "title": "Página no encontrada",
+    "description": "Esta dirección no corresponde a ninguna página. Revisa el enlace o vuelve a empezar desde la página de inicio.",
+    "home": "Ir a la página de inicio"
+  }
+}

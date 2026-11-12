@@ -1,0 +1,61 @@
+enum DurableJobState {
+  PENDING
+  PUBLISHED
+  RUNNING
+  RETRY
+  COMPLETE
+  FAILED
+  CANCELLED
+}
+
+/// Kinds with an implemented worker consumer. Later chunks extend this enum and
+/// register matching queues in jobs.ts, runtime.ts, consumer-health, and queue router.
+enum DurableJobKind {
+  PROBE
+  PROVIDER_PROBE
+  INDEX_KB
+  QUERY_EMBEDDING
+  PUSH_MIRROR
+  DOWNLOAD_MODEL
+  /// KB invitation / ownership-transfer email. Payload is ids only.
+  KB_EMAIL
+}
+
+model DurableJob {
+  id                 String                 @id @default(uuid())
+  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime               @default(now()) @updatedAt @db.Timestamptz(3)
+  dedupKey           String                 @unique
+  kind               DurableJobKind
+  desired            Json
+  state              DurableJobState        @default(PENDING)
+  attemptEpoch       Int                    @default(1)
+  attemptCount       Int                    @default(0)
+  dispatchOwner      String?
+  dispatchClaimUntil DateTime?              @db.Timestamptz(3)
+  workerOwner        String?
+  leaseUntil         DateTime?              @db.Timestamptz(3)
+  lastHeartbeatAt    DateTime?              @db.Timestamptz(3)
+  nextRunAt          DateTime               @default(now()) @db.Timestamptz(3)
+  cancelledAt        DateTime?              @db.Timestamptz(3)
+  completedAt        DateTime?              @db.Timestamptz(3)
+  lastError          String?
+  probeEffect        DurableJobProbeEffect?
+  providerRevisions  ProviderRevision[]
+  indexGeneration    IndexGeneration?
+  queryRequest       QueryEmbeddingRequest?
+  localModel         LocalModel?
+
+  @@index([state, nextRunAt])
+  @@index([dispatchClaimUntil])
+  @@map("durable_job")
+}
+
+model DurableJobProbeEffect {
+  jobId        String     @id
+  durableJob   DurableJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  attemptEpoch Int
+  marker       String
+
+  @@map("durable_job_probe_effect")
+}

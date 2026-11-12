@@ -1,0 +1,81 @@
+{
+  "$comment": "Template for .claude/settings.json (installed by `pnpm run setup` / `pnpm claude:hooks:install`; .claude/ is gitignored). The PreToolUse hook blocks the AGENTS.md Dangerous Commands list at the tool boundary; the rules live in scripts/claude-hooks/pre-tool-use.mjs and are the authoritative gate. The permissions.deny list below is a coarse second layer covering the most destructive command prefixes. Re-running the installer merges anything missing into an existing settings file, and `pnpm doctor` warns when the installed copy has drifted from this one. Claude Code asks you to trust these hooks the first time \u2014 allow them.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/pre-tool-use.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/pre-tool-use.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(doas:*)",
+      "Bash(prisma migrate dev:*)",
+      "Bash(prisma migrate reset:*)",
+      "Bash(pnpm prisma migrate dev:*)",
+      "Bash(pnpm prisma migrate reset:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma migrate reset:*)",
+      "Bash(pnpm exec prisma migrate dev:*)",
+      "Bash(pnpm exec prisma migrate reset:*)",
+      "Bash(prisma db push:*)",
+      "Bash(pnpm prisma db push:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(pnpm exec prisma db push:*)",
+      "Bash(prisma db drop:*)",
+      "Bash(pnpm prisma db drop:*)",
+      "Bash(npx prisma db drop:*)",
+      "Bash(pnpm exec prisma db drop:*)",
+      "Bash(dropdb:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -f:*)",
+      "Bash(git clean -d:*)",
+      "Bash(git clean -x:*)",
+      "Bash(docker compose down -v:*)",
+      "Bash(docker compose down --volumes:*)",
+      "Bash(docker-compose down -v:*)",
+      "Bash(docker-compose down --volumes:*)",
+      "Bash(ALLOW_NONLOCAL_DB_SEED:*)",
+      "Bash(ALLOW_NONLOCAL_DB_STUDIO:*)",
+      "Bash(bash scripts/backup/restore.sh:*)",
+      "Bash(scripts/backup/restore.sh:*)",
+      "Bash(git checkout .:*)",
+      "Bash(git checkout -- .:*)",
+      "Bash(git restore .:*)",
+      "Bash(git restore -- .:*)",
+      "Edit(apps/web/src/routeTree.gen.ts)",
+      "Write(apps/web/src/routeTree.gen.ts)",
+      "Edit(.env.example)",
+      "Write(.env.example)",
+      "Edit(apps/web/.env.example)",
+      "Write(apps/web/.env.example)",
+      "Edit(CLAUDE.md)",
+      "Write(CLAUDE.md)",
+      "Edit(.github/copilot-instructions.md)",
+      "Write(.github/copilot-instructions.md)",
+      "Edit(pnpm-lock.yaml)",
+      "Write(pnpm-lock.yaml)",
+      "Bash(node scripts/restore-archive.mjs:*)",
+      "Bash(ALLOW_NONLOCAL_DB_MIGRATE_APPLY:*)",
+      "Bash(export ALLOW_NONLOCAL_DB_MIGRATE_APPLY:*)"
+    ]
+  }
+}

@@ -1,0 +1,6310 @@
+{
+  "builtinProvider": {
+    "id": "builtinembeddingmodel000",
+    "name": "builtin"
+  },
+  "requestMeta": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {},
+    "properties": {
+      "io.modelcontextprotocol/related-task": {
+        "properties": {
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId"
+        ],
+        "type": "object"
+      },
+      "progressToken": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "schemaVersion": "kb/1",
+  "toolGroups": [
+    "read",
+    "edit",
+    "assets",
+    "export",
+    "pull_requests",
+    "index_admin",
+    "kb_admin",
+    "sealed"
+  ],
+  "toolPresets": {
+    "direct": [
+      "read",
+      "edit",
+      "assets",
+      "pull_requests"
+    ],
+    "propose": [
+      "read",
+      "edit",
+      "pull_requests"
+    ],
+    "read": [
+      "read"
+    ]
+  },
+  "tools": {
+    "knowledge_assets_import": {
+      "catalog": {
+        "description": "Copy an existing asset, by sha256 hash at a given revision, from a knowledge base you can read into this one at a path. Same commit rules as knowledge_assets_put.",
+        "groups": [
+          "assets"
+        ],
+        "minimumAccess": {
+          "kind": "propose_or_write"
+        },
+        "name": "knowledge_assets_import",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "additionalProperties": false,
+            "properties": {
+              "hash": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "kbId": {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              "rev": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kbId",
+              "rev",
+              "hash"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "path",
+          "source"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_assets_list": {
+      "catalog": {
+        "description": "List assets with their path, hash, size and MIME type. Reads main unless rev pins a commit. Paginated: pass nextCursor back as cursor.",
+        "groups": [
+          "assets"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_assets_list",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "mime": {
+                  "enum": [
+                    "text/markdown",
+                    "text/plain",
+                    "text/csv",
+                    "application/json",
+                    "application/pdf",
+                    "image/png",
+                    "image/jpeg",
+                    "image/gif",
+                    "image/webp",
+                    "image/svg+xml",
+                    "audio/mpeg",
+                    "audio/wav",
+                    "audio/ogg",
+                    "video/mp4",
+                    "video/webm"
+                  ],
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "size": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "hash",
+                "size",
+                "mime"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_assets_put": {
+      "catalog": {
+        "description": "Add a finished upload as an asset at a path. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.",
+        "groups": [
+          "assets"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_assets_put",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "path",
+          "uploadId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_bases_create": {
+      "catalog": {
+        "description": "Create a new knowledge base from a name, URL slug and description. Available only when the credential was approved to create knowledge bases.",
+        "groups": [
+          "kb_admin"
+        ],
+        "minimumAccess": {
+          "kind": "global_allow_create"
+        },
+        "name": "knowledge_bases_create",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "minLength": 10,
+            "type": "string",
+            "x-kb-metadata-text": "description"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+            "x-kb-metadata-text": "name"
+          },
+          "slug": {
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug",
+          "description",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kb": {
+            "additionalProperties": false,
+            "properties": {
+              "attachmentLocator": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "capabilities": {
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "write",
+                    "review",
+                    "manage"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "defaultBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "description": {
+                "maxLength": 2000,
+                "minLength": 10,
+                "type": "string",
+                "x-kb-metadata-text": "description"
+              },
+              "embeddingGeneration": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "id": {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              "metadataVersion": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string",
+                "x-kb-metadata-text": "name"
+              },
+              "sealedNamespace": {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              "slug": {
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "writeMode": {
+                "enum": [
+                  "direct",
+                  "proposal_required",
+                  "read_only"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "description",
+              "defaultBranch",
+              "headSha",
+              "metadataVersion",
+              "capabilities",
+              "writeMode",
+              "embeddingGeneration",
+              "attachmentLocator",
+              "sealedNamespace"
+            ],
+            "type": "object"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "kb"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_bases_delete": {
+      "catalog": {
+        "confirm": "DELETE",
+        "description": "Tombstone a knowledge base. Owner only; requires the current metadataVersion and confirm \"DELETE\".",
+        "groups": [
+          "kb_admin"
+        ],
+        "minimumAccess": {
+          "kind": "owner_manage"
+        },
+        "name": "knowledge_bases_delete",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": "DELETE",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "metadataVersion": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "metadataVersion",
+          "idempotencyKey",
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "tombstoned": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operationId",
+          "tombstoned"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_bases_get": {
+      "catalog": {
+        "description": "Get one knowledge base's metadata (name, description, head revision, metadataVersion, capabilities) and its search-index status.",
+        "groups": [],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_bases_get",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "additionalProperties": false,
+            "properties": {
+              "activeGenerationId": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "activeState": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PENDING",
+                      "BUILDING",
+                      "INDEXING",
+                      "COMPLETE",
+                      "FAILED",
+                      "SUPERSEDED"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "desiredEpoch": {
+                "type": "string"
+              },
+              "desiredGenerationId": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "desiredState": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PENDING",
+                      "BUILDING",
+                      "INDEXING",
+                      "COMPLETE",
+                      "FAILED",
+                      "SUPERSEDED"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dimensions": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fingerprint": {
+                "anyOf": [
+                  {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "freshness": {
+                "enum": [
+                  "current",
+                  "stale",
+                  "building",
+                  "failed",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "indexedCommitSha": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rebuildPending": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "EMBEDDING_SETTINGS_CHANGED",
+                      "EMBEDDING_MODEL_CHANGED",
+                      "EMBEDDING_RUNTIME_RELOADING"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "activeGenerationId",
+              "desiredGenerationId",
+              "desiredEpoch",
+              "activeState",
+              "desiredState",
+              "indexedCommitSha",
+              "headSha",
+              "dimensions",
+              "fingerprint",
+              "freshness",
+              "errorCode",
+              "rebuildPending"
+            ],
+            "type": "object"
+          },
+          "kb": {
+            "additionalProperties": false,
+            "properties": {
+              "attachmentLocator": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "capabilities": {
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "write",
+                    "review",
+                    "manage"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "defaultBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "description": {
+                "maxLength": 2000,
+                "minLength": 10,
+                "type": "string",
+                "x-kb-metadata-text": "description"
+              },
+              "embeddingGeneration": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "id": {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              "metadataVersion": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string",
+                "x-kb-metadata-text": "name"
+              },
+              "sealedNamespace": {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              "slug": {
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "writeMode": {
+                "enum": [
+                  "direct",
+                  "proposal_required",
+                  "read_only"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "description",
+              "defaultBranch",
+              "headSha",
+              "metadataVersion",
+              "capabilities",
+              "writeMode",
+              "embeddingGeneration",
+              "attachmentLocator",
+              "sealedNamespace"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "kb",
+          "index"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_bases_list": {
+      "catalog": {
+        "description": "List the knowledge bases this credential can read, with each one's ID, name, head revision and your capabilities. Paginated: pass nextCursor back as cursor.",
+        "groups": [],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_bases_list",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "attachmentLocator": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "capabilities": {
+                  "items": {
+                    "enum": [
+                      "read",
+                      "propose",
+                      "write",
+                      "review",
+                      "manage"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "defaultBranch": {
+                  "const": "main",
+                  "type": "string"
+                },
+                "description": {
+                  "maxLength": 2000,
+                  "minLength": 10,
+                  "type": "string",
+                  "x-kb-metadata-text": "description"
+                },
+                "embeddingGeneration": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-z0-9]{24,32}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "headSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z0-9]{24,32}$",
+                  "type": "string"
+                },
+                "metadataVersion": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                },
+                "name": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string",
+                  "x-kb-metadata-text": "name"
+                },
+                "sealedNamespace": {
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "type": "string"
+                },
+                "slug": {
+                  "maxLength": 63,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                  "type": "string"
+                },
+                "writeMode": {
+                  "enum": [
+                    "direct",
+                    "proposal_required",
+                    "read_only"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "slug",
+                "description",
+                "defaultBranch",
+                "headSha",
+                "metadataVersion",
+                "capabilities",
+                "writeMode",
+                "embeddingGeneration",
+                "attachmentLocator",
+                "sealedNamespace"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_bases_update": {
+      "catalog": {
+        "description": "Rename a knowledge base or change its description. Pass the current metadataVersion from knowledge_bases_get; a stale version is rejected.",
+        "groups": [
+          "kb_admin"
+        ],
+        "minimumAccess": {
+          "bit": "manage",
+          "kind": "permission"
+        },
+        "name": "knowledge_bases_update",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "description"
+            ]
+          }
+        ],
+        "properties": {
+          "description": {
+            "maxLength": 2000,
+            "minLength": 10,
+            "type": "string",
+            "x-kb-metadata-text": "description"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "metadataVersion": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string",
+            "x-kb-metadata-text": "name"
+          }
+        },
+        "required": [
+          "kbId",
+          "metadataVersion",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kb": {
+            "additionalProperties": false,
+            "properties": {
+              "attachmentLocator": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "capabilities": {
+                "items": {
+                  "enum": [
+                    "read",
+                    "propose",
+                    "write",
+                    "review",
+                    "manage"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "defaultBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "description": {
+                "maxLength": 2000,
+                "minLength": 10,
+                "type": "string",
+                "x-kb-metadata-text": "description"
+              },
+              "embeddingGeneration": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "id": {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              "metadataVersion": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "name": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string",
+                "x-kb-metadata-text": "name"
+              },
+              "sealedNamespace": {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              "slug": {
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              "writeMode": {
+                "enum": [
+                  "direct",
+                  "proposal_required",
+                  "read_only"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "description",
+              "defaultBranch",
+              "headSha",
+              "metadataVersion",
+              "capabilities",
+              "writeMode",
+              "embeddingGeneration",
+              "attachmentLocator",
+              "sealedNamespace"
+            ],
+            "type": "object"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "kb"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_changes_apply": {
+      "catalog": {
+        "description": "Apply up to 32 document and asset changes as one atomic commit. Each successful call commits: apply the first 32 changes now, then send the rest in another call using the returned commit as baseRevision. Mode \"edit\" takes create, replace, delete, assetPut and assetRemove operations; mode \"dream\" writes a consolidation of the listed source sessions. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. To update your open pull request, pass its head or current main as baseRevision: against main it moves onto main if main moved, and a CONFLICT lists any paths to write in full (rewriting a path the pull request changed also needs its proposalNumber, with proposalHeadSha set to the head you read). Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
+        "groups": [
+          "edit"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_changes_apply",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "edit"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "dream"
+                ]
+              },
+              "properties": {
+                "changes": {
+                  "minItems": 1,
+                  "type": "array"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "dream"
+                }
+              },
+              "required": [
+                "mode"
+              ]
+            },
+            "then": {
+              "properties": {
+                "changes": {
+                  "maxItems": 0,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "dream",
+                "title"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "dream": {
+                  "properties": {
+                    "upserts": {
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "upserts"
+                  ]
+                },
+                "mode": {
+                  "const": "dream"
+                }
+              },
+              "required": [
+                "mode",
+                "dream"
+              ]
+            },
+            "then": {
+              "properties": {
+                "sourceSessionIds": {
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sourceSessionIds"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changes": {
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "content": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "markdown": {
+                              "maxLength": 131072,
+                              "type": "string",
+                              "x-kb-no-control-chars": true,
+                              "x-kb-utf8-max-bytes": 131072
+                            }
+                          },
+                          "required": [
+                            "markdown"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "uploadId": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uploadId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "op": {
+                      "const": "create",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string",
+                      "x-kb-path": true
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "path",
+                    "content"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "content": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "markdown": {
+                              "maxLength": 131072,
+                              "type": "string",
+                              "x-kb-no-control-chars": true,
+                              "x-kb-utf8-max-bytes": 131072
+                            }
+                          },
+                          "required": [
+                            "markdown"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "uploadId": {
+                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uploadId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "op": {
+                      "const": "replace",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string",
+                      "x-kb-path": true
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "path",
+                    "content"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "const": "delete",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string",
+                      "x-kb-path": true
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "const": "assetPut",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string",
+                      "x-kb-path": true
+                    },
+                    "uploadId": {
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "path",
+                    "uploadId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "const": "assetRemove",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string",
+                      "x-kb-path": true
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "path"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "dream": {
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "provider": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
+                ],
+                "type": "object"
+              },
+              "redactionApplied": {
+                "const": true,
+                "type": "boolean"
+              },
+              "upserts": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "body": {
+                      "type": "string",
+                      "x-kb-utf8-max-bytes": 65536
+                    },
+                    "citations": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "label": {
+                            "maxLength": 240,
+                            "type": "string"
+                          },
+                          "target": {
+                            "maxLength": 2048,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "target"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "id": {
+                      "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$",
+                      "type": "string"
+                    },
+                    "provenance": {
+                      "const": "dream",
+                      "type": "string"
+                    },
+                    "title": {
+                      "anyOf": [
+                        {
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "title",
+                    "body",
+                    "citations",
+                    "provenance"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "type": "array"
+              }
+            },
+            "required": [
+              "model",
+              "redactionApplied",
+              "upserts"
+            ],
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "edit",
+              "dream"
+            ],
+            "type": "string"
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "mode",
+          "changes"
+        ],
+        "type": "object",
+        "x-kb-change-paths": [
+          "changes[]"
+        ],
+        "x-kb-unique-items": [
+          "sourceSessionIds[]",
+          "dream.upserts[].id"
+        ]
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_documents_create": {
+      "catalog": {
+        "description": "Create one Markdown document at a new path. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
+        "groups": [
+          "edit"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_documents_create",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "markdown": {
+                    "maxLength": 131072,
+                    "type": "string",
+                    "x-kb-no-control-chars": true,
+                    "x-kb-utf8-max-bytes": 131072
+                  }
+                },
+                "required": [
+                  "markdown"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "uploadId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "uploadId"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_documents_delete": {
+      "catalog": {
+        "confirm": "DELETE",
+        "description": "Delete one Markdown document. Requires confirm \"DELETE\", the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.",
+        "groups": [
+          "edit"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_documents_delete",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "confirm": {
+            "const": "DELETE",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "path",
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_documents_get": {
+      "catalog": {
+        "description": "Read one Markdown document by path: raw Markdown, parsed front matter, the commit it was read at, citations and referenced assets. Reads main unless rev pins a commit.",
+        "groups": [
+          "read"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_documents_get",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "path"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "assetRefs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "hash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "mime": {
+                  "enum": [
+                    "text/markdown",
+                    "text/plain",
+                    "text/csv",
+                    "application/json",
+                    "application/pdf",
+                    "image/png",
+                    "image/jpeg",
+                    "image/gif",
+                    "image/webp",
+                    "image/svg+xml",
+                    "audio/mpeg",
+                    "audio/wav",
+                    "audio/ogg",
+                    "video/mp4",
+                    "video/webm"
+                  ],
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "size": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "hash",
+                "size",
+                "mime"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "blobSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "contentHash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "documentCitations": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "maxLength": 240,
+                  "type": "string"
+                },
+                "target": {
+                  "maxLength": 2048,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "documentId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frontMatter": {
+            "additionalProperties": {},
+            "if": {
+              "properties": {
+                "citations": true
+              },
+              "required": [
+                "citations"
+              ]
+            },
+            "then": {
+              "properties": {
+                "citations": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "target": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "target"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                }
+              }
+            },
+            "type": "object",
+            "x-kb-json-depth-max": 16,
+            "x-kb-json-encoded-max-bytes": 65536
+          },
+          "markdown": {
+            "type": "string",
+            "x-kb-utf8-max-bytes": 2097152
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          }
+        },
+        "required": [
+          "path",
+          "documentId",
+          "markdown",
+          "frontMatter",
+          "commitSha",
+          "blobSha",
+          "contentHash",
+          "documentCitations",
+          "assetRefs"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_documents_list": {
+      "catalog": {
+        "description": "List Markdown document paths, optionally under a path prefix. Reads main unless rev pins a commit. Paginated: pass nextCursor back as cursor.",
+        "groups": [
+          "read"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_documents_list",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "prefix": {
+            "type": "string",
+            "x-kb-path-prefix": true
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "blobSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "commitSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "documentId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "size": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "documentId",
+                "commitSha",
+                "blobSha",
+                "size"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_documents_update": {
+      "catalog": {
+        "description": "Replace one existing Markdown document's full content. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
+        "groups": [
+          "edit"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_documents_update",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "markdown": {
+                    "maxLength": 131072,
+                    "type": "string",
+                    "x-kb-no-control-chars": true,
+                    "x-kb-utf8-max-bytes": 131072
+                  }
+                },
+                "required": [
+                  "markdown"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "uploadId": {
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "uploadId"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "proposalHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "proposalNumber": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "baseRevision",
+          "idempotencyKey",
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "changedPaths": {
+            "items": {
+              "type": "string",
+              "x-kb-path": true
+            },
+            "type": "array"
+          },
+          "commitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexJobId": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "applied",
+              "proposed",
+              "noop"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "authorActorKey": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "baseSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "headSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "mergeCommitSha": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{40}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "number": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceBranch": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "OPEN",
+                      "CONFLICT",
+                      "CLOSED",
+                      "MERGED"
+                    ],
+                    "type": "string"
+                  },
+                  "targetBranch": {
+                    "const": "main",
+                    "type": "string"
+                  },
+                  "targetSha": {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "maximum": 9007199254740991,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "sourceBranch",
+                  "targetBranch",
+                  "baseSha",
+                  "headSha",
+                  "targetSha",
+                  "status",
+                  "authorActorKey",
+                  "version",
+                  "mergeCommitSha"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionIds": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "const": "ASSET_STILL_REFERENCED",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "referencedBy": {
+                  "items": {
+                    "type": "string",
+                    "x-kb-path": true
+                  },
+                  "maxItems": 20,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "code",
+                "path",
+                "referencedBy"
+              ],
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationId",
+          "kind",
+          "commitSha",
+          "baseRevision",
+          "proposal",
+          "changedPaths",
+          "sourceSessionIds",
+          "indexJobId"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_embedding_profile_get": {
+      "catalog": {
+        "description": "Show the embedding provider and revision used for semantic search, with the index status.",
+        "groups": [
+          "index_admin"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_embedding_profile_get",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "additionalProperties": false,
+            "properties": {
+              "activeGenerationId": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "activeState": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PENDING",
+                      "BUILDING",
+                      "INDEXING",
+                      "COMPLETE",
+                      "FAILED",
+                      "SUPERSEDED"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "desiredEpoch": {
+                "type": "string"
+              },
+              "desiredGenerationId": {
+                "anyOf": [
+                  {
+                    "pattern": "^[a-z0-9]{24,32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "desiredState": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "PENDING",
+                      "BUILDING",
+                      "INDEXING",
+                      "COMPLETE",
+                      "FAILED",
+                      "SUPERSEDED"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dimensions": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fingerprint": {
+                "anyOf": [
+                  {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "freshness": {
+                "enum": [
+                  "current",
+                  "stale",
+                  "building",
+                  "failed",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "indexedCommitSha": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rebuildPending": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "EMBEDDING_SETTINGS_CHANGED",
+                      "EMBEDDING_MODEL_CHANGED",
+                      "EMBEDDING_RUNTIME_RELOADING"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "activeGenerationId",
+              "desiredGenerationId",
+              "desiredEpoch",
+              "activeState",
+              "desiredState",
+              "indexedCommitSha",
+              "headSha",
+              "dimensions",
+              "fingerprint",
+              "freshness",
+              "errorCode",
+              "rebuildPending"
+            ],
+            "type": "object"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "contextTokens": {
+                    "anyOf": [
+                      {
+                        "maximum": 9007199254740991,
+                        "minimum": -9007199254740991,
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dimensions": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "enum": [
+                      "OPENAI_COMPAT",
+                      "SYSTEM_BUILTIN"
+                    ],
+                    "type": "string"
+                  },
+                  "model": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "providerId": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9]{24,32}$",
+                        "type": "string"
+                      },
+                      {
+                        "const": "builtin",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "revision": {
+                    "maximum": 9007199254740991,
+                    "minimum": -9007199254740991,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "enum": [
+                      "ready",
+                      "revoked",
+                      "unavailable"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "providerId",
+                  "revision",
+                  "kind",
+                  "name",
+                  "model",
+                  "dimensions",
+                  "contextTokens",
+                  "status"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "profile",
+          "index"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_embedding_profile_set": {
+      "catalog": {
+        "confirm": "RUN",
+        "description": "Switch the embedding provider, which rebuilds the search index. Pass a registered providerId with its revision, or providerId \"builtin\" for the built-in model (revision optional). Requires confirm \"RUN\".",
+        "groups": [
+          "index_admin"
+        ],
+        "minimumAccess": {
+          "bit": "manage",
+          "kind": "permission"
+        },
+        "name": "knowledge_embedding_profile_set",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": "RUN",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "providerId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              {
+                "const": "builtin",
+                "type": "string"
+              }
+            ]
+          },
+          "revision": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "providerId",
+          "idempotencyKey",
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "generationId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "jobId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "PENDING",
+              "CURRENT"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "generationId",
+          "jobId",
+          "state"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_export_complete": {
+      "catalog": {
+        "description": "Release a prepared export after you finish reading it.",
+        "groups": [
+          "export"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_export_complete",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "transferId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "released": {
+            "const": true,
+            "type": "boolean"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transferId",
+          "released"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_export_prepare": {
+      "catalog": {
+        "description": "Prepare a ZIP export: kind \"whole\" for documents and assets, or \"assets\" for assets only. Returns a transferId to read with knowledge_transfer_read and release with knowledge_export_complete.",
+        "groups": [
+          "export"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_export_prepare",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "assets",
+              "whole"
+            ],
+            "type": "string"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "kind",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "expiresAt": {
+            "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+            "type": "string",
+            "x-kb-iso-utc-instant": true
+          },
+          "mime": {
+            "const": "application/zip",
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "transferId",
+          "rev",
+          "size",
+          "contentHash",
+          "expiresAt",
+          "mime"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_index_rebuild": {
+      "catalog": {
+        "confirm": "RUN",
+        "description": "Request a full rebuild of the search index. Requires confirm \"RUN\".",
+        "groups": [
+          "index_admin"
+        ],
+        "minimumAccess": {
+          "bit": "manage",
+          "kind": "permission"
+        },
+        "name": "knowledge_index_rebuild",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": "RUN",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "idempotencyKey",
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "generationId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "jobId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "state": {
+            "const": "PENDING",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "generationId",
+          "jobId",
+          "state"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_index_status": {
+      "catalog": {
+        "description": "Show whether the search index is current: indexed commit versus head, build state, freshness and any error code.",
+        "groups": [
+          "index_admin"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_index_status",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "activeGenerationId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "activeState": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PENDING",
+                  "BUILDING",
+                  "INDEXING",
+                  "COMPLETE",
+                  "FAILED",
+                  "SUPERSEDED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "desiredEpoch": {
+            "type": "string"
+          },
+          "desiredGenerationId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]{24,32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "desiredState": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PENDING",
+                  "BUILDING",
+                  "INDEXING",
+                  "COMPLETE",
+                  "FAILED",
+                  "SUPERSEDED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dimensions": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "freshness": {
+            "enum": [
+              "current",
+              "stale",
+              "building",
+              "failed",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "headSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexedCommitSha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rebuildPending": {
+            "anyOf": [
+              {
+                "enum": [
+                  "EMBEDDING_SETTINGS_CHANGED",
+                  "EMBEDDING_MODEL_CHANGED",
+                  "EMBEDDING_RUNTIME_RELOADING"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "activeGenerationId",
+          "desiredGenerationId",
+          "desiredEpoch",
+          "activeState",
+          "desiredState",
+          "indexedCommitSha",
+          "headSha",
+          "dimensions",
+          "fingerprint",
+          "freshness",
+          "errorCode",
+          "rebuildPending"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_pull_requests_create": {
+      "catalog": {
+        "description": "Open a pull request from a branch you own into main. Pass the expected head and main SHAs and a title.",
+        "groups": [
+          "pull_requests"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_pull_requests_create",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expectedHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "expectedTargetSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "headBranch": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "headBranch",
+          "expectedHeadSha",
+          "expectedTargetSha",
+          "title",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "pr": {
+            "additionalProperties": false,
+            "properties": {
+              "authorActorKey": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "baseSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "mergeCommitSha": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "number": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sourceBranch": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "OPEN",
+                  "CONFLICT",
+                  "CLOSED",
+                  "MERGED"
+                ],
+                "type": "string"
+              },
+              "targetBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "targetSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "sourceBranch",
+              "targetBranch",
+              "baseSha",
+              "headSha",
+              "targetSha",
+              "status",
+              "authorActorKey",
+              "version",
+              "mergeCommitSha"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "operationId",
+          "pr"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_pull_requests_get": {
+      "catalog": {
+        "description": "Get one pull request with its before/after Markdown diff and touched assets. The diff is paged; fetch every page before reviewing.",
+        "groups": [
+          "pull_requests"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_pull_requests_get",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expectedHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "number": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "page": {
+            "additionalProperties": false,
+            "properties": {
+              "cursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limit": {
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "kbId",
+          "number"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "afterBlobSha": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[0-9a-f]{40}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "beforeBlobSha": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[0-9a-f]{40}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "status": {
+                  "enum": [
+                    "added",
+                    "modified",
+                    "deleted"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "status",
+                "beforeBlobSha",
+                "afterBlobSha"
+              ],
+              "type": "object"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pr": {
+            "additionalProperties": false,
+            "properties": {
+              "authorActorKey": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "baseSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "mergeCommitSha": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "number": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sourceBranch": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "OPEN",
+                  "CONFLICT",
+                  "CLOSED",
+                  "MERGED"
+                ],
+                "type": "string"
+              },
+              "targetBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "targetSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "sourceBranch",
+              "targetBranch",
+              "baseSha",
+              "headSha",
+              "targetSha",
+              "status",
+              "authorActorKey",
+              "version",
+              "mergeCommitSha"
+            ],
+            "type": "object"
+          },
+          "touchedAssets": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "after": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "hash": {
+                          "pattern": "^sha256:[0-9a-f]{64}$",
+                          "type": "string"
+                        },
+                        "mime": {
+                          "enum": [
+                            "text/markdown",
+                            "text/plain",
+                            "text/csv",
+                            "application/json",
+                            "application/pdf",
+                            "image/png",
+                            "image/jpeg",
+                            "image/gif",
+                            "image/webp",
+                            "image/svg+xml",
+                            "audio/mpeg",
+                            "audio/wav",
+                            "audio/ogg",
+                            "video/mp4",
+                            "video/webm"
+                          ],
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string",
+                          "x-kb-path": true
+                        },
+                        "size": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "hash",
+                        "size",
+                        "mime"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "before": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "hash": {
+                          "pattern": "^sha256:[0-9a-f]{64}$",
+                          "type": "string"
+                        },
+                        "mime": {
+                          "enum": [
+                            "text/markdown",
+                            "text/plain",
+                            "text/csv",
+                            "application/json",
+                            "application/pdf",
+                            "image/png",
+                            "image/jpeg",
+                            "image/gif",
+                            "image/webp",
+                            "image/svg+xml",
+                            "audio/mpeg",
+                            "audio/wav",
+                            "audio/ogg",
+                            "video/mp4",
+                            "video/webm"
+                          ],
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string",
+                          "x-kb-path": true
+                        },
+                        "size": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "hash",
+                        "size",
+                        "mime"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                }
+              },
+              "required": [
+                "path",
+                "before",
+                "after"
+              ],
+              "type": "object"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
+        "required": [
+          "pr",
+          "files",
+          "touchedAssets",
+          "nextCursor"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_pull_requests_list": {
+      "catalog": {
+        "description": "List pull requests, optionally filtered by status (OPEN, CONFLICT, CLOSED, MERGED). Paginated: pass nextCursor back as cursor.",
+        "groups": [
+          "pull_requests"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_pull_requests_list",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "OPEN",
+              "CONFLICT",
+              "CLOSED",
+              "MERGED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "authorActorKey": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "baseSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "headSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "mergeCommitSha": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[0-9a-f]{40}$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "number": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "sourceBranch": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "OPEN",
+                    "CONFLICT",
+                    "CLOSED",
+                    "MERGED"
+                  ],
+                  "type": "string"
+                },
+                "targetBranch": {
+                  "const": "main",
+                  "type": "string"
+                },
+                "targetSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "title": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "version": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "sourceBranch",
+                "targetBranch",
+                "baseSha",
+                "headSha",
+                "targetSha",
+                "status",
+                "authorActorKey",
+                "version",
+                "mergeCommitSha"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_pull_requests_review": {
+      "catalog": {
+        "decisionVariants": [
+          {
+            "confirm": "MERGE",
+            "decision": "merge",
+            "minimumAccess": {
+              "bit": "review",
+              "kind": "permission"
+            }
+          },
+          {
+            "confirm": "CLOSE",
+            "decision": "close",
+            "minimumAccess": {
+              "kind": "any_of",
+              "of": [
+                {
+                  "bit": "review",
+                  "kind": "permission"
+                },
+                {
+                  "kind": "author_with_propose"
+                }
+              ]
+            }
+          }
+        ],
+        "description": "Merge or close a pull request. Merging needs review permission, confirm \"MERGE\" and the head and target SHAs from the diff you reviewed. Closing needs confirm \"CLOSE\"; an author with propose access may close their own, from any of their credentials.",
+        "groups": [
+          "pull_requests"
+        ],
+        "minimumAccess": {
+          "kind": "any_of",
+          "of": [
+            {
+              "bit": "review",
+              "kind": "permission"
+            },
+            {
+              "kind": "author_with_propose"
+            }
+          ]
+        },
+        "name": "knowledge_pull_requests_review",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "else": {
+          "properties": {
+            "confirm": {
+              "const": "CLOSE"
+            }
+          },
+          "required": [
+            "confirm"
+          ]
+        },
+        "if": {
+          "properties": {
+            "decision": {
+              "const": "merge"
+            }
+          },
+          "required": [
+            "decision"
+          ]
+        },
+        "properties": {
+          "confirm": {
+            "anyOf": [
+              {
+                "const": "MERGE",
+                "type": "string"
+              },
+              {
+                "const": "CLOSE",
+                "type": "string"
+              }
+            ]
+          },
+          "decision": {
+            "enum": [
+              "merge",
+              "close"
+            ],
+            "type": "string"
+          },
+          "expectedHeadSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "expectedTargetSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "number": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "number",
+          "decision",
+          "expectedHeadSha",
+          "expectedTargetSha",
+          "idempotencyKey",
+          "confirm"
+        ],
+        "then": {
+          "properties": {
+            "confirm": {
+              "const": "MERGE"
+            }
+          },
+          "required": [
+            "confirm"
+          ]
+        },
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "pr": {
+            "additionalProperties": false,
+            "properties": {
+              "authorActorKey": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "baseSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "headSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "mergeCommitSha": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{40}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "number": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "sourceBranch": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "OPEN",
+                  "CONFLICT",
+                  "CLOSED",
+                  "MERGED"
+                ],
+                "type": "string"
+              },
+              "targetBranch": {
+                "const": "main",
+                "type": "string"
+              },
+              "targetSha": {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "version": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "number",
+              "title",
+              "sourceBranch",
+              "targetBranch",
+              "baseSha",
+              "headSha",
+              "targetSha",
+              "status",
+              "authorActorKey",
+              "version",
+              "mergeCommitSha"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "operationId",
+          "pr"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_sealed_resolve": {
+      "catalog": {
+        "description": "Resolve a sealed-value reference found in a document into ciphertext encrypted for your approved recipient key. Plaintext is never returned.",
+        "groups": [
+          "sealed"
+        ],
+        "minimumAccess": {
+          "kind": "sealed_grant"
+        },
+        "name": "knowledge_sealed_resolve",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "x-kb-path": true
+          },
+          "recipientKeyId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "reference": {
+            "maxLength": 160,
+            "type": "string"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "path",
+          "reference",
+          "recipientKeyId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "envelope": {
+            "additionalProperties": false,
+            "properties": {
+              "algorithm": {
+                "const": "X25519-HKDF-SHA256-AES256GCM",
+                "type": "string"
+              },
+              "ciphertext": {
+                "minLength": 1,
+                "type": "string",
+                "x-kb-base64-canonical": {
+                  "maxBytes": 65536,
+                  "minBytes": 16
+                }
+              },
+              "ephemeralPublicKey": {
+                "minLength": 1,
+                "type": "string",
+                "x-kb-base64-canonical": {
+                  "maxBytes": 32,
+                  "minBytes": 32
+                }
+              },
+              "nonce": {
+                "minLength": 1,
+                "type": "string",
+                "x-kb-base64-canonical": {
+                  "maxBytes": 12,
+                  "minBytes": 12
+                }
+              }
+            },
+            "required": [
+              "algorithm",
+              "ephemeralPublicKey",
+              "nonce",
+              "ciphertext"
+            ],
+            "type": "object"
+          },
+          "expiresAt": {
+            "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+            "type": "string",
+            "x-kb-iso-utc-instant": true
+          },
+          "recipientKeyId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "reference": {
+            "maxLength": 160,
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "recipientKeyId",
+          "envelope",
+          "expiresAt"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_search": {
+      "catalog": {
+        "description": "Hybrid full-text and semantic search over a knowledge base's indexed main branch. Returns ranked snippets with paths and citations; narrow with pathPrefix or documentId. Compare indexedCommitSha with headSha if recent edits seem missing.",
+        "groups": [
+          "read"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_search",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "pathPrefix": {
+            "type": "string",
+            "x-kb-path-prefix": true
+          },
+          "query": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "query"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "freshness": {
+            "enum": [
+              "current",
+              "stale",
+              "building",
+              "failed",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "generationId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "headSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexNotices": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "const": "EMBEDDING_REBUILD_PENDING",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "enum": [
+                        "EMBEDDING_SETTINGS_CHANGED",
+                        "EMBEDDING_MODEL_CHANGED",
+                        "EMBEDDING_RUNTIME_RELOADING"
+                      ],
+                      "type": "string"
+                    },
+                    "kbId": {
+                      "pattern": "^[a-z0-9]{24,32}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kbId",
+                    "code",
+                    "detail"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "const": "LEXICAL_ONLY",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "enum": [
+                        "NO_EMBEDDING_PROFILE",
+                        "EMBEDDING_PROFILE_REVOKED",
+                        "EMBEDDING_PROFILE_UNAVAILABLE",
+                        "SEMANTIC_INDEX_BUILDING"
+                      ],
+                      "type": "string"
+                    },
+                    "kbId": {
+                      "pattern": "^[a-z0-9]{24,32}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kbId",
+                    "code",
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "maxItems": 1,
+            "type": "array"
+          },
+          "indexedCommitSha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "results": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assetRefs": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hash": {
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "mime": {
+                        "enum": [
+                          "text/markdown",
+                          "text/plain",
+                          "text/csv",
+                          "application/json",
+                          "application/pdf",
+                          "image/png",
+                          "image/jpeg",
+                          "image/gif",
+                          "image/webp",
+                          "image/svg+xml",
+                          "audio/mpeg",
+                          "audio/wav",
+                          "audio/ogg",
+                          "video/mp4",
+                          "video/webm"
+                        ],
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string",
+                        "x-kb-path": true
+                      },
+                      "size": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "hash",
+                      "size",
+                      "mime"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "blobSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "chunkIndex": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "commitSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "contentHash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "documentCitations": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "target": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "target"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "documentId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "freshness": {
+                  "enum": [
+                    "current",
+                    "stale",
+                    "building",
+                    "failed",
+                    "unavailable"
+                  ],
+                  "type": "string"
+                },
+                "indexGenerationId": {
+                  "pattern": "^[a-z0-9]{24,32}$",
+                  "type": "string"
+                },
+                "knowledgeBaseId": {
+                  "pattern": "^[a-z0-9]{24,32}$",
+                  "type": "string"
+                },
+                "knowledgeBaseName": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "matchedRow": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "maxLength": 1024,
+                            "type": "string"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mode": {
+                  "enum": [
+                    "hybrid",
+                    "structured",
+                    "lexical"
+                  ],
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "score": {
+                  "type": "number"
+                },
+                "snippet": {
+                  "maxLength": 240,
+                  "type": "string"
+                },
+                "span": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "endByte": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "endToken": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "startByte": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "startToken": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "startToken",
+                    "endToken",
+                    "startByte",
+                    "endByte"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "knowledgeBaseId",
+                "knowledgeBaseName",
+                "path",
+                "documentId",
+                "commitSha",
+                "blobSha",
+                "contentHash",
+                "chunkIndex",
+                "span",
+                "snippet",
+                "score",
+                "mode",
+                "indexGenerationId",
+                "freshness",
+                "documentCitations",
+                "assetRefs",
+                "matchedRow"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "generationId",
+          "freshness",
+          "indexedCommitSha",
+          "headSha",
+          "indexNotices"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_structured_search": {
+      "catalog": {
+        "description": "Filter documents by front matter: type, title, tags, a timestamp range or exact column values, optionally with a text query. Use for metadata lookups; use knowledge_search for meaning-based search.",
+        "groups": [
+          "read"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_structured_search",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "query"
+            ]
+          },
+          {
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "required": [
+              "title"
+            ]
+          },
+          {
+            "properties": {
+              "tags": {
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "tags"
+            ]
+          },
+          {
+            "properties": {
+              "timestamp": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "after"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "before"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "timestamp"
+            ]
+          },
+          {
+            "properties": {
+              "structured": {
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "structured"
+            ]
+          }
+        ],
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "structured": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "column": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000]*$",
+                  "type": "string"
+                },
+                "equals": {
+                  "anyOf": [
+                    {
+                      "maxLength": 1024,
+                      "pattern": "^[^\\u0000]*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "column",
+                "equals"
+              ],
+              "type": "object"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[^\\u0000]*$",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "timestamp": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+                "type": "string",
+                "x-kb-iso-utc-instant": true
+              },
+              "before": {
+                "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+                "type": "string",
+                "x-kb-iso-utc-instant": true
+              }
+            },
+            "type": "object"
+          },
+          "title": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId"
+        ],
+        "type": "object",
+        "x-kb-iso-range": {
+          "after": "timestamp.after",
+          "before": "timestamp.before"
+        }
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "freshness": {
+            "enum": [
+              "current",
+              "stale",
+              "building",
+              "failed",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "generationId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "headSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "indexNotices": {
+            "items": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "const": "EMBEDDING_REBUILD_PENDING",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "enum": [
+                        "EMBEDDING_SETTINGS_CHANGED",
+                        "EMBEDDING_MODEL_CHANGED",
+                        "EMBEDDING_RUNTIME_RELOADING"
+                      ],
+                      "type": "string"
+                    },
+                    "kbId": {
+                      "pattern": "^[a-z0-9]{24,32}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kbId",
+                    "code",
+                    "detail"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "const": "LEXICAL_ONLY",
+                      "type": "string"
+                    },
+                    "detail": {
+                      "enum": [
+                        "NO_EMBEDDING_PROFILE",
+                        "EMBEDDING_PROFILE_REVOKED",
+                        "EMBEDDING_PROFILE_UNAVAILABLE",
+                        "SEMANTIC_INDEX_BUILDING"
+                      ],
+                      "type": "string"
+                    },
+                    "kbId": {
+                      "pattern": "^[a-z0-9]{24,32}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kbId",
+                    "code",
+                    "detail"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "maxItems": 1,
+            "type": "array"
+          },
+          "indexedCommitSha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assetRefs": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hash": {
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "mime": {
+                        "enum": [
+                          "text/markdown",
+                          "text/plain",
+                          "text/csv",
+                          "application/json",
+                          "application/pdf",
+                          "image/png",
+                          "image/jpeg",
+                          "image/gif",
+                          "image/webp",
+                          "image/svg+xml",
+                          "audio/mpeg",
+                          "audio/wav",
+                          "audio/ogg",
+                          "video/mp4",
+                          "video/webm"
+                        ],
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string",
+                        "x-kb-path": true
+                      },
+                      "size": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "hash",
+                      "size",
+                      "mime"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "blobSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "chunkIndex": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "commitSha": {
+                  "pattern": "^[0-9a-f]{40}$",
+                  "type": "string"
+                },
+                "contentHash": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "documentCitations": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "target": {
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "target"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "documentId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 256,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "freshness": {
+                  "enum": [
+                    "current",
+                    "stale",
+                    "building",
+                    "failed",
+                    "unavailable"
+                  ],
+                  "type": "string"
+                },
+                "indexGenerationId": {
+                  "pattern": "^[a-z0-9]{24,32}$",
+                  "type": "string"
+                },
+                "knowledgeBaseId": {
+                  "pattern": "^[a-z0-9]{24,32}$",
+                  "type": "string"
+                },
+                "knowledgeBaseName": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "matchedRow": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "maxLength": 1024,
+                            "type": "string"
+                          },
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mode": {
+                  "enum": [
+                    "hybrid",
+                    "structured",
+                    "lexical"
+                  ],
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "x-kb-path": true
+                },
+                "score": {
+                  "type": "number"
+                },
+                "snippet": {
+                  "maxLength": 240,
+                  "type": "string"
+                },
+                "span": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "endByte": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "endToken": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "startByte": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "startToken": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "startToken",
+                    "endToken",
+                    "startByte",
+                    "endByte"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "knowledgeBaseId",
+                "knowledgeBaseName",
+                "path",
+                "documentId",
+                "commitSha",
+                "blobSha",
+                "contentHash",
+                "chunkIndex",
+                "span",
+                "snippet",
+                "score",
+                "mode",
+                "indexGenerationId",
+                "freshness",
+                "documentCitations",
+                "assetRefs",
+                "matchedRow"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "generationId",
+          "freshness",
+          "indexedCommitSha",
+          "headSha",
+          "indexNotices"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_transfer_read": {
+      "catalog": {
+        "description": "Read a prepared export as base64 chunks from a byte offset. Repeat with nextOffset until eof is true.",
+        "groups": [
+          "export"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_transfer_read",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "maxBytes": {
+            "maximum": 196608,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "transferId",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "bytesBase64": {
+            "minLength": 1,
+            "type": "string",
+            "x-kb-base64-canonical": {
+              "maxBytes": 196608,
+              "minBytes": 1
+            }
+          },
+          "contentHash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "eof": {
+            "type": "boolean"
+          },
+          "nextOffset": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transferId",
+          "offset",
+          "nextOffset",
+          "bytesBase64",
+          "eof",
+          "contentHash"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_upload_begin": {
+      "catalog": {
+        "description": "Start a chunked upload of a Markdown file or asset, declaring its kind, size, sha256 contentHash and MIME type. Returns an uploadId and the maximum chunk size. Continue with knowledge_upload_write, then knowledge_upload_finish. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
+        "groups": [
+          "edit",
+          "assets"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_upload_begin",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "markdown",
+              "asset"
+            ],
+            "type": "string"
+          },
+          "mime": {
+            "enum": [
+              "text/markdown",
+              "application/pdf",
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp",
+              "audio/mpeg",
+              "audio/wav",
+              "audio/ogg",
+              "video/mp4",
+              "video/webm"
+            ],
+            "type": "string"
+          },
+          "size": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kbId",
+          "idempotencyKey",
+          "kind",
+          "size",
+          "contentHash",
+          "mime"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expiresAt": {
+            "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+            "type": "string",
+            "x-kb-iso-utc-instant": true
+          },
+          "maxChunkBytes": {
+            "const": 196608,
+            "type": "number"
+          },
+          "offset": {
+            "const": 0,
+            "type": "number"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "uploadId",
+          "offset",
+          "expiresAt",
+          "maxChunkBytes"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_upload_finish": {
+      "catalog": {
+        "description": "Finish an upload after all bytes are written; the server verifies size and hash. Then reference the uploadId from knowledge_assets_put or an assetPut change.",
+        "groups": [
+          "edit",
+          "assets"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_upload_finish",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "uploadId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "expiresAt": {
+            "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+            "type": "string",
+            "x-kb-iso-utc-instant": true
+          },
+          "mime": {
+            "enum": [
+              "text/markdown",
+              "text/plain",
+              "text/csv",
+              "application/json",
+              "application/pdf",
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp",
+              "image/svg+xml",
+              "audio/mpeg",
+              "audio/wav",
+              "audio/ogg",
+              "video/mp4",
+              "video/webm"
+            ],
+            "type": "string"
+          },
+          "size": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "const": "READY",
+            "type": "string"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uploadId",
+          "contentHash",
+          "size",
+          "mime",
+          "state",
+          "expiresAt"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_upload_write": {
+      "catalog": {
+        "description": "Send the next chunk of an upload as base64 at the current byte offset. Returns the next offset.",
+        "groups": [
+          "edit",
+          "assets"
+        ],
+        "minimumAccess": {
+          "bit": "propose",
+          "kind": "permission"
+        },
+        "name": "knowledge_upload_write",
+        "readOnly": false,
+        "requiredMcpScope": "mcp:write"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "bytesBase64": {
+            "minLength": 1,
+            "type": "string",
+            "x-kb-base64-canonical": {
+              "maxBytes": 196608,
+              "minBytes": 1
+            }
+          },
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "offset": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "uploadId",
+          "offset",
+          "bytesBase64"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "offset": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uploadId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uploadId",
+          "offset"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "validationContract": {
+    "dialect": "https://json-schema.org/draft/2020-12/schema",
+    "keywords": {
+      "x-kb-base64-canonical": {
+        "applies": "string",
+        "params": [
+          "minBytes",
+          "maxBytes"
+        ],
+        "rule": "Canonical base64 (standard alphabet, length divisible by 4, exact re-encoding) whose decoded byte length is between minBytes and maxBytes inclusive."
+      },
+      "x-kb-change-paths": {
+        "applies": "object",
+        "rule": "Each selector resolves to a list of changes ({op, path}). No path may appear twice for the same kind (assetPut/assetRemove are asset changes, every other op a document change), and no two changes other than removals (delete, assetRemove) may have the same Unicode case-folded path. A removal may share a case-folded path with any other change."
+      },
+      "x-kb-iso-range": {
+        "applies": "object",
+        "params": [
+          "after",
+          "before"
+        ],
+        "rule": "The instants selected by the after and before selectors (selector notation) must satisfy after < before compared as exact UTC instants at the accepted fractional precision; equal instants are rejected."
+      },
+      "x-kb-iso-utc-instant": {
+        "applies": "string",
+        "rule": "RFC 3339 UTC instant with a 4-digit year, Z offset, optional 1-9 fractional digits, and a real calendar date/time."
+      },
+      "x-kb-json-depth-max": {
+        "applies": "object",
+        "rule": "JSON nesting depth of the value is at most this number; scalars are depth 0 and each array or object level adds one."
+      },
+      "x-kb-json-encoded-max-bytes": {
+        "applies": "object",
+        "rule": "The UTF-8 byte length of the compact JSON encoding (JSON.stringify) of the value is at most this many bytes."
+      },
+      "x-kb-metadata-text": {
+        "applies": "string",
+        "params": [
+          "name",
+          "description"
+        ],
+        "rule": "name rejects C0 (U+0000..U+001F) and DEL (U+007F). description follows the Markdown control policy because it is embedded in the generated index.md: C0 (including NUL, which PostgreSQL text cannot store) and DEL are rejected except tab (U+0009), line feed (U+000A) and carriage return (U+000D). Both preserve ZWJ/ZWNJ and other Unicode scalar values within their character bounds."
+      },
+      "x-kb-no-control-chars": {
+        "applies": "string",
+        "rule": "C0 control characters other than tab (U+0009), line feed (U+000A) and carriage return (U+000D) are rejected."
+      },
+      "x-kb-path": {
+        "applies": "string",
+        "rule": "A single kb repository path accepted by the server path normalizer: forward-slash separated clean relative path, no leading slash, no . or .. segments, no drive letters or UNC hosts, bounded length."
+      },
+      "x-kb-path-prefix": {
+        "applies": "string",
+        "rule": "A raw document-path prefix: an x-kb-path value, optionally followed by one trailing slash (`notes/` matches only paths under the `notes` directory)."
+      },
+      "x-kb-unique-items": {
+        "applies": "object",
+        "rule": "Each selector resolves to a list; every element of that list must be pairwise distinct."
+      },
+      "x-kb-utf8-max-bytes": {
+        "applies": "string",
+        "rule": "The UTF-8 encoding of the value is at most this many bytes."
+      }
+    },
+    "selectorNotation": "Dot-separated object property path from the schema root; a [] segment iterates array elements (e.g. dream.upserts[].id).",
+    "stringLengthNote": "minLength and maxLength count Unicode scalar values (JSON Schema code-point semantics). The TypeScript runtime enforces exactly the same bounds by counting Unicode scalar values and rejecting unpaired surrogates, so runtime and artifact verdicts agree for every bounded string; fields whose ASCII-anchored pattern already restricts the alphabet (slug) coincide by construction. Unpaired surrogates cannot appear in server-emitted outputs because the runtime rejects them on every bounded string.",
+    "stringLengthUnits": "unicode-scalar-values"
+  }
+}

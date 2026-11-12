@@ -1,0 +1,40 @@
+{
+  "items": {
+    "home": "Inicio",
+    "dashboard": "Panel de control",
+    "knowledgeBases": "Bases de conocimiento",
+    "settings": "Configuración",
+    "admin": "Administración"
+  },
+  "languageLabel": "Idioma",
+  "mainNav": {
+    "ariaLabel": "Navegación principal"
+  },
+  "themeToggle": {
+    "label": "Cambiar tema",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Sistema"
+  },
+  "userMenu": {
+    "myAccount": "Mi cuenta",
+    "signIn": "Iniciar sesión",
+    "signOut": "Cerrar sesión",
+    "signUp": "Registrarse"
+  },
+  "sidebar": {
+    "collapse": "Contraer barra lateral",
+    "expand": "Expandir barra lateral"
+  },
+  "titles": {
+    "knowledgeBase": "Base de conocimiento",
+    "signIn": "Iniciar sesión",
+    "signUp": "Crear cuenta",
+    "forgotPassword": "Olvidé mi contraseña",
+    "resetPassword": "Restablecer contraseña",
+    "setPassword": "Elige tu contraseña",
+    "verifyEmail": "Verificar correo",
+    "mcpConsent": "Autorizar app"
+  },
+  "skipToContent": "Saltar al contenido"
+}

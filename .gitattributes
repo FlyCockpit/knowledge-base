@@ -1,0 +1,17 @@
+* text=auto eol=lf
+*.sh text eol=lf
+
+# Generated artifacts; edit their sources and run the corresponding generator.
+apps/web/src/routeTree.gen.ts linguist-generated=true
+pnpm-lock.yaml linguist-generated=true
+apps/cli/Cargo.lock linguist-generated=true
+packages/api/src/lib/kb/protocol/schema.json linguist-generated=true
+packages/api/src/lib/kb/protocol/fixtures.json linguist-generated=true
+packages/db/prisma/migrations/** linguist-generated=false
+apps/cli/vendor/inventory.json linguist-generated=true
+docs/mcp-tool-coverage.md linguist-generated=true
+CLAUDE.md linguist-generated=true
+.github/copilot-instructions.md linguist-generated=true
+apps/cli/CLAUDE.md linguist-generated=true
+**/.env.example linguist-generated=true
+.env.docker.defaults linguist-generated=true

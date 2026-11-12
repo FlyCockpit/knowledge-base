@@ -1,0 +1,7 @@
+{
+  "extends": "@knowledge-base/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.contract.test.ts"]
+}

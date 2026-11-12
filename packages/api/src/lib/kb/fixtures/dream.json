@@ -1,0 +1,28 @@
+{
+  "model": {
+    "provider": "fixture-provider",
+    "model": "fixture-model"
+  },
+  "redactionApplied": true,
+  "upserts": [
+    {
+      "id": "alpha-note",
+      "type": "concept",
+      "title": "Alpha",
+      "body": "Deterministic dream body.\n",
+      "citations": [
+        { "label": "b", "target": "https://example.test/b" },
+        { "label": "a", "target": "https://example.test/a" }
+      ],
+      "provenance": "dream"
+    },
+    {
+      "id": "beta-note",
+      "type": "concept",
+      "title": null,
+      "body": "Second upsert.",
+      "citations": [],
+      "provenance": "dream"
+    }
+  ]
+}

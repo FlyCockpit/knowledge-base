@@ -1,0 +1,178 @@
+{
+  "$schema": "https://www.react.doctor/schema.json",
+  "blocking": "error",
+  "ignore": {
+    "overrides": [
+      {
+        // Composed cmdk Command + Popover autosuggest:
+        // the role="combobox" trigger gets its ARIA state from the composed
+        // parts rather than one element, and loading is driven by the
+        // AbortSignal-based useAsyncSearch hook (not useTransition), so these
+        // ARIA and render-lifecycle heuristics fire on code that is correct
+        // by design. The single- and multi-select variants share the pattern.
+        "files": ["src/components/async-combobox.tsx", "src/components/multi-async-combobox.tsx"],
+        "rules": [
+          "react-doctor/role-has-required-aria-props",
+          "react-doctor/no-render-in-render",
+          "react-doctor/no-cascading-set-state",
+          "react-doctor/rendering-usetransition-loading"
+        ]
+      },
+      {
+        // Generic shadcn Label primitive: control association happens at each
+        // call site via htmlFor/nesting, which the rule can't see from here.
+        "files": ["src/components/label.tsx"],
+        "rules": ["react-doctor/label-has-associated-control"]
+      },
+      {
+        // Stock shadcn compound primitive (InputGroup + Addon/Button/Text/
+        // Input/Textarea parts), kept as upstream ships it:
+        //  - the addon's onClick only forwards focus to the inner input;
+        //    keyboard interaction lives on the input itself, so no key handler
+        //    is needed on the wrapper;
+        //  - role="group" on the wrapper divs is deliberate — the "matching"
+        //    HTML element <fieldset> brings min-inline-size:min-content,
+        //    legend, and disabled-propagation quirks that break the styled
+        //    flex layout;
+        //  - the compound parts live in one file per the shadcn convention,
+        //    like every other primitive in this directory.
+        "files": ["src/components/input-group.tsx"],
+        "rules": [
+          "react-doctor/click-events-have-key-events",
+          "react-doctor/prefer-tag-over-role",
+          "react-doctor/no-multi-component-file"
+        ]
+      },
+      {
+        // TanStack Form's documented submit pattern calls e.preventDefault()
+        // inside form onSubmit (see AGENTS.md § Forms); banning it app-wide
+        // would flag every form.
+        "files": ["src/**/*.tsx"],
+        "rules": ["react-doctor/no-prevent-default"]
+      },
+      {
+        // These routes are SPA-only (root route ships ssr: false; SSR is
+        // opt-in per public content route), so they never hydrate and
+        // time-dependent render output cannot mismatch.
+        "files": [
+          "src/routes/$lang/_app/admin/**/*.tsx",
+          "src/routes/$lang/_app/_auth/**/*.tsx",
+          "src/routes/$lang/_app/login.tsx",
+          "src/components/admin/**/*.tsx"
+        ],
+        // Two DISTINCT rules, not two spellings of one: both ship at warn
+        // severity with different checks ("Time or random value in JSX" vs
+        // "Locale/timezone formatting during render"). Both are suppressed on
+        // the same premise, which covers them both — everything in `files` lives
+        // under `_app/`, the client-only branch that never server-renders, so
+        // there is no server HTML for a clock or a locale to disagree with.
+        // Several of these files do call `toLocale*`/`Intl.*` during render, so
+        // this is a live suppression, not dead config — it just isn't a
+        // hydration risk on a client-only tree.
+        "rules": [
+          "react-doctor/rendering-hydration-mismatch-time",
+          "react-doctor/no-locale-format-in-render"
+        ]
+      },
+      {
+        // The login screen is a small state machine (credentials → 2FA →
+        // redirect): the already-authenticated redirect is a guarded
+        // render-time navigate, and step state intentionally changes outside
+        // event handlers when auth responses land.
+        "files": ["src/routes/$lang/_app/login.tsx"],
+        "rules": [
+          "react-doctor/tanstack-start-no-navigate-in-render",
+          "react-doctor/rerender-state-only-in-handlers"
+        ]
+      },
+      {
+        // Legacy oversized screens tracked for refactor (split per the
+        // react-composition pattern). Suppressed per-file so the rules stay
+        // active for new code; do not add files to this list — split the
+        // component instead.
+        "files": [
+          "src/routes/$lang/_app/_auth/settings/security.tsx",
+          "src/routes/$lang/_app/_auth.tsx",
+          "src/routes/$lang/_app/admin/assets/index.tsx",
+          "src/routes/$lang/_app/admin/users.tsx"
+        ],
+        "rules": [
+          "react-doctor/rerender-state-only-in-handlers",
+          "react-doctor/prefer-useReducer",
+          "react-doctor/rendering-usetransition-loading",
+          "react-doctor/no-giant-component"
+        ]
+      },
+      {
+        // Asset-cleanup admin actions run sequentially on purpose — one
+        // request at a time against the cleanup endpoints instead of an
+        // unbounded Promise.all fan-out.
+        "files": ["src/routes/$lang/_app/admin/assets/index.tsx"],
+        "rules": ["react-doctor/async-await-in-loop"]
+      },
+      {
+        // Shared autosuggest loop (AGENTS.md § Forms, AsyncCombobox). `fetchResults` is
+        // a data fetcher, not a parent-notification callback: the effect
+        // debounces the query, fetches with an AbortSignal, and pulls results
+        // *down* into this hook's own returned state — the exact
+        // cancel-the-previous-request-on-every-keystroke behaviour React Query
+        // intentionally does not provide. The rule's AST heuristic flags any
+        // effect that awaits a function param and feeds it to setState, so it
+        // false-positives here; the hook never pushes live state to a parent.
+        "files": ["src/hooks/use-async-search.ts"],
+        "rules": ["react-doctor/no-pass-live-state-to-parent"]
+      },
+      {
+        // Route files intentionally declare their page-section components as
+        // non-exported locals in the same file (AGENTS.md § React:
+        // "Do not export route-local component functions"). That is the prescribed structure,
+        // not a smell — exporting them would rejoin the eager bundle and defeat
+        // TanStack's per-route code splitting. Kept scoped to routes so the
+        // rule still fires for genuinely multi-component files elsewhere.
+        "files": ["src/routes/**/*.tsx"],
+        "rules": ["react-doctor/no-multi-component-file"]
+      },
+      {
+        // Deliberate co-exports, not stray non-component exports:
+        //  - button/toggle/sileo ship their `cva` variants (`buttonVariants`,
+        //    `toggleVariants`, …) beside the component per the shadcn/ui
+        //    convention — other components import the variants for styling.
+        // The Fast-Refresh heuristic can't tell these apart from accidental
+        // exports; the pattern is load-bearing.
+        "files": [
+          "src/components/button.tsx",
+          "src/components/toggle.tsx",
+          "src/components/sileo.tsx"
+        ],
+        "rules": ["react-doctor/only-export-components"]
+      },
+      {
+        // `useChangeLanguage` syncs i18next's active language to the URL's
+        // `:lang` segment. That sync must run for URL-driven locale changes with
+        // no event to hang it on (deep links, back/forward, redirects), so it is
+        // a genuine external-system effect living in the approved hooks/ escape
+        // hatch — not an event handler faked with a prop + useEffect.
+        "files": ["src/hooks/use-change-language.ts"],
+        "rules": ["react-doctor/no-event-handler"]
+      },
+      {
+        // The seed-job result panel renders an append-only, never-reordered log
+        // of completed-run summary lines (duplicate strings are possible, so a
+        // content key is unsafe). A positional key is correct for a static list
+        // like this — the reorder/filter hazard the rule guards against can't
+        // occur here.
+        "files": ["src/routes/$lang/_app/admin/seed.tsx"],
+        "rules": ["react-doctor/no-array-index-as-key"]
+      },
+      {
+        // UserActions' two booleans (isAdmin/isArchived) reflect the row's
+        // data state and only swap individual items inside one shared
+        // dropdown menu — they don't switch whole subtrees, and no impossible
+        // state combinations exist. Splitting into four explicit variant
+        // components would quadruple an otherwise-identical menu.
+        "files": ["src/routes/$lang/_app/admin/users.tsx"],
+        "rules": ["react-doctor/prefer-explicit-variants"]
+      }
+    ]
+  }
+}

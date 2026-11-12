@@ -1,0 +1,21 @@
+{
+  "appSettingsLoadFailed": "Failed to load app settings.",
+  "emptyDescription": "Knowledge bases you own or that someone shares with you will show up here.",
+  "emptyTitle": "No knowledge bases yet",
+  "loadFailed": "Failed to load dashboard.",
+  "welcomeBack": "Welcome back, {{name}}",
+  "openKbs": "View knowledge bases",
+  "description": "Your knowledge bases and access at a glance.",
+  "recent": "Knowledge bases",
+  "kpi": {
+    "owned": "Owned knowledge bases",
+    "shared": "Shared with you",
+    "searchable": "With a search index",
+    "searchableHint": "of {{count}} you can open",
+    "tokens": "Active access tokens",
+    "manageTokens": "Manage tokens",
+    "more": "{{count}}+",
+    "firstPage": "Counted over the first {{count}}",
+    "loading": "Loading"
+  }
+}

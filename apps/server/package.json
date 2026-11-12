@@ -1,0 +1,43 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/output.ts",
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit",
+    "dev": "make -C native -j2 && pnpm build && node --import tsx src/output.ts --fenced",
+    "start": "node dist/index.mjs --fenced",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@hono/node-server": "catalog:",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "@knowledge-base/api": "workspace:*",
+    "@knowledge-base/auth": "workspace:*",
+    "@knowledge-base/db": "workspace:*",
+    "@knowledge-base/env": "workspace:*",
+    "@knowledge-base/queue": "workspace:*",
+    "better-auth": "catalog:",
+    "better-sqlite3": "catalog:",
+    "hono": "catalog:",
+    "rate-limiter-flexible": "catalog:",
+    "sharp": "catalog:",
+    "sqlite-vec": "catalog:",
+    "zod": "catalog:",
+    "@modelcontextprotocol/server": "catalog:"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  }
+}

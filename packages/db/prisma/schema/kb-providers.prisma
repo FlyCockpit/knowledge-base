@@ -1,0 +1,51 @@
+enum EmbeddingProviderKind {
+  OPENAI_COMPAT
+  SYSTEM_BUILTIN
+}
+
+model EmbeddingProvider {
+  id        String                @id @default(cuid(2))
+  createdAt DateTime              @default(now()) @db.Timestamptz(3)
+  ownerId   String?
+  owner     User?                 @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  name      String
+  kind      EmbeddingProviderKind @default(OPENAI_COMPAT)
+  revokedAt DateTime?             @db.Timestamptz(3)
+  revisions ProviderRevision[]
+
+  @@index([ownerId, createdAt, id])
+  @@map("embedding_provider")
+}
+
+/// Append only. The sole allowed update destroys ciphertext on revocation.
+/// Probe state is derived from the durable job, never a mutable revision flag.
+/// An OPENAI_COMPAT revision owns its probe job; SYSTEM_BUILTIN revisions (one per
+/// runtime config fingerprint) share the READY download job of their model epoch.
+model ProviderRevision {
+  providerId     String
+  provider       EmbeddingProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  version        Int
+  endpointUrl    String
+  model          String
+  dimensions     Int
+  ciphertext     String?
+  aadVersion     Int               @default(1)
+  keyVersion     Int               @default(1)
+  ownerSnapshot  String
+  fingerprint    String
+  idempotencyKey String
+  requestHash    String
+  jobId          String
+  job            DurableJob        @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  /// SYSTEM_BUILTIN only: model identity (weights, pooling, prefix, dims, semantics;
+  /// never build parameters). Old generations stay query-compatible while it
+  /// matches the current identity. NULL for OPENAI_COMPAT.
+  modelIdentity  String?
+  generations    IndexGeneration[]
+  attachedKbs    KnowledgeBase[]   @relation("KbProfile")
+
+  @@id([providerId, version])
+  @@unique([ownerSnapshot, idempotencyKey])
+  @@index([jobId])
+  @@map("provider_revision")
+}

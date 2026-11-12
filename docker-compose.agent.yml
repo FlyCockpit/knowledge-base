@@ -1,0 +1,355 @@
+# docker-compose.agent.yml — port-parameterized, ephemeral local stack used by
+# agents to boot the app in isolation, browse it, and tear it down. The wrapper
+# script `scripts/dev-docker.sh` sets COMPOSE_PROJECT_NAME and WEB_PORT before
+# invoking compose.
+#
+# One profile, `dev`: source-mounted server/web plus a dedicated worker. The
+# production images (Dockerfile, Dockerfile.worker) are not run here; they are
+# checked behind HTTPS by `pnpm smoke:image` (scripts/image-smoke.sh) and CI.
+#
+# Postgres and Valkey use disposable anonymous volumes (no named service volumes):
+#   * `compose restart`  → state preserved within a session
+#   * `compose down`     → next `up` uses fresh anonymous volumes.
+#
+# NOT for production. The header of .env.docker.defaults explains why its
+# values are only safe for local, ephemeral use.
+#
+# Start: pnpm dev:docker <port>
+# Tail:  pnpm dev:docker:logs <port> [service]
+# Down:  pnpm dev:docker:down <port>
+
+services:
+  postgres:
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    volumes:
+      - /var/lib/postgresql
+    environment:
+      POSTGRES_DB: knowledge_base
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    healthcheck:
+      # The temporary initdb server accepts only local sockets; wait for TCP
+      # after initdb has completed.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    profiles: [dev]
+
+  redis:
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles: [dev]
+
+  # ---------------------------------------------------------------------------
+  # Mailpit — local SMTP sink. The app's mailer (packages/mailer) points here
+  # by default via SMTP_HOST=mailpit / SMTP_PORT=1025 in .env.docker.defaults,
+  # so the real signup → email-verification → 2FA flow works offline with zero
+  # credentials: verification emails are captured here instead of hitting a
+  # real relay. Read them at http://localhost:$MAILPIT_PORT (web UI) or
+  # GET http://localhost:$MAILPIT_PORT/api/v1/messages (REST). To send for
+  # real instead (e.g. AgentMail, Postmark, SES), set SMTP_* in .env — those
+  # override the mailpit defaults. MP_SMTP_AUTH_ACCEPT_ANY +
+  # MP_SMTP_AUTH_ALLOW_INSECURE let nodemailer connect without auth/TLS.
+  mailpit:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # Web UI + REST API. Host port derived as WEB_PORT+5000 by
+      # scripts/dev-docker.sh so concurrent stacks never collide.
+      # Bind to loopback only (BIND_ADDR default below) — see the app-dev note.
+      - "${BIND_ADDR:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    profiles: [dev]
+
+  # The dev runtimes run as the host UID, which no image can bake in, so this
+  # one-shot prepares the data volume for that UID. It reuses the toolchain
+  # image (same pinned Node base as every Dockerfile; dev-docker.sh builds it
+  # before `up`), so no second, unpinned Node image is pulled.
+  kb-init:
+    image: ${COMPOSE_PROJECT_NAME:?run via pnpm dev:docker}-dev-toolchain
+    pull_policy: never
+    user: "0:0"
+    environment:
+      KB_DATA_ROOT: /var/lib/knowledge-base
+      KB_RUNTIME_UID: "${HOST_UID:-1000}"
+      KB_RUNTIME_GID: "${HOST_GID:-1000}"
+    volumes:
+      - ./scripts/init-kb-volumes.mjs:/init.mjs:ro
+      - kb-data:/var/lib/knowledge-base
+    command: ["node", "/init.mjs"]
+    restart: "no"
+    profiles: [dev]
+
+  # ---------------------------------------------------------------------------
+  # Dev profile — separate server/web and bundled worker containers. Source
+  # is bind-mounted; node_modules live in per-project
+  # bind mounts so multi-agent installs don't collide.
+  # ---------------------------------------------------------------------------
+  app-dev: &dev-runtime
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # One named toolchain image for app-dev, dev-setup and worker-dev, so
+    # dev-docker.sh can check it (pnpm offline as an arbitrary UID) before up.
+    image: ${COMPOSE_PROJECT_NAME:?run via pnpm dev:docker}-dev-toolchain
+    # Run as the host user so files written into the bind-mounted /app
+    # (turbo cache, vite cache, generated prisma client, dist output, etc.)
+    # are owned by the host user instead of root. HOST_UID/HOST_GID are
+    # exported by scripts/dev-docker.sh; the 1000 fallback matches the
+    # default user on most Linux distros and the `node` user in the base
+    # image. There is no /etc/passwd entry for arbitrary UIDs — HOME is
+    # set explicitly below to a directory Dockerfile.dev chmod'd a+rwX.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - .env.docker.defaults
+      - path: .env
+        required: false
+    environment: &dev-environment
+      HOME: /home/agent
+      KB_RUNTIME_UID: "${HOST_UID:-1000}"
+      KB_RUNTIME_GID: "${HOST_GID:-1000}"
+      # Pin the pnpm content-addressable store inside the image. Without this,
+      # pnpm's cross-filesystem fallback can create `.pnpm-store/` in the
+      # bind-mounted repo root when its preferred store location and the
+      # project sit on different filesystems. Only /pnpm/store is a+rwX in
+      # Dockerfile.dev (the toolchain in /pnpm stays read-only), so an
+      # arbitrary HOST_UID can populate it.
+      PNPM_STORE_DIR: /pnpm/store
+      # Always point at the in-compose services, regardless of what the user's
+      # .env says (their .env may target a local host-bound Postgres).
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/knowledge_base
+      # Override env_file too: builder authority belongs only to the worker.
+      REDIS_URL: redis://redis:6379
+      # Asset S3 is OFF unless explicitly opted in with fixture-only AGENT_ settings.
+      # Never inherit a developer's production asset bucket or credentials from .env.
+      KB_ASSET_CACHE_MAX_BYTES: "${AGENT_KB_ASSET_CACHE_MAX_BYTES:-}"
+      KB_ASSET_S3_ENABLED: "${AGENT_KB_ASSET_S3_ENABLED:-false}"
+      KB_ASSET_S3_BUCKET: "${AGENT_KB_ASSET_S3_BUCKET:-}"
+      KB_ASSET_S3_ENDPOINT: "${AGENT_KB_ASSET_S3_ENDPOINT:-}"
+      KB_ASSET_S3_REGION: "${AGENT_KB_ASSET_S3_REGION:-}"
+      KB_ASSET_S3_PREFIX: "${AGENT_KB_ASSET_S3_PREFIX:-}"
+      KB_ASSET_S3_FORCE_PATH_STYLE: "${AGENT_KB_ASSET_S3_FORCE_PATH_STYLE:-false}"
+      KB_ASSET_S3_ACCESS_KEY_ID: "${AGENT_KB_ASSET_S3_ACCESS_KEY_ID:-}"
+      KB_ASSET_S3_SECRET_ACCESS_KEY: "${AGENT_KB_ASSET_S3_SECRET_ACCESS_KEY:-}"
+      KB_ASSET_S3_OPERATOR_ACCESS_KEY_ID: ""
+      KB_ASSET_S3_OPERATOR_SECRET_ACCESS_KEY: ""
+      BETTER_AUTH_URL: http://localhost:${WEB_PORT:-3001}
+      # Unset so the web client falls back to window.location.origin; the vite
+      # dev server proxies /rpc, /api, /ws to the in-container server on :3000.
+      VITE_SERVER_URL: ""
+      # Tell vite to bind 0.0.0.0 so the host port mapping can reach it.
+      VITE_DEV_HOST: "true"
+      # Keep the in-container dev server and API ports stable even if the
+      # developer's host .env files customize ports for multi-app local dev.
+      VITE_DEV_PORT: "3001"
+      VITE_DEV_SERVER_URL: http://localhost:3000
+      SERVER_PORT: "3000"
+      NODE_ENV: development
+      # Generated once per project and exported by scripts/dev-docker.sh.
+      KB_MASTER_KEY: "${KB_MASTER_KEY:-}"
+      KB_DATA_ROOT: /var/lib/knowledge-base
+      # Translation API KEYS are OPT-IN for the agent stack, same rationale as
+      # asset S3 above: a real key here costs real money on every agent translation
+      # save AND is rendered in plaintext by `docker compose config`. They read
+      # AGENT_-prefixed vars, NOT the bare host OPENROUTER_API_KEY /
+      # ANTHROPIC_API_KEY — unset => empty => translation runs fail
+      # the first job with a clear error and the rest of the app keeps working.
+      # PROVIDER/MODEL are not secrets and cost nothing without a key, so they
+      # still inherit from the host (no need to re-declare them when you opt in
+      # via AGENT_OPENROUTER_API_KEY).
+      OPENROUTER_API_KEY: "${AGENT_OPENROUTER_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${AGENT_ANTHROPIC_API_KEY:-}"
+      TRANSLATION_PROVIDER: "${TRANSLATION_PROVIDER:-openrouter}"
+      TRANSLATION_MODEL: "${TRANSLATION_MODEL:-}"
+    working_dir: /app
+    command: ["pnpm", "exec", "turbo", "dev", "--filter=server", "--filter=web"]
+    deploy:
+      replicas: 1
+      update_config:
+        order: stop-first
+    volumes: &dev-source # Bind the whole repo for live editing…
+      - ./:/app
+      # Mask the host volume tree so the recursive ./:/app bind above doesn't
+      # surface every port's node_modules back inside this container.
+      - /app/.docker-volumes
+      # …and keep node_modules in a gitignored, per-project directory
+      # (.docker-volumes/<project>/nm_*) so pnpm never writes into the host
+      # repo tree and multi-agent runs on different ports don't fight over the
+      # same store. AGENT_VOLUME_ROOT is an absolute path exported by
+      # scripts/dev-docker.sh, which also pre-creates these dirs with host
+      # ownership (the container runs as HOST_UID:HOST_GID).
+      - ${AGENT_VOLUME_ROOT:?run via pnpm dev:docker}/nm_root:/app/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_web:/app/apps/web/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_server:/app/apps/server/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_worker:/app/apps/worker/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_api:/app/packages/api/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_auth:/app/packages/auth/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_config:/app/packages/config/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_db:/app/packages/db/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_env:/app/packages/env/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_queue:/app/packages/queue/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_ui:/app/packages/ui/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_i18n-translate:/app/packages/i18n-translate/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_mailer:/app/packages/mailer/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_test-utils:/app/packages/test-utils/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_locales:/app/packages/locales/node_modules
+      - kb-data:/var/lib/knowledge-base
+      # NOTE: every workspace package that gets a node_modules MUST be listed
+      # here, or pnpm install in the container writes it back into the host
+      # repo. scripts/dev-docker.sh enforces this — it refuses to start if a
+      # workspace package is missing its mount.
+    ports:
+      # Only the vite dev server is exposed. It proxies API traffic to the
+      # in-container server on 3000, which has no host port binding.
+      #
+      # BIND_ADDR defaults to 127.0.0.1 so the published port is loopback-only.
+      # A bare "<port>:3001" binds 0.0.0.0 and, because Docker writes its own
+      # iptables rules ahead of ufw/firewalld, would expose this dev stack to
+      # the public internet on a VPS even behind a closed host firewall. To
+      # reach it from another device on your LAN (e.g. the PWA on a real phone),
+      # opt in explicitly: BIND_ADDR=0.0.0.0 pnpm dev:docker <port>.
+      - "${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      dev-setup:
+        condition: service_completed_successfully
+    profiles: [dev]
+
+  # Install/build once before either runtime enters the shared dependency tree.
+  dev-setup:
+    <<: *dev-runtime
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo "[dev-docker] installing dependencies (first run ~60s, cached after)…"
+        pnpm install --frozen-lockfile --ignore-scripts
+        # Probe the packaged better-sqlite3 prebuilt + sqlite-vec; server and
+        # worker resolve the same virtual-store directory.
+        node scripts/sqlite-native.mjs apps/server
+        node scripts/lib/validate-kb-master-key.mjs
+        echo "[dev-docker] generating prisma client…"
+        pnpm -F @knowledge-base/db exec prisma generate
+        echo "[dev-docker] applying committed migrations…"
+        # This fixed, project-private ephemeral Postgres is not on the host's
+        # loopback allowlist. Apply expand migrations using the shared guarded
+        # CLI owner; local development does not run delayed contracts.
+        node --input-type=module -e 'import { prisma } from "./scripts/db/lib/prisma.mjs"; await prisma(["migrate", "deploy"]);'
+        # Always rebuild: the bind-mounted tree may hold a kb-supervisor built
+        # on the host against a newer glibc, which make would keep as current.
+        # Every dev runtime then runs this container-built binary.
+        make -B -C apps/server/native -j2
+        pnpm -F server build
+        pnpm -F worker build
+        TMPDIR=/var/lib/knowledge-base/models/.private/tmp node scripts/build-embedding-runtime.mjs --output /app/node_modules/.cache/kb-embedding-runtime --install
+        node scripts/init-kb-volumes.mjs
+    ports: []
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kb-init:
+        condition: service_completed_successfully
+    volumes:
+      # Bind the whole repo for live editing…
+      - ./:/app
+      # Mask the host volume tree so the recursive ./:/app bind above doesn't
+      # surface every port's node_modules back inside this container.
+      - /app/.docker-volumes
+      # …and keep node_modules in a gitignored, per-project directory
+      # (.docker-volumes/<project>/nm_*) so pnpm never writes into the host
+      # repo tree and multi-agent runs on different ports don't fight over the
+      # same store. AGENT_VOLUME_ROOT is an absolute path exported by
+      # scripts/dev-docker.sh, which also pre-creates these dirs with host
+      # ownership (the container runs as HOST_UID:HOST_GID).
+      - ${AGENT_VOLUME_ROOT:?run via pnpm dev:docker}/nm_root:/app/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_web:/app/apps/web/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_server:/app/apps/server/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_worker:/app/apps/worker/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_api:/app/packages/api/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_auth:/app/packages/auth/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_config:/app/packages/config/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_db:/app/packages/db/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_env:/app/packages/env/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_queue:/app/packages/queue/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_ui:/app/packages/ui/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_i18n-translate:/app/packages/i18n-translate/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_mailer:/app/packages/mailer/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_test-utils:/app/packages/test-utils/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_locales:/app/packages/locales/node_modules
+      - kb-data:/var/lib/knowledge-base
+      # NOTE: every workspace package that gets a node_modules MUST be listed
+      # here, or pnpm install in the container writes it back into the host
+      # repo. scripts/dev-docker.sh enforces this — it refuses to start if a
+      # workspace package is missing its mount.
+
+  worker-dev:
+    <<: *dev-runtime
+    environment:
+      <<: *dev-environment
+      KB_ASSET_S3_ACCESS_KEY_ID: ""
+      KB_ASSET_S3_SECRET_ACCESS_KEY: ""
+      KB_MASTER_KEY: "${KB_MASTER_KEY:-}"
+    command: ["node", "apps/worker/dist/index.mjs", "--fenced"]
+    ports: []
+    tmpfs:
+      - /run/kb-mirror:rw,noexec,nosuid,nodev,size=16m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=0700
+    volumes:
+      - ./:/app:ro
+      - /app/.docker-volumes
+      - ${AGENT_VOLUME_ROOT:?run via pnpm dev:docker}/nm_root:/app/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_apps_web:/app/apps/web/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_apps_server:/app/apps/server/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_apps_worker:/app/apps/worker/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_api:/app/packages/api/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_auth:/app/packages/auth/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_config:/app/packages/config/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_db:/app/packages/db/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_env:/app/packages/env/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_queue:/app/packages/queue/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_ui:/app/packages/ui/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_i18n-translate:/app/packages/i18n-translate/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_mailer:/app/packages/mailer/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_test-utils:/app/packages/test-utils/node_modules:ro
+      - ${AGENT_VOLUME_ROOT}/nm_packages_locales:/app/packages/locales/node_modules:ro
+      - kb-data:/var/lib/knowledge-base
+
+# node_modules live in per-project bind mounts under .docker-volumes/<project>/
+# (gitignored). Postgres + Valkey use disposable anonymous volumes
+# (ephemeral — removed by `pnpm dev:docker:down`). KB volume names are
+# project-scoped by Compose. One kb-data volume holds repos/, assets/, models/
+# and index/; every service mounts it read-write.
+volumes:
+  kb-data:
+
+# ---------------------------------------------------------------------------
+# Network — every service above joins this single bridge (Compose attaches each
+# service to `default` automatically). Compose scopes the network by
+# COMPOSE_PROJECT_NAME, which scripts/dev-docker.sh sets to
+# <repo-slug>-<path-hash>-<port>, so each project+port gets a wholly separate
+# network with no cross-talk: two different template-derived apps doing agent
+# browser-testing on the same host (e.g. a shared VPS, separate per-app
+# databases) cannot see each other's containers, postgres, or redis. The
+# explicit `name:` carries the project so `docker network ls` is readable; the
+# interpolation fallback only applies to a raw `docker compose` invocation,
+# which the AGENT_VOLUME_ROOT guard above already blocks outside the
+# dev:docker wrappers.
+# ---------------------------------------------------------------------------
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-knowledge-base-agent}_net
+    driver: bridge

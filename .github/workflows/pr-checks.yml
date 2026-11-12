@@ -1,0 +1,864 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches: [main]
+    # `ready_for_review` is load-bearing: the jobs below skip while the PR is a
+    # draft, and a skipped required check satisfies a ruleset. Without this type
+    # a PR opened as a draft and then marked ready would be mergeable with every
+    # check skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel superseded runs when a PR is force-pushed.
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token: PR checks only read the repo.
+permissions:
+  contents: read
+
+jobs:
+  # Shared setup: install dependencies once and cache for downstream jobs.
+  setup:
+    name: Install dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.draft == false
+    outputs:
+      kb-suites: ${{ steps.kb-suites.outputs.json }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Inventory every registered integration suite
+        id: kb-suites
+        run: |
+          node --input-type=module -e '
+            import { SUITES, assertSuiteCoverage } from "./scripts/test-kb.mjs";
+            assertSuiteCoverage();
+            console.log("json=" + JSON.stringify(Object.entries(SUITES).filter(([, config]) => !config.qwenModel).map(([suite, config]) => ({
+              suite, browser: Boolean(config.playwright)
+            }))));
+          ' >> "$GITHUB_OUTPUT"
+
+      # Saved under this exact SHA, with no restore-keys, and every job below
+      # `needs: setup` — so a restore MISS downstream is never "not cached yet",
+      # it means this save failed or the entry was evicted. Those jobs therefore
+      # set `fail-on-cache-miss: true`: without it they run with no node_modules
+      # and fail with `biome: not found`, which sends you looking in the wrong
+      # place.
+      - name: Cache workspace
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+
+  # ── Validation jobs (all depend on setup) ──────────────────────────
+
+  lint:
+    name: Lint & format
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Lint & format check
+        run: pnpm check:ci
+
+      # Every key in a packages/env Zod schema must be described in
+      # scripts/lib/env-manifest.ts, and the generated .env.example files must
+      # match it. Without this, a new env var silently goes missing from
+      # `pnpm generate:secrets` and surfaces as a production boot failure.
+      - name: Environment manifest check
+        run: pnpm env:check
+
+      # packages/env validation modules must never load a .env file: they run in
+      # the web SSR graph, and a dotenv import there becomes an unresolvable Vite
+      # SSR external that only fails in a built container. Loading happens in
+      # @knowledge-base/env/{load-dotenv,root-env}, called from process entrypoints
+      # only. Typecheck, lint, and tests all pass while this is violated — which
+      # is why it is a gate. See scripts/check-load-dotenv-contract.ts.
+      - name: Env load/validate contract check
+        run: pnpm env:check-entrypoints
+
+      # The three Dockerfiles hand-enumerate a `COPY <member>/package.json` line
+      # for every workspace member, ahead of `pnpm install --frozen-lockfile`.
+      # Add a packages/* or apps/* member and forget its line and `docker build`
+      # fails at install time — invisible to `pnpm build`/tests. This gate makes
+      # the omission a fast error instead. See scripts/check-docker-copy.ts.
+      - name: Dockerfile COPY-list check
+        run: pnpm docker:check-copy
+
+      # Code comments AND retained product docs cite sections (`AGENTS.md § Bar`).
+      # When a doc is restructured the citation silently rots — the file still
+      # exists, but the named section is gone. This gate asserts every cited
+      # `§ <section>` in a live doc resolves to a real heading. Broken relative
+      # links between retained docs fail. Leftover comments that name a deleted
+      # directory (the former patterns/ library) warn instead of failing.
+      # See scripts/check-doc-citations.ts.
+      - name: Doc-citation check
+        run: pnpm docs:check-citations
+
+      # `minimumReleaseAgeExclude` exempts a package from the supply-chain
+      # age gate. Those exemptions are taken during a security window (the
+      # only patched version is younger than the window) and are supposed to
+      # be removed once the version ages in — but nothing forces that, so a
+      # one-week hole silently becomes permanent. This gate enforces the
+      # `drop-after:` date on each entry.
+      # See scripts/check-release-age-excludes.ts.
+      - name: Release-age exclude expiry
+        run: pnpm deps:check-excludes
+
+  typecheck:
+    name: Type check
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Type check
+        run: pnpm check-types
+
+  build:
+    name: Build
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Build
+        run: pnpm build
+
+  test:
+    name: Test
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Test
+        run: pnpm test
+
+  # ── KB integration (Docker PG/Redis; excluded from pnpm gate) ─────
+
+  kb-integration:
+    name: KB integration tests (${{ matrix.suite }})
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.suite == 'deployment' && 45 || 25 }}
+    if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.kb-suites) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Install Chromium and its system dependencies
+        if: matrix.browser
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      # Both real models run in mandatory kb-model-smoke.yml on x64 and arm64.
+      - name: KB integration suite
+        run: pnpm test:kb -- ${{ matrix.suite }}
+
+      - name: Upload redacted fixture logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kb-test-artifacts-${{ matrix.suite }}
+          path: /tmp/kb-test-artifacts/*.log
+          if-no-files-found: ignore
+
+  # Preserve the existing required status while requiring every matrix leg.
+  kb-integration-gate:
+    name: KB integration tests
+    needs: kb-integration
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every registered suite to pass
+        env:
+          RESULT: ${{ needs.kb-integration.result }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [ "$RESULT" = success ] || { [ "$DRAFT" = true ] && [ "$RESULT" = skipped ]; }; then
+            exit 0
+          fi
+          echo "KB integration result: $RESULT"
+          exit 1
+
+  # ── Agent docs drift check ─────────────────────────────────────────
+
+  agent-docs:
+    name: Agent docs in sync
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Regenerate agent docs
+        run: pnpm sync:agent-docs
+
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code CLAUDE.md .github/copilot-instructions.md; then
+            echo "::error::Agent docs are out of sync with AGENTS.md. Run 'pnpm sync:agent-docs' and commit the result."
+            exit 1
+          fi
+
+  # ── Policy checks (grep-based, enforce CLAUDE.md rules) ───────────
+
+  policy-checks:
+    name: Policy checks
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      # Enforcement only, per PR. The tooling's own self-tests (which prove
+      # the checkers still catch what they claim to catch) do NOT run here:
+      # they are maintainer-facing verification of the template's guard
+      # machinery, they run nightly (.github/workflows/nightly-tooling.yml,
+      # `pnpm verify:tooling`) and at release (`pnpm verify`) — keeping them
+      # off every PR also keeps them off every app built from this template.
+      - name: Grep policy checks (AGENTS.md guardrails)
+        run: |
+          pnpm policy:checks
+          pnpm policy:local-db-guard
+          pnpm db:test-unit
+          pnpm backup:test-unit
+          pnpm deploy:test-unit
+          pnpm policy:backup-writer
+
+      - name: Agent docs size budget
+        run: pnpm policy:agents-size
+
+      - name: Test colocation
+        run: pnpm policy:test-colocation
+
+      - name: Queue wiring
+        run: pnpm policy:queue-wiring
+
+      - name: Access matrix enforcement
+        run: pnpm policy:access-matrix
+
+      - name: Timestamp instants (timestamptz only, no session-TZ SQL)
+        run: pnpm policy:timestamps
+
+  # ── Prisma schema validation ──────────────────────────────────────
+
+  prisma-validate:
+    name: Prisma validate
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Validate schema
+        run: pnpm -F @knowledge-base/db exec prisma validate
+
+      - name: Check schema formatting
+        run: pnpm -F @knowledge-base/db exec prisma format --check
+
+  migrations:
+    name: Migration checks
+    container: node:26.13.1-bookworm
+    defaults:
+      run:
+        shell: bash
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+        env:
+          # Throwaway server that exists only for this job; trust auth keeps
+          # any credential-shaped URL out of the repository.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CHECK_DATABASE_URL: postgresql://postgres@postgres:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The checks compare against the base branch's migration history.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      # Match the host setup job's cache compression before computing the
+      # cache version. The container also owns /usr/local/bin for the guard.
+      - name: Install cache decompressor
+        run: apt-get update && apt-get install -y --no-install-recommends zstd
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Fetch the base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+      - name: Compile the owned-child guard
+        run: cc -O2 -Wall -Wextra -Werror apps/worker/src/native/child-guard.c -o /usr/local/bin/kb-child-guard
+
+      - name: Check migrations
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -o pipefail
+          pnpm db:check-migrations --base "origin/${BASE_REF}" | tee migration-summary.md
+
+      - name: Test migration recovery, locks and contracts against Postgres
+        run: nice -n 10 pnpm db:test-migrations --server-url "$CHECK_DATABASE_URL"
+
+      - name: Preserve destructive SQL summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: migration-destructive-summary
+          path: migration-summary.md
+          if-no-files-found: warn
+
+  # ── React Doctor (React health scan: hooks, a11y, perf, security) ─
+
+  react-doctor:
+    name: React Doctor
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Required for --scope changed: react-doctor uses `git merge-base` to find
+          # the common ancestor with the base branch.
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Run react-doctor (changed files only)
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          pnpm exec react-doctor . \
+            --scope changed \
+            --base "origin/${BASE_REF}" \
+            --annotations \
+            --offline \
+            -y
+
+  # ── Knip (unused exports & dependencies) ───────────────────────────
+
+  knip:
+    name: Unused code check
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: Restore workspace
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/db/prisma/generated
+          key: workspace-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Knip
+        run: pnpm knip
+
+  # ── pnpm audit (known-CVE check against the lockfile) ─────────────
+
+  pnpm-audit:
+    name: pnpm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      # Verify the installed security patch before its narrow audit exemption.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Security patch regression checks
+        run: pnpm deps:check-security-patches
+
+      # pnpm audit reads pnpm-lock.yaml directly.
+      #
+      # Threshold stays `high`; the sole patched-package false positive is
+      # guarded above. Lower-severity advisories stay visible to Dependabot.
+      # Bump to `moderate`
+      # once those are cleared.
+      - name: pnpm audit
+        run: pnpm audit --audit-level=high
+
+  # ── Secret scanning (always-on for non-draft PRs) ─────────────────
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # This job intentionally has no workspace install: both gates are
+      # standalone Node/Bash programs. Pin the runtime here rather than
+      # relying on a runner-default Node or pnpm from another job.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+
+      - name: TruffleHog OSS
+        run: |
+          set -euo pipefail
+          bash scripts/trufflehog-pr-scan.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}"
+
+      - name: Template secret patterns
+        run: |
+          set -euo pipefail
+          node scripts/check-template-secret-patterns.mjs --self-test
+          node scripts/check-template-secret-patterns.mjs
+
+  # ── Docker image build ────────────────────────────────────────────
+
+  # A matrix job publishes one status check per leg — `Docker image build (app)`
+  # and siblings — so the bare `Docker image build` context a branch ruleset can
+  # require would never appear. The legs are named explicitly here, and the
+  # `docker-gate` job below publishes the single required context.
+  docker:
+    name: Docker image build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: app
+            dockerfile: ./Dockerfile
+          - image: worker
+            dockerfile: ./Dockerfile.worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Passed as APT_CACHE_DATE so the base stage's `apt-get upgrade` layer is
+      # rebuilt at most daily instead of being frozen in the buildx cache —
+      # otherwise Trivy fails on OS patches Debian shipped after the layer was
+      # first cached (see the ARG comment in the Dockerfiles).
+      - name: Compute apt cache-bust date
+        id: apt-date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ github.event.repository.name }}-${{ matrix.image }}-pr:${{ github.sha }}
+          build-args: |
+            APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          provenance: false
+
+      - name: Reclaim ephemeral Buildx cache before Trivy
+        run: |
+          set -euo pipefail
+          docker buildx prune -f --max-used-space 512MB || docker builder prune -f
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          # Pin the Trivy binary explicitly; the action default (v0.70.0) lags.
+          version: v0.76.2
+          image-ref: ${{ github.event.repository.name }}-${{ matrix.image }}-pr:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+  # ── Required status check for the Docker matrix ───────────────────────
+
+  # This aggregates the matrix legs above so a human-facing status identifies
+  # the Docker failure, while the required PR aggregate below also inspects the
+  # underlying `docker` result directly.
+  #
+  # `if: always()` so a failed leg cannot be laundered into a skipped gate. A
+  # draft PR skips the `docker` job entirely; `skipped` is treated as a pass here
+  # exactly as GitHub treats a skipped required check.
+  docker-gate:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: docker
+    if: always()
+    steps:
+      - name: Require every image build to have passed
+        env:
+          DOCKER_RESULT: ${{ needs.docker.result }}
+        run: |
+          set -euo pipefail
+          case "$DOCKER_RESULT" in
+            success)
+              echo "All Docker image builds passed."
+              ;;
+            skipped)
+              echo "Docker image builds were skipped (draft PR) — nothing to gate."
+              ;;
+            *)
+              echo "::error::Docker image build did not pass (result: $DOCKER_RESULT). Open the 'Docker image build (<image>)' checks for the failing leg."
+              exit 1
+              ;;
+          esac
+
+  # ── Required PR validation aggregate ─────────────────────────────────
+
+  # Required checks marked "skipped" satisfy GitHub rulesets. A failed setup
+  # therefore cannot be left to its skipped dependents: this job always runs,
+  # reads the setup and every validation result, and accepts skips only when
+  # the pull request itself is a draft. `.github/rulesets/main.json` requires
+  # this one stable context rather than a list of jobs that GitHub could mark
+  # skipped before they performed validation.
+  pr-validation:
+    name: PR validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - setup
+      - lint
+      - typecheck
+      - build
+      - test
+      - kb-integration
+      - kb-integration-gate
+      - agent-docs
+      - policy-checks
+      - prisma-validate
+      - migrations
+      - react-doctor
+      - knip
+      - pnpm-audit
+      - secret-scan
+      - docker
+      - docker-gate
+    if: always()
+    steps:
+      - name: Require successful validation for ready pull requests
+        env:
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          SETUP_RESULT: ${{ needs['setup'].result }}
+          LINT_RESULT: ${{ needs['lint'].result }}
+          TYPECHECK_RESULT: ${{ needs['typecheck'].result }}
+          BUILD_RESULT: ${{ needs['build'].result }}
+          TEST_RESULT: ${{ needs['test'].result }}
+          KB_INTEGRATION_RESULT: ${{ needs['kb-integration'].result }}
+          KB_INTEGRATION_GATE_RESULT: ${{ needs['kb-integration-gate'].result }}
+          AGENT_DOCS_RESULT: ${{ needs['agent-docs'].result }}
+          POLICY_CHECKS_RESULT: ${{ needs['policy-checks'].result }}
+          MIGRATIONS_RESULT: ${{ needs['migrations'].result }}
+          PRISMA_VALIDATE_RESULT: ${{ needs['prisma-validate'].result }}
+          REACT_DOCTOR_RESULT: ${{ needs['react-doctor'].result }}
+          KNIP_RESULT: ${{ needs['knip'].result }}
+          PNPM_AUDIT_RESULT: ${{ needs['pnpm-audit'].result }}
+          SECRET_SCAN_RESULT: ${{ needs['secret-scan'].result }}
+          DOCKER_RESULT: ${{ needs['docker'].result }}
+          DOCKER_GATE_RESULT: ${{ needs['docker-gate'].result }}
+        run: |
+          set -euo pipefail
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "Draft pull request — validation jobs are intentionally skipped."
+            exit 0
+          fi
+
+          for result in \
+            "$SETUP_RESULT" \
+            "$LINT_RESULT" \
+            "$TYPECHECK_RESULT" \
+            "$BUILD_RESULT" \
+            "$TEST_RESULT" \
+            "$KB_INTEGRATION_RESULT" \
+            "$KB_INTEGRATION_GATE_RESULT" \
+            "$AGENT_DOCS_RESULT" \
+            "$POLICY_CHECKS_RESULT" \
+            "$PRISMA_VALIDATE_RESULT" \
+            "$MIGRATIONS_RESULT" \
+            "$REACT_DOCTOR_RESULT" \
+            "$KNIP_RESULT" \
+            "$PNPM_AUDIT_RESULT" \
+            "$SECRET_SCAN_RESULT" \
+            "$DOCKER_RESULT" \
+            "$DOCKER_GATE_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required setup or validation job did not succeed (result: $result)."
+              exit 1
+            fi
+          done
+          echo "Setup and every validation job succeeded."

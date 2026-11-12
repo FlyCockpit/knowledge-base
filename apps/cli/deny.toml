@@ -1,0 +1,68 @@
+# cargo-deny configuration — supply-chain guardrails enforced in CI.
+# Run locally with: cargo deny check
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Check every platform shipped by dist-workspace.toml, including non-host
+# dependencies. The contract test prevents a release target from being omitted.
+# The default all-platform graph also includes the verifier's wasm32-only
+# webpki-root-certs bundle, which no CLI artifact compiles or redistributes.
+# Keep the license rules below unchanged; a future wasm release needs review.
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+# Fail on any crate with a known RUSTSEC security advisory.
+version = 2
+yanked = "deny"
+# Add IDs here only with a written justification, e.g.:
+# ignore = ["RUSTSEC-0000-0000"]  # reason: <why this is acceptable>
+ignore = [
+    # zbus 6.0.0 (2026-10-16) folded zbus_names/zvariant/zvariant_derive into
+    # zbus itself and marked the standalone crates unmaintained. They reach us
+    # only through the Linux keystore chain kb-local -> zbus-secret-service-
+    # keyring-store 1.0.1 -> secret-service 5.2.0 -> zbus 5.19, and no
+    # secret-service release on zbus 6 exists yet. Informational (unmaintained),
+    # not a vulnerability. Remove these once secret-service moves to zbus 6.
+    "RUSTSEC-2026-0370", # zvariant unmaintained
+    "RUSTSEC-2026-0371", # zbus_names unmaintained
+    "RUSTSEC-2026-0372", # zvariant_derive unmaintained
+]
+
+[licenses]
+version = 2
+# Allowlist of licenses your dependency tree may use. If a new dependency pulls
+# in a license not listed here, CI fails — forcing a conscious decision rather
+# than an accidental GPL/AGPL inclusion. Add licenses deliberately.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Warn when multiple versions of the same crate are pulled in (bloat / slow
+# builds). Not an error by default — bump to "deny" once your tree is clean.
+multiple-versions = "warn"
+wildcards = "deny"
+# Crates you never want, with a reason:
+# deny = [{ crate = "openssl", reason = "use rustls instead" }]
+deny = []
+
+[sources]
+# Only allow crates from crates.io by default. Add git sources explicitly.
+unknown-registry = "deny"
+unknown-git = "deny"

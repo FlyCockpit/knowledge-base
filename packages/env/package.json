@@ -1,0 +1,43 @@
+{
+  "name": "@knowledge-base/env",
+  "license": "Apache-2.0",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./asset-storage-config": "./src/asset-storage-config.ts",
+    "./app-name": "./src/app-name.ts",
+    "./backup-config": "./src/backup-config.ts",
+    "./shared": "./src/shared.ts",
+    "./vars/server": "./src/vars/server.ts",
+    "./vars/shared": "./src/vars/shared.ts",
+    "./vars/web": "./src/vars/web.ts",
+    "./topology": "./src/topology.ts",
+    "./server": "./src/server.ts",
+    "./web": "./src/web.ts",
+    "./load-dotenv": "./src/load-dotenv.ts",
+    "./root-env": "./src/root-env.ts",
+    "./kb-master-key": "./src/kb-master-key.ts",
+    "./mailbox": "./src/mailbox.ts",
+    "./secret": "./src/secret.ts",
+    "./log": "./src/log.ts",
+    "./log-record": "./src/log-record.ts",
+    "./connection-config": "./src/connection-config.ts",
+    "./service-output": "./src/service-output.ts"
+  },
+  "dependencies": {
+    "@t3-oss/env-core": "^0.13.11",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests"
+  },
+  "devDependencies": {
+    "@knowledge-base/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

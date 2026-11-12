@@ -1,0 +1,20 @@
+{
+  "appUpdateAvailable": "A new version is available. Reloading…",
+  "badRequest": "That request wasn't valid.",
+  "conflict": "That conflicts with an existing record.",
+  "couldNotCopy": "Couldn't copy — please select and copy manually.",
+  "forbidden": "You don't have access to this.",
+  "generic": "Something didn't work. Try again.",
+  "notFound": "That wasn't found.",
+  "pageDescription": "{{appName}} is a web application",
+  "rateLimited": "Too many attempts. Please wait a few minutes and try again.",
+  "rateLimitedWithSeconds": "Too many attempts. Try again in {{seconds}} seconds.",
+  "rootError": "This page didn't load. Try again, or reload.",
+  "serverError": "Something didn't work on our end. Try again in a moment.",
+  "sessionEnded": "Your session has ended. Sign in again.",
+  "pageNotFound": {
+    "title": "Page not found",
+    "description": "This address doesn't match any page. Check the link, or start again from the home page.",
+    "home": "Go to the home page"
+  }
+}
