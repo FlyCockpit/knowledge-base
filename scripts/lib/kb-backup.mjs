@@ -1002,38 +1002,43 @@ export async function deliverBackup({
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const abort = new AbortController();
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, () => abort.abort());
-  try {
-    const env = process.env;
-    const input = {
-      connectionString: env.DATABASE_URL,
-      dataDir: env.KB_DATA_ROOT,
-      backupDir: env.BACKUP_DIR,
-      recipient: env.BACKUP_AGE_RECIPIENT,
-      signal: abort.signal,
-    };
-    if (process.argv[2] === "snapshot")
-      await snapshotOffline({
-        ...input,
-        schemaDir: env.KB_BACKUP_SCHEMA_DIR,
-        runId: env.KB_BACKUP_RUN_ID,
-      });
-    else {
-      const file = await coordinateBackup({ ...input, runId: env.KB_BACKUP_RUN_ID || undefined });
-      await deliverBackup({
-        file,
-        label: process.argv[3] || "manual",
-        resultFile: env.BACKUP_RESULT_FILE,
+  // No top-level await: deliverBackup imports upload-backup-to-s3.mjs, which
+  // imports this module; awaiting here would leave that import waiting on this
+  // module's own evaluation forever (a silent hang before any upload).
+  void (async () => {
+    try {
+      const env = process.env;
+      const input = {
         connectionString: env.DATABASE_URL,
+        dataDir: env.KB_DATA_ROOT,
+        backupDir: env.BACKUP_DIR,
+        recipient: env.BACKUP_AGE_RECIPIENT,
         signal: abort.signal,
-      });
-      const { pruneCompletedPairs } = await import("../backup/schedule.mjs");
-      await pruneCompletedPairs(dirname(file));
-      console.log("Backup completed.");
+      };
+      if (process.argv[2] === "snapshot")
+        await snapshotOffline({
+          ...input,
+          schemaDir: env.KB_BACKUP_SCHEMA_DIR,
+          runId: env.KB_BACKUP_RUN_ID,
+        });
+      else {
+        const file = await coordinateBackup({ ...input, runId: env.KB_BACKUP_RUN_ID || undefined });
+        await deliverBackup({
+          file,
+          label: process.argv[3] || "manual",
+          resultFile: env.BACKUP_RESULT_FILE,
+          connectionString: env.DATABASE_URL,
+          signal: abort.signal,
+        });
+        const { pruneCompletedPairs } = await import("../backup/schedule.mjs");
+        await pruneCompletedPairs(dirname(file));
+        console.log("Backup completed.");
+      }
+    } catch {
+      console.error(
+        "FATAL: quiesced backup failed; no partial bundle is valid. Retry offline recovery before restarting if maintenance remains closed.",
+      );
+      process.exitCode = 1;
     }
-  } catch {
-    console.error(
-      "FATAL: quiesced backup failed; no partial bundle is valid. Retry offline recovery before restarting if maintenance remains closed.",
-    );
-    process.exitCode = 1;
-  }
+  })();
 }

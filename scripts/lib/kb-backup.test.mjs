@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -379,4 +379,33 @@ test("the large-object check runs inside the exported snapshot, before pg_dump",
   const dump = source.indexOf('"pg_dump",');
   assert.ok(snapshot > 0 && check > snapshot && dump > check, "snapshot → check → pg_dump");
   assert.ok(check < source.indexOf('open(dump, "wx"'), "no dump file is created first");
+});
+
+test("the CLI entry never holds module evaluation, so its upload import cannot deadlock", async () => {
+  // deliverBackup imports upload-backup-to-s3.mjs, which imports kb-backup.mjs.
+  // A top-level await in the entry would keep that import pending forever.
+  // A slow fake `age` preflight keeps the CLI busy; evaluation must finish first.
+  const dir = await mkdtemp(join(tmpdir(), "kb-backup-entry-"));
+  try {
+    await writeFile(join(dir, "age"), "#!/bin/sh\nsleep 1\nexit 1\n", { mode: 0o755 });
+    const entry = new URL("./kb-backup.mjs", import.meta.url).pathname;
+    const script = `process.argv.splice(1, Infinity, ${JSON.stringify(entry)}, "coordinate");
+await import(${JSON.stringify(entry)});
+console.error("EVALUATED");`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      env: {
+        PATH: `${dir}:/usr/bin:/bin`,
+        KB_DATA_ROOT: join(dir, "data"),
+        BACKUP_DIR: join(dir, "backups"),
+        BACKUP_AGE_RECIPIENT: "age1entrytest",
+      },
+      timeout: 30_000,
+    });
+    const output = result.stderr;
+    assert.ok(output.includes("FATAL: quiesced backup failed"), output);
+    assert.ok(output.indexOf("EVALUATED") < output.indexOf("FATAL"), output);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
