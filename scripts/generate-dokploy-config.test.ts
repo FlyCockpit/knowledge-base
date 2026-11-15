@@ -234,6 +234,11 @@ test("Compose shares data and backup volumes, reuses server build and keeps secr
   assert.match(service(yaml, "backup"), /schedule\.mjs", "health"/);
   assert.match(service(yaml, "server"), /MIGRATE_ON_START: "true"/);
   assert.match(service(yaml, "worker"), /MIGRATE_ON_START: "false"/);
+  for (const role of ["worker", "backup"])
+    assert.match(
+      service(yaml, role),
+      /depends_on:[\s\S]*knowledge-base-development-server:\n {8}condition: service_started/,
+    );
   assert.match(service(yaml, "server"), /stop_grace_period: 100s/);
   assert.match(yaml, /order: stop-first/);
   assert.match(yaml, /failure_action: rollback/);
