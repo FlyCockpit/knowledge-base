@@ -770,7 +770,7 @@ it("every pnpm hook explicitly disables automatic install without disabling chec
 });
 it("reaps only kb-test resources of exited runners", () => {
   // Pure functions over injected listings: pinned to the unprefixed namespace
-  // whatever KB_TEST_NAME_PREFIX this run carries (prefixed cases below).
+  // whatever TEST_CONTAINER_PREFIX this run carries (prefixed cases below).
   const env = {};
   assert.deepEqual(parseRunProject("kb-test-deployment-609696-6e3870-deployment-server-1", env), {
     project: "kb-test-deployment-609696-6e3870",
@@ -862,12 +862,12 @@ it("reaps exact labelled fixture names only after their owning run exits", () =>
     [live, 222],
   ]);
 });
-it("KB_TEST_NAME_PREFIX validates and joins with one dash", () => {
+it("TEST_CONTAINER_PREFIX validates and joins with one dash", () => {
   assert.equal(kbTestNamePrefix({}), "");
-  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "" }), "");
-  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "rp5-fubk" }), "rp5-fubk-");
-  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "rp5-fubk-" }), "rp5-fubk-");
-  assert.equal(kbTestName("kb-ssh-x", { KB_TEST_NAME_PREFIX: "a1" }), "a1-kb-ssh-x");
+  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "" }), "");
+  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "rp5-fubk" }), "rp5-fubk-");
+  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "rp5-fubk-" }), "rp5-fubk-");
+  assert.equal(kbTestName("kb-ssh-x", { TEST_CONTAINER_PREFIX: "a1" }), "a1-kb-ssh-x");
   // `kb-test`/`kb-` prefixes could make one namespace's names parse as another run's.
   for (const bad of [
     "RP5",
@@ -882,10 +882,10 @@ it("KB_TEST_NAME_PREFIX validates and joins with one dash", () => {
     "x-kb-test-y",
     "kb-x",
   ])
-    assert.throws(() => kbTestNamePrefix({ KB_TEST_NAME_PREFIX: bad }), /KB_TEST_NAME_PREFIX/);
+    assert.throws(() => kbTestNamePrefix({ TEST_CONTAINER_PREFIX: bad }), /TEST_CONTAINER_PREFIX/);
 });
 it("a prefixed runner parses and reaps only its own namespace", () => {
-  const env = { KB_TEST_NAME_PREFIX: "rp5-fubk" };
+  const env = { TEST_CONTAINER_PREFIX: "rp5-fubk" };
   assert.deepEqual(parseRunProject("rp5-fubk-kb-test-journal-111-aaaaaa-postgres-1", env), {
     project: "rp5-fubk-kb-test-journal-111-aaaaaa",
     pid: 111,

@@ -130,7 +130,7 @@ async function main() {
       throw new Error(`Runtime Docker ${args[0]} failed (${error.code ?? "nonzero"}).`);
     }
   };
-  // Every Docker name this run chooses carries KB_TEST_NAME_PREFIX (validated
+  // Every Docker name this run chooses carries TEST_CONTAINER_PREFIX (validated
   // here, before any Docker call), like `pnpm test:kb`.
   const runId = randomUUID();
   const ownedName = (kind) => kbTestName(`knowledge-base-runtime-${kind}-${runId}`);

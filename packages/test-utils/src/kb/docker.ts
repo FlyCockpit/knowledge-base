@@ -7,7 +7,7 @@ import { kbTestName, kbTestNamePrefixPattern } from "./test-names.mjs";
 const exec = promisify(execFile);
 
 // Reuse the runner's ownership label; standalone fixtures own their process.
-// Both carry this run's `KB_TEST_NAME_PREFIX` (./test-names.mjs).
+// Both carry this run's `TEST_CONTAINER_PREFIX` (./test-names.mjs).
 const runnerProject = process.env.KB_TEST_PROJECT ?? "";
 const fixtureProject = new RegExp(
   `^${kbTestNamePrefixPattern()}kb-test-[a-z0-9-]+-\\d+-[0-9a-f]{6}$`,

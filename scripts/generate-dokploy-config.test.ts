@@ -252,6 +252,18 @@ test("backup settings reach the leader and scheduler; SMTP and monitor keys reac
     assert.ok(!optional.worker.includes(key), key);
   }
   assert.ok(optional.worker.includes("BACKUP_MONITOR_S3_SECRET_ACCESS_KEY"));
+  // The server re-ages the worker's recorded verdict with the configured
+  // limit, so both get it; the Compose server never gets the monitor key pair.
+  assert.ok(optional.server.includes("BACKUP_MAX_AGE_HOURS"));
+  assert.ok(optional.worker.includes("BACKUP_MAX_AGE_HOURS"));
+  const compose = generateDokployCompose(defaults);
+  for (const role of ["server", "worker"])
+    assert.match(
+      service(compose, role),
+      /BACKUP_MAX_AGE_HOURS: "\$\{BACKUP_MAX_AGE_HOURS:-\}"/,
+      role,
+    );
+  assert.doesNotMatch(service(compose, "server"), /BACKUP_MONITOR_S3_/);
   for (const keys of [optional.server, optional.worker]) {
     assert.ok(keys.includes("OPENROUTER_API_KEY"));
     assert.ok(!keys.includes("KB_INSTANCE_ID"));

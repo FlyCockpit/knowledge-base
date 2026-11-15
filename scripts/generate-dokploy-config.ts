@@ -232,6 +232,10 @@ function environments(compose: boolean, project: string) {
       // writer. The entrypoint strips both pairs before the HTTP runtime exec.
       ...values(assetRoleKeys.backup),
       ...values(backupKeys),
+      // The worker holds the monitor keys and records the freshness verdict;
+      // the admin card re-ages it with the configured limit, so the server
+      // needs that non-secret limit too (packages/api/src/lib/backup-freshness.ts).
+      ...values(["BACKUP_MAX_AGE_HOURS"]),
       ...values(smtpKeys),
       ...values([
         "BETTER_AUTH_SECRET",

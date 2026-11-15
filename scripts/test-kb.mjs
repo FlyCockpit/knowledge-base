@@ -1037,8 +1037,8 @@ function stopServices(project, secrets) {
 }
 
 /**
- * Run-owned resource names use `<KB_TEST_NAME_PREFIX>kb-test-<suite>-<runner pid>-<6 hex>`
- * as a prefix. Only this run's namespace (its `KB_TEST_NAME_PREFIX`, empty by default)
+ * Run-owned resource names use `<TEST_CONTAINER_PREFIX>kb-test-<suite>-<runner pid>-<6 hex>`
+ * as a prefix. Only this run's namespace (its `TEST_CONTAINER_PREFIX`, empty by default)
  * parses, so a reaper never considers another prefix's resources.
  * Container ownership requires a label; an image or container name alone is insufficient.
  */

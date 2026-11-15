@@ -59,8 +59,8 @@ function chosenNames(calls) {
   return names;
 }
 
-test("runtime:test-operations puts every Docker name it chooses under KB_TEST_NAME_PREFIX", () => {
-  const result = smoke({ KB_TEST_NAME_PREFIX: "rp-unit" });
+test("runtime:test-operations puts every Docker name it chooses under TEST_CONTAINER_PREFIX", () => {
+  const result = smoke({ TEST_CONTAINER_PREFIX: "rp-unit" });
   assert.equal(result.status, 1, result.stderr);
   const names = chosenNames(result.calls);
   // The worker base image, the Postgres container and both removals.
@@ -87,9 +87,9 @@ test("runtime:test-operations without a prefix uses its own unprefixed names", (
   for (const name of names) assert.match(name, /^knowledge-base-runtime-/);
 });
 
-test("runtime:test-operations refuses an invalid KB_TEST_NAME_PREFIX before any Docker call", () => {
-  const result = smoke({ KB_TEST_NAME_PREFIX: "Bad_Prefix" });
+test("runtime:test-operations refuses an invalid TEST_CONTAINER_PREFIX before any Docker call", () => {
+  const result = smoke({ TEST_CONTAINER_PREFIX: "Bad_Prefix" });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /KB_TEST_NAME_PREFIX must be/);
+  assert.match(result.stderr, /TEST_CONTAINER_PREFIX must be/);
   assert.deepEqual(result.calls, []);
 });

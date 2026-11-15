@@ -1,5 +1,5 @@
 /**
- * Docker name prefix for `pnpm test:kb` (`KB_TEST_NAME_PREFIX`). Every Docker
+ * Docker name prefix for `pnpm test:kb` (`TEST_CONTAINER_PREFIX`). Every Docker
  * name a run chooses (the compose project and so its containers, networks and
  * volumes, image tags, the named fixture containers, networks and volumes, and
  * the build-only `standalone` namespace) starts with it, so two checkouts can
@@ -18,12 +18,12 @@
 const PREFIX = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 export function kbTestNamePrefix(env = process.env) {
-  const raw = env.KB_TEST_NAME_PREFIX ?? "";
+  const raw = env.TEST_CONTAINER_PREFIX ?? "";
   if (raw === "") return "";
   const value = raw.endsWith("-") ? raw.slice(0, -1) : raw;
   if (!PREFIX.test(value) || value.includes("kb-test") || value.startsWith("kb-")) {
     throw new Error(
-      "KB_TEST_NAME_PREFIX must be lowercase letters, digits and inner dashes (at most 32 characters), not starting with kb- or containing kb-test",
+      "TEST_CONTAINER_PREFIX must be lowercase letters, digits and inner dashes (at most 32 characters), not starting with kb- or containing kb-test",
     );
   }
   return `${value}-`;

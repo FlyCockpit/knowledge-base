@@ -3,7 +3,7 @@
  * `pnpm db:test-migrations` — end-to-end test of the migration tooling
  * against a DISPOSABLE Postgres (a throwaway `postgres:18` docker container,
  * or `--server-url <superuser url>` for one you already run, e.g. CI).
- * `--container-prefix <name>` (or TEST_MIGRATIONS_CONTAINER_PREFIX) names the
+ * `--container-prefix <name>` (or TEST_CONTAINER_PREFIX in front of the default) names the
  * throwaway container `<name>-<hex>` (default `knowledge-base-test-migrations`),
  * so a shared machine's containers stay in their own namespace. Every database
  * and role it creates carries a per-run random suffix, so a `--server-url`
@@ -95,16 +95,33 @@ function freePort() {
   });
 }
 
-/** The throwaway container's name prefix: `--container-prefix`, then the env var. */
-function containerPrefix() {
-  const index = process.argv.indexOf("--container-prefix");
-  const prefix =
-    index >= 0
-      ? process.argv[index + 1]
-      : process.env.TEST_MIGRATIONS_CONTAINER_PREFIX || "knowledge-base-test-migrations";
-  if (!prefix || !/^[a-z0-9][a-z0-9_.-]*$/.test(prefix))
-    throw new Error("--container-prefix needs a Docker name prefix ([a-z0-9][a-z0-9_.-]*)");
-  return prefix;
+/**
+ * The throwaway container's name prefix: `--container-prefix <name>` replaces
+ * it; otherwise TEST_CONTAINER_PREFIX (shared with `pnpm test:kb` and
+ * `runtime:test-operations`, same rule as
+ * packages/test-utils/src/kb/test-names.mjs) goes in front of the default.
+ * An invalid value is an error, never a silent default.
+ */
+export function containerPrefix(argv = process.argv, env = process.env) {
+  const index = argv.indexOf("--container-prefix");
+  if (index >= 0) {
+    const prefix = argv[index + 1];
+    if (!prefix || !/^[a-z0-9][a-z0-9_.-]*$/.test(prefix))
+      throw new Error("--container-prefix needs a Docker name prefix ([a-z0-9][a-z0-9_.-]*)");
+    return prefix;
+  }
+  const raw = env.TEST_CONTAINER_PREFIX ?? "";
+  if (raw === "") return "knowledge-base-test-migrations";
+  const value = raw.endsWith("-") ? raw.slice(0, -1) : raw;
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(value) ||
+    value.includes("kb-test") ||
+    value.startsWith("kb-")
+  )
+    throw new Error(
+      "TEST_CONTAINER_PREFIX must be lowercase letters, digits and inner dashes (at most 32 characters), not starting with kb- or containing kb-test",
+    );
+  return `${value}-knowledge-base-test-migrations`;
 }
 
 /**
