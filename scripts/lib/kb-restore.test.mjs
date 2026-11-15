@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -255,9 +255,10 @@ function compatibilityFixture() {
     snapshot.sourceCatalog.push({
       kind: "enum",
       identity: type[1],
-      definition: [...type[2].matchAll(/'((?:''|[^'])*)'/g)]
-        .map((m) => m[1].replaceAll("''", "'"))
-        .join(","),
+      // The format readApplicationCatalog writes: JSON array text.
+      definition: JSON.stringify(
+        [...type[2].matchAll(/'((?:''|[^'])*)'/g)].map((m) => m[1].replaceAll("''", "'")),
+      ),
     });
   }
   return { baseline, later, snapshot };
@@ -369,10 +370,9 @@ test("same-image post-contract restore permits retired baseline columns and unus
   const kind = snapshot.sourceCatalog.find(
     (r) => r.kind === "enum" && r.identity === "DurableJobKind",
   );
-  kind.definition = kind.definition
-    .split(",")
-    .filter((label) => label !== "PROBE")
-    .join(",");
+  kind.definition = JSON.stringify(
+    JSON.parse(kind.definition).filter((label) => label !== "PROBE"),
+  );
   assert.doesNotThrow(() =>
     validateRestoreCompatibility(snapshot, [baseline, later], [baseline, later]),
   );
@@ -398,10 +398,9 @@ test("every explicit restore column and enum label is required before import", a
     for (const label of labels.split(" ")) {
       const altered = structuredClone(snapshot);
       const row = altered.sourceCatalog.find((r) => r.kind === "enum" && r.identity === type);
-      row.definition = row.definition
-        .split(",")
-        .filter((value) => value !== label)
-        .join(",");
+      row.definition = JSON.stringify(
+        JSON.parse(row.definition).filter((value) => value !== label),
+      );
       assert.throws(
         () => validateRestoreCompatibility(altered, [baseline], [baseline]),
         /COMPATIBLE_IMAGE/,
@@ -409,4 +408,228 @@ test("every explicit restore column and enum label is required before import", a
       );
     }
   }
+});
+
+test("enum labels are read in readApplicationCatalog's JSON array format; anything else is refused", async () => {
+  const { validateRestoreCompatibility } = await import("./kb-restore.mjs");
+  const { baseline, snapshot } = compatibilityFixture();
+  // The fixture writes what the real catalog query writes; it must pass.
+  assert.doesNotThrow(() => validateRestoreCompatibility(snapshot, [baseline], [baseline]));
+  const row = snapshot.sourceCatalog.find(
+    (r) => r.kind === "enum" && r.identity === "DurableJobKind",
+  );
+  const labels = JSON.parse(row.definition);
+  for (const definition of [
+    labels.join(","),
+    "not json",
+    JSON.stringify({ labels }),
+    "null",
+    // Every required label present, plus a member pg_enum could never hold.
+    JSON.stringify([...labels, null]),
+    JSON.stringify([...labels, 1]),
+    JSON.stringify([...labels, { label: "x" }]),
+    JSON.stringify([...labels, ["nested"]]),
+    JSON.stringify([...labels, labels[0]]),
+  ]) {
+    const altered = structuredClone(snapshot);
+    altered.sourceCatalog.find(
+      (r) => r.kind === "enum" && r.identity === "DurableJobKind",
+    ).definition = definition;
+    assert.throws(
+      () => validateRestoreCompatibility(altered, [baseline], [baseline]),
+      /COMPATIBLE_IMAGE/,
+      definition,
+    );
+  }
+});
+
+test("a missing age client is reported as such, not as a corrupt bundle, and never hangs", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "kb-restore-no-age-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  // Isolated PATH: only a `node` link, no age.
+  await symlink(process.execPath, join(dir, "node"));
+  const cipher = Buffer.from("age-encryption.org/v1\nfixture\n");
+  const file = join(dir, "backup.age");
+  await writeFile(file, cipher);
+  await writeFile(
+    `${file}.complete`,
+    JSON.stringify({
+      version: 1,
+      size: cipher.length,
+      sha256: createHash("sha256").update(cipher).digest("hex"),
+    }),
+  );
+  const identity = join(dir, "identity");
+  await writeFile(identity, "inert\n");
+  const stage = join(dir, "stage");
+  await mkdir(stage);
+  const path = process.env.PATH;
+  process.env.PATH = dir;
+  try {
+    await assert.rejects(extractBundle(file, identity, stage), {
+      code: "RESTORE_DECRYPT_CLIENT_MISSING",
+    });
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+// Exit 3 ("refused, nothing changed") is host.sh's cue to start the stopped
+// writers again, so it must cover exactly the refusals before this run's first
+// restore-state write on a target with no earlier attempt.
+const restoreModule = new URL("./kb-restore.mjs", import.meta.url).pathname;
+const initVolumes = new URL("../init-kb-volumes.mjs", import.meta.url).pathname;
+function fencedRestore(f, scenario) {
+  // The real offline fence: both fence files flock'd (exclusive) on inherited
+  // descriptors, as kb-supervisor --restore hands them over. The pg client is
+  // a fake that records every statement and answers per scenario.
+  const child = `
+import { restoreOffline, restoreExitCode } from ${JSON.stringify(restoreModule)};
+const scenario = process.env.SCENARIO;
+const sent = [];
+const controller = new AbortController();
+if (scenario === "cancelled") controller.abort();
+const createClient = () => ({
+  on() {},
+  async connect() {},
+  async end() {},
+  async query(sql) {
+    sent.push(sql);
+    if (sql.includes("pg_try_advisory_lock")) return { rows: [{ held: !scenario.endsWith("busy") }] };
+    if (sql.includes("to_regclass('knowledge_base_control.kb_restore')")) {
+      if (scenario === "probe-fails-busy") throw Object.assign(new Error("lost"), { code: "57P01" });
+      return { rows: [{ present: scenario.startsWith("pending") || scenario === "ready-busy" }] };
+    }
+    if (sql.startsWith("SELECT 1 FROM knowledge_base_control.kb_restore WHERE singleton AND state<>'READY'"))
+      return { rows: scenario.startsWith("pending") ? [{}] : [] };
+    if (sql.startsWith("SELECT * FROM knowledge_base_control.kb_restore"))
+      return { rows: scenario === "earlier-attempt" ? [{ attempt_id: "other", source_hash: "other", state: "STAGING" }]
+        : scenario === "restored-before" ? [{ attempt_id: "other", source_hash: "other", state: "READY" }]
+        : scenario === "same-ready" ? [{ attempt_id: process.env.ATTEMPT, source_hash: process.env.SOURCE_HASH, state: "READY", inventory: [] }]
+        : [] };
+    if (sql.startsWith("UPDATE knowledge_base_control.kb_restore SET state='PROMOTING'")) throw Object.assign(new Error("lost"), { code: "57P01" });
+    if (sql.includes("FROM pg_class c JOIN pg_namespace")) return { rows: scenario === "occupied" ? [{}] : [] };
+    if (sql.startsWith("INSERT INTO knowledge_base_control.kb_restore")) throw Object.assign(new Error("lost"), { code: "57P01" });
+    return { rows: [] };
+  },
+});
+try {
+  await restoreOffline({ file: process.env.BUNDLE, identity: process.env.IDENTITY, attemptId: process.env.ATTEMPT,
+    connectionString: "postgresql://fixture/kb", dataDir: process.env.DATA, signal: controller.signal, createClient });
+  console.log(JSON.stringify({ ok: true }));
+} catch (error) {
+  console.log(JSON.stringify({ code: error.code, exit: restoreExitCode(error), insert: sent.some((sql) => sql.startsWith("INSERT")) }));
+}`;
+  const script = join(f.dir, "fenced-restore.mjs");
+  return writeFile(script, child).then(() => {
+    const out = execFileSync(
+      "bash",
+      [
+        "-c",
+        'set -e; exec 7<>"$REPOS/.private/server.fence"; flock -x 7; exec 8<>"$REPOS/.private/worker.fence"; flock -x 8; KB_FENCE_FD=7 KB_WORKER_FENCE_FD=8 exec node "$0"',
+        script,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          SCENARIO: scenario,
+          BUNDLE: f.file,
+          IDENTITY: f.identity,
+          ATTEMPT: f.attemptId,
+          SOURCE_HASH: f.sourceHash ?? "",
+          DATA: f.data,
+          REPOS: f.repos,
+        },
+      },
+    );
+    return JSON.parse(out.trim().split("\n").at(-1));
+  });
+}
+
+test("restore refusals before any restore-state write exit 3; anything after the intent, or with an earlier attempt, exits 1", async (t) => {
+  const f = await fixture(t);
+  await encryptBundle({ ...f, metadata, sources: [] });
+  const { ensureKbDataSkeleton, kbDataPaths } = await import(initVolumes);
+  f.data = join(f.dir, "data");
+  ensureKbDataSkeleton(f.data);
+  f.repos = kbDataPaths(f.data).reposDir;
+  f.attemptId = randomUUID();
+  // verifyEncryptedBundle's source hash is the bundle's own SHA-256.
+  f.sourceHash = createHash("sha256").update(readFileSync(f.file)).digest("hex");
+  for (const [scenario, expected] of [
+    ["occupied", { code: "RESTORE_EMPTY_TARGET_REQUIRED", exit: 3, insert: false }],
+    ["busy", { code: "RESTORE_MAINTENANCE_BUSY", exit: 3, insert: false }],
+    ["cancelled", { code: "RESTORE_FAILED_FENCE", exit: 3, insert: false }],
+    // An earlier attempt's intent is restore state: the writers stay stopped.
+    ["earlier-attempt", { code: "RESTORE_ATTEMPT_CONFLICT", exit: 1, insert: false }],
+    // A pending earlier attempt seen by the probe: a refusal before its row is
+    // read (busy) is not "nothing changed"; neither is an unknown probe.
+    ["pending-busy", { code: "RESTORE_MAINTENANCE_BUSY", exit: 1, insert: false }],
+    ["ready-busy", { code: "RESTORE_MAINTENANCE_BUSY", exit: 3, insert: false }],
+    ["probe-fails-busy", { code: "RESTORE_MAINTENANCE_BUSY", exit: 1, insert: false }],
+    // A finished (READY) restore is a live target that admits the writers:
+    // refusing another attempt there changed nothing.
+    ["restored-before", { code: "RESTORE_ATTEMPT_CONFLICT", exit: 3, insert: false }],
+    // Re-entering the same READY attempt writes PROMOTING first: not refused.
+    ["same-ready", { code: "RESTORE_FAILED_FENCE_57P01", exit: 1, insert: false }],
+    // The intent write was sent (the session died on it): not "nothing changed".
+    ["write-failed", { code: "RESTORE_FAILED_FENCE_57P01", exit: 1, insert: true }],
+  ]) {
+    assert.deepEqual(await fencedRestore(f, scenario), expected, scenario);
+  }
+  // The real CLI, fenced: a mistyped attempt UUID is named (not a generic
+  // RESTORE_FAILED) and refused with nothing changed.
+  const cli = spawnSync(
+    "bash",
+    [
+      "-c",
+      'exec 7<>"$REPOS/.private/server.fence"; flock -x 7; exec 8<>"$REPOS/.private/worker.fence"; flock -x 8; KB_FENCE_FD=7 KB_WORKER_FENCE_FD=8 exec node "$0" "$BUNDLE" "$IDENTITY" not-a-uuid',
+      restoreModule,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        BUNDLE: f.file,
+        IDENTITY: f.identity,
+        REPOS: f.repos,
+        KB_DATA_ROOT: f.data,
+      },
+    },
+  );
+  assert.equal(cli.status, 3, cli.stderr);
+  assert.match(cli.stderr, /^REFUSED: INVALID_RESTORE_ATTEMPT; nothing was changed\./);
+});
+
+test("refusals before the fence and the CLI's argument check are exit 3 too", async (t) => {
+  const f = await fixture(t);
+  const { restoreExitCode } = await import("./kb-restore.mjs");
+  for (const [options, code] of [
+    [{ dataDir: undefined }, "RESTORE_DATA_ROOT_REQUIRED"],
+    [{ dataDir: f.dir }, undefined],
+  ]) {
+    const error = await restoreOffline({ ...options, attemptId: randomUUID() }).then(
+      () => assert.fail("expected a refusal"),
+      (caught) => caught,
+    );
+    if (code) assert.equal(error.code, code);
+    else assert.match(error.message, /fence/);
+    assert.equal(restoreExitCode(error), 3, String(code));
+  }
+  assert.equal(restoreExitCode(new Error("unclassified")), 1);
+  const cli = (() => {
+    try {
+      execFileSync(process.execPath, [restoreModule, "a.age", "id", randomUUID(), "--bogus"], {
+        encoding: "utf8",
+        stdio: "pipe",
+        env: { PATH: process.env.PATH },
+      });
+      return { status: 0 };
+    } catch (error) {
+      return { status: error.status, stderr: error.stderr };
+    }
+  })();
+  assert.equal(cli.status, 3);
+  assert.match(cli.stderr, /^REFUSED: RESTORE_INVALID_ARGUMENTS; nothing was changed\./);
 });

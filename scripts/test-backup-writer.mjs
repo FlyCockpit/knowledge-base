@@ -233,7 +233,7 @@ test("backup writer rejects a missing dump credential before dump or upload effe
         pathname: "/mock",
       },
     );
-    // backup.sh performs a read-only version preflight before validating dump credentials.
+    // backup.sh validates dump credentials before any database access; the psql/pg_dump stubs prove neither runs.
     await executable(join(directory, "psql"), "#!/bin/sh\nprintf '180000\\n'\n");
     await executable(
       join(directory, "pg_dump"),
@@ -242,6 +242,7 @@ test("backup writer rejects a missing dump credential before dump or upload effe
     const env = {
       PATH: `${directory}:${dirname(process.execPath)}:/usr/bin:/bin`,
       DATABASE_URL: inertDatabaseUrl,
+      BACKUP_ENABLED: "true",
       BACKUP_DIR: join(directory, "backups"),
       BACKUP_S3_BUCKET: "inert-backup-bucket",
       BACKUP_S3_REGION: "us-east-1",
@@ -628,8 +629,8 @@ test("required bundle shell and direct upload consumers preserve both asset comp
     const base = {
       PATH: `${directory}:${dirname(process.execPath)}:/usr/bin:/bin`,
       DATABASE_URL: inertDatabaseUrl,
+      BACKUP_ENABLED: "true",
       BACKUP_DIR: join(directory, "backups"),
-      BACKUP_REQUIRED: "1",
       BACKUP_S3_BUCKET: "backups",
       BACKUP_S3_REGION: "us-east-1",
       BACKUP_S3_SECRET_ACCESS_KEY: "dump-secret-sentinel",
@@ -736,26 +737,67 @@ test("full encrypted uploads verify both remote objects, retry completed pairs a
   await assert.rejects(uploadPair({ file, client, config: inertS3Config }), /mismatch/);
 });
 
-test("required backup hooks refuse disabled backup without admitting any writer", () => {
-  const result = spawnSync("bash", [backupScript], {
-    env: { PATH: process.env.PATH, BACKUP_ENABLED: "false", BACKUP_REQUIRED: "1" },
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /required full-bundle backup is disabled/);
+test("backup shell toggle accepts only strict true/false and defaults off", () => {
+  for (const value of [
+    undefined,
+    "",
+    "false",
+    "true",
+    "1",
+    "yes",
+    "on",
+    "0",
+    "no",
+    "off",
+    "TRUE",
+    "FALSE",
+    " true ",
+    "invalid",
+  ]) {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        'source "$1"; if backup_enabled; then echo enabled; else echo disabled; fi',
+        "backup-env-test",
+        join(root, "scripts/lib/backup-env.sh"),
+      ],
+      {
+        env: { PATH: process.env.PATH, ...(value === undefined ? {} : { BACKUP_ENABLED: value }) },
+        encoding: "utf8",
+      },
+    );
+    if (value === "true") {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.trim(), "enabled");
+    } else if (value === undefined || value === "" || value === "false") {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.trim(), "disabled");
+    } else {
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /use true or false/);
+      assert.equal(result.stdout, "", "invalid values must stop the caller");
+    }
+  }
 });
 
-test("manual image hook preserves disabled-backup no-op while mutation labels fail", () => {
+test("backups default off without admitting any writer", () => {
+  const result = spawnSync("bash", [backupScript], {
+    env: { PATH: process.env.PATH },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /skipping backup/);
+});
+
+test("all image hooks skip disabled backups without credentials or storage", () => {
   const hook = join(root, "scripts/backup/pre-migrate.sh");
   for (const label of ["manual", "pre-migrate", "pre-drop", "daily"]) {
     const result = spawnSync("bash", [hook, "--label", label], {
       env: { PATH: process.env.PATH, BACKUP_ENABLED: "false" },
       encoding: "utf8",
     });
-    assert.equal(result.status, label === "manual" ? 0 : 1);
-    assert.match(
-      result.stderr,
-      label === "manual" ? /skipping backup/ : /required full-bundle backup is disabled/,
-    );
+    assert.equal(result.status, 0);
+    assert.match(result.stderr, /skipping backup/);
   }
 });

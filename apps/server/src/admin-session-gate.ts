@@ -1,15 +1,15 @@
-import { isTwoFactorPolicySatisfied } from "@knowledge-base/api/lib/two-factor-policy";
+import { checkAdminAuthority } from "@knowledge-base/api";
 import { auth, type Session } from "@knowledge-base/auth";
-import { isUserBanned } from "@knowledge-base/auth/ban";
-import { isAdminRole, isImpersonatedSession } from "@knowledge-base/auth/roles";
 
 type AdminSessionGateResult =
   | { ok: true; session: Session }
   | { ok: false; status: 401 | 403; error: string; errorDescription: string };
 
 // This gate protects Better-Auth plugin endpoints whose request surface is
-// reached without any oRPC context, so it re-implements the same rule as the
-// oRPC `requireAdmin` middleware: verified email, admin role, and forced 2FA.
+// reached without any oRPC context. It applies the single admin rule the oRPC
+// `requireAdmin` / `requireAdminOr404` middleware apply (`checkAdminAuthority`
+// in @knowledge-base/api: non-impersonated session, not banned, verified email,
+// admin role, forced 2FA) and only maps the failure to this gate's response.
 export async function requireVerifiedAdminSession(
   headers: Headers,
 ): Promise<AdminSessionGateResult> {
@@ -34,18 +34,9 @@ export async function requireVerifiedAdminSession(
     session = null;
   }
 
-  if (!session?.user || isImpersonatedSession(session)) {
-    return {
-      ok: false,
-      status: 401,
-      error: "unauthorized",
-      errorDescription: "Authentication required",
-    };
-  }
-
   // The admin plugin only rejects a banned user when a session is CREATED
   // (`session.create.before`), never on `getSession` — so nothing downstream of
-  // here notices a ban on its own.
+  // here notices a ban on its own; checkAdminAuthority's ban check does.
   //
   // Be precise about what this does and does not buy, because the obvious
   // reading is wrong. It does NOT close the 60s cookie-cache window: on a cache
@@ -57,41 +48,26 @@ export async function requireVerifiedAdminSession(
   // What it does buy is coverage for a ban applied WITHOUT clearing sessions —
   // a direct DB update, a future admin path that forgets to, or a session minted
   // between the two statements. Defense in depth.
-  if (isUserBanned(session.user)) {
+  const authority = await checkAdminAuthority(session);
+  if (!authority.ok) {
+    if (authority.reason === "unauthenticated") {
+      return {
+        ok: false,
+        status: 401,
+        error: "unauthorized",
+        errorDescription: "Authentication required",
+      };
+    }
     return {
       ok: false,
       status: 403,
       error: "access_denied",
-      errorDescription: "Verified admin access required",
+      errorDescription:
+        authority.reason === "two-factor"
+          ? "Two-factor authentication setup is required"
+          : "Verified admin access required",
     };
   }
 
-  if (!session.user.emailVerified) {
-    return {
-      ok: false,
-      status: 403,
-      error: "access_denied",
-      errorDescription: "Verified admin access required",
-    };
-  }
-
-  if (!isAdminRole(session.user.role)) {
-    return {
-      ok: false,
-      status: 403,
-      error: "access_denied",
-      errorDescription: "Verified admin access required",
-    };
-  }
-
-  if (!(await isTwoFactorPolicySatisfied(session.user))) {
-    return {
-      ok: false,
-      status: 403,
-      error: "access_denied",
-      errorDescription: "Two-factor authentication setup is required",
-    };
-  }
-
-  return { ok: true, session };
+  return { ok: true, session: authority.session };
 }

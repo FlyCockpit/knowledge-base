@@ -103,10 +103,48 @@ describe("resolveClientIp (TRUST_PROXY_HOPS = 1, one reverse proxy)", () => {
   });
 
   it("falls back to the socket peer when the trusted entry is malformed", () => {
-    for (const xff of ["not-an-ip", "8.8.8.8, garbage", "203.0.113.9:443", ", ,", "1.2.3.4,,"]) {
+    for (const xff of [
+      "not-an-ip",
+      "8.8.8.8, garbage",
+      "garbage:443",
+      "[garbage]:443",
+      "[203.0.113.9]:443",
+      "999.1.1.1:80",
+      "203.0.113.9:99999",
+      "203.0.113.9:",
+      "2001:db8::5]:443",
+      "198.51.100.7/32",
+      ", ,",
+      "1.2.3.4,,",
+    ]) {
       const expected = xff === "1.2.3.4,," ? "1.2.3.4" : "10.0.0.2";
       expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff })), xff).toBe(expected);
     }
+  });
+
+  it("strips a proxy-appended port from the selected entry before validating it", () => {
+    // IPv4 with a port (Azure Application Gateway's default format).
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "203.0.113.9:5678" }))).toBe(
+      "203.0.113.9",
+    );
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "8.8.8.8:1, 198.51.100.7:443" }))).toBe(
+      "198.51.100.7",
+    );
+    // Bracketed IPv6, with and without a port.
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "[2001:db8::1]:5678" }))).toBe(
+      "2001:db8::1",
+    );
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "[2001:db8::5]" }))).toBe("2001:db8::5");
+  });
+
+  it("leaves a bare IPv6 literal alone, even when its last group looks like a port", () => {
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "2001:db8::1" }))).toBe("2001:db8::1");
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "2001:db8::5678" }))).toBe(
+      "2001:db8::5678",
+    );
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "::ffff:1.2.3.4" }))).toBe(
+      "::ffff:1.2.3.4",
+    );
   });
 
   it("takes exactly N from the right for a longer trusted chain", () => {

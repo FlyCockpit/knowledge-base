@@ -667,13 +667,60 @@ describe("ref reads tell a missing ref from a broken one (R3-W10 review)", () =>
       (dir: string) => writeFileSync(join(dir, "config"), "[core\nbroken"),
     ],
     ["not a repository", (dir: string) => rmSync(join(dir, "HEAD"))],
-  ])("reports a %s ref as a storage failure, never as absent", async (_name, corrupt) => {
+  ])("reports a %s ref as a storage failure, never as absent", async (name, corrupt) => {
     const { dir } = repo();
     try {
       corrupt(dir);
-      for (const result of await both(dir, "refs/heads/topic"))
+      for (const result of await both(dir, "refs/heads/topic")) {
         expect(result).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+        // Only a ref git itself reports as broken is flagged definite
+        // corruption (create recovery quarantines it); the rest may be transient.
+        expect(gitReads.isBrokenRefError(result), name).toBe(name === "garbage");
+      }
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("an unreadable ref file is never read as definite corruption", () => {
+  // git says "ignoring broken ref" for a ref file it cannot read, exactly as
+  // for garbage; a permission problem may be fixed, so it must stay retryable.
+  it.skipIf(process.getuid?.() === 0)("EACCES on a valid ref, sync and async alike", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kb-ref-unreadable-"));
+    const env = { ...gitReads.hardenedGitEnv() };
+    const run = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, env, encoding: "utf8" }).trim();
+    const ref = join(dir, "refs/heads/main");
+    try {
+      run("init", "--bare", "--quiet", "--initial-branch=main");
+      const tree = execFileSync("git", ["mktree"], {
+        cwd: dir,
+        env,
+        input: "",
+        encoding: "utf8",
+      }).trim();
+      run("update-ref", "refs/heads/main", run("commit-tree", tree, "-m", "m"));
+      chmodSync(ref, 0o000);
+      const sync = (() => {
+        try {
+          return gitReads.readRefSha(dir, "refs/heads/main");
+        } catch (error) {
+          return error;
+        }
+      })();
+      const async = await gitReads
+        .readRefShaAsync(dir, "refs/heads/main", {})
+        .catch((error: unknown) => error);
+      for (const result of [sync, async]) {
+        expect(result).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+        expect(gitReads.isBrokenRefError(result)).toBe(false);
+      }
+      await expect(
+        gitReads.readRefOrBroken(() => gitReads.readRefSha(dir, "refs/heads/main")),
+      ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+    } finally {
+      chmodSync(ref, 0o644);
       rmSync(dir, { recursive: true, force: true });
     }
   });

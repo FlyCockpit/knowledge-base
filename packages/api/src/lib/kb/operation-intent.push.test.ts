@@ -12,7 +12,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@knowledge-base/db", () => ({ default: {} }));
 vi.mock("@knowledge-base/queue", () => ({}));
 vi.mock("./audit", () => ({ admitSecurityEvent: () => false }));
-vi.mock("./git-read", () => ({ kbBareRepoPath: () => "/repo", readHeadSha: () => "a".repeat(40) }));
+vi.mock("./git-read", () => ({
+  kbBareRepoPath: () => "/repo",
+  readHeadSha: () => "a".repeat(40),
+  // Pass-through: these cases read a healthy ref.
+  readRefOrBroken: async (read: () => string | null | Promise<string | null>) => read(),
+}));
 vi.mock("./git-write", () => ({ removeAbandonedPublicationLocks: () => {} }));
 vi.mock("./push-validation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./push-validation")>()),

@@ -223,6 +223,9 @@ it("retains worker scratch reservations through interruption and reconciles them
         slug: `rollup-${randomUUID()}`,
         description: "Scheduled rollup fixture knowledge base",
         state: "ACTIVE",
+        // An ACTIVE base needs a head (knowledge_base_active_requires_owner_head);
+        // the rollup packs loose objects and never reads the ref.
+        headSha: "0".repeat(40),
       },
     });
     const workerRepo = kbBareRepoPath(kbDataPaths(root).reposDir, kb.id);

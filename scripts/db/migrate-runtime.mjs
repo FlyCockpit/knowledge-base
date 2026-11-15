@@ -600,7 +600,7 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
 
   log(`pending migration(s): ${toApply.join(", ")}`);
   lock.assertHeld("the pre-migration backup");
-  const backup = freshDatabase ? { ran: false, label: null } : await preMigrateBackup(ctx);
+  const backup = freshDatabase ? await freshDatabaseBackupCheck(ctx) : await preMigrateBackup(ctx);
 
   return await withMutation(ctx, async (client) => {
     const current = await readMutationFacts(ctx, client);
@@ -945,6 +945,7 @@ async function applyDue(ctx, client, lock, { migrations, run, level, now, inputs
   if (!run.fresh && !run.backup?.ran) {
     lock.assertHeld("the pre-drop backup");
     const result = await runBackupHook(ctx, ["--label", "pre-drop"]);
+    cancelledHook(ctx);
     if (result.missing || result.code !== 0) {
       loud([
         `the configured pre-drop backup failed (exit ${result.code}); scheduled deletions skipped this run.`,
@@ -1131,8 +1132,9 @@ async function reportReplayError(ctx, migration) {
  *          ...verified remote identity fields}}
  * The completion file is KB's {version:1,size,sha256} bundle digest marker.
  * The runner supplies KB_BACKUP_RUN_ID, BACKUP_RESULT_FILE and
- * --label; the hook preserves human stdout. No result, disabled backup, missing
- * pair, mismatched UUID/label/digest, or configured upload failure blocks DDL.
+ * --label; the hook preserves human stdout. When backups are enabled, no result,
+ * missing pair, mismatched UUID/label/digest or configured upload failure blocks DDL.
+ * Disabled backups skip the hook and leave contract_backup null.
  * contract_backup stores JSON.stringify(result), retaining the entire identity.
  * This hook runs under runner 72707370, NEVER under DADP or Prisma exclusion.
  */
@@ -1173,7 +1175,45 @@ export function validateBackupResult(result, { runId, label, uploadConfigured = 
   return result;
 }
 
+function backupEnabled(env) {
+  const enabled = env.BACKUP_ENABLED || "false";
+  if (!["true", "false"].includes(enabled))
+    throw new Refusal("BACKUP_ENABLED must be true or false.");
+  return enabled === "true";
+}
+
+/**
+ * A stop signal cancels the runner (ctx.abort). A cancelled runner never
+ * starts a backup hook, and a cancel while one runs forwards one TERM to it
+ * (backup.sh drains its own children on TERM); the runner still waits for the
+ * hook to exit, so it never leaves one behind. Callers then report the
+ * cancellation, not a backup failure (cancelledHook).
+ */
+function spawnBackupHook(ctx, args, env) {
+  const signal = ctx.abort?.signal;
+  if (signal?.aborted) return Promise.resolve(1);
+  return new Promise((resolve) => {
+    const child = spawn("bash", [ctx.backupHook, ...args], {
+      env,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    const onAbort = () => child.kill("SIGTERM");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const done = (code) => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(code);
+    };
+    child.on("error", () => done(1));
+    child.on("close", (status) => done(status ?? 1));
+  });
+}
+
+function cancelledHook(ctx) {
+  if (ctx.abort?.signal.aborted) throw new Refusal("Migration runner cancelled.");
+}
+
 export async function runBackupHook(ctx, args = []) {
+  if (!backupEnabled(ctx.env)) return { missing: false, code: 0, label: null, skipped: true };
   if (!existsSync(ctx.backupHook)) return { missing: true, code: 1, label: null };
   const staging = mkdtempSync(path.join(tmpdir(), "knowledge-base-backup-result-"));
   const resultFile = path.join(staging, "result.json");
@@ -1181,17 +1221,10 @@ export async function runBackupHook(ctx, args = []) {
   const labelAt = args.indexOf("--label");
   const label = labelAt < 0 ? "pre-migrate" : args[labelAt + 1];
   try {
-    const code = await new Promise((resolve) => {
-      const child = spawn("bash", [ctx.backupHook, ...(labelAt < 0 ? ["--label", label] : args)], {
-        env: {
-          ...ctx.env,
-          KB_BACKUP_RUN_ID: runId,
-          BACKUP_RESULT_FILE: resultFile,
-        },
-        stdio: ["ignore", "inherit", "inherit"],
-      });
-      child.on("error", () => resolve(1));
-      child.on("close", (status) => resolve(status ?? 1));
+    const code = await spawnBackupHook(ctx, labelAt < 0 ? ["--label", label] : args, {
+      ...ctx.env,
+      KB_BACKUP_RUN_ID: runId,
+      BACKUP_RESULT_FILE: resultFile,
     });
     if (code !== 0) return { missing: false, code, label: null };
     const result = validateBackupResult(JSON.parse(readFileSync(resultFile, "utf8")), {
@@ -1207,9 +1240,33 @@ export async function runBackupHook(ctx, args = []) {
   }
 }
 
+/**
+ * A brand-new database (proven-empty catalog, `0_init` first) has nothing to
+ * back up, and a full bundle cannot be taken before `0_init` creates the
+ * catalog it coordinates through. BACKUP_ENABLED=true still requires a usable
+ * destination, a brand-new database too (owner decision): the hook runs in
+ * `--check-destination` mode (recipient, a mounted BACKUP_DIR or BACKUP_S3_BUCKET, BACKUP_S3_*
+ * settings; no bundle) and a failure or a missing hook refuses the migration.
+ * With backups off nothing runs.
+ */
+async function freshDatabaseBackupCheck(ctx) {
+  if (!backupEnabled(ctx.env)) return { ran: false, label: null };
+  log("brand-new database: no bundle to take; checking the backup destination…");
+  const code = existsSync(ctx.backupHook)
+    ? await spawnBackupHook(ctx, ["--check-destination"], ctx.env)
+    : 1;
+  cancelledHook(ctx);
+  if (code !== 0)
+    throw new Refusal(
+      "BACKUP_ENABLED=true but the backup destination check failed (BACKUP_AGE_RECIPIENT, a volume mounted at BACKUP_DIR or BACKUP_S3_BUCKET, BACKUP_S3_* settings); refusing to migrate, a brand-new database too. Fix the backup configuration or set BACKUP_ENABLED=false (docs/backup-restore.md).",
+    );
+  return { ran: false, label: null };
+}
+
 async function preMigrateBackup(ctx) {
-  log("running the pre-migration full-bundle backup hook…");
-  const { code, label } = await runBackupHook(ctx);
+  const { code, label, skipped } = await runBackupHook(ctx);
+  cancelledHook(ctx);
+  if (skipped) return { ran: false, label: null };
   if (code !== 0 || !label)
     throw new Refusal(
       "the required pre-migration full-bundle backup failed or returned no verified result; refusing to migrate. Fix the backup configuration (docs/backup-restore.md).",

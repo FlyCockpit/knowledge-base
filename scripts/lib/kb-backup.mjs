@@ -145,6 +145,29 @@ async function write(stream, bytes) {
     stream.write(bytes, (error) => (error ? reject(error) : resolveWrite())),
   );
 }
+/**
+ * A bundle of a database holding PostgreSQL large objects could never be
+ * restored: pg_restore writes each one in its own BEGIN … COMMIT, which ends
+ * restore's single import transaction early, so restore refuses such archives
+ * (`RESTORE_LARGE_OBJECTS`). Refuse at backup time instead, inside the
+ * exported snapshot and before any dump is written, so no backup that restore
+ * would refuse is ever completed. `pg_largeobject_metadata` is readable by
+ * every role (the backup role needs no extra grant). KB itself never creates
+ * large objects; one present here was added outside the application.
+ */
+export async function refuseLargeObjects(client) {
+  const found = await client.query(
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_largeobject_metadata) AS present",
+  );
+  if (found.rows[0]?.present === true) {
+    const error = new Error(
+      "BACKUP_LARGE_OBJECTS: the database holds PostgreSQL large objects (pg_largeobject), which restore refuses; remove them before backing up (docs/backup-restore.md).",
+    );
+    error.code = "BACKUP_LARGE_OBJECTS";
+    throw error;
+  }
+}
+
 export async function assertOfflineFence(reposDir) {
   for (const [variable, name] of [
     ["KB_FENCE_FD", "server"],
@@ -601,6 +624,7 @@ export async function snapshotOffline({
       "SELECT \"opId\" FROM operation_intent WHERE phase IN ('PREPARED','COMMITTING') LIMIT 1",
     );
     if (unfinished.rows.length) throw new Error("Journal recovery required before backup.");
+    await refuseLargeObjects(client);
     const heads = [];
     let last = "";
     for (;;) {

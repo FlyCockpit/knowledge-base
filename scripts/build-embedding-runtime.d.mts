@@ -21,3 +21,7 @@ export declare function createBuildSupervisor(options?: {
   close(): void;
 };
 export declare function buildEmbeddingRuntime(args?: string[]): Promise<void>;
+/** A test-kb build-group registry path under `$TMPDIR/kb-test-builds-<project>/`. */
+export declare function isBuildRegistryPath(path: string | undefined): path is string;
+/** Link a descendant registry into its delegating ancestor's, under that ancestor's admission lock. */
+export declare function linkBuildRegistry(parent: string, child: string): string;

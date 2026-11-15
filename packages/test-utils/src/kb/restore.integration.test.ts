@@ -50,7 +50,11 @@ import { createLocalJWKSet, jwtVerify } from "jose";
 import { Client } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { isSkeletonOnly, kbDataPaths } from "../../../../scripts/init-kb-volumes.mjs";
+import {
+  ensureKbDataSkeleton,
+  isSkeletonOnly,
+  kbDataPaths,
+} from "../../../../scripts/init-kb-volumes.mjs";
 import { coordinateBackup, encryptBundle, readBundle } from "../../../../scripts/lib/kb-backup.mjs";
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
 import { type KbPostgresCluster, openKbPostgresClusterFromEnv } from "./postgres";
@@ -1301,7 +1305,11 @@ it("exclusive DB maintenance and empty-target checks leave previous bytes intact
     await owner.query("SELECT pg_advisory_lock($1::bigint)", [0x4b424d41]);
     expect((await restore(f)).error).toContain("RESTORE_MAINTENANCE_BUSY");
     await owner.end();
-    // The refused attempt still left a skeleton-only root (case ii below).
+    // The busy refusal comes before any IO on the data root ("refused,
+    // nothing changed"): the root is still as the fixture left it.
+    expect(isSkeletonOnly(f.target.data)).toBe(true);
+    // A skeleton-only root, as the image's volume init leaves it (case ii).
+    ensureKbDataSkeleton(f.target.data, process.getuid?.() ?? 1000, process.getgid?.() ?? 1000);
     expect(isSkeletonOnly(f.target.data)).toBe(true);
     // Case iii: one stray file anywhere in the data root refuses the target.
     for (const stray of [join(f.target.assets, "sentinel"), join(f.target.data, "stray")]) {

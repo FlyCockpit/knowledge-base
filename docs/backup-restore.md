@@ -7,6 +7,27 @@ SQLite search index under `index/` is rebuildable and excluded; authority,
 journals, sealed/provider records and Git history are not disposable. Model
 weights and Valkey are also excluded. Every pre-migration/pre-drop backup is this same full recovery unit; a database-only dump cannot restore a KB instance.
 
+Backups are **off by default**: `BACKUP_ENABLED` defaults to `false` (unset
+means `false`; only the literal `true` turns backups on). New deployments need no
+backup settings, storage or scheduler; migrations and due deletions proceed
+without a backup. Every start that migrates (the server, and a `migrate` job)
+and every waiting server prints one notice explaining how to opt in
+(`pre-migrate.sh --startup-notice`, run by the image entrypoint).
+Disabled backups do not affect health/readiness or produce freshness warnings.
+
+To opt in, regenerate Dokploy configuration with `--backups true`, set
+`BACKUP_ENABLED=true` and `BACKUP_AGE_RECIPIENT`, and mount the generated shared
+backup output volume (`BACKUP_DIR=/app/backups`). A backup destination is that
+volume mounted at `BACKUP_DIR` (the mount point itself; a subdirectory of a
+volume mounted elsewhere does not count), or `BACKUP_S3_BUCKET`: the image's own
+`/app/backups` without a mounted volume lives in the container and is lost with
+it, so it does not count. With `BACKUP_ENABLED=true` and no destination (or no
+recipient), every start that migrates refuses at startup, even with nothing
+pending, and every backup refuses before touching the database. Set `BACKUP_SCHEDULE=daily` on
+one backup service for daily runs; scheduling otherwise stays off. S3 upload
+and its separate freshness-monitor credentials are optional. Keep the private
+age identity and original application keys separately as described below.
+
 ## Operator key custody
 
 The server image pins official age v1.3.2 with its published SHA-256. Recommend
@@ -30,7 +51,7 @@ Use the generated server-image `backup` command or opt-in `backup-schedule` serv
 
 `BACKUP_SCHEDULE=off` is the default. Set daily, BACKUP_HOUR_UTC=3 and BACKUP_KEEP=14 for one verified daily full bundle, retaining local completed pairs by UTC day. Successful manual, pre-migrate and pre-drop deliveries each retain their newest seven pairs, including when daily scheduling is off; failed deliveries and staging files are preserved. Pair verification is cached by both files’ inode, size and timestamps during a scheduler process. The scheduler catches up after restart with an initial five-minute delay and retries a failed upload hourly using the same immutable pair. Success/health requires verified delivery; partial uploads never count. S3 retention is an operator lifecycle policy. Keep backup and monitor credentials separate.
 
-The initialized-database runner requires this full bundle before pending migrations or due deletions. Missing recipient/output, disabled backup or failed configured upload blocks mutation. Only a proven-empty managed catalog with no applied history and 0_init first skips it, for all pending folders in that initial deploy. The hook publishes structured identity after completion; no prose parsing or plain-dump fallback. Labels manual/pre-migrate/pre-drop/daily are metadata on immutable backup-UUID.age files.
+With BACKUP_ENABLED=true, the initialized-database runner requires this full bundle before pending migrations or due deletions. Missing recipient/output or failed configured upload blocks mutation. Disabled backups skip the hook entirely. A brand-new database (proven-empty managed catalog, no applied history, `0_init` first) gets no bundle, since there is nothing to back up; but with BACKUP_ENABLED=true the hook still runs `--check-destination` (recipient, a writable BACKUP_DIR that is a mounted volume unless BACKUP_S3_BUCKET is set, BACKUP_S3_* settings), and a failed check or a missing hook refuses the migration. A stop signal during a startup backup sends the hook one TERM (backup.sh drains its writer) and the start ends without migrating. A bundle interrupted while it is written never gets its `.complete` marker, so it is never used; one interrupted during S3 delivery keeps its completed, verified local pair (valid for restore, and the upload is retried). The hook publishes structured identity after completion; no prose parsing or plain-dump fallback. Labels manual/pre-migrate/pre-drop/daily are metadata on immutable backup-UUID.age files.
 
 A durable maintenance request closes server writes/uploads and worker effects.
 The five-minute quiesce budget waits for explicit drain acknowledgements, stops
@@ -92,6 +113,63 @@ blocks server, worker and migration admission until a verified ready result. Nat
 schema comparison and archive children must drain before fences release; a
 printed diff without complete child acknowledgement is insufficient.
 
+A backup refuses a database that holds PostgreSQL large objects
+(`BACKUP_LARGE_OBJECTS`, checked inside the exported snapshot before any dump
+is written), so no completed bundle can be one restore would refuse; KB itself
+never creates them. Archives containing PostgreSQL large objects (`BLOB`, `BLOB METADATA` or
+`BLOBS` entries in the archive's `pg_restore --list`) are refused with
+`RESTORE_LARGE_OBJECTS` before any restore script is written or imported:
+pg_restore commits each large object in its own transaction, which would end
+the single import transaction early. The refusal comes after the durable
+restore intent exists, so that attempt can never complete and keeps blocking
+admission: recreate the
+empty target (a new empty database and data volume) before restoring a
+different bundle. A missing `age` fails the attempt with
+`RESTORE_DECRYPT_CLIENT_MISSING`; a missing `pg_restore` or `psql` fails it
+with the generic import code (`RESTORE_FAILED_IMPORT`). Install a compatible
+image and retry the same attempt.
+
+### Host helper
+
+`scripts/backup/host.sh` (Linux only: bash, GNU coreutils, docker) runs the
+server image's `list`, `backup`, `restore`, `drill` and `hold-deletions`
+commands next to an existing deployment. It discovers the server by its
+`io.knowledge-base.role=server` label, the private Postgres network, the data
+and backup bind mounts and an allowlisted environment, and mounts the identity
+read-only. `list`, `backup`, `restore` and `drill` need the backups mount
+(`BACKUP_DIR`), which a deployment generated with backups off (the default)
+does not have: regenerate it with `pnpm dokploy:config --backups true` and
+redeploy first; only `hold-deletions` works without it.
+`restore <bundle|latest> <host-identity> <attempt-uuid>` asks you to
+type the compose project name, then stops the server, worker and backup
+writers (stopped ones included, so a completed retry starts every one of them
+again). Its exit status:
+
+| Exit | Meaning | Writers afterwards |
+|---|---|---|
+| 0 | Restore completed | Started again |
+| 3 | Cancelled at the typed-project prompt (another answer, Enter, EOF, Ctrl-C, TERM or HUP) | Never stopped |
+| 3, "Refused; nothing was changed" | The restore refused before it wrote any restore state, on a target with no earlier attempt (`REFUSED: <code>`): bad arguments (`RESTORE_INVALID_ARGUMENTS`), a missing data root or fence, a busy target (`RESTORE_MAINTENANCE_BUSY`, `RESTORE_ACTIVE_CONNECTIONS`), a non-empty target (`RESTORE_EMPTY_TARGET_REQUIRED`), an unreadable or incomplete bundle, no completed pair for `latest`, or a cancel before the first write; also a different attempt on a target an earlier restore finished (`RESTORE_ATTEMPT_CONFLICT` against a READY restore) | Started again, only the ones that were running before the helper stopped them |
+| non-zero, "Restore was not invoked" | A stop failed or a signal (128+n) arrived before the restore container ran | Started again, only the ones that were running (nothing was restored) |
+| other non-zero, "did not finish" | The restore failed or was interrupted after it wrote its restore intent, refused a different attempt while an earlier one is pending (`RESTORE_ATTEMPT_CONFLICT`), or the supervisor itself refused (80–92) | **Stay stopped**; the exact `docker start …` command is printed |
+
+The restore command's own status is the same contract: 0 restored, 3 refused
+with nothing changed (`REFUSED: …`), 1 anything else (`FATAL: …`; the target
+may hold a partial attempt). A refusal while an earlier attempt is still
+pending is never "nothing changed" once the restore has read that attempt;
+when it comes earlier (for example a busy target or a mistyped bundle), the
+helper starts only the writers that were running before it stopped them, so
+ones an earlier failed attempt left stopped stay stopped (and the runner,
+maintenance admission and the scheduler all refuse while a restore is pending).
+
+After any other non-zero restore, inspect the destination and retry offline with the
+same source, identity and attempt UUID (the helper prints the command); start
+the writers only after a completed retry or to abandon the restore.
+`bash host.sh restore … | tee restore.log` works: only stdin must be a
+terminal. Use `set -o pipefail` or `${PIPESTATUS[0]}` to read the helper's
+status through the pipe; a terminal Ctrl-C also kills `tee`, so use `tee -i`
+to keep the log.
+
 ## Authority reset and return to service
 
 Promotion increments authority epoch once; revoke ALL OAuth, PAT, device and browser
@@ -134,7 +212,7 @@ operator guide for active/historical generations and offline migration retry.
 
 Bundles contain shipped migration SQL/checksums and snapshot-consistent applied _prisma_migrations plus _knowledge_base_* contract state and source catalog, captured in the same exported snapshot as pg_dump. Applied history may be a matching subset of shipped files, including out-of-order merges; pre-drop snapshots intentionally retain retired data. Prerelease archive formats are refused. Source control schema is excluded so destination restore intent remains authoritative.
 
-Before import, restore checks every current authority-reset, key, audit, model/job and asset projection against the source catalog. The explicit `RESTORE_SURFACE` in `scripts/lib/kb-restore.mjs` defines required typed columns and enum labels, including cache reconciliation and authority reset. Retired application fields and unused labels outside that surface do not prevent same-image restore. Use a compatible image if the restore surface is unsupported. Restore source state unchanged; do not apply pending migrations inside the offline operation. Final commit publishes READY, invalidates imported live registrations and extends the restore deletion hold to at least seven days without shortening existing holds. Next normal startup backs up and applies newer migrations.
+Before import, restore checks every current authority-reset, key, audit, model/job and asset projection against the source catalog. The explicit `RESTORE_SURFACE` in `scripts/lib/kb-restore.mjs` defines required typed columns and enum labels, including cache reconciliation and authority reset. Retired application fields and unused labels outside that surface do not prevent same-image restore. Use a compatible image if the restore surface is unsupported. Restore source state unchanged; do not apply pending migrations inside the offline operation. Final commit publishes READY, invalidates imported live registrations and extends the restore deletion hold to at least seven days without shortening existing holds. Next normal startup applies newer migrations, taking a backup first only when backups are enabled.
 
 Runner exclusion is acquired before offline preflight, then request/maintenance, DADP and Prisma locks, under both native volume fences. Snapshots use DADP then Prisma and never reacquire a parent runner lock. Every child drains before fence release. See [lock and interruption rules](./schema-migrations.md#locks-and-interruption).
 

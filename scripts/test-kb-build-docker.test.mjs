@@ -19,6 +19,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { buildArtifactDirectory } from "../packages/test-utils/src/kb/build-artifacts.mjs";
 import { NODE_BASE_IMAGE } from "../packages/test-utils/src/kb/node-image.mjs";
+import { kbTestName } from "../packages/test-utils/src/kb/test-names.mjs";
 import { BUILD_TIMEOUT_MS, runCaptured } from "./test-kb.mjs";
 
 /** Docker CLI calls stall under I/O pressure; only the build hang guard bounds them. */
@@ -45,7 +46,7 @@ const hangGuard = (promise, what) => {
 
 test("flk4 Docker build cancellation stops real daemon RUN work, then accepts a fresh build", async (context) => {
   const directory = mkdtempSync(join(tmpdir(), "kb-daemon-cancel-"));
-  const project = `kb-daemon-${randomUUID()}`;
+  const project = kbTestName(`kb-daemon-${randomUUID()}`);
   const image = `${project}:test`;
   const controller = new AbortController();
   let buildName;

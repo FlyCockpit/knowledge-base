@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { createBuildSupervisor } from "../../../../scripts/build-embedding-runtime.mjs";
 import { dockerFixtureLabels, removeDockerContainer, withDockerContainer } from "./docker.js";
 import { NODE_BASE_IMAGE } from "./node-image.mjs";
+import { kbTestName } from "./test-names.mjs";
 
 const exec = promisify(execFile);
 const fixtureUid = process.getuid?.() ?? 1000;
@@ -23,7 +24,7 @@ const imageIdentity = createHash("sha256")
   .update(`${dockerfile}\n${fixtureUid}`)
   .digest("hex")
   .slice(0, 16);
-const IMAGE = `kb-mirror-ssh-fixture:${(process.env.KB_TEST_PROJECT === "standalone" ? undefined : process.env.KB_TEST_PROJECT) ?? imageIdentity}`;
+const IMAGE = `${kbTestName("kb-mirror-ssh-fixture")}:${(process.env.KB_TEST_PROJECT === kbTestName("standalone") ? undefined : process.env.KB_TEST_PROJECT) ?? imageIdentity}`;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function snapshotRepo(repo: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -80,7 +81,7 @@ async function prebuildImage(): Promise<void> {
 /** Real isolated OpenSSH server. Every key is generated for this test and kept
  * in tmpfs. Only the selected fixture hostname resolves to loopback in tests. */
 export async function createSshFixture() {
-  const name = `kb-ssh-${randomUUID()}`;
+  const name = kbTestName(`kb-ssh-${randomUUID()}`);
   const dir = await mkdtemp("/dev/shm/kb-ssh-"),
     root = join(dir, "keys");
   let containerRequested = false;
@@ -288,7 +289,7 @@ while [ "$(cat /fixture/mode)" = lost-reply ]; do sleep 0.05; done
         ]);
       },
       async assertReadonly(repo: string) {
-        const name = `kb-ssh-readonly-${randomUUID()}`;
+        const name = kbTestName(`kb-ssh-readonly-${randomUUID()}`);
         return withDockerContainer(name, () =>
           execFileSync(
             "docker",

@@ -12,6 +12,7 @@ type Options = {
   url: string;
   project?: string;
   proxyNetwork?: string;
+  backups?: boolean;
 };
 const keys = new Set(ENV_VARS.map((variable) => variable.key));
 const sharedKeys = new Set(Object.keys(sharedVars));
@@ -125,7 +126,7 @@ const defaults: Record<string, string> = {
   POSTGRES_USER: "knowledge_base",
   POSTGRES_DB: "knowledge_base",
   SMTP_PORT: "587",
-  BACKUP_ENABLED: "true",
+  BACKUP_ENABLED: "false",
   BACKUP_SCHEDULE: "off",
   BACKUP_HOUR_UTC: "3",
   BACKUP_KEEP: "14",
@@ -243,14 +244,14 @@ export function generateDokployConfig(options: Options) {
         ? ["/run/kb-mirror:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=0700"]
         : [],
     environment,
-    mounts: role === "worker" ? [dataMount] : [dataMount, backupMount],
+    mounts: role === "worker" || !options.backups ? [dataMount] : [dataMount, backupMount],
     domain: role === "server" ? { host: url.hostname, port: 3000, https: true } : null,
     optional: role === "backup",
   });
   const applications = [
     application("server", { ...env.server, BETTER_AUTH_URL: url.origin }),
     application("worker", env.worker),
-    application("backup", env.backup),
+    ...(options.backups ? [application("backup", env.backup)] : []),
   ];
   const required = [
     ...new Set(
@@ -285,10 +286,20 @@ export function generateDokployConfig(options: Options) {
       maxmemoryPolicy: "noeviction",
     },
     environmentVariablesToSetOnce: Object.fromEntries(
-      required.map((key) => [
-        key,
-        `<set ${key} for ${options.environment}; complete literal value, no nested references>`,
-      ]),
+      required
+        .filter((key) =>
+          [
+            "DATABASE_URL",
+            "REDIS_URL",
+            "KB_MASTER_KEY",
+            "BETTER_AUTH_SECRET",
+            "ADMIN_EMAIL",
+          ].includes(key),
+        )
+        .map((key) => [
+          key,
+          `<set ${key} for ${options.environment}; complete literal value, no nested references>`,
+        ]),
     ),
     applications,
     optionalEnvironmentKeys: {
@@ -321,10 +332,10 @@ export function generateDokployConfig(options: Options) {
       offlineOperator: refs(assetRoleKeys.operator),
       note: "Asset S3 defaults OFF. Runtime writer secret only on server; entrypoint removes it from migration/backup/offline children. Full bundles need the read-only operator pair and both comparison IDs. Entrypoint strips the operator pair, backup writer pair and heartbeat URL before runtime exec, after the pre-migrate bundle. Offline storage migration needs its own reviewed operator grants. Worker gets location/cache only; never give it asset writer/operator or backup writer secrets.",
     },
-    backupSetupRequired:
-      "Before an initialized database's next migration, provision BACKUP_AGE_RECIPIENT and the shared node-writable backups volume. A verified encrypted full bundle is mandatory; configured S3 upload must succeed. BACKUP_SCHEDULE=off by default; enable daily on exactly one backup service. Set BACKUP_HOUR_UTC (default 3) and BACKUP_KEEP (default 14). Keep an off-site copy and external missed-backup alert.",
+    backupOptIn:
+      "Backups default off; migrations and due deletions proceed without backup storage. To enable, regenerate with --backups true, set BACKUP_ENABLED=true and BACKUP_AGE_RECIPIENT, and use the shared node-writable backups volume. Enabled backup failures block mutation. Set BACKUP_SCHEDULE=daily on exactly one backup service (default off), BACKUP_HOUR_UTC (default 3) and BACKUP_KEEP (default 14). S3 and separate monitor credentials are optional off-site coverage.",
     volumeInit:
-      "Label exactly one local-disk host knowledge-base=true. All roles use that host. Fresh named volumes copy UID/GID 1000 skeletons from images; bind roots must be pre-owned 1000:1000. Server/worker share kb-data read-write; server/backup share backups. A compromised worker can modify Git/CAS bytes. Worker gets private /run/kb-mirror tmpfs. Manual resources use the project prefix; Compose volumes use its project scope.",
+      "Label exactly one local-disk host knowledge-base=true. All roles use that host. Fresh named volumes copy UID/GID 1000 skeletons from images; bind roots must be pre-owned 1000:1000. Server/worker share kb-data read-write; server/backup share backups only with --backups true. A compromised worker can modify Git/CAS bytes. Worker gets private /run/kb-mirror tmpfs. Manual resources use the project prefix; Compose volumes use its project scope.",
     rolloutContract:
       "Use stop-first replacement; native supervisors keep lifetime volume fences and drain descendants. One-shots never register runtime instances. Image startup health grace is 10800s for full bundles and migrations. Worker wait expires at 300s and exits; restart policy retries while server finishes its bundle. If retries stop, redeploy/restart the worker after server migrations complete. Never shorten health grace to the worker wait. Run deploy:check for the selected commit; dokploy:verify is optional deeper inspection on the VPS.",
     releaseContract:
@@ -435,8 +446,7 @@ ${depends}
 ${envLines({ ...env.server, BETTER_AUTH_URL: url.origin })}
     volumes:
       - kb-data:${kbDataRoot}
-      - backups:${backupRoot}
-    labels:
+${options.backups ? `      - backups:${backupRoot}\n` : ""}    labels:
 ${labels.map((label) => `      - ${JSON.stringify(label)}`).join("\n")}
     networks:
       default:
@@ -459,7 +469,9 @@ ${envLines(env.worker)}
       - /run/kb-mirror:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=0700
 ${runtimePolicy}
 
-  # Optional scheduler: idles while BACKUP_SCHEDULE=off (default).
+${
+  options.backups
+    ? `  # Opt-in scheduler: idles while BACKUP_SCHEDULE=off (default).
   # Enable daily on exactly one service. It never takes a runtime lifetime fence.
   backup:
     image: ${project}-server
@@ -482,7 +494,9 @@ ${envLines(env.backup)}
       start_period: 360s
 ${runtimePolicy}
 
-  # Offline operator: stop server and worker first; keep this on the same host.
+`
+    : ""
+}  # Offline operator: stop server and worker first; keep this on the same host.
   asset-operator:
     image: ${project}-server
     build: *server-build
@@ -504,8 +518,7 @@ volumes:
   postgres-data:
   redis-data:
   kb-data:
-  backups:
-
+${options.backups ? "  backups:\n" : ""}
 networks:
   proxy:
     name: ${proxyNetwork}
@@ -522,7 +535,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const value = args[index + 1];
       if (
         !key ||
-        !["--environment", "--git-ref", "--url", "--project", "--proxy-network"].includes(key) ||
+        ![
+          "--environment",
+          "--git-ref",
+          "--url",
+          "--project",
+          "--proxy-network",
+          "--backups",
+        ].includes(key) ||
         fields[key] ||
         !value ||
         value.startsWith("--")
@@ -534,7 +554,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
     if (!fields["--environment"] || !fields["--git-ref"] || !fields["--url"])
       throw new Error("--environment, --git-ref, and --url are required.");
+    if (fields["--backups"] && !["true", "false"].includes(fields["--backups"]))
+      throw new Error("--backups must be true or false.");
     const options = {
+      backups: fields["--backups"] === "true",
       environment: fields["--environment"],
       gitRef: fields["--git-ref"],
       url: fields["--url"],

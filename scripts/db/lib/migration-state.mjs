@@ -21,7 +21,9 @@
  * runner lock (MIGRATION_RUNNER_LOCK_KEY), i.e. a `migrate-runtime.mjs apply`
  * (or a restore) is working on this database right now. The reading session
  * never holds it itself, so a runner that reads the state while holding the
- * lock sees its own lock here.
+ * lock sees its own lock here. `lifecycleActive` likewise reports the KB
+ * lifecycle (DADP) lock, KB_DDL_LOCK_KEY: a runner mutation, a full-bundle
+ * snapshot, an offline restore or an asset-storage migration holds it.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -125,6 +127,7 @@ export async function readMigrationState({
     checksumMismatch: /** @type {string[]} */ ([]),
     inProgress: false,
     runnerActive: false,
+    lifecycleActive: false,
     error: /** @type {string | null} */ (null),
   };
   const schema = prismaSchemaName(databaseUrl);
@@ -146,6 +149,8 @@ export async function readMigrationState({
     await assertNoPendingRestore(client);
     const runner = await client.query(ADVISORY_HELD_SQL, [MIGRATION_RUNNER_LOCK_KEY]);
     base.runnerActive = Boolean(runner.rows[0].held);
+    const lifecycle = await client.query(ADVISORY_HELD_SQL, [KB_DDL_LOCK_KEY]);
+    base.lifecycleActive = Boolean(lifecycle.rows[0].held);
     const table = await client.query(
       "SELECT to_regclass(format('%I._prisma_migrations', $1::text)) AS t",
       [schema],
@@ -177,6 +182,71 @@ export async function readMigrationState({
   } finally {
     if (!existingClient) await client.end().catch(() => {});
   }
+}
+
+/**
+ * Why touching a `failed` row right now would be unsafe, or null. A row with
+ * no finished_at is only a failure when nobody is still applying it: while
+ * Prisma's lock is held its migration is mid-flight, and while the runner lock
+ * is held a deploy runner (or a restore) owns the history. Marking such a row
+ * rolled back would let a second `migrate deploy` re-run a migration that is
+ * still executing. The KB lifecycle (DADP) lock means a runner mutation, a
+ * full-bundle snapshot, an offline restore or an asset-storage migration owns
+ * the database; a snapshot takes it before Prisma's lock, so it covers the gap
+ * in which neither of the other two keys is held yet. `db:migrate:apply`
+ * refuses on any of them; the production runner applies the same rule to
+ * Prisma's lock (it waits, then refuses) and is itself the runner-lock holder.
+ * @param {{ inProgress: boolean, runnerActive: boolean, lifecycleActive?: boolean }} state
+ */
+export function migrationInFlight(state) {
+  if (state.inProgress)
+    return "another session holds Prisma's migration lock (Prisma Migrate is applying a migration right now)";
+  if (state.runnerActive)
+    return "another session holds the migration runner lock (a deploy runner or a restore is working on this database)";
+  if (state.lifecycleActive)
+    return "another session holds the KB lifecycle lock (a migration, backup snapshot, restore or asset-storage migration is working on this database)";
+  return null;
+}
+
+/**
+ * Take the migration runner lock without waiting, on a dedicated session, for
+ * a local wrapper that resolves or deploys migrations. Production runners and
+ * offline restore/storage take the same key, so while it is held none of them
+ * can start.
+ * @param {{ databaseUrl: string, pg: typeof import("pg"), applicationName?: string,
+ *   connectTimeoutMs?: number }} options
+ * @returns {Promise<{ release: () => Promise<void> } | null>} null when another session holds it
+ */
+export async function tryHoldRunnerLock({
+  databaseUrl,
+  pg,
+  applicationName = "knowledge-base-db-apply",
+  connectTimeoutMs = 10_000,
+}) {
+  const client = new pg.Client({
+    connectionString: pgConnectionString(databaseUrl),
+    connectionTimeoutMillis: connectTimeoutMs,
+    application_name: applicationName,
+  });
+  try {
+    await client.connect();
+    const result = await client.query(
+      `SELECT pg_try_advisory_lock(${MIGRATION_RUNNER_LOCK_KEY}) AS acquired`,
+    );
+    if (!result.rows[0]?.acquired) {
+      await client.end().catch(() => {});
+      return null;
+    }
+  } catch (error) {
+    await client.end().catch(() => {});
+    throw new Error(`cannot take the migration runner lock (${safeError(error)})`);
+  }
+  return {
+    release: async () => {
+      await client.query(`SELECT pg_advisory_unlock(${MIGRATION_RUNNER_LOCK_KEY})`).catch(() => {});
+      await client.end().catch(() => {});
+    },
+  };
 }
 
 /** Pure classification, exported for unit tests. */

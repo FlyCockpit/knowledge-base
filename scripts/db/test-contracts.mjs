@@ -3,7 +3,8 @@
  * `pnpm db:test-migrations` (scripts/db/test-migrations.mjs) against its
  * DISPOSABLE server. The real runner (migrate-runtime.mjs) and real Prisma
  * apply hand-built fixture folders in temp directories; the migration role is
- * a non-superuser `knowledge_base_app` that owns every scratch database here.
+ * a per-run non-superuser `knowledge_base_app_<hex>` that owns every scratch
+ * database here (per-run database names too, so a shared server is never touched).
  *
  * Scenario numbers follow the expand/contract plan's test list:
  *   2 the soak, then the drop · 3 an old heartbeat blocks · 4 rollback
@@ -151,10 +152,15 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
 
   // Synthetic completed-pair result; KB's real encrypted bundles are covered by W2.
   const hookLog = path.join(work, "hook.log");
-  const hook = writeTestBackupHook(work, {
-    logFile: hookLog,
-    failFile: path.join(work, "hook-fail"),
-  });
+  const failFile = path.join(work, "hook-fail");
+  const bundleHook = writeTestBackupHook(work, { logFile: hookLog, failFile });
+  // A brand-new database gets `--check-destination` (no bundle, no result file),
+  // as pre-migrate.sh does: record it, honour hook-fail, and exit.
+  const hook = path.join(work, "hook.sh");
+  writeFileSync(
+    hook,
+    `if [ "$1" = "--check-destination" ]; then echo "$*" >> ${JSON.stringify(hookLog)}; [ -f ${JSON.stringify(failFile)} ] && exit 1; exit 0; fi\nexec bash ${JSON.stringify(bundleHook)} "$@"\n`,
+  );
   const hookCalls = () => {
     try {
       return readFileSync(hookLog, "utf8").trim().split("\n").filter(Boolean);
@@ -164,7 +170,15 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
   };
 
   const apply = async (db, names, options = {}) => {
-    const { mode = "apply", id, role, folders = FOLDERS, image = IMAGE, schema } = options;
+    const {
+      mode = "apply",
+      id,
+      role,
+      folders = FOLDERS,
+      image = IMAGE,
+      schema,
+      backupEnabled = "true",
+    } = options;
     const url = urlFor(db, { schema });
     const dir = dirOf(folders, names);
     const config = tempConfig({ url, migrations: dir });
@@ -177,7 +191,11 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       code = await run({
         mode,
         role,
-        env: { DATABASE_URL: url, ...(id ? { KB_INSTANCE_ID: id } : {}) },
+        env: {
+          DATABASE_URL: url,
+          ...(backupEnabled === undefined ? {} : { BACKUP_ENABLED: backupEnabled }),
+          ...(id ? { KB_INSTANCE_ID: id } : {}),
+        },
         migrationsDir: dir,
         runPrisma: (args, opts) =>
           prisma([...args, "--config", config], { ...opts, capture: true }).then((r) => {
@@ -445,6 +463,36 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       }
     });
     await step(
+      "contracts 10e: BACKUP_ENABLED=true and no backup hook in the image → the contracts are skipped",
+      async () => {
+        const r = await apply(s1, D, { backupHook: path.join(work, "no-such-hook.sh") });
+        assert.equal(r.code, 0, r.out);
+        // KB's runner reports a missing hook like a failed one (exit 1) or by name.
+        assert.match(
+          r.out,
+          /(pre-drop backup|no backup hook).*scheduled deletions skipped this run/,
+        );
+        assert.equal((await row(s1, F3)).contract_attempts, 1, "no attempt was made");
+      },
+    );
+    await step(
+      "contracts 10d: BACKUP_ENABLED=false → no pre-drop hook, the due deletion still runs",
+      async () => {
+        // The hook would fail; off means it is never called, so it cannot block.
+        writeFileSync(path.join(work, "hook-fail"), "");
+        rmSync(hookLog, { force: true });
+        try {
+          const r = await apply(s1, D, { backupEnabled: "false" });
+          assert.equal(r.code, 0, r.out);
+          assert.deepEqual(hookCalls(), []);
+          assert.doesNotMatch(r.out, /pre-drop backup failed/);
+          assert.ok((await row(s1, F3)).contract_attempts > 1, "the deletion was attempted");
+        } finally {
+          rmSync(path.join(work, "hook-fail"));
+        }
+      },
+    );
+    await step(
       "contracts: the pre-deploy catalog read does not wait behind ACCESS EXCLUSIVE",
       async () => {
         const holder = new pg.Client({ connectionString: urlFor(s1) });
@@ -490,7 +538,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
 
     // ------------------------------------------------------------ s2 (fresh)
     await step(
-      "contracts 9: a fresh database applies every contract at once (no backup, no soak)",
+      "contracts 9: a fresh database applies every contract at once (no pre-drop backup, no soak)",
       async () => {
         const s2 = "knowledge_base_test_c_s2";
         await createDb(s2);
@@ -499,7 +547,10 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
         assert.equal(r.code, 0, r.out);
         assert.ok(!(await columns(s2)).includes("x"));
         assert.deepEqual(await labels(s2), ["A"]);
-        assert.ok(!hookCalls().some((c) => c.includes("pre-drop")));
+        // No fresh-database exemption: BACKUP_ENABLED=true still requires a
+        // usable destination (a brand-new database has no bundle to take); no
+        // pre-drop bundle.
+        assert.deepEqual(hookCalls(), ["--check-destination"]);
         assert.ok((await row(s2, F2)).contract_applied_at);
         assert.deepEqual(await holds(s2), []);
       },
@@ -685,8 +736,10 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
           assert.equal(r.code, 0, r.out);
           assert.match(r.out, /restored from a logical backup \(registry table recreated\)/);
           assert.ok((await columns(s4)).includes("x"), "not re-applied this run");
+          // `app` maps the logical name itself; actualDb(s4) here named a new,
+          // nonexistent database.
           const same = await app(
-            actualDb(s4),
+            s4,
             `SELECT registry_oid::text = to_regclass('"_knowledge_base_cluster"')::oid::text AS same FROM "_knowledge_base_cluster"`,
           );
           assert.deepEqual(same, [{ same: true }]);
@@ -754,7 +807,12 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       `CREATE TABLE "w" ("id" SERIAL NOT NULL, "s" "S" NOT NULL DEFAULT 'B', "note" TEXT, "n" INTEGER NOT NULL DEFAULT 0, CONSTRAINT "w_pkey" PRIMARY KEY ("id"));`,
       // A user plpgsql trigger and procedure that bind the enum type (R4-1, R5-1).
       `CREATE FUNCTION "w_note"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."s" = 'A'::"S" THEN NEW."note" := 'is-a'; END IF; RETURN NEW; END $$;`,
-      `CREATE TRIGGER "w_note" BEFORE INSERT OR UPDATE ON "w" FOR EACH ROW EXECUTE FUNCTION "w_note"();`,
+      // BEFORE triggers fire in name order (byte order). "__w_note" sorts like
+      // the earliest possible unquoted trigger name: before
+      // "knowledge_base_sync_*", after the generated "0_knowledge_base_sync_<hash>".
+      // It must see the remapped value ("note" = 'is-a' below), which proves
+      // the sync trigger fires first.
+      `CREATE TRIGGER "__w_note" BEFORE INSERT OR UPDATE ON "w" FOR EACH ROW EXECUTE FUNCTION "w_note"();`,
       `CREATE PROCEDURE "pp"(INOUT r TEXT) LANGUAGE plpgsql AS $$ DECLARE x "S" := 'A'; BEGIN r := x::text; END $$;`,
     ].join("\n");
     const ENUM_FOLDERS = {

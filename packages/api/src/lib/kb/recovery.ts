@@ -4,13 +4,14 @@ import { join } from "node:path";
 import type { PrismaClient } from "@knowledge-base/db/client";
 import { logInternalError } from "@knowledge-base/env/log";
 import { recoverCasPublications } from "./asset-lineage";
-import { kbBareRepoPath, readHeadSha, runGit } from "./git-read";
+import { kbBareRepoPath, readHeadSha, readRefOrBroken, runGit } from "./git-read";
 import { fsyncPublishedRef, objectExists } from "./git-write";
 import type { KbCreatePreparedDelta } from "./kb-lifecycle-intent";
 import {
   checkoutPinnedSession,
   enqueueKbOperation,
   KB_LOCK_CLASSID,
+  KbLockError,
   kbLockObjid,
   type LockQuery,
 } from "./lock";
@@ -33,6 +34,15 @@ export {
 } from "./recovery-gate";
 
 export const RECOVERY_SWEEP_MS = 60_000;
+/**
+ * The most ACTIVE KBs one recovery pass may newly quarantine. A pass whose
+ * KB-local failures exceed it, or exceed half of the ACTIVE KBs, quarantines
+ * nothing and aborts instead (retried next pass): that many healthy-until-now
+ * KBs failing together is more likely one host fault than separate damage,
+ * and quarantine is permanent until an operator acts. KBs already
+ * REPAIR_REQUIRED that keep failing do not count.
+ */
+export const RECOVERY_QUARANTINE_LIMIT_PER_PASS = 3;
 
 let sweepInFlight: Promise<void> | undefined;
 
@@ -89,7 +99,8 @@ export async function recoverCreatingKnowledgeBase(
   if (intent?.phase === "FINALIZED") return;
   const targetKbId = intent?.reservedKbId ?? kbId;
   const repoPath = kbBareRepoPath(reposDir, targetKbId);
-  const actual = readHeadSha(repoPath);
+  // A broken ref settles below as REPAIR_REQUIRED (readRefOrBroken).
+  const actual = await readRefOrBroken(() => readHeadSha(repoPath));
   if (
     intent?.phase === "COMMITTING" &&
     intent.newRef &&
@@ -175,6 +186,136 @@ async function recoverOneKnowledgeBase(
   await reconcileKbIntents(query, reposDir, kbId);
 }
 
+/**
+ * Error codes of the host, not of one KB: no space or quota, descriptor or
+ * process exhaustion, memory, a read-only or busy mount, a timeout. Every KB would fail the same way, and the fault can clear, so they
+ * abort the sweep (retried next pass) rather than quarantine anything.
+ */
+const HOST_LEVEL_ERROR_CODES = new Set([
+  "ENOSPC",
+  "EDQUOT",
+  "EMFILE",
+  "ENFILE",
+  "EAGAIN",
+  "EWOULDBLOCK",
+  "ENOMEM",
+  "EROFS",
+  "EBUSY",
+  "ETIMEDOUT",
+  "EINTR",
+]);
+
+/**
+ * Whether a recovery failure may be this KB's own (an I/O error on its files,
+ * a Git failure or unreadable storage in its repository, a corrupt journal
+ * row) and so a quarantine candidate. Never one, so the pass aborts as before
+ * and the next one retries:
+ * - a PostgreSQL error (SQLSTATE `code` plus `severity`) and a lost KB lock;
+ * - a host-level errno ({@link HOST_LEVEL_ERROR_CODES}).
+ * Everything else is only a candidate: whether it is quarantined depends on
+ * how many KBs failed in the same pass ({@link RECOVERY_QUARANTINE_LIMIT_PER_PASS}),
+ * which is what tells one damaged repository from git missing or a broken mount.
+ */
+export function isKbLocalRecoveryFailure(error: unknown): boolean {
+  if (error instanceof KbLockError) return false;
+  if (!error || typeof error !== "object") return true;
+  const { code, severity } = error as { code?: unknown; severity?: unknown };
+  if (typeof severity === "string" && typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+    return false;
+  }
+  if (typeof code === "string" && HOST_LEVEL_ERROR_CODES.has(code)) return false;
+  return true;
+}
+
+/**
+ * Whether a pass may quarantine its `candidates` newly failing ACTIVE KBs out
+ * of `activeKbs`: at most {@link RECOVERY_QUARANTINE_LIMIT_PER_PASS}, and at
+ * most half of the ACTIVE KBs (a single-KB instance never isolates; its pass
+ * aborts and retries, as before isolation existed).
+ */
+export function mayQuarantine(candidates: number, activeKbs: number): boolean {
+  return candidates <= RECOVERY_QUARANTINE_LIMIT_PER_PASS && candidates * 2 <= activeKbs;
+}
+
+/** KBs whose continuing failure (already quarantined, or not ACTIVE) this process has logged. */
+const loggedStillFailing = new Set<string>();
+
+function logStillFailing(
+  site: "kb.recovery-kb-quarantined" | "kb.recovery-kb-unmarked",
+  kbId: string,
+  error: unknown,
+) {
+  // Retried every pass; say so once per process (until it recovers), not every minute.
+  if (loggedStillFailing.has(kbId)) return;
+  loggedStillFailing.add(kbId);
+  logInternalError(site, error, { kbId });
+}
+
+/**
+ * Mark one ACTIVE KB REPAIR_REQUIRED after its recovery failed, under its
+ * operation gate, advisory lock and the volume fence (no writer interleaves).
+ * Only an ACTIVE row changes: CREATING is left to `recoverCreatingKnowledgeBase`
+ * (creation finalization only accepts CREATING; marking it would strand the
+ * create intent, its reservation and its slug), and a TOMBSTONED KB is never
+ * resurrected. A KB whose lock is busy is left as it is (retried next pass).
+ * A mark that cannot be written propagates and aborts the pass.
+ */
+async function markRecoveryQuarantine(
+  connectionString: string,
+  kbId: string,
+  error: unknown,
+  assertFence: () => void,
+): Promise<void> {
+  await enqueueKbOperation(kbId, async () => {
+    const lease = await checkoutPinnedSession({
+      connectionString,
+      opId: `recovery-quarantine-${randomUUID()}`,
+    });
+    try {
+      const locked = await lease.query<{ ok: boolean }>(
+        "SELECT pg_try_advisory_lock($1, $2) AS ok",
+        [KB_LOCK_CLASSID, kbLockObjid(kbId)],
+      );
+      if (!locked.rows[0]?.ok) {
+        logStillFailing("kb.recovery-kb-unmarked", kbId, error);
+        return;
+      }
+      assertFence();
+      const marked = await lease.transaction(async (query) => {
+        const updated = await query(
+          `UPDATE "knowledge_base"
+              SET state = 'REPAIR_REQUIRED'::"KnowledgeBaseState", "updatedAt" = now()
+            WHERE id = $1 AND state = 'ACTIVE'::"KnowledgeBaseState"`,
+          [kbId],
+        );
+        return (updated.rowCount ?? 0) > 0;
+      });
+      if (marked) {
+        loggedStillFailing.delete(kbId);
+        logInternalError("kb.recovery-kb", error, { kbId });
+      } else {
+        logStillFailing("kb.recovery-kb-unmarked", kbId, error);
+      }
+    } finally {
+      await lease.close();
+    }
+  });
+}
+
+/**
+ * Recover one KB under its operation gate, advisory lock and the volume fence.
+ *
+ * Failure isolation: a failure while reconciling THIS KB (a storage error in
+ * its repository or CAS files, a corrupt journal row) is returned instead of
+ * thrown, so the sweep goes on with the other KBs; `settleRecoveryFailures`
+ * then decides whether to quarantine it. The KB's transaction rolled back, so
+ * nothing it held is released: reservations, staged-upload claims and pending
+ * CAS rows stay as they were.
+ * Everything that is not a KB-local failure still aborts the sweep, as before:
+ * a lost volume fence (re-asserted first), a database, KB-lock or host-level
+ * error ({@link isKbLocalRecoveryFailure}), or a session or lock that cannot be
+ * obtained.
+ */
 async function recoverKbUnderFence(
   connectionString: string,
   reposDir: string,
@@ -182,7 +323,9 @@ async function recoverKbUnderFence(
   assertFence: () => void,
   settleIntent?: (query: LockQuery) => Promise<void>,
   casOnly = false,
-): Promise<void> {
+): Promise<{ failure?: unknown }> {
+  let failure: unknown;
+  let failed = false;
   await enqueueKbOperation(kbId, async () => {
     const lease = await checkoutPinnedSession({
       connectionString,
@@ -198,25 +341,76 @@ async function recoverKbUnderFence(
       // the lifetime volume fence also excludes a former server's descendants.
       // Both must hold before reconciliation unlinks Git's abandoned ref lock.
       assertFence();
-      if (casOnly) {
-        // Separate transactions preserve disk-before-logical order even across
-        // abandoned attempts that used different backing volumes.
-        while (await lease.transaction((query) => recoverCasPublications(query, kbId))) {
-          assertFence();
+      try {
+        if (casOnly) {
+          // Separate transactions preserve disk-before-logical order even across
+          // abandoned attempts that used different backing volumes.
+          while (await lease.transaction((query) => recoverCasPublications(query, kbId))) {
+            assertFence();
+          }
+          return;
         }
-        return;
+        // One transaction per KB reconciliation: the complete delta — head
+        // update, durable job, audit, and the FINALIZED receipt — commits
+        // atomically, so no half-finalized intent is ever observable.
+        await lease.transaction(async (query) => {
+          await settleIntent?.(query);
+          await recoverOneKnowledgeBase(query, reposDir, kbId);
+        }, false);
+      } catch (error) {
+        // A lost fence is never one KB's failure: fail the whole sweep closed.
+        assertFence();
+        if (!isKbLocalRecoveryFailure(error)) throw error;
+        // A quarantine candidate: the pass decides once it has seen every KB.
+        failure = error;
+        failed = true;
       }
-      // One transaction per KB reconciliation: the complete delta — head
-      // update, durable job, audit, and the FINALIZED receipt — commits
-      // atomically, so no half-finalized intent is ever observable.
-      await lease.transaction(async (query) => {
-        await settleIntent?.(query);
-        await recoverOneKnowledgeBase(query, reposDir, kbId);
-      }, false);
     } finally {
       await lease.close();
     }
   });
+  return failed ? { failure } : {};
+}
+
+/**
+ * Decide the pass's KB-local failures once every KB was tried. ACTIVE ones are
+ * quarantine candidates: within {@link mayQuarantine} each is marked
+ * REPAIR_REQUIRED and the pass continues; beyond it the pass quarantines
+ * nothing and aborts with the first failure (fail closed, retried next pass).
+ * Failures of KBs that are not ACTIVE (already REPAIR_REQUIRED, CREATING, a
+ * tombstone's CAS rows, a vanished row) never count and are only logged.
+ * Nothing a failed KB held was released: its transaction rolled back.
+ */
+async function settleRecoveryFailures(
+  db: PrismaClient,
+  connectionString: string,
+  failures: Map<string, unknown>,
+  assertFence: () => void,
+): Promise<void> {
+  if (failures.size === 0) return;
+  const ids = [...failures.keys()];
+  const rows = await db.$queryRaw<{ id: string; state: string }[]>`
+    SELECT id, state::text AS state FROM "knowledge_base" WHERE id = ANY(${ids}::text[])`;
+  const stateOf = new Map(rows.map((row) => [row.id, row.state]));
+  const candidates = ids.filter((id) => stateOf.get(id) === "ACTIVE");
+  for (const id of ids) {
+    if (stateOf.get(id) === "ACTIVE") continue;
+    logStillFailing(
+      stateOf.get(id) === "REPAIR_REQUIRED"
+        ? "kb.recovery-kb-quarantined"
+        : "kb.recovery-kb-unmarked",
+      id,
+      failures.get(id),
+    );
+  }
+  if (candidates.length === 0) return;
+  const totals = await db.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(*)::int AS count FROM "knowledge_base" WHERE state = 'ACTIVE'::"KnowledgeBaseState"`;
+  if (!mayQuarantine(candidates.length, totals[0]?.count ?? 0)) throw failures.get(candidates[0]!);
+  assertFence();
+  for (const id of candidates) {
+    await markRecoveryQuarantine(connectionString, id, failures.get(id), assertFence);
+  }
 }
 
 export async function runStartupJournalRecovery(
@@ -271,6 +465,26 @@ export async function runJournalRecoverySweep(
       await lease.close();
     }
   });
+  // KB-local failures of this pass, by KB. Later loops skip a failed KB
+  // rather than fail (and log) it again; the next sweep retries it.
+  const failures = new Map<string, unknown>();
+  const recoverOnce = async (
+    kbId: string,
+    settleIntent?: (query: LockQuery) => Promise<void>,
+    casOnly = false,
+  ) => {
+    if (failures.has(kbId)) return;
+    const result = await recoverKbUnderFence(
+      connectionString,
+      reposDir,
+      kbId,
+      assertFence,
+      settleIntent,
+      casOnly,
+    );
+    if ("failure" in result) failures.set(kbId, result.failure);
+    else loggedStillFailing.delete(kbId);
+  };
   let afterKbId = "";
   for (;;) {
     const pending = await db.$queryRaw<{ kbId: string }[]>`
@@ -279,7 +493,7 @@ export async function runJournalRecoverySweep(
        ORDER BY "kbId" LIMIT 100`;
     if (pending.length === 0) break;
     for (const row of pending) {
-      await recoverKbUnderFence(connectionString, reposDir, row.kbId, assertFence, undefined, true);
+      await recoverOnce(row.kbId, undefined, true);
     }
     afterKbId = pending[pending.length - 1]!.kbId;
   }
@@ -287,7 +501,7 @@ export async function runJournalRecoverySweep(
     SELECT id FROM "knowledge_base"
      WHERE state IN ('ACTIVE'::"KnowledgeBaseState", 'CREATING'::"KnowledgeBaseState", 'REPAIR_REQUIRED'::"KnowledgeBaseState")`;
   for (const kb of kbs) {
-    await recoverKbUnderFence(connectionString, reposDir, kb.id, assertFence);
+    await recoverOnce(kb.id);
   }
   const orphans = await db.$queryRaw<
     {
@@ -306,12 +520,8 @@ export async function runJournalRecoverySweep(
         // Serialize on the persisted reservation: the in-flight create holds
         // this same per-KB gate from reservation insert through COMMITTING,
         // so an orphan can only be settled after that attempt drained.
-        await recoverKbUnderFence(
-          connectionString,
-          reposDir,
-          intent.reservedKbId,
-          assertFence,
-          (query) => settleOrphanKbCreateIntent(query, intent.opId),
+        await recoverOnce(intent.reservedKbId, (query) =>
+          settleOrphanKbCreateIntent(query, intent.opId),
         );
         continue;
       }
@@ -328,8 +538,9 @@ export async function runJournalRecoverySweep(
       }
       continue;
     }
-    await recoverKbUnderFence(connectionString, reposDir, intent.kbId, assertFence);
+    await recoverOnce(intent.kbId);
   }
+  await settleRecoveryFailures(db, connectionString, failures, assertFence);
   // Settle every pending journal before allowing staging expiry/reclaim.
   assertFence();
   await sweepExpiredStagedUploads(connectionString, assetsDir);

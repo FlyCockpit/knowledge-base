@@ -72,7 +72,21 @@ The server is the single canonical writer. A native lifetime fence drains Git
 children before another process enters; authority then sorted KB locks protect
 the durable one-ref journal. Startup recovers intended/old refs once. A third
 unexpected SHA marks REPAIR_REQUIRED; operators must inspect, never reset refs
-or delete lock files to bypass it. Lost publication replies can mean a committed
+or delete lock files to bypass it. Recovery (startup and the 60 s sweep)
+isolates each KB: a KB whose recovery fails (an I/O, Git, storage or journal
+error) is skipped and the other KBs are still recovered. Its failed transaction
+leaves intents, reservations and staged-upload claims as they were. At the end
+of the pass the failed ACTIVE KBs are marked REPAIR_REQUIRED and logged
+(`kb.recovery-kb`), provided they are at most three and at most half of the
+ACTIVE KBs; clearing the fault does not lift the quarantine. More than that
+looks like one host fault (git missing, a broken mount), so the pass quarantines
+nothing and aborts, and so do a lost volume fence, a database or lock error and
+a host-level errno (no space, descriptor or process exhaustion, a read-only
+mount); startup then fails closed and the next pass retries. A single-KB
+instance never isolates. A CREATING KB is never marked (create recovery settles
+it on a later pass), and a KB already REPAIR_REQUIRED that keeps failing is
+logged once per process. Retention never compacts the intents of a REPAIR_REQUIRED
+KB while their quota reservations are still held. Lost publication replies can mean a committed
 operation: retry the identical key or inspect the PR/ref.
 
 ## One-way external mirror

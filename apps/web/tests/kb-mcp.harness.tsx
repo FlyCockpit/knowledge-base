@@ -27,7 +27,19 @@ await i18n.init({
   interpolation: { escapeValue: false },
 });
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-const root = createRootRoute({ component: Outlet });
+// The app's global CSS clips the document (`body { overflow: clip }`); the
+// real app shell supplies the one bounded scroller. Without one here, a
+// settings page taller than the viewport (the lists grow as specs add
+// fixtures) leaves its lower controls unreachable: Playwright reports them
+// "outside of the viewport" and the click never lands. A plain div, not a
+// second <main>: the consent route brings its own landmark.
+const root = createRootRoute({
+  component: () => (
+    <div style={{ position: "fixed", inset: 0, overflowY: "auto", overflowX: "clip" }}>
+      <Outlet />
+    </div>
+  ),
+});
 // Apply the same id/path wiring as the generated tree, using the actual page components.
 const consent = consentRoute.update({
   id: "/$lang/mcp-consent",

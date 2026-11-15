@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -686,7 +686,18 @@ describe("sealed real authority, PostgreSQL and Git", () => {
     expect(readHeadSha(f.repo)).toBe(f.base);
     const merged = await merge(f, p);
     expect(merged.pr.status).toBe("MERGED");
-    expect(readHeadSha(f.repo)).toBe(p.commitSha);
+    // A reviewed merge always records its merger (pr-merge.ts), even where a
+    // fast-forward was possible: head is the merge commit over base and the
+    // proposal, carrying the proposal's tree.
+    const mergeSha = merged.pr.mergeCommitSha!;
+    expect(readHeadSha(f.repo)).toBe(mergeSha);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", f.repo, ...args], { encoding: "utf8" }).trim();
+    expect(git("rev-list", "--parents", "-n", "1", mergeSha).split(" ").slice(1)).toEqual([
+      f.base,
+      p.commitSha,
+    ]);
+    expect(git("rev-parse", `${mergeSha}^{tree}`)).toBe(git("rev-parse", `${p.commitSha}^{tree}`));
   });
   it("KB and forced-account teardown erase ciphertext and grants while preserving tombstones", async () => {
     for (const mode of ["kb", "account"] as const) {

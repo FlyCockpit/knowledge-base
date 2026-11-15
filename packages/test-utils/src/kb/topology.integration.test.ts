@@ -15,6 +15,7 @@ import { QUEUE_NAMES } from "@knowledge-base/queue/jobs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { drainDockerFixtures, removeDockerContainer, withDockerContainer } from "./docker.js";
 import { NODE_BASE_IMAGE } from "./node-image.mjs";
+import { kbTestName } from "./test-names.mjs";
 
 afterEach(drainDockerFixtures, 300_000);
 
@@ -61,15 +62,19 @@ describe("dedicated worker topology", () => {
     expect(entrypoint).toMatch(/kb_volume_role=server/);
     expect(entrypoint).toMatch(/kb_volume_role=worker/);
     // Role-free skeleton repair runs after the mount-root runtime check.
-    expect(entrypoint).toContain("  node /app/scripts/init-kb-volumes.mjs\n");
-    expect(entrypoint).not.toContain("--role");
+    expect(entrypoint).toContain("  supervise node /app/scripts/init-kb-volumes.mjs\n");
+    // The skeleton repair is role-free; only the migration runner takes the
+    // volume role (apply for the server, wait for the worker).
+    expect(entrypoint).not.toMatch(/init-kb-volumes\.mjs[^\n]*--role/);
+    expect(entrypoint).toContain('run_runner apply --role "$kb_volume_role"');
+    expect(entrypoint).toContain('run_runner wait --role "$kb_volume_role"');
     expect(entrypoint.indexOf("--check-runtime")).toBeLessThan(
-      entrypoint.indexOf("  node /app/scripts/init-kb-volumes.mjs\n"),
+      entrypoint.indexOf("  supervise node /app/scripts/init-kb-volumes.mjs\n"),
     );
   });
 
   it("removes a named fixture when an attached Docker run times out", async () => {
-    const name = `kb-topology-timeout-${randomUUID()}`;
+    const name = kbTestName(`kb-topology-timeout-${randomUUID()}`);
     try {
       const pending = withDockerContainer(name, async () => {
         // Ensure a real container exists before timing out its attached client.
@@ -103,8 +108,8 @@ describe("dedicated worker topology", () => {
   }, 180_000);
 
   it("joins a following Docker fixture registered by an abandoned action", async () => {
-    const firstName = `kb-topology-first-${randomUUID()}`;
-    const nextName = `kb-topology-next-${randomUUID()}`;
+    const firstName = kbTestName(`kb-topology-first-${randomUUID()}`);
+    const nextName = kbTestName(`kb-topology-next-${randomUUID()}`);
     let finished = false;
     const create = (name: string) =>
       docker([
@@ -146,8 +151,8 @@ describe("dedicated worker topology", () => {
   }, 300_000);
 
   describe("one data volume", () => {
-    const server = `kb-topology-server-${randomUUID()}`;
-    const worker = `kb-topology-worker-${randomUUID()}`;
+    const server = kbTestName(`kb-topology-server-${randomUUID()}`);
+    const worker = kbTestName(`kb-topology-worker-${randomUUID()}`);
     const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
     const volumes: string[] = [];
     let root: string;
@@ -158,7 +163,7 @@ describe("dedicated worker topology", () => {
     // be tmpfs). Mounted at a path absent from the image it gets no copy-up, so
     // it is an empty, operator-provisioned root like an empty bind mount.
     async function emptyVolume(): Promise<string> {
-      const name = `kb-topology-data-${randomUUID()}`;
+      const name = kbTestName(`kb-topology-data-${randomUUID()}`);
       volumes.push(name);
       await docker(["volume", "create", name]);
       await docker([
@@ -178,7 +183,7 @@ describe("dedicated worker topology", () => {
       return name;
     }
     async function checkData(mounts: string[]) {
-      const name = `kb-topology-check-${randomUUID()}`;
+      const name = kbTestName(`kb-topology-check-${randomUUID()}`);
       return withDockerContainer(name, () =>
         docker(
           [

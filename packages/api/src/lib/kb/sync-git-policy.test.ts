@@ -58,9 +58,10 @@ const ALLOWED: Record<string, string[]> = {
   "packages/api/src/lib/kb/operation-intent.ts": [
     // Reconciliation without read options: startup recovery and the
     // post-publication confirmation, which must finish after the ref moved.
-    ": readHeadSha(kbBareRepoPath(reposDir, kbId));",
+    // (Both reads go through readRefOrBroken, which settles a broken ref.)
+    ": readHeadSha(kbBareRepoPath(reposDir, kbId)),",
     "? readHeadSha(repoPath)",
-    ": readRefSha(repoPath, refName);",
+    ": readRefSha(repoPath, refName),",
     "else fsyncPublishedRef({ reposDir, kbId }, refName);",
     // The journal test publication (test harness operation only).
     "baseBlobs: intent.oldRef ? readCommitBlobs(repoPath, intent.oldRef) : undefined,",

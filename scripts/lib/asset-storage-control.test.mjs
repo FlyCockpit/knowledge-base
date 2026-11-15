@@ -50,6 +50,10 @@ test("the image entrypoint preserves every offline operator argument and strips 
       `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(output)}, JSON.stringify({args:process.argv.slice(2), writerPresent:Object.hasOwn(process.env, 'KB_ASSET_S3_SECRET_ACCESS_KEY'), instancePresent:Object.hasOwn(process.env, 'KB_INSTANCE_ID')}));\n`,
       { mode: 0o700 },
     );
+    // The entrypoint execs one-shots under tini; a pass-through stub stands in.
+    writeFileSync(join(dir, "tini"), '#!/bin/sh\n[ "$1" = -- ] && shift\nexec "$@"\n', {
+      mode: 0o700,
+    });
     const args = [
       "asset-storage",
       "migrate",

@@ -350,3 +350,33 @@ for (const scenario of [
     assert.equal(cleared, scenario === "snapshot-failure");
     assert.equal(children, scenario === "incomplete-drain" ? 1 : 2);
   });
+
+test("a database holding large objects is refused at backup time, before any dump", async () => {
+  const { refuseLargeObjects } = await import("./kb-backup.mjs");
+  const sent = [];
+  const client = (present) => ({
+    async query(sql) {
+      sent.push(sql);
+      return { rows: [{ present }] };
+    },
+  });
+  await assert.rejects(refuseLargeObjects(client(true)), (error) => {
+    assert.equal(error.code, "BACKUP_LARGE_OBJECTS");
+    assert.match(error.message, /large objects[\s\S]*restore refuses/);
+    return true;
+  });
+  await refuseLargeObjects(client(false));
+  assert.deepEqual(sent, [
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_largeobject_metadata) AS present",
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_largeobject_metadata) AS present",
+  ]);
+});
+
+test("the large-object check runs inside the exported snapshot, before pg_dump", async () => {
+  const source = await readFile(new URL("./kb-backup.mjs", import.meta.url), "utf8");
+  const snapshot = source.indexOf("SELECT pg_export_snapshot()");
+  const check = source.indexOf("await refuseLargeObjects(client);");
+  const dump = source.indexOf('"pg_dump",');
+  assert.ok(snapshot > 0 && check > snapshot && dump > check, "snapshot → check → pg_dump");
+  assert.ok(check < source.indexOf('open(dump, "wx"'), "no dump file is created first");
+});

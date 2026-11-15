@@ -23,6 +23,7 @@ import {
 } from "./docker.js";
 import { NODE_BASE_IMAGE } from "./node-image.mjs";
 import { drainProcessFixtures, ownProcess } from "./process.js";
+import { kbTestName } from "./test-names.mjs";
 
 afterEach(drainDockerFixtures, 300_000);
 
@@ -634,7 +635,7 @@ describe("kernel fence and descendant supervision", () => {
     const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
     const before = fenceStat(repos);
     const run = (args: string[]) => {
-      const name = `kb-fence-smoke-${randomUUID()}`;
+      const name = kbTestName(`kb-fence-smoke-${randomUUID()}`);
       return withDockerContainer(name, () =>
         docker([
           "run",
@@ -689,7 +690,7 @@ describe("kernel fence and descendant supervision", () => {
     const readyPath = join(repos, "child.ready");
     const leakPath = join(repos, "leaked");
     const user = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
-    const name = `kb-fence-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
+    const name = kbTestName(`kb-fence-${process.pid}-${Math.random().toString(16).slice(2, 8)}`);
     containers.push(name);
     docker([
       "run",

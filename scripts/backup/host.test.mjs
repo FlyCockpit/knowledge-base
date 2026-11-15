@@ -1,0 +1,540 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { linuxOnlyTest } from "./linux-only.mjs";
+
+// host.sh is Linux-only (the deployment server): see linux-only.mjs.
+const test = linuxOnlyTest(import.meta.url);
+
+const host = fileURLToPath(new URL("./host.sh", import.meta.url));
+const project = "knowledge-base-prod";
+const attempt = "11111111-2222-4333-8444-555555555555";
+const base = {};
+
+// Docker is an inert inspect fixture. No real Docker, database or credential IO.
+const dockerStub = `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(process.env.FIXTURE, 'utf8'));
+const project = ${JSON.stringify(project)};
+const out = (s) => process.stdout.write(s + '\\n');
+fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n');
+if (args[0] === 'ps') {
+  const scoped = args.includes('label=com.docker.compose.project=' + project);
+  const svc = args.find(s => s.startsWith('label=com.docker.compose.service='))?.split('=').at(-1);
+  const role = args.includes('label=io.knowledge-base.role=server');
+  // Without -a, docker ps lists running containers only.
+  const listed = (id) => { if (args.includes('-a') || !(fixture.stopped ?? []).includes(id)) out(id); };
+  if (!scoped) process.stdout.write(fixture.projects ?? project + '\\n');
+  else if (role) listed('server-id');
+  else if (svc === 'postgres') listed('pg-id');
+  else if (svc === 'worker') listed('worker-id');
+  else if (svc === 'backup') listed('backup-id');
+} else if (args[0] === 'inspect') {
+  const template = args[2];
+  if (template.includes('.Mounts')) out(template.includes('/var/lib/kb') ? '/srv/kb-data' : fixture.noBackups ? '' : '/srv/kb-backups');
+  else if (template.includes('.Config.Env')) out([
+    'DATABASE_URL=' + 'postgresql://writer:fixture@postgres:5432/kb',
+    'KB_DATA_ROOT=/var/lib/kb', ...(fixture.noBackupDir ? [] : ['BACKUP_DIR=/app/backups']), 'KB_MASTER_KEY=fixture-key',
+    'KB_INSTANCE_ID=fixture-instance', 'KB_ASSET_S3_SECRET_ACCESS_KEY=fixture-asset-secret',
+    'UNRELATED_SECRET=fixture-unrelated',
+  ].join('\\n'));
+  else if (template.includes('.NetworkSettings.Networks')) out('kb_private');
+  else if (template.includes('.Image')) out('image-id');
+  else process.exit(2);
+} else if (args[0] === 'run') {
+  const names = process.env.FIXTURE_NAMES.split('\\n').filter(Boolean).sort();
+  fs.writeFileSync(process.env.RESULT, JSON.stringify({ args, names }));
+  if (process.env.MARK_RUN) {
+    fs.writeFileSync(process.env.MARK_RUN, '');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+  }
+  if (args.includes('restore') && args.includes('/run/kb-restore.identity'))
+    process.exitCode = Number(fixture.restoreExit ?? 0);
+} else if (args[0] === 'stop') {
+  // Once: the first stop (after the prompt) is interrupted by a signal.
+  const signalled = process.env.CALLS + '.signalled';
+  if (fixture.stopSignal && !fs.existsSync(signalled)) {
+    fs.writeFileSync(signalled, '');
+    process.kill(process.ppid, fixture.stopSignal);
+  }
+  if (process.env.MARK) {
+    fs.writeFileSync(process.env.MARK, '');
+    // Give the reader time to leave before the shell's next write.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+  }
+  process.exitCode = Number(fixture.stopExit ?? 0);
+} else if (args[0] === 'info') {
+  if (fixture.dockerDown) process.exit(1);
+} else if (args[0] === 'start') {
+} else process.exit(3);
+`;
+
+/**
+ * Real host.sh functions (sourced, then `body`), inert Docker boundary on an
+ * isolated PATH entry; only disposable fake values. Bounded: a hung run is
+ * killed with SIGKILL (its traps may hold a SIGTERM pending), and the scratch
+ * directory is always removed.
+ */
+function run(
+  fixture = base,
+  {
+    body = `main list --project ${project}`,
+    input = "",
+    markOnStop = false,
+    markOnRun = false,
+    gone = false,
+  } = {},
+) {
+  const dir = mkdtempSync(join(tmpdir(), "kb-host-test-"));
+  try {
+    writeFileSync(join(dir, "docker.cjs"), dockerStub);
+    writeFileSync(
+      join(dir, "docker"),
+      `#!/usr/bin/env bash
+FIXTURE_NAMES=""
+if [ "$1" = run ]; then
+  previous=""
+  for arg in "$@"; do
+    if [ "$previous" = --env-file ]; then
+      FIXTURE_NAMES="$(cut -d= -f1 "$arg" | sort)"
+      break
+    fi
+    previous="$arg"
+  done
+fi
+export FIXTURE_NAMES
+exec ${process.execPath} "$FIXTURE_SCRIPT" "$@"
+`,
+    );
+    chmodSync(join(dir, "docker"), 0o755);
+    const identity = join(dir, "identity");
+    writeFileSync(identity, "fixture identity\n");
+    writeFileSync(join(dir, "fixture.json"), JSON.stringify(fixture));
+    // Node starts children with SIGPIPE ignored; a terminal shell has it at the
+    // default (fatal), so restore that before bash starts (GNU env, Linux-only).
+    const result = spawnSync(
+      "env",
+      ["--default-signal=PIPE", "bash", "-c", `source "$1"\n${body}`, "host-test", host],
+      {
+        encoding: "utf8",
+        input,
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+        env: {
+          PATH: `${dir}:${process.env.PATH}`,
+          IDENTITY: identity,
+          FIXTURE: join(dir, "fixture.json"),
+          RESULT: join(dir, "result.json"),
+          CALLS: join(dir, "calls.jsonl"),
+          FIXTURE_SCRIPT: join(dir, "docker.cjs"),
+          ...(markOnStop ? { MARK: join(dir, "stopped") } : {}),
+          ...(markOnRun ? { MARK_RUN: join(dir, "restoring") } : {}),
+          ...(gone ? { HOST_TEST_GONE: join(dir, "reader-gone") } : {}),
+        },
+      },
+    );
+    let invocation = null;
+    try {
+      invocation = JSON.parse(readFileSync(join(dir, "result.json"), "utf8"));
+    } catch {}
+    let calls = [];
+    try {
+      calls = readFileSync(join(dir, "calls.jsonl"), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    } catch {}
+    return { ...result, invocation, calls };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const verbs = (result, keep = ["stop", "start", "run", "restart", "kill"]) =>
+  result.calls.map((args) => args[0]).filter((verb) => keep.includes(verb));
+const targets = (result, verb) =>
+  result.calls.filter((args) => args[0] === verb).map((args) => args.at(-1));
+const writerIds = ["server-id", "worker-id", "backup-id"];
+const restoreArgs = `/app/backups/daily.age "$IDENTITY" ${attempt} --project ${project}`;
+const restoreCall = `main restore ${restoreArgs}`;
+// The terminal check and the typed answer are seams; everything else is real.
+const confirmed = `stdin_is_terminal() { return 0; }\nread_answer() { answer=${project}; }`;
+const restoreBody = `${confirmed}\n${restoreCall}`;
+
+test("host can be sourced without discovering or changing anything", () => {
+  const result = run(base, { body: ":" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.calls, []);
+});
+
+test("host rejects an unknown command, an incomplete --project and bad restore args before Docker", () => {
+  for (const [body, message] of [
+    ["main unknown", /Choose list/],
+    ["main", /Choose list/],
+    ["main list --project", /needs a name/],
+    [`main restore latest "$IDENTITY"`, /same attempt UUID/],
+    [`main drill latest "$IDENTITY" extra`, /only source and identity/],
+  ]) {
+    const result = run(base, { body });
+    assert.equal(result.status, 1, body);
+    assert.match(result.stderr, message, body);
+    assert.deepEqual(result.calls, [], body);
+  }
+});
+
+test("host stops before discovery when it cannot talk to Docker", () => {
+  // Without the check, a failing `docker ps` inside the discovery read is
+  // invisible to set -e and surfaces as a misleading "exactly one deployment".
+  const result = run({ dockerDown: true });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /cannot talk to Docker/);
+  assert.doesNotMatch(result.stderr, /exactly one deployment|Expected one server/);
+  assert.deepEqual(
+    result.calls.map((args) => args[0]),
+    ["info"],
+  );
+  assert.equal(result.invocation, null);
+});
+
+test("host refuses Docker results missing compose project labels", () => {
+  // Unlabelled results are ignored, so the one labelled project is selected.
+  const result = run({ projects: `\n<no value>\n${project}\n` }, { body: "main list" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.invocation);
+  const none = run({ projects: "\n<no value>\n" }, { body: "main list" });
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /exactly one deployment/);
+  assert.equal(none.invocation, null);
+});
+
+test("host forwards only the KB allowlist through the private Postgres network", () => {
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  const args = result.invocation.args;
+  assert.equal(args[args.indexOf("--network") + 1], "kb_private");
+  assert.ok(args.includes("type=bind,src=/srv/kb-data,dst=/var/lib/kb"), args.join(" "));
+  assert.ok(args.includes("type=bind,src=/srv/kb-backups,dst=/app/backups"), args.join(" "));
+  assert.deepEqual(result.invocation.names, [
+    "BACKUP_DIR",
+    "DATABASE_URL",
+    "KB_DATA_ROOT",
+    "KB_MASTER_KEY",
+  ]);
+});
+
+test("host restore refuses before stopping anything when stdin is not a terminal", () => {
+  // spawnSync gives the script a pipe for stdin: the real stdin_is_terminal.
+  const result = run(base, { body: restoreCall, input: `${project}\n` });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Use a terminal/);
+  assert.deepEqual(verbs(result), []);
+});
+
+test("host restore starts the writers again after a completed restore, stopping each first", () => {
+  const result = run(base, { body: restoreBody });
+  assert.equal(result.status, 0, result.stderr);
+  // The restart waits for each writer's stop (idempotent) before starting it:
+  // an interrupted `docker stop` would otherwise make the start a no-op on a
+  // container that then exits (the stop-then-start race).
+  assert.deepEqual(
+    result.calls
+      .filter((args) => ["stop", "start", "run"].includes(args[0]))
+      .map((args) => `${args[0]} ${args[0] === "run" ? "" : args.at(-1)}`.trim()),
+    [
+      "stop server-id",
+      "stop worker-id",
+      "stop backup-id",
+      "run",
+      "stop server-id",
+      "start server-id",
+      "stop worker-id",
+      "start worker-id",
+      "stop backup-id",
+      "start backup-id",
+    ],
+  );
+  assert.deepEqual(result.invocation.args.slice(-4), [
+    "restore",
+    "/app/backups/daily.age",
+    "/run/kb-restore.identity",
+    attempt,
+  ]);
+  assert.ok(!result.calls.some((args) => args.includes("pg-id") && args[0] !== "inspect"));
+  assert.match(result.stderr, /Restore done[\s\S]*Started the writers again/);
+});
+
+test("host restore: a completed retry starts writers an earlier failed attempt left stopped", () => {
+  // The failed attempt kept every writer stopped; the retry must find them (ps -a).
+  const result = run({ ...base, stopped: writerIds, restoreExit: 0 }, { body: restoreBody });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(targets(result, "start").sort(), [...writerIds].sort());
+});
+
+test("host without a backups mount: hold-deletions works; list, backup, restore and drill refuse before any one-off container", () => {
+  for (const fixture of [
+    { ...base, noBackups: true },
+    { ...base, noBackupDir: true },
+  ]) {
+    const hold = run(fixture, { body: `main hold-deletions 7 --project ${project}` });
+    assert.equal(hold.status, 0, hold.stderr);
+    assert.ok(hold.invocation.args.includes("hold-deletions"));
+    assert.ok(!hold.invocation.args.some((arg) => arg.includes("/srv/kb-backups")));
+    for (const body of [
+      `main list --project ${project}`,
+      `main backup --project ${project}`,
+      `${confirmed}\n${restoreCall}`,
+      `main drill /app/backups/daily.age "$IDENTITY" --project ${project}`,
+    ]) {
+      const refused = run(fixture, { body });
+      assert.equal(refused.status, 1, body);
+      assert.match(refused.stderr, /no backups mount[\s\S]*--backups true/, body);
+      assert.equal(refused.invocation, null, body);
+      assert.deepEqual(verbs(refused), [], body);
+    }
+  }
+});
+
+test("host restore starts the writers again after a refusal (3) that changed nothing", () => {
+  const result = run({ ...base, restoreExit: 3 }, { body: restoreBody });
+  assert.equal(result.status, 3, result.stderr);
+  assert.deepEqual(
+    result.calls
+      .filter((args) => ["stop", "start", "run"].includes(args[0]))
+      .map((args) => `${args[0]} ${args[0] === "run" ? "" : args.at(-1)}`.trim()),
+    [
+      "stop server-id",
+      "stop worker-id",
+      "stop backup-id",
+      "run",
+      "stop server-id",
+      "start server-id",
+      "stop worker-id",
+      "start worker-id",
+      "stop backup-id",
+      "start backup-id",
+    ],
+  );
+  assert.match(result.stderr, /Refused; nothing was changed[\s\S]*Started the writers again/);
+  assert.doesNotMatch(result.stderr, /did not finish|Restore done/);
+});
+
+test("host restore: a refusal (3) starts again only the writers that were running before", () => {
+  // An earlier failed attempt left every writer stopped: a refused retry
+  // (e.g. a mistyped bundle) must not start them against a pending restore.
+  const allStopped = run({ ...base, stopped: writerIds, restoreExit: 3 }, { body: restoreBody });
+  assert.equal(allStopped.status, 3, allStopped.stderr);
+  assert.deepEqual(targets(allStopped, "start"), []);
+  assert.match(
+    allStopped.stderr,
+    /Left stopped \(they were not running before\): server-id worker-id backup-id/,
+  );
+  assert.doesNotMatch(allStopped.stderr, /Started the writers again/);
+  // An operator-stopped backup service stays stopped; the rest start again.
+  const backupStopped = run(
+    { ...base, stopped: ["backup-id"], restoreExit: 3 },
+    { body: restoreBody },
+  );
+  assert.equal(backupStopped.status, 3, backupStopped.stderr);
+  assert.deepEqual(targets(backupStopped, "start"), ["server-id", "worker-id"]);
+  assert.match(
+    backupStopped.stderr,
+    /Started the writers again[\s\S]*Left stopped \(they were not running before\): backup-id/,
+  );
+  // A completed restore still starts every one of them.
+  const completed = run({ ...base, stopped: ["backup-id"], restoreExit: 0 }, { body: restoreBody });
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.deepEqual(targets(completed, "start"), writerIds);
+});
+
+test("host keeps the writers stopped after any other restore exit and prints start + retry", () => {
+  for (const restoreExit of [1, 2, 7, 125, 129, 130, 143]) {
+    const result = run({ restoreExit }, { body: restoreBody });
+    assert.equal(result.status, restoreExit, result.stderr);
+    assert.deepEqual(verbs(result), ["stop", "stop", "stop", "run"], String(restoreExit));
+    assert.match(
+      result.stderr,
+      new RegExp(`did not finish \\(exit ${restoreExit}\\)\\. The writers stay stopped`),
+    );
+    assert.match(result.stderr, new RegExp(`same source and attempt UUID[\\s\\S]*${attempt}`));
+    assert.match(result.stderr, /docker start server-id worker-id backup-id/);
+    assert.doesNotMatch(result.stderr, /Started the writers again|Restore done/);
+    if (restoreExit === 125) assert.match(result.stderr, /docker run failed \(exit 125\)/);
+  }
+});
+
+// The typed answer arrives on stdin; read_answer is the real one.
+const promptRestore = `stdin_is_terminal() { return 0; }\n${restoreCall}`;
+const cancelLine = "[kb-host] Cancelled. Nothing was changed; no writer was stopped.\n";
+
+test("host restore: declining the typed-project prompt (other text, Enter, EOF) exits 3, nothing stopped", () => {
+  for (const [label, input] of [
+    ["n", "n\n"],
+    ["other project", "knowledge-base-staging\n"],
+    ["empty input", "\n"],
+    ["EOF", ""],
+  ]) {
+    const result = run(base, { body: promptRestore, input });
+    assert.equal(result.status, 3, `${label}: ${result.stderr}`);
+    assert.deepEqual(verbs(result), [], label);
+    assert.ok(result.stdout.endsWith(cancelLine), `${label}: ${result.stdout}`);
+    assert.doesNotMatch(result.stderr, /\[kb-host\]/, label);
+  }
+  const accepted = run(base, { body: promptRestore, input: `${project}\n` });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.deepEqual(verbs(accepted).slice(0, 4), ["stop", "stop", "stop", "run"]);
+});
+
+test("host restore: a declined prompt still exits 3 through `| tee` (pipefail / PIPESTATUS)", () => {
+  for (const [label, input] of [
+    ["n", "n\n"],
+    ["EOF", ""],
+  ]) {
+    for (const tail of [
+      `set -o pipefail\nmain restore ${restoreArgs} | cat\nexit $?`,
+      `set +o pipefail\nmain restore ${restoreArgs} | cat\nexit "\${PIPESTATUS[0]}"`,
+    ]) {
+      const result = run(base, { body: `stdin_is_terminal() { return 0; }\n${tail}`, input });
+      assert.equal(result.status, 3, `${label}: ${result.stderr}`);
+      assert.match(result.stdout, /Cancelled\. Nothing was changed/, label);
+      assert.deepEqual(verbs(result), [], label);
+    }
+  }
+});
+
+test("host restore: a completed or failed restore keeps its exit status through `| tee`", () => {
+  for (const restoreExit of [0, 1]) {
+    const result = run(
+      { restoreExit },
+      { body: `${confirmed}\nmain restore ${restoreArgs} | cat\nexit "\${PIPESTATUS[0]}"` },
+    );
+    assert.equal(result.status, restoreExit, result.stderr);
+  }
+});
+
+// A reader that leaves after the first line and closes its end of the pipe.
+const leavingReader = `| { read -r _ || true; exec 0<&-; touch "$HOST_TEST_GONE"; }`;
+
+test("host restore: a declined prompt exits 3 even when the `| tee` reader left while it waited", () => {
+  const result = run(base, {
+    body: `stdin_is_terminal() { return 0; }
+read_answer() { echo banner; until [ -f "$HOST_TEST_GONE" ]; do sleep 0.05; done; read -r answer; }
+main restore ${restoreArgs} ${leavingReader}
+exit "\${PIPESTATUS[0]}"`,
+    input: "n\n",
+    gone: true,
+  });
+  assert.equal(result.status, 3, result.stderr);
+  assert.deepEqual(verbs(result), []);
+});
+
+const promptSignals = [
+  ["SIGINT", "INT"],
+  ["SIGTERM", "TERM"],
+  ["SIGHUP", "HUP"],
+];
+// The prompt waits on a reader that never answers and never reaches EOF while
+// this shell lives (an EOF would cancel with 3 too, hiding an ignored signal:
+// the run would time out instead).
+const waitForever = 'read -r answer < <(exec tail -f /dev/null --pid="$pid" 2>/dev/null)';
+const signalAtPrompt = (signal) =>
+  `stdin_is_terminal() { return 0; }
+read_answer() { local pid=$BASHPID; ( sleep 0.2; kill -${signal} "$pid" ) & ${waitForever}; }`;
+
+test("host restore: Ctrl-C (INT), TERM or HUP while the prompt waits exits 3, nothing stopped", () => {
+  for (const [name, signal] of promptSignals) {
+    const result = run(base, { body: `${signalAtPrompt(signal)}\n${restoreCall}` });
+    assert.equal(result.status, 3, `${name}: ${result.signal ?? ""} ${result.stderr}`);
+    assert.deepEqual(verbs(result), [], name);
+    assert.ok(result.stdout.endsWith(cancelLine), `${name}: ${result.stdout}`);
+  }
+});
+
+test("host restore: a signal at the prompt exits 3 even when a `2>&1 | tee` reader is gone", () => {
+  for (const [name, signal] of promptSignals) {
+    const result = run(base, {
+      body: `stdin_is_terminal() { return 0; }
+read_answer() { local pid=$BASHPID; echo banner; until [ -f "$HOST_TEST_GONE" ]; do sleep 0.05; done; ( sleep 0.2; kill -${signal} "$pid" ) & ${waitForever}; }
+main restore ${restoreArgs} 2>&1 ${leavingReader}
+exit "\${PIPESTATUS[0]}"`,
+      gone: true,
+    });
+    assert.equal(result.status, 3, `${name}: ${result.signal ?? ""} ${result.stderr}`);
+    assert.deepEqual(verbs(result), [], name);
+  }
+});
+
+test("host restore: the prompt's signal traps are gone after it (the previous ones are back)", () => {
+  const result = run(base, {
+    body: `project=${project}
+read_answer() { answer=${project}; }
+trap 'echo previous-int' INT
+trap - TERM
+confirm_stop
+trap -p INT TERM HUP`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "trap -- 'echo previous-int' SIGINT\n");
+});
+
+test("host restore: a signal after the prompt, before the restore runs, starts the writers again", () => {
+  for (const [name, status] of [
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+    ["SIGHUP", 129],
+  ]) {
+    const result = run({ stopSignal: name }, { body: restoreBody });
+    assert.equal(result.status, status, `${name}: ${result.signal ?? ""} ${result.stderr}`);
+    assert.ok(!verbs(result).includes("run"), name);
+    assert.deepEqual(targets(result, "start"), writerIds, name);
+    assert.match(result.stderr, /Restore was not invoked; nothing was restored/, name);
+  }
+});
+
+test("host starts the writers again when its stdout reader dies before the restore runs", () => {
+  // The reader leaves once the first writer is stopped, like `tee` killed by
+  // Ctrl-C. A broken-pipe write must end the shell through set -e (the EXIT
+  // trap runs), never through SIGPIPE (141, nothing started again).
+  const result = run(base, {
+    body: `${confirmed}
+${restoreCall} | { until [ -f "$MARK" ]; do read -r -t 0.05 _ || true; done; exec 0<&-; }
+exit "\${PIPESTATUS[0]}"`,
+    markOnStop: true,
+  });
+  assert.notEqual(result.status, 141, result.stderr);
+  assert.deepEqual(targets(result, "start"), writerIds, result.stderr);
+  assert.ok(!verbs(result).includes("run"));
+  assert.match(result.stderr, /Restore was not invoked/);
+});
+
+test("host keeps the restore's status when a `2>&1 | tee` reader died during the restore", () => {
+  // Ctrl-C kills `tee` while the restore runs: the EXIT trap's notes then hit
+  // a broken pipe. They must not change the status or skip the restart.
+  for (const restoreExit of [0, 1]) {
+    const result = run(
+      { restoreExit },
+      {
+        body: `${confirmed}
+${restoreCall} 2>&1 | { until [ -f "$MARK_RUN" ]; do read -r -t 0.05 _ || true; done; exec 0<&-; }
+exit "\${PIPESTATUS[0]}"`,
+        markOnRun: true,
+      },
+    );
+    assert.equal(result.status, restoreExit, String(restoreExit));
+    assert.deepEqual(
+      targets(result, "start"),
+      restoreExit === 0 ? writerIds : [],
+      String(restoreExit),
+    );
+  }
+});
+
+test("host starts the writers again when stopping one fails", () => {
+  const result = run({ stopExit: 8 }, { body: restoreBody });
+  assert.equal(result.status, 8, result.stderr);
+  assert.deepEqual(targets(result, "start"), writerIds);
+  assert.ok(!verbs(result).includes("run"));
+});

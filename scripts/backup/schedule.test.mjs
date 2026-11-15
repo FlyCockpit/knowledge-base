@@ -55,17 +55,36 @@ async function directory(t) {
 }
 test("schedule is off by default, daily opts in with reviewed hour/retention", () => {
   assert.deepEqual(scheduleConfig({}), { enabled: false });
-  assert.deepEqual(scheduleConfig({ BACKUP_SCHEDULE: "daily" }), {
+  assert.deepEqual(scheduleConfig({ BACKUP_SCHEDULE: "daily" }), { enabled: false });
+  assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "false", BACKUP_SCHEDULE: "daily" }), {
+    enabled: false,
+  });
+  assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily" }), {
     enabled: true,
     hourUtc: 3,
     keep: 14,
   });
   for (const env of [
     { BACKUP_SCHEDULE: "hourly" },
-    { BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "24" },
-    { BACKUP_SCHEDULE: "daily", BACKUP_KEEP: "0" },
+    { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "24" },
+    { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily", BACKUP_KEEP: "0" },
   ])
     assert.throws(() => scheduleConfig(env));
+});
+test("daily scheduling with backups off warns once and stays healthy", (t) => {
+  const warning = t.mock.method(console, "warn", () => {});
+  for (const enabled of [undefined, "", "false"]) {
+    warning.mock.resetCalls();
+    const config = scheduleConfig({ BACKUP_SCHEDULE: "daily", BACKUP_ENABLED: enabled });
+    assert.equal(warning.mock.callCount(), 1);
+    assert.match(warning.mock.calls[0].arguments[0], /daily backups are NOT running/);
+    assert.match(warning.mock.calls[0].arguments[0], /BACKUP_ENABLED=true/);
+    assert.equal(healthOf(config, Date.now()).healthy, true);
+  }
+  warning.mock.resetCalls();
+  scheduleConfig({});
+  scheduleConfig({ BACKUP_SCHEDULE: "daily", BACKUP_ENABLED: "true" });
+  assert.equal(warning.mock.callCount(), 0);
 });
 test("UTC scheduling catches a missed slot after restart and rolls over years", () => {
   const now = Date.UTC(2026, 10, 11, 3, 5);

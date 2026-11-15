@@ -52,6 +52,10 @@ pnpm dev
 
 ## Configuration
 
+Backups are opt-in: `BACKUP_ENABLED` defaults to `false`. New deployments need no backup storage,
+scheduler or encryption recipient, and migrations run without backup hooks.
+Enable them with `BACKUP_ENABLED=true`; see [backup setup](./docs/backup-restore.md).
+
 The main settings are `DATABASE_URL`, `REDIS_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `KB_DATA_ROOT`, `KB_MASTER_KEY`, `ADMIN_EMAIL`, `SIGNUP_ENABLED`, `SMTP_*`, `SSO_*`, `KB_ASSET_S3_*`, `BACKUP_*` and `MIGRATE_ON_START`. The `.env.example` files are generated from the env manifest (`pnpm env:sync`). See [deployment and key custody](./docs/deploy.md) for roles, custody and mounts.
 
 ## Usage
@@ -114,6 +118,15 @@ labelled SSH, memory, push-hook and fence fixtures. Cleanup requires the owning
 runner to have exited and no surviving process to carry its project. Conflicting
 or absent container labels and uncertain process liveness preserve the resource.
 Removal is best effort; later coordinator invocations can reclaim any remainder.
+
+Set `KB_TEST_NAME_PREFIX` (lowercase letters, digits and inner dashes, at most
+32 characters, not starting with `kb-` or containing `kb-test`) to put every
+Docker name a run chooses under that prefix: the compose project and its
+containers, networks and volumes, image tags, and the named fixture containers,
+networks and volumes, and the build-only `standalone` namespace. Containers
+started without a name get Docker's own unique names. Runs from different checkouts can then share a
+daemon, and the reaper only considers names in its own prefix's namespace
+(unset is the unprefixed namespace).
 
 The Rust CLI lives in `apps/cli` (outside pnpm/turbo):
 

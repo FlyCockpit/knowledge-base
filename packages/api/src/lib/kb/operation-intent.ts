@@ -14,6 +14,7 @@ import {
   kbBareRepoPath,
   readCommitBlobs,
   readHeadSha,
+  readRefOrBroken,
   readRefSha,
   readRefShaAsync,
   runGitAsync,
@@ -711,9 +712,12 @@ async function verifyIndexedHead(
   kbId: string,
   readOptions?: GitReadOptions,
 ): Promise<boolean> {
-  const actual = readOptions
-    ? await readRefShaAsync(kbBareRepoPath(reposDir, kbId), "refs/heads/main", readOptions)
-    : readHeadSha(kbBareRepoPath(reposDir, kbId));
+  // A broken ref never equals the indexed head: it marks REPAIR_REQUIRED.
+  const actual = await readRefOrBroken(() =>
+    readOptions
+      ? readRefShaAsync(kbBareRepoPath(reposDir, kbId), "refs/heads/main", readOptions)
+      : readHeadSha(kbBareRepoPath(reposDir, kbId)),
+  );
   const rows = await query<{ headSha: string | null; state: string }>(
     `SELECT "headSha", state::text AS state FROM "knowledge_base" WHERE id = $1`,
     [kbId],
@@ -787,11 +791,14 @@ export async function reconcileKbIntents(
     }
     const refName = intent.refName ?? "refs/heads/main";
     const zeroRef = "0".repeat(40);
-    const rawActual = readOptions
-      ? await readRefShaAsync(repoPath, refName, readOptions)
-      : refName === "refs/heads/main"
-        ? readHeadSha(repoPath)
-        : readRefSha(repoPath, refName);
+    // A broken ref matches neither journal ref: "ref diverged" below.
+    const rawActual = await readRefOrBroken(() =>
+      readOptions
+        ? readRefShaAsync(repoPath, refName, readOptions)
+        : refName === "refs/heads/main"
+          ? readHeadSha(repoPath)
+          : readRefSha(repoPath, refName),
+    );
     const actual = rawActual ?? (refName === "refs/heads/main" ? null : zeroRef);
     if (actual === intent.newRef && intent.phase === "COMMITTING") {
       let exists: boolean;

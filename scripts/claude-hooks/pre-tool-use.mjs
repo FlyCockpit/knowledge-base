@@ -56,6 +56,7 @@ import {
  *   name: string;
  *   test: (segment: string, argv: DecodedWord[], resolved: ResolveCommandResult | null, context: CheckContext) => boolean;
  *   reason: string;
+ *   includeOpaqueScripts?: boolean;
  * }} BashRule
  */
 
@@ -1466,10 +1467,59 @@ function prismaStaticArgs(args) {
   return args.map((word) => staticWordValue(word));
 }
 
-// `migrate deploy|diff|resolve|status` are the sanctioned Prisma Migrate flow
-// (wrappers, image runner, documented recovery). Only the resetting
-// subcommands are denied.
-const PRISMA_MIGRATE_SUBCOMMANDS = new Set(["reset", "dev"]);
+// Prisma options that take a separate value (`--schema x migrate …`).
+const PRISMA_VALUE_FLAGS = new Set(["--schema", "--config", "--url", "--datasource", "--name"]);
+
+/**
+ * The positional words of a prisma invocation (subcommand first), options
+ * removed wherever they appear: `prisma --schema s.prisma migrate --config c.ts
+ * resolve` → ["migrate", "resolve"]. Without this a global option before (or
+ * between) the subcommands would move them out of the fixed positions the deny
+ * rules check.
+ *
+ * @param {Array<string | null>} staticArgs
+ */
+function prismaPositional(staticArgs) {
+  /** @type {Array<string | null>} */
+  const out = [];
+  for (let i = 0; i < staticArgs.length; i++) {
+    const arg = staticArgs[i];
+    if (typeof arg === "string" && arg.startsWith("-")) {
+      if (!arg.includes("=") && PRISMA_VALUE_FLAGS.has(arg)) i++;
+      continue;
+    }
+    out.push(arg ?? null);
+  }
+  return out;
+}
+
+/**
+ * Whether the first `command` word among the prisma positionals is directly
+ * followed by a subcommand `matches` accepts. The command need not come first:
+ * the value of a global option the hook does not know (`prisma --foo bar
+ * migrate resolve`) stays in the positionals ahead of it. Only the word right
+ * after it counts, so option values later in the line (`migrate diff
+ * --to-schema dev`) are never mistaken for a subcommand.
+ *
+ * @param {Array<string | null>} positionals
+ * @param {string} command
+ * @param {(word: string) => boolean} matches
+ */
+function prismaSubcommandAfter(positionals, command, matches) {
+  const at = positionals.indexOf(command);
+  if (at < 0) return false;
+  const next = positionals[at + 1];
+  return typeof next === "string" && matches(next);
+}
+
+// Deploy must run through the migration runner wrappers, which hold the lock
+// and run pre-migration checks (the backup gate, KB restore intent, the DADP
+// lifecycle lock). Direct Prisma deploy bypasses those controls. `migrate
+// diff|status` stay allowed. A raw `migrate resolve` is denied by its own
+// rule below: it rewrites migration history, so it belongs to the wrappers
+// (`pnpm db:migrate:apply` resolves a local interrupted migration itself, under
+// the migration runner lock) and to an operator following the recovery runbook.
+const PRISMA_MIGRATE_SUBCOMMANDS = new Set(["reset", "dev", "deploy"]);
 // These commands can select another user or accept a shell command string.
 // They are denied at command identity instead of attempting to model their
 // host-specific authentication and argv grammars.
@@ -3827,17 +3877,28 @@ export const BASH_RULES = [
   {
     name: "prisma-migrate",
     test: (_segment, _argv, resolved) => {
-      const staticArgs = prismaStaticArgs(prismaArgs(resolved) ?? []);
-      return staticArgs[0] === "migrate" && PRISMA_MIGRATE_SUBCOMMANDS.has(staticArgs[1] ?? "");
+      const staticArgs = prismaPositional(prismaStaticArgs(prismaArgs(resolved) ?? []));
+      return prismaSubcommandAfter(staticArgs, "migrate", (word) =>
+        PRISMA_MIGRATE_SUBCOMMANDS.has(word),
+      );
     },
     reason:
-      "`prisma migrate reset|dev` can drop and recreate the database. Generate a migration with `pnpm db:migrate <name>`, apply it with `pnpm db:migrate:apply`, and rebuild this checkout's own DB with `pnpm db:reset:local` — see docs/schema-migrations.md.", // destructive:audited — deny reason, never executed.
+      "Direct Prisma reset/dev/deploy commands are forbidden: `prisma migrate reset|dev` can drop and recreate the database, and a raw `prisma migrate deploy` bypasses the migration runner's lock, backup gate and KB restore checks. Generate a migration with `pnpm db:migrate <name>`, apply it with `pnpm db:migrate:apply`, and rebuild this checkout's own DB with `pnpm db:reset:local` — see docs/schema-migrations.md.", // destructive:audited — deny reason, never executed.
+  },
+  {
+    name: "prisma-migrate-resolve",
+    test: (_segment, _argv, resolved) => {
+      const staticArgs = prismaPositional(prismaStaticArgs(prismaArgs(resolved) ?? []));
+      return prismaSubcommandAfter(staticArgs, "migrate", (word) => word === "resolve");
+    },
+    reason:
+      "`prisma migrate resolve` rewrites migration history (it can mark a migration that another session is still applying as rolled back). Locally, `pnpm db:migrate:apply` resolves an interrupted transactional migration itself, under the migration runner lock; otherwise rebuild this checkout's DB with `pnpm db:reset:local`. On a shared or production database it is an owner step: print the exact command and hand it to the user. Runbook: docs/schema-migrations.md#recovery-runbook",
   },
   {
     name: "prisma-db-push",
     test: (_segment, _argv, resolved) => {
-      const staticArgs = prismaStaticArgs(prismaArgs(resolved) ?? []);
-      return staticArgs[0] === "db" && staticArgs[1] === "push";
+      const staticArgs = prismaPositional(prismaStaticArgs(prismaArgs(resolved) ?? []));
+      return prismaSubcommandAfter(staticArgs, "db", (word) => word === "push");
     },
     reason:
       "`prisma db push` bypasses migration history and is removed from this repo. Generate a migration with `pnpm db:migrate <name>`, review the SQL, then `pnpm db:migrate:apply` — see docs/schema-migrations.md.", // destructive:audited — deny reason, never executed.
@@ -3851,8 +3912,8 @@ export const BASH_RULES = [
   {
     name: "db-drop",
     test: (_segment, _argv, resolved) => {
-      const staticArgs = prismaStaticArgs(prismaArgs(resolved) ?? []);
-      return staticArgs[0] === "db" && staticArgs[1] === "drop";
+      const staticArgs = prismaPositional(prismaStaticArgs(prismaArgs(resolved) ?? []));
+      return prismaSubcommandAfter(staticArgs, "db", (word) => word === "drop");
     },
     reason:
       // destructive:audited — denial reason names a forbidden command; it is not executed.
@@ -4045,6 +4106,14 @@ export const BASH_RULES = [
       "Archive extract and `patch` at the project root can overwrite enforcement-managed files. Extract into a disposable directory (`tar -xf … -C /tmp/…`) or apply patches yourself.",
   },
   {
+    name: "local-db-mark",
+    // `pnpm db:worktree --adopt` resolves to an opaque package script.
+    includeOpaqueScripts: true,
+    test: (segment, argv, resolved) => localDbMarkDenied(resolved, argv, segment),
+    reason:
+      "The disposable-local mark is what lets `pnpm db:reset:local` erase a database, so only a person sets it on an existing database: they run `pnpm db:worktree --adopt` at a terminal and type the name back. Agents never adopt a database, run scripts/db/dev-postgres-init/10-mark-local.sh, or write `COMMENT ON DATABASE`. Ask the user — see docs/schema-changes-recipe.md#local-database-troubleshooting.",
+  },
+  {
     name: "db-escape-or-restore",
     test: (segment, argv, resolved) => dbEscapeOrRestoreDenied(resolved, argv, segment),
     reason:
@@ -4126,6 +4195,145 @@ function isProtectedBasename(token) {
 
 const DANGEROUS_DB_ENV_ASSIGNMENT =
   /(?:^|[;&\n]|\|\||&&)\s*(?:(?:export|declare|local|readonly|typeset)\s+(?:-[A-Za-z]+\s+)*)?(?:ALLOW_NONLOCAL_[A-Z0-9_]+=)/;
+
+// The disposable-local mark's stable prefix (scripts/db/lib/scratch-db.mjs).
+const LOCAL_DB_MARK_PREFIX = "disposable-local-database";
+/** Commands that run another command line given as one argument (`script -c`, `unbuffer`, …). */
+const COMMAND_LINE_WRAPPERS = new Set([
+  "script",
+  "unbuffer",
+  "expect",
+  "faketime",
+  "flock",
+  "watch",
+]);
+const SQL_CLIENT_WORD = /(^|[\s/'"])(psql|mysql)\b|\bdb\s+execute\b/;
+const MARK_INIT_SCRIPT = /(^|\/)10-mark-local\.sh$/;
+
+/** Does this text mark a database (SQL) — on the raw text, with block comments removed, and with all SQL comments removed? */
+function marksLocalDatabase(text) {
+  // Raw: `--dbname` / `--command` are psql options, not SQL comments, so
+  // stripping `--…` first would hide what follows them. Block comments only:
+  // `COMMENT/**/ON DATABASE` after a long option. Fully stripped: the rest.
+  const blockless = text.replace(/\/\*[\s\S]*?\*\//g, " ");
+  const stripped = blockless.replace(/--[^\n]*/g, " ");
+  return [text, blockless, stripped].some(
+    (candidate) =>
+      /COMMENT\s+ON\s+DATABASE/i.test(candidate) || candidate.includes(LOCAL_DB_MARK_PREFIX),
+  );
+}
+
+/** A command line (a wrapper payload) that adopts: shell quotes removed, dynamic words fail closed. */
+function adoptsLocalDatabase(text) {
+  const unquoted = text.replace(/['"\\]/g, "");
+  if (!/(^|[\s:/])(db:worktree|worktree\.mjs)\b/.test(unquoted)) return false;
+  return /\s--adopt\b/.test(unquoted) || unquoted.includes("$");
+}
+
+function runsMarkInitScript(tokens, runner) {
+  if (MARK_INIT_SCRIPT.test(runner)) return true;
+  return (
+    ["bash", "sh", "dash", "zsh", "ksh", "source", "."].includes(runner) &&
+    tokens.some((token) => MARK_INIT_SCRIPT.test(token))
+  );
+}
+
+/**
+ * `pnpm db:worktree --adopt` (or the script with `--adopt`), running the dev
+ * compose init script, and SQL that comments on a database: each can put the
+ * disposable-local mark on a database the reset guard would otherwise refuse
+ * to drop.
+ *
+ * @param {ResolveCommandResult | null} resolved
+ * @param {DecodedWord[]} argv
+ * @param {string} segment
+ */
+function localDbMarkDenied(resolved, argv, segment = "") {
+  if (!resolved || "unsupported" in resolved || "shellText" in resolved) return false;
+  const tokens = argvToTokens(argv);
+  const decoded = [tokens.join(" "), segment].join("\n");
+  if (!("opaqueScript" in resolved)) {
+    const runner = basename(resolved.command);
+    // scripts/db/dev-postgres-init/10-mark-local.sh writes the mark itself.
+    if (runsMarkInitScript(tokens, runner)) return true;
+    // A SQL client, or `docker exec … psql`: the SQL is visible here. A query
+    // that merely quotes the phrase is denied as well; the reason tells the
+    // agent to ask instead. (SQL piped in from echo/printf: see
+    // pipedLocalDbMarkDenied.)
+    const sqlClient =
+      isSqlClientInvocation(resolved) ||
+      (runner === "docker" &&
+        tokens.includes("exec") &&
+        tokens.some((t) => basename(t) === "psql"));
+    if (sqlClient && marksLocalDatabase(decoded)) return true;
+    // `script -qc "pnpm db:worktree --adopt"` and similar: the payload is one
+    // argument, so judge its text (SQL only when it also runs a SQL client).
+    if (
+      COMMAND_LINE_WRAPPERS.has(runner) &&
+      (adoptsLocalDatabase(decoded) ||
+        MARK_INIT_SCRIPT.test(
+          decoded
+            .replace(/['"]/g, " ")
+            .split(/\s+/)
+            .find((w) => MARK_INIT_SCRIPT.test(w)) ?? "",
+        ) ||
+        (SQL_CLIENT_WORD.test(decoded) && marksLocalDatabase(decoded)))
+    )
+      return true;
+  }
+  // An opaque result comes only from a package runner (`pnpm run db:worktree`,
+  // also behind wrappers such as `env`), so the script name in argv decides.
+  if (!("opaqueScript" in resolved)) {
+    const runner = basename(resolved.command);
+    // `pnpm db:worktree` resolves to the script name itself.
+    if (!["node", "nodejs", "tsx", "bun", "db:worktree"].includes(runner)) return false;
+  }
+  const isWorktree = tokens.some((token) => /(^|:)db:worktree$|(^|\/)worktree\.mjs$/.test(token));
+  if (!isWorktree) return false;
+  // Arguments must be spelled statically: `ADOPT=--adopt; pnpm db:worktree $ADOPT`.
+  if (argv.some((word) => !isStaticWord(word))) return true;
+  return tokens.some((token) => token === "--adopt" || token.startsWith("--adopt="));
+}
+
+/**
+ * `echo "COMMENT ON DATABASE …" | psql`: marking SQL printed by an earlier
+ * pipeline stage into a later SQL client stage.
+ * @param {Array<{ segment: string; argv: DecodedWord[]; resolved: ResolveCommandResult | null; pipeline?: import('./bash-parser.mjs').PipelineContext }>} judged
+ */
+function pipedLocalDbMarkDenied(judged) {
+  /** @type {Map<number, typeof judged>} */
+  const byPipeline = new Map();
+  for (const entry of judged) {
+    if (!entry.pipeline) continue;
+    const members = byPipeline.get(entry.pipeline.id) ?? [];
+    members.push(entry);
+    byPipeline.set(entry.pipeline.id, members);
+  }
+  for (const members of byPipeline.values()) {
+    const clientStages = members
+      .filter(({ resolved, argv }) => {
+        if (!resolved || "unsupported" in resolved || "shellText" in resolved) return false;
+        if ("opaqueScript" in resolved) return false;
+        const tokens = argvToTokens(argv);
+        return (
+          isSqlClientInvocation(resolved) ||
+          (basename(resolved.command) === "docker" && tokens.some((t) => basename(t) === "psql"))
+        );
+      })
+      .map((entry) => entry.pipeline?.index ?? 0);
+    if (!clientStages.length) continue;
+    const firstClient = Math.min(...clientStages);
+    if (
+      members.some(
+        (entry) =>
+          (entry.pipeline?.index ?? 0) < firstClient &&
+          marksLocalDatabase([argvToTokens(entry.argv).join(" "), entry.segment].join("\n")),
+      )
+    )
+      return true;
+  }
+  return false;
+}
 
 function dbEscapeOrRestoreDenied(_resolved, argv, segment = "") {
   const tokens = argvToTokens(argv);
@@ -4488,6 +4696,13 @@ async function checkBashOutcome(command, depth = 0, context = {}) {
 
   const pipeDenial = pipelineToShellDenial(judged);
   if (pipeDenial) return { reason: pipeDenial, cwdProven: cwdByScope.get(0) ?? false };
+  if (pipedLocalDbMarkDenied(judged)) {
+    const rule = BASH_RULES.find((entry) => entry.name === "local-db-mark");
+    return {
+      reason: `[local-db-mark] ${rule?.reason ?? "marking SQL piped into a SQL client"}`,
+      cwdProven: cwdByScope.get(0) ?? false,
+    };
+  }
 
   for (const { resolved, redirectTargets, context: invocationContext } of judged) {
     const writeDenial = protectedWriteTargetDenial(resolved, redirectTargets, invocationContext);
@@ -4502,7 +4717,7 @@ async function checkBashOutcome(command, depth = 0, context = {}) {
 
   for (const rule of BASH_RULES) {
     for (const { segment, argv, resolved, context: invocationContext } of judged) {
-      if (resolved && "opaqueScript" in resolved) continue;
+      if (resolved && "opaqueScript" in resolved && !rule.includeOpaqueScripts) continue;
       if (rule.test(segment, argv, resolved, invocationContext))
         return {
           reason: `[${rule.name}] ${rule.reason}`,
@@ -4729,10 +4944,39 @@ async function selfTest() {
     // -- Prisma / database ---------------------------------------------------
     ["pnpm prisma migrate reset", true], // destructive:audited — inert hook self-test input; parsed, never executed.
     ["npx prisma migrate dev --name x", true], // destructive:audited — inert hook self-test input; parsed, never executed.
-    ["pnpm exec prisma migrate deploy", false],
+    ["pnpm exec prisma migrate deploy", true], // destructive:audited — inert direct-deploy denial test.
+    ["prisma migrate deploy", true], // destructive:audited — inert direct-deploy denial test.
+    ["npx prisma migrate deploy --schema packages/db/prisma/schema", true], // destructive:audited — inert direct-deploy denial test.
+    ['sh -c "prisma migrate deploy"', true], // destructive:audited — inert direct-deploy denial test.
     ["pnpm --filter @knowledge-base/db exec prisma migrate status", false],
     ["prisma migrate diff --from-empty --to-schema prisma/schema --script", false],
-    ["prisma migrate resolve --rolled-back 20260101000000_x", false],
+    ["prisma migrate resolve --rolled-back 20260101000000_x", true],
+    ["pnpm --filter @knowledge-base/db exec prisma migrate resolve --applied 0_init", true],
+    ["npx prisma migrate resolve --rolled-back x", true],
+    ['sh -c "prisma migrate resolve --applied x"', true],
+    ["prisma --schema s.prisma migrate resolve --applied x", true],
+    ["prisma --schema=s.prisma migrate resolve --applied x", true],
+    ["prisma migrate --schema s.prisma resolve --applied x", true],
+    [
+      "pnpm -F @knowledge-base/db prisma --config prisma.config.ts migrate resolve --applied x",
+      true,
+    ],
+    ["prisma --url postgresql://localhost/x migrate resolve --applied x", true],
+    ["prisma --foo bar migrate resolve --applied x", true],
+    ["prisma --schema s.prisma migrate reset", true], // destructive:audited — inert hook self-test input; parsed, never executed.
+    ["prisma migrate --schema s.prisma reset", true], // destructive:audited — inert hook self-test input; parsed, never executed.
+    ["prisma --config prisma.config.ts db push", true], // destructive:audited — inert hook self-test input; parsed, never executed.
+    ["prisma --schema s.prisma db drop", true], // destructive:audited — inert hook self-test input; parsed, never executed.
+    ["prisma migrate --config c.ts deploy", true], // destructive:audited — inert direct-deploy denial test (options before the subcommand).
+    ["prisma --telemetry-information x migrate reset", true], // destructive:audited — inert hook self-test input; parsed, never executed.
+    ["prisma --telemetry-information x migrate resolve --applied x", true],
+    ["prisma --schema s.prisma migrate status", false],
+    ["prisma migrate diff --from-empty --to-schema dev --script", false],
+    [
+      "prisma migrate diff --from-empty --to-schema prisma/schema --script --output deploy.sql",
+      false,
+    ],
+    ['grep -n "migrate resolve" docs/schema-migrations.md', false],
     ["prisma db push", true], // destructive:audited — inert hook self-test input; parsed, never executed.
     ["pnpm exec prisma db push --skip-generate", true], // destructive:audited — inert hook self-test input; parsed, never executed.
     ["prisma db push --force-reset", true], // destructive:audited — inert hook self-test input; parsed, never executed.
@@ -4752,6 +4996,49 @@ async function selfTest() {
     ["pnpm db:migrate:rebase", false],
     ["pnpm db:reset:local", false],
     ["pnpm db:worktree", false],
+    // -- disposable-local mark (db:reset:local's guard) ------------------------
+    ["pnpm db:worktree --adopt", true],
+    ["pnpm run db:worktree --adopt", true],
+    ["node scripts/db/worktree.mjs --adopt", true],
+    ["env pnpm run db:worktree --adopt", true],
+    ['bash -c "pnpm db:worktree --adopt"', true],
+    ["pnpm db:worktree '--ado'pt", true],
+    ["nice -n 10 pnpm db:worktree --adopt", true],
+    ["npm run db:worktree -- --adopt", true],
+    [
+      'psql "$DATABASE_URL" -c "COMMENT ON DATABASE knowledge_base IS \'knowledge-base:disposable-local-database v1\'"',
+      true,
+    ],
+    ["psql -c \"COMMENT/**/ON DATABASE x IS 'y'\"", true],
+    ["psql -c 'COM''MENT ON DATABASE x IS y'", true],
+    // Long psql options before the SQL are not SQL comments.
+    ["psql --command \"COMMENT ON DATABASE x IS 'y'\"", true],
+    ["psql --dbname=postgres -c \"COMMENT ON DATABASE x IS 'y'\"", true],
+    [
+      "psql --dbname=postgres -c \"COMMENT/**/ON DATABASE x IS E'knowledge-base:disposable-local-databas\\x65 v1'\"",
+      true,
+    ],
+    // SQL fed through a pipe or docker exec, a dynamic --adopt, a pty wrapper.
+    ["echo \"COMMENT ON DATABASE x IS 'y'\" | psql", true],
+    ["docker exec pg psql -U postgres -c \"COMMENT ON DATABASE x IS 'y'\"", true],
+    ["ADOPT=--adopt; pnpm db:worktree $ADOPT", true],
+    ["printf 'x\\n' | script -qc \"pnpm db:worktree --adopt\" /dev/null", true],
+    ["printf 'x\\n' | script -qc 'pnpm db:worktree \"--adopt\"' /dev/null", true],
+    // The dev compose init script writes the mark itself.
+    [
+      "PGHOST=127.0.0.1 POSTGRES_DB=knowledge_base POSTGRES_USER=postgres bash scripts/db/dev-postgres-init/10-mark-local.sh",
+      true,
+    ],
+    ["sh scripts/db/dev-postgres-init/10-mark-local.sh", true],
+    // Read-only commands that only mention the phrase stay allowed.
+    ["cat scripts/db/dev-postgres-init/10-mark-local.sh", false],
+    ["echo hello", false],
+    ["grep -n -- --adopt scripts/db/worktree.mjs", false],
+    ['grep "db:worktree --adopt" docs/schema-changes-recipe.md', false],
+    ['rg -n "COMMENT ON DATABASE" scripts/db', false],
+    ["watch 'rg -n \"COMMENT ON DATABASE\" docs'", false],
+    ["printf '%s\\n' 'COMMENT ON DATABASE'", false],
+    ["git log -S 'COMMENT ON DATABASE' --oneline", false],
     // -- git -----------------------------------------------------------------
     ["git commit -m 'x' --no-verify", true],
     ["git push --force origin main", true],

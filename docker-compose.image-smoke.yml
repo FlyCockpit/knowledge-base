@@ -24,7 +24,6 @@ x-runtime-env: &runtime-env
   SMTP_PORT: "1025"
   SMTP_FROM: noreply@example.test
   KB_ASSET_S3_ENABLED: "false"
-  BACKUP_ENABLED: "false"
 
 services:
   postgres:

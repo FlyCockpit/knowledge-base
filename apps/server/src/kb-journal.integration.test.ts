@@ -23,9 +23,12 @@ import {
 } from "@knowledge-base/api/lib/kb/operation-intent";
 import { prismaAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
 import {
+  kbRecoveryGateOpen,
+  RECOVERY_QUARANTINE_LIMIT_PER_PASS,
   runStartupJournalRecovery,
   setKbRecoveryComplete,
 } from "@knowledge-base/api/lib/kb/recovery";
+import { captureLog } from "@knowledge-base/env/log";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { assertProcessFence } from "./kb-process.js";
 import { createKbWriteCoordinator, runJournalTestPublish } from "./kb-write-coordinator.js";
@@ -38,17 +41,23 @@ vi.mock("./kb-process.js", async (importOriginal) => ({
   assertProcessFence() {},
 }));
 
-const syncFault = vi.hoisted(() => ({ directory: "" }));
+const syncFault = vi.hoisted(() => ({
+  directory: "",
+  tripped: false,
+  directories: new Set<string>(),
+}));
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal();
   return {
     ...fs,
     fsyncSync(fd) {
       if (
-        syncFault.directory &&
+        (syncFault.directory || syncFault.directories.size > 0) &&
         fs.fstatSync(fd).isDirectory() &&
-        fs.readlinkSync(`/proc/self/fd/${fd}`) === syncFault.directory
+        (fs.readlinkSync(`/proc/self/fd/${fd}`) === syncFault.directory ||
+          syncFault.directories.has(fs.readlinkSync(`/proc/self/fd/${fd}`)))
       ) {
+        syncFault.tripped = true;
         throw Object.assign(new Error("injected directory fsync failure"), { code: "EIO" });
       }
       return fs.fsyncSync(fd);
@@ -775,7 +784,7 @@ describe("journal integration", () => {
     }
   });
 
-  it("keeps a failed ref-directory sync COMMITTING until recovery can sync it", async () => {
+  it("quarantines a KB whose ref-directory sync fails in recovery, keeping its intent COMMITTING", async () => {
     const user = await owner();
     const kb = await activeKb(user.id, "fsync-failure");
     const repo = kbBareRepoPath(reposDir, kb.id);
@@ -793,20 +802,41 @@ describe("journal integration", () => {
       await expect(publish(kb.id, user.id, "failed-sync", "m")).rejects.toMatchObject({
         code: "EIO",
       });
-      await expect(
-        runStartupJournalRecovery(prisma, reposDir, assetsDir, db.urls.runtime, assertProcessFence),
-      ).rejects.toMatchObject({ code: "EIO" });
+      // The storage failure is this KB's alone: startup recovery isolates it
+      // (logs, marks the KB REPAIR_REQUIRED, completes) instead of failing.
+      const log = captureLog();
+      try {
+        await runStartupJournalRecovery(
+          prisma,
+          reposDir,
+          assetsDir,
+          db.urls.runtime,
+          assertProcessFence,
+        );
+      } finally {
+        log.restore();
+      }
+      expect(log.records).toContainEqual(
+        expect.objectContaining({ site: "kb.recovery-kb", kbId: kb.id }),
+      );
+      expect(kbRecoveryGateOpen()).toBe(true);
+      // Nothing fails open: the intent stays COMMITTING, nothing is finalized
+      // or published from it, and the quarantine refuses further publication.
       expect(
         (await prisma.operationIntent.findUnique({ where: { opId: intent.opId } })).phase,
       ).toBe("COMMITTING");
-      expect((await prisma.knowledgeBase.findUnique({ where: { id: kb.id } })).headSha).toBe(
-        kb.headSha,
-      );
+      const quarantined = await prisma.knowledgeBase.findUnique({ where: { id: kb.id } });
+      expect(quarantined.state).toBe("REPAIR_REQUIRED");
+      expect(quarantined.headSha).toBe(kb.headSha);
       expect(await prisma.durableJob.count({ where: { dedupKey: `journal:${intent.opId}` } })).toBe(
         0,
       );
       expect(await prisma.auditEvent.count({ where: { opId: intent.opId } })).toBe(0);
       syncFault.directory = "";
+      await expect(publish(kb.id, user.id, "failed-sync-2", "m")).rejects.toMatchObject({
+        code: "REPAIR_REQUIRED",
+      });
+      // Clearing the fault does not lift the quarantine: an operator does.
       await runStartupJournalRecovery(
         prisma,
         reposDir,
@@ -814,16 +844,187 @@ describe("journal integration", () => {
         db.urls.runtime,
         assertProcessFence,
       );
-      const receipt = await publish(kb.id, user.id, "failed-sync", "m");
-      expect(receipt.headSha).toBe(intent.newRef);
-      expect(await publish(kb.id, user.id, "failed-sync", "m")).toEqual(receipt);
-      expect(await prisma.durableJob.count({ where: { dedupKey: `journal:${intent.opId}` } })).toBe(
-        1,
+      expect((await prisma.knowledgeBase.findUnique({ where: { id: kb.id } })).state).toBe(
+        "REPAIR_REQUIRED",
       );
-      expect(await prisma.auditEvent.count({ where: { opId: intent.opId } })).toBe(1);
     } finally {
       syncFault.directory = "";
       setKbRecoveryComplete(true);
     }
+  });
+  /** A COMMITTING intent whose ref already advanced: recovery finalizes it (fsyncing refs/heads). */
+  async function committedAhead(kbId: string, userId: string, key: string) {
+    const repo = kbBareRepoPath(reposDir, kbId);
+    const head = readHeadSha(repo)!;
+    const newSha = await createEmptyTreeCommit(
+      { reposDir, kbId },
+      { parentSha: head, message: key },
+    );
+    runGit(repo, ["update-ref", "refs/heads/main", newSha]);
+    const opId = crypto.randomUUID();
+    const lease = await checkoutPinnedSession({
+      connectionString: db.urls.runtime,
+      opId: crypto.randomUUID(),
+    });
+    try {
+      await lease.transaction(async (query) => {
+        await query(
+          `INSERT INTO "operation_intent"
+            ("opId", "createdAt", "updatedAt", "kbId", "actorKey", "actorUserIdSnapshot", "actorUserId", operation,
+             "idempotencyKey", "requestHash", phase, "refName", "oldRef", "newRef",
+             "preparedDelta", "publishNonce")
+           VALUES ($1, now(), now(), $2, $3, $4, $4, $5, $6, $7, 'COMMITTING'::"OperationIntentPhase",
+                   'refs/heads/main', $8, $9, $10::jsonb, $11)`,
+          [
+            opId,
+            kbId,
+            `user:${userId}`,
+            userId,
+            "JOURNAL_TEST_PUBLISH",
+            key,
+            "hash",
+            head,
+            newSha,
+            JSON.stringify({
+              kind: "journal_test_publish",
+              headSha: newSha,
+              marker: key,
+              jobDedupKey: `journal:${key}`,
+            }),
+            crypto.randomUUID(),
+          ],
+        );
+      }, true);
+    } finally {
+      await lease.close();
+    }
+    return { opId, newSha, repo };
+  }
+
+  it("isolates one KB's storage failure: the healthy KBs around it recover and startup completes", async () => {
+    const user = await owner();
+    const kbs = [];
+    for (const slug of ["isolate-a", "isolate-b", "isolate-c"])
+      kbs.push(await activeKb(user.id, slug));
+    const pending = [];
+    for (const kb of kbs) pending.push(await committedAhead(kb.id, user.id, `isolate-${kb.id}`));
+    const failing = kbs[1];
+    syncFault.directory = join(pending[1].repo, "refs/heads");
+    const log = captureLog();
+    try {
+      await runStartupJournalRecovery(
+        prisma,
+        reposDir,
+        assetsDir,
+        db.urls.runtime,
+        assertProcessFence,
+      );
+    } finally {
+      syncFault.directory = "";
+      log.restore();
+    }
+    expect(kbRecoveryGateOpen()).toBe(true);
+    for (const [index, kb] of kbs.entries()) {
+      const row = await prisma.knowledgeBase.findUnique({ where: { id: kb.id } });
+      const intent = await prisma.operationIntent.findUnique({
+        where: { opId: pending[index].opId },
+      });
+      if (kb.id === failing.id) {
+        expect(row).toMatchObject({ state: "REPAIR_REQUIRED", headSha: kb.headSha });
+        expect(intent.phase).toBe("COMMITTING");
+      } else {
+        expect(row).toMatchObject({ state: "ACTIVE", headSha: pending[index].newSha });
+        expect(intent.phase).toBe("FINALIZED");
+      }
+    }
+    // Earlier tests' KBs share this database; count only this test's.
+    const failures = log.records.filter(
+      (record) => record.site === "kb.recovery-kb" && kbs.some((kb) => kb.id === record.kbId),
+    );
+    expect(failures).toEqual([expect.objectContaining({ kbId: failing.id, errorCode: "EIO" })]);
+  });
+
+  it("still fails the sweep closed when the volume fence is lost during a KB's failure", async () => {
+    const user = await owner();
+    const kb = await activeKb(user.id, "isolate-fence");
+    const pending = await committedAhead(kb.id, user.id, "isolate-fence");
+    syncFault.directory = join(pending.repo, "refs/heads");
+    syncFault.tripped = false;
+    const fenceLost = Object.assign(new Error("volume fence lost"), { code: "FENCE_LOST" });
+    try {
+      await expect(
+        runStartupJournalRecovery(prisma, reposDir, assetsDir, db.urls.runtime, () => {
+          // The fence holds until this KB's storage failure, then is lost: the
+          // re-check before quarantining must abort the sweep instead.
+          if (syncFault.tripped) throw fenceLost;
+        }),
+      ).rejects.toBe(fenceLost);
+      expect(syncFault.tripped).toBe(true);
+    } finally {
+      syncFault.directory = "";
+      syncFault.tripped = false;
+    }
+    expect(kbRecoveryGateOpen()).toBe(false);
+    // Not quarantined: a lost fence is not evidence against the KB.
+    expect((await prisma.knowledgeBase.findUnique({ where: { id: kb.id } })).state).toBe("ACTIVE");
+    await runStartupJournalRecovery(
+      prisma,
+      reposDir,
+      assetsDir,
+      db.urls.runtime,
+      assertProcessFence,
+    );
+    expect((await prisma.operationIntent.findUnique({ where: { opId: pending.opId } })).phase).toBe(
+      "FINALIZED",
+    );
+    setKbRecoveryComplete(true);
+  });
+  it("quarantines nothing when more KBs fail together than the limit, across repeated passes", async () => {
+    const user = await owner();
+    const kbs = [];
+    for (const slug of ["breaker-a", "breaker-b", "breaker-c", "breaker-d", "breaker-e"])
+      kbs.push(await activeKb(user.id, slug));
+    for (const kb of kbs) {
+      const pending = await committedAhead(kb.id, user.id, `breaker-${kb.id}`);
+      syncFault.directories.add(join(pending.repo, "refs/heads"));
+    }
+    try {
+      // Five healthy-until-now KBs failing alike look like one host fault. A
+      // persistent fault must not quarantine a few more KBs on every pass.
+      for (let pass = 0; pass < 2; pass += 1) {
+        await expect(
+          runStartupJournalRecovery(
+            prisma,
+            reposDir,
+            assetsDir,
+            db.urls.runtime,
+            assertProcessFence,
+          ),
+        ).rejects.toMatchObject({ code: "EIO" });
+        expect(kbRecoveryGateOpen()).toBe(false);
+        const states = await prisma.knowledgeBase.findMany({
+          where: { id: { in: kbs.map((kb) => kb.id) } },
+          select: { state: true },
+        });
+        expect(states.map((row) => row.state)).toEqual(kbs.map(() => "ACTIVE"));
+      }
+    } finally {
+      syncFault.directories.clear();
+    }
+    expect(kbs.length).toBeGreaterThan(RECOVERY_QUARANTINE_LIMIT_PER_PASS);
+    // With the fault gone the pass completes and recovers every one of them.
+    await runStartupJournalRecovery(
+      prisma,
+      reposDir,
+      assetsDir,
+      db.urls.runtime,
+      assertProcessFence,
+    );
+    expect(kbRecoveryGateOpen()).toBe(true);
+    expect(
+      await prisma.knowledgeBase.count({
+        where: { id: { in: kbs.map((kb) => kb.id) }, state: "ACTIVE" },
+      }),
+    ).toBe(kbs.length);
   });
 });

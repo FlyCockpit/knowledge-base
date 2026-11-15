@@ -8,7 +8,10 @@
  *
  * Explicit only: no other script calls this. The guard
  * (scripts/assert-local-database.sh db:reset:local) accepts only the exact
- * per-checkout name on localhost and refuses every escape-hatch override.
+ * per-checkout name on localhost and refuses every escape-hatch override, and
+ * EXPECTED_DB (it never changes which database a reset drops). The database
+ * must also carry the disposable-local-database mark (scratch-db.mjs): a
+ * localhost URL with the right name can still be an SSH tunnel to production.
  */
 import { fileURLToPath } from "node:url";
 import { applyAllContracts } from "./lib/contracts.mjs";
@@ -20,11 +23,26 @@ import {
   readMigrationsFolder,
 } from "./lib/migration-state.mjs";
 import { loadPg, MIGRATIONS_DIR, prisma, ROOT } from "./lib/prisma.mjs";
-import { adminClient, createDatabase, removeDatabase } from "./lib/scratch-db.mjs";
+import { adminClient, createDatabase, isMarkedLocal, removeDatabase } from "./lib/scratch-db.mjs";
+
+/** Printed when the database exists but carries no mark. */
+export function unmarkedHelp(database) {
+  return (
+    `FATAL: refusing to reset ${database}: it is not marked as a disposable local database.\n\n` +
+    "Only databases that `pnpm db:worktree` (or the dev compose stack, `pnpm dev:services`) created carry the mark.\n" +
+    "A localhost URL with the right name is not proof: an SSH tunnel or port-forward to a shared or\n" +
+    "production server looks exactly like this. Nothing was dropped.\n\n" +
+    "If this really is this checkout's own local database (for example one created before the mark\n" +
+    "existed), a person adopts it once, at a terminal, then re-runs the reset:\n\n" +
+    "  pnpm db:worktree --adopt\n\n" +
+    "Agents: do not run that yourself; hand it to the user."
+  );
+}
 
 async function main() {
   const url = assertLocal("db:reset:local");
-  const expected = localDatabaseNames({ cwd: ROOT }).main;
+  // Never EXPECTED_DB: the guard already refused it for this command.
+  const expected = localDatabaseNames({ cwd: ROOT, env: {} }).main;
   const { database } = describeUrl(url);
   if (database !== expected) {
     console.error(
@@ -35,6 +53,14 @@ async function main() {
   const pg = loadPg();
   const admin = await adminClient(pg, url);
   try {
+    const exists =
+      (await admin.query("SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1", [database]))
+        .rowCount > 0;
+    if (exists && !(await isMarkedLocal(admin, database))) {
+      console.error(unmarkedHelp(database));
+      process.exitCode = 1;
+      return;
+    }
     await removeDatabase(admin, database, { kind: "local", expected });
     await createDatabase(admin, database);
     console.log(`Recreated local database ${database}.`);

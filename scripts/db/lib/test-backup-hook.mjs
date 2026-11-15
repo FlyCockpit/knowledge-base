@@ -15,6 +15,8 @@ const logFile=${JSON.stringify(logFile ?? null)};
 const failFile=${JSON.stringify(failFile ?? null)};
 if(logFile) fs.appendFileSync(logFile,process.argv.slice(2).join(" ")+"\\n");
 if(failFile && fs.existsSync(failFile)) process.exit(1);
+// --check-destination (brand-new database) checks the destination only: no bundle.
+if(process.argv.includes("--check-destination")) process.exit(0);
 const bundlePath=path.join(${JSON.stringify(dir)},"backup-"+env.KB_BACKUP_RUN_ID+".age");
 const bytes="TEST FIXTURE ONLY - not an encrypted recovery bundle";
 fs.writeFileSync(bundlePath,bytes);

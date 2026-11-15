@@ -519,10 +519,37 @@ export async function reconcileIndexFiles(
 }
 
 /**
+ * True unless the intent (`oi`) belongs to a REPAIR_REQUIRED KB and still holds a quota
+ * reservation: one carrying its `opId`, or one its prepared delta names (`quotaReservationId`,
+ * `quotaReservationIds`, the two shapes `quotaReservationIdsInDelta` reads). The CASE keeps
+ * `jsonb_array_elements_text` off a non-array value. Exported for its tests.
+ */
+export const NOT_QUARANTINE_HELD_SQL = `NOT EXISTS (
+  SELECT 1 FROM knowledge_base qkb
+   WHERE qkb.id = oi."kbId"
+     AND qkb.state = 'REPAIR_REQUIRED'::"KnowledgeBaseState"
+     AND EXISTS (
+       SELECT 1 FROM quota_reservation qr
+        WHERE qr.outcome = 'RESERVED'::"QuotaReservationOutcome"
+          AND (qr."opId" = oi."opId"::text
+               OR qr.id = oi."preparedDelta"->>'quotaReservationId'
+               OR qr.id = ANY(CASE WHEN jsonb_typeof(oi."preparedDelta"->'quotaReservationIds') = 'array'
+                                   THEN ARRAY(SELECT jsonb_array_elements_text(oi."preparedDelta"->'quotaReservationIds'))
+                                   ELSE ARRAY[]::text[] END))))`;
+
+/**
  * Operation receipts: after 30 days the prepared body is reduced to its integrity projection.
  * Actor, key, request hash, result revision/status and the replay response stay forever, so a
  * retry after live reauthorization returns the same receipt and a different body under the
  * same key remains IDEMPOTENCY_MISMATCH. Only terminal intents are compacted.
+ *
+ * Quarantine exemption: an intent of a REPAIR_REQUIRED KB is never compacted while any of its
+ * quota reservations is still held (RESERVED), by the intent's `opId` or by an id its prepared
+ * delta lists. Repair paths keep those reservations for operator review, and the prepared
+ * details are what that review (and the settlement after it) needs. Once the reservations are
+ * settled, or the KB leaves quarantine, the ordinary 30-day rule applies again. The predicate is
+ * checked in the selection and again in the guarded UPDATE, which runs after the KB row is
+ * locked FOR SHARE, so an intent quarantined after selection (or concurrently) is skipped.
  */
 export function compactOperationReceipts(options: RetentionSweepOptions): Promise<number> {
   const now = cutoff(options);
@@ -532,26 +559,38 @@ export function compactOperationReceipts(options: RetentionSweepOptions): Promis
     async (query, afterId, limit) =>
       (
         await query<{ id: string }>(
-          `SELECT "opId"::text AS id FROM operation_intent
-            WHERE "opId"::text > $2 AND "compactedAt" IS NULL
-              AND phase IN ('FINALIZED'::"OperationIntentPhase", 'ABORTED'::"OperationIntentPhase")
-              AND COALESCE("finishedAt", "createdAt") <= ${NOW_SQL} - ($4 * interval '1 millisecond')
-            ORDER BY "opId"::text LIMIT $3`,
+          `SELECT oi."opId"::text AS id FROM operation_intent oi
+            WHERE oi."opId"::text > $2 AND oi."compactedAt" IS NULL
+              AND oi.phase IN ('FINALIZED'::"OperationIntentPhase", 'ABORTED'::"OperationIntentPhase")
+              AND COALESCE(oi."finishedAt", oi."createdAt") <= ${NOW_SQL} - ($4 * interval '1 millisecond')
+              AND ${NOT_QUARANTINE_HELD_SQL}
+            ORDER BY oi."opId"::text LIMIT $3`,
           [now, afterId, limit, RETENTION.operationBodyMs],
         )
       ).rows.map((row) => row.id),
     async (query, id) => {
+      // Serialize with quarantine: hold the intent's KB row (FOR SHARE) for
+      // this transaction. A quarantine committed before this lock is seen by
+      // the UPDATE below (a new statement, a new snapshot); one attempted
+      // after it waits until this row's compaction has committed.
+      await query(
+        `SELECT 1 FROM knowledge_base
+          WHERE id = (SELECT "kbId" FROM operation_intent WHERE "opId" = $1::uuid)
+          FOR SHARE`,
+        [id],
+      );
       const updated = await query(
-        `UPDATE operation_intent SET
-           "preparedDelta" = CASE WHEN "preparedDelta" IS NULL THEN NULL ELSE jsonb_strip_nulls(jsonb_build_object(
+        `UPDATE operation_intent oi SET
+           "preparedDelta" = CASE WHEN oi."preparedDelta" IS NULL THEN NULL ELSE jsonb_strip_nulls(jsonb_build_object(
              'compacted', true,
-             'kind', "preparedDelta"->'kind',
-             'headSha', "preparedDelta"->'headSha',
-             'quotaReservationId', "preparedDelta"->'quotaReservationId',
-             'quotaReservationIds', "preparedDelta"->'quotaReservationIds')) END,
+             'kind', oi."preparedDelta"->'kind',
+             'headSha', oi."preparedDelta"->'headSha',
+             'quotaReservationId', oi."preparedDelta"->'quotaReservationId',
+             'quotaReservationIds', oi."preparedDelta"->'quotaReservationIds')) END,
            "compactedAt" = clock_timestamp()
-         WHERE "opId" = $1::uuid AND "compactedAt" IS NULL
-           AND phase IN ('FINALIZED'::"OperationIntentPhase", 'ABORTED'::"OperationIntentPhase")`,
+         WHERE oi."opId" = $1::uuid AND oi."compactedAt" IS NULL
+           AND oi.phase IN ('FINALIZED'::"OperationIntentPhase", 'ABORTED'::"OperationIntentPhase")
+           AND ${NOT_QUARANTINE_HELD_SQL}`,
         [id],
       );
       return (updated.rowCount ?? 0) > 0;

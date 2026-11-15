@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,7 +17,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildArtifactPath } from "../packages/test-utils/src/kb/build-artifacts.mjs";
+import {
+  buildArtifactDirectory,
+  buildArtifactPath,
+} from "../packages/test-utils/src/kb/build-artifacts.mjs";
+import {
+  kbTestName,
+  kbTestNamePrefix,
+  kbTestNamePrefixPattern,
+} from "../packages/test-utils/src/kb/test-names.mjs";
 import {
   assertBrowserReport,
   assertImageGitReached,
@@ -34,6 +43,7 @@ import {
   resolveAgeDir,
   resolveSuiteName,
   resolveTestTimeZones,
+  runCaptured,
   runIsLive,
   runSuite,
   SUITES,
@@ -759,16 +769,19 @@ it("every pnpm hook explicitly disables automatic install without disabling chec
   }
 });
 it("reaps only kb-test resources of exited runners", () => {
-  assert.deepEqual(parseRunProject("kb-test-deployment-609696-6e3870-deployment-server-1"), {
+  // Pure functions over injected listings: pinned to the unprefixed namespace
+  // whatever KB_TEST_NAME_PREFIX this run carries (prefixed cases below).
+  const env = {};
+  assert.deepEqual(parseRunProject("kb-test-deployment-609696-6e3870-deployment-server-1", env), {
     project: "kb-test-deployment-609696-6e3870",
     pid: 609696,
   });
-  assert.deepEqual(parseRunProject("kb-test-git-push-12-abcdef_default"), {
+  assert.deepEqual(parseRunProject("kb-test-git-push-12-abcdef_default", env), {
     project: "kb-test-git-push-12-abcdef",
     pid: 12,
   });
   for (const foreign of ["template-runtime-pg-1", "kb-ssh-1", "kb-test-x-1-abcdefg", "other"])
-    assert.equal(parseRunProject(foreign), null);
+    assert.equal(parseRunProject(foreign, env), null);
   const dead = "kb-test-deployment-111-aaaaaa";
   const live = "kb-test-deployment-222-bbbbbb";
   const calls = [];
@@ -785,6 +798,7 @@ it("reaps only kb-test resources of exited runners", () => {
     images: `${dead}-server:latest\n${live}-server:latest\nkb-mirror-ssh-fixture:43`,
   };
   reapDeadRuns({
+    env,
     docker: (args) => {
       if (args.includes("ls") || args[0] === "ps" || args[0] === "images")
         return listings[args[0]] ?? "";
@@ -830,6 +844,7 @@ it("reaps exact labelled fixture names only after their owning run exits", () =>
   const calls = [];
   const checked = [];
   reapDeadRuns({
+    env: {},
     docker: (args) => {
       if (args[0] === "ps") return rows.join("\n");
       if (args.includes("ls") || args[0] === "images") return "";
@@ -845,6 +860,69 @@ it("reaps exact labelled fixture names only after their owning run exits", () =>
   assert.deepEqual(checked, [
     [dead, 111],
     [live, 222],
+  ]);
+});
+it("KB_TEST_NAME_PREFIX validates and joins with one dash", () => {
+  assert.equal(kbTestNamePrefix({}), "");
+  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "" }), "");
+  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "rp5-fubk" }), "rp5-fubk-");
+  assert.equal(kbTestNamePrefix({ KB_TEST_NAME_PREFIX: "rp5-fubk-" }), "rp5-fubk-");
+  assert.equal(kbTestName("kb-ssh-x", { KB_TEST_NAME_PREFIX: "a1" }), "a1-kb-ssh-x");
+  // `kb-test`/`kb-` prefixes could make one namespace's names parse as another run's.
+  for (const bad of [
+    "RP5",
+    "rp5_fubk",
+    "-x",
+    "x--",
+    "a b",
+    "x/y",
+    "x:y",
+    "a".repeat(33),
+    "kb-test-journal-111-aaaaaa",
+    "x-kb-test-y",
+    "kb-x",
+  ])
+    assert.throws(() => kbTestNamePrefix({ KB_TEST_NAME_PREFIX: bad }), /KB_TEST_NAME_PREFIX/);
+});
+it("a prefixed runner parses and reaps only its own namespace", () => {
+  const env = { KB_TEST_NAME_PREFIX: "rp5-fubk" };
+  assert.deepEqual(parseRunProject("rp5-fubk-kb-test-journal-111-aaaaaa-postgres-1", env), {
+    project: "rp5-fubk-kb-test-journal-111-aaaaaa",
+    pid: 111,
+  });
+  // The unprefixed namespace and other prefixes are foreign to it, and vice versa.
+  assert.equal(parseRunProject("kb-test-journal-111-aaaaaa", env), null);
+  assert.equal(parseRunProject("other-kb-test-journal-111-aaaaaa", env), null);
+  assert.equal(parseRunProject("rp5-fubk-kb-test-journal-111-aaaaaa", {}), null);
+
+  const dead = "rp5-fubk-kb-test-mirror-111-aaaaaa";
+  const unprefixedDead = "kb-test-mirror-333-cccccc";
+  const uuid = "01234567-89ab-4cde-8fab-0123456789ab";
+  const rows = [
+    `own	${dead}-postgres-1	postgres	${dead}	`,
+    `fixture	rp5-fubk-kb-ssh-${uuid}	node:26-slim		${dead}`,
+    `unprefixed-fixture	kb-ssh-${uuid}	node:26-slim		${dead}`,
+    `other-namespace	${unprefixedDead}-postgres-1	postgres	${unprefixedDead}	`,
+  ];
+  const calls = [];
+  reapDeadRuns({
+    env,
+    docker: (args) => {
+      if (args[0] === "ps") return rows.join("\n");
+      if (args[0] === "network" && args[1] === "ls")
+        return `${dead}_default\n${unprefixedDead}_default`;
+      if (args[0] === "volume" && args[1] === "ls") return `${dead}_pg\n${unprefixedDead}_pg`;
+      if (args[0] === "images") return `${dead}-git:latest\n${unprefixedDead}-git:latest`;
+      calls.push(args);
+      return "";
+    },
+    isLive: () => false,
+  });
+  assert.deepEqual(calls, [
+    ["rm", "-f", "-v", "own", "fixture"],
+    ["network", "rm", `${dead}_default`],
+    ["volume", "rm", `${dead}_pg`],
+    ["rmi", `${dead}-git:latest`],
   ]);
 });
 it("both cleanup paths reject foreign, live, absent and conflicting container ownership", () => {
@@ -863,8 +941,8 @@ it("both cleanup paths reject foreign, live, absent and conflicting container ow
     `conflicting-image\t${dead}-server-1\t${live}-server\t${dead}\t`,
   ].join("\n");
   for (const cleanup of [
-    (docker) => reapDeadRuns({ docker, isLive: (project) => project === live }),
-    (docker) => removeImageContainers(image, dead, docker),
+    (docker) => reapDeadRuns({ env: {}, docker, isLive: (project) => project === live }),
+    (docker) => removeImageContainers(image, dead, docker, {}),
   ]) {
     const calls = [];
     cleanup((args) => {
@@ -897,10 +975,19 @@ if (args[0] === 'ps' && process.env.REAPER_TEST_EMPTY !== '1')
 `,
     { mode: 0o755 },
   );
+  // Its own build namespace: under `test:kb harness` the inherited KB_TEST_PROJECT
+  // is the enclosing run, whose build-group registry holds this test process's
+  // group. A build-only child adopting it drains that registry and kills the run.
+  const project = `kb-reaper-cli-${process.pid}`;
   const run = (args, extraEnv = {}) =>
     spawnSync(process.execPath, [runner, ...args], {
       cwd: ROOT,
-      env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ...extraEnv },
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        KB_TEST_PROJECT: project,
+        ...extraEnv,
+      },
       encoding: "utf8",
     });
   const commands = () =>
@@ -943,6 +1030,556 @@ if (args[0] === 'ps' && process.env.REAPER_TEST_EMPTY !== '1')
     assert.deepEqual(commands(), [], "a normal suite must not reap another run's resources");
   } finally {
     rmSync(directory, { recursive: true, force: true });
+    rmSync(buildArtifactDirectory(project), { recursive: true, force: true });
+  }
+});
+
+/** A test's build namespace and the failure logs its captures wrote (owner and guest). */
+const removeNamespace = (project) => {
+  rmSync(buildArtifactDirectory(project), { recursive: true, force: true });
+  const logs = join(tmpdir(), "kb-test-artifacts");
+  if (!existsSync(logs)) return;
+  for (const name of readdirSync(logs))
+    if (name === `${project}.log` || name.startsWith(`${project}-guest-`))
+      rmSync(join(logs, name), { force: true });
+};
+
+/** Running (not exited, not a zombie awaiting its reaper). */
+const processAlive = (pid) => {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2)[0]);
+  } catch {
+    return false;
+  }
+};
+
+/** A detached sleeper standing in for a live run: its own group, namespace owner. */
+async function liveForeignRun(project, { guest = false } = {}) {
+  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const stop = async () => {
+    if (sleeper.exitCode !== null || sleeper.signalCode !== null) return;
+    const exited = once(sleeper, "exit");
+    try {
+      process.kill(-sleeper.pid, "SIGKILL");
+    } catch {}
+    await exited;
+  };
+  try {
+    await once(sleeper, "spawn");
+    const stat = readFileSync(`/proc/${sleeper.pid}/stat`, "utf8");
+    const record = `${sleeper.pid}-${stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]}`;
+    const namespace = buildArtifactDirectory(project);
+    // A member record for its whole membership, the owner record if it owns the
+    // namespace, and one capture's registry holding the run's own group.
+    const registry = join(namespace, `build-groups-${record}-1`);
+    mkdirSync(registry, { recursive: true });
+    if (!guest) writeFileSync(join(namespace, "owner"), `${record}-1`);
+    writeFileSync(join(namespace, `member-${record}-1`), guest ? "guest" : "owner");
+    writeFileSync(join(registry, record), "");
+    writeFileSync(join(registry, "admission.lock"), "");
+    writeFileSync(buildArtifactPath("artifact", project), "outer");
+    return {
+      project,
+      namespace,
+      registry,
+      record,
+      guest,
+      alive: () => {
+        try {
+          process.kill(-sleeper.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      stop,
+    };
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
+
+const assertForeignRunIntact = (outer, message) => {
+  assert.ok(outer.alive(), `${message}: the live run's group must survive`);
+  assert.deepEqual(
+    readdirSync(outer.registry).sort(),
+    ["admission.lock", outer.record].sort(),
+    `${message}: the live run's registry must be untouched (no cancel, link or removal)`,
+  );
+  if (!outer.guest)
+    assert.equal(readFileSync(join(outer.namespace, "owner"), "utf8"), `${outer.record}-1`);
+  assert.ok(existsSync(join(outer.namespace, `member-${outer.record}-1`)));
+  assert.equal(readFileSync(buildArtifactPath("artifact", outer.project), "utf8"), "outer");
+};
+
+const printRegistry = (project, delayMs = 0) =>
+  runCaptured(
+    process.execPath,
+    ["-e", `setTimeout(() => process.stdout.write(process.env.KB_TEST_BUILD_GROUPS), ${delayMs})`],
+    process.env,
+    [],
+    project,
+  );
+
+it("a captured command never adopts another live process's build namespace", async () => {
+  const project = `kb-registry-owner-${process.pid}`;
+  const failureLogs = join(tmpdir(), "kb-test-artifacts");
+  const guestLogs = () =>
+    existsSync(failureLogs)
+      ? readdirSync(failureLogs).filter((name) => name.startsWith(`${project}-guest-`))
+      : [];
+  let outer;
+  try {
+    outer = await liveForeignRun(project);
+    const own = await printRegistry(project);
+    assert.notEqual(own, outer.registry, "a live foreign owner makes this process a guest");
+    assert.match(own, /\/build-groups-\d+-\d+-\d+$/);
+    assert.equal(existsSync(own), false, "the private registry is this command's to remove");
+    assertForeignRunIntact(outer, "private registry");
+
+    // A failing command drains and cancels only its own registry too, and logs
+    // its failure beside (never over) the owner's diagnostic artifact.
+    mkdirSync(failureLogs, { recursive: true });
+    writeFileSync(join(failureLogs, `${project}.log`), "owner log");
+    await assert.rejects(
+      runCaptured(process.execPath, ["-e", "process.exit(3)"], process.env, [], project),
+      (error) => error.status === 3,
+    );
+    assertForeignRunIntact(outer, "failed command");
+    assert.equal(readFileSync(join(failureLogs, `${project}.log`), "utf8"), "owner log");
+    assert.equal(guestLogs().length, 1, "the guest's own failure log");
+
+    // An unverifiable owner record (malformed or unreadable) fails closed: still foreign.
+    const record = join(outer.namespace, "owner");
+    writeFileSync(record, "not-a-record");
+    await printRegistry(project);
+    assert.equal(readFileSync(record, "utf8"), "not-a-record", "a guest never replaces it");
+    writeFileSync(record, `${outer.record}-1`);
+    if (process.getuid?.() !== 0) {
+      chmodSync(record, 0);
+      try {
+        await printRegistry(project);
+      } finally {
+        chmodSync(record, 0o644);
+      }
+      assert.equal(readFileSync(record, "utf8"), `${outer.record}-1`);
+    }
+    assertForeignRunIntact(outer, "unverifiable owner");
+
+    // Once the owner has exited its record is stale: the next joiner owns the
+    // namespace for its membership, then gives ownership up (it was not asked to remove).
+    await outer.stop();
+    const own2 = await printRegistry(project);
+    assert.match(own2, /\/build-groups-\d+-\d+-\d+$/);
+    assert.equal(existsSync(record), false, "the stale owner was replaced, then released");
+    assert.ok(existsSync(outer.registry), "an exited run's registry is not this capture's");
+  } finally {
+    await outer?.stop();
+    removeNamespace(project);
+  }
+});
+
+it("racing joiners of a stale namespace elect exactly one owner", { timeout: 60_000 }, async () => {
+  const project = `kb-registry-race-${process.pid}`;
+  const namespace = buildArtifactDirectory(project);
+  const barrier = mkdtempSync(join(tmpdir(), "kb-registry-race-"));
+  const runner = new URL("./test-kb.mjs", import.meta.url).href;
+  // pid 1 never started at tick 0, so "1-0-1" is the record of an exited owner.
+  mkdirSync(namespace, { recursive: true });
+  writeFileSync(join(namespace, "owner"), "1-0-1");
+  // Every capture holds its membership until all six have joined (the barrier).
+  const command = `const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(barrier)} + "/ready-" + process.pid, ""); const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(join(barrier, "go"))})) { clearInterval(wait); process.stdout.write(process.env.KB_TEST_BUILD_GROUPS); } }, 20);`;
+  const program = `import {runCaptured} from ${JSON.stringify(runner)};
+const out = await runCaptured(process.execPath, ["-e", ${JSON.stringify(command)}], process.env, [], ${JSON.stringify(project)});
+process.stderr.write("REGISTRY " + out + "\\n");`;
+  const children = [];
+  try {
+    for (let n = 0; n < 6; n++) {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", program], {
+        cwd: ROOT,
+        env: { ...process.env, KB_TEST_BUILD_GROUPS: "" },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      children.push({ child, done: once(child, "exit").then(([code]) => ({ code, stderr })) });
+    }
+    const deadline = Date.now() + 30_000;
+    while (readdirSync(barrier).filter((name) => name.startsWith("ready-")).length < 6) {
+      assert.ok(Date.now() < deadline, "every joiner reaches its command");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const roles = readdirSync(namespace)
+      .filter((name) => name.startsWith("member-"))
+      .map((name) => readFileSync(join(namespace, name), "utf8"));
+    assert.deepEqual(roles.sort(), ["guest", "guest", "guest", "guest", "guest", "owner"]);
+    const owner = readFileSync(join(namespace, "owner"), "utf8");
+    assert.ok(
+      children.some(({ child }) => owner.startsWith(`${child.pid}-`)),
+      "the owner is one of the joiners",
+    );
+    writeFileSync(join(barrier, "go"), "");
+    const results = await Promise.all(children.map(({ done }) => done));
+    for (const { code, stderr } of results) assert.equal(code, 0, stderr);
+    const registries = results.map(({ stderr }) => /REGISTRY (\S+)/.exec(stderr)?.[1]);
+    assert.equal(new Set(registries).size, 6, "no two captures share a registry");
+    assert.deepEqual(
+      readdirSync(namespace).filter((name) => name.startsWith("member-") || name === "owner"),
+      [],
+      "every joiner left; the owner gave its ownership up",
+    );
+  } finally {
+    // Release the barrier first, so every capture ends and drains its own group.
+    if (existsSync(barrier)) writeFileSync(join(barrier, "go"), "");
+    const settled = Promise.all(children.map(({ done }) => done));
+    const timer = new Promise((resolve) => setTimeout(resolve, 10_000));
+    await Promise.race([settled, timer]);
+    for (const { child } of children) if (child.exitCode === null) child.kill("SIGKILL");
+    await settled;
+    rmSync(barrier, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("concurrent captures of one process each drain only their own registry", async () => {
+  const project = `kb-registry-concurrent-${process.pid}`;
+  try {
+    const [first, second] = await Promise.all([
+      printRegistry(project, 800),
+      printRegistry(project, 300),
+    ]);
+    assert.notEqual(first, second);
+    for (const registry of [first, second]) assert.equal(existsSync(registry), false);
+  } finally {
+    removeNamespace(project);
+  }
+});
+
+it("retained Docker intent blocks every new capture, even while its process lives", async () => {
+  const project = `kb-registry-retained-${process.pid}`;
+  const retained = buildArtifactPath("build-groups-1-0-1", project);
+  let live;
+  try {
+    mkdirSync(retained, { recursive: true });
+    writeFileSync(join(retained, "docker-kb-build-x.json"), JSON.stringify({ name: "kb-build-x" }));
+    await assert.rejects(printRegistry(project), /Previous Docker build drain is incomplete/);
+    assert.ok(existsSync(join(retained, "docker-kb-build-x.json")), "intent stays for inspection");
+    rmSync(retained, { recursive: true, force: true });
+
+    // A live process's registry with intent is its in-flight work, until that
+    // capture ends with an incomplete drain and marks it retained.
+    live = await liveForeignRun(project, { guest: true });
+    writeFileSync(join(live.registry, "docker-kb-build-y.json"), JSON.stringify({ name: "y" }));
+    assert.match(await printRegistry(project), /\/build-groups-\d+-\d+-\d+$/);
+    writeFileSync(join(live.registry, "retained"), "");
+    await assert.rejects(printRegistry(project), /Previous Docker build drain is incomplete/);
+  } finally {
+    await live?.stop();
+    removeNamespace(project);
+  }
+});
+
+it("an ancestor still drains a nested capture's tools after the nested owner is force-killed", {
+  timeout: 60_000,
+}, async () => {
+  const project = `kb-registry-ancestor-${process.pid}`;
+  const directory = mkdtempSync(join(tmpdir(), "kb-registry-ancestor-"));
+  const pidFile = join(directory, "tool.pid");
+  const runner = new URL("./test-kb.mjs", import.meta.url).href;
+  // The nested owner is a guest in the same namespace (the run-49 topology). Its
+  // tool records its pid, then the owner SIGKILLs itself mid-capture.
+  writeFileSync(
+    join(directory, "nested.mjs"),
+    `import {existsSync} from 'node:fs';import {runCaptured} from ${JSON.stringify(runner)};
+runCaptured(process.execPath, ["-e", ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`)}], process.env, [], ${JSON.stringify(project)}).catch(() => {});
+const wait = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(wait); process.kill(process.pid, "SIGKILL"); } }, 20);`,
+  );
+  let tool;
+  try {
+    await assert.rejects(
+      runCaptured(process.execPath, [join(directory, "nested.mjs")], process.env, [], project),
+      // The admission launcher reports its killed tool as status 1.
+      (error) => error.status === 1,
+    );
+    tool = Number(readFileSync(pidFile, "utf8"));
+    assert.equal(processAlive(tool), false, "the orphaned nested tool must be drained");
+  } finally {
+    // Recover the pid however the assertions went, so a surviving tool never leaks.
+    if (!tool && existsSync(pidFile)) tool = Number(readFileSync(pidFile, "utf8"));
+    if (tool && processAlive(tool)) process.kill(tool, "SIGKILL");
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("an ancestor acknowledges a force-killed nested capture's Docker intent", {
+  timeout: 60_000,
+}, async () => {
+  const project = `kb-registry-daemon-${process.pid}`;
+  const directory = mkdtempSync(join(tmpdir(), "kb-registry-daemon-"));
+  const started = join(directory, "build.name");
+  const log = join(directory, "docker.log");
+  const runner = new URL("./test-kb.mjs", import.meta.url).href;
+  // A fake client: `build` records its daemon build name and hangs; the daemon
+  // readback reports that build cancelled once its client is gone.
+  writeFileSync(
+    join(directory, "docker"),
+    `#!${process.execPath}
+import {appendFileSync,existsSync,readFileSync,writeFileSync} from 'node:fs';
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, args.slice(0, 2).join(' ') + '\\n');
+if (args[0] === 'build') {
+  writeFileSync(${JSON.stringify(join(directory, "build.pid"))}, String(process.pid));
+  writeFileSync(${JSON.stringify(started)}, args[args.indexOf('--build-arg') + 1].split('=')[1]);
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'buildx' && existsSync(${JSON.stringify(started)}))
+  process.stdout.write(JSON.stringify({name: readFileSync(${JSON.stringify(started)}, 'utf8'), status: 'Canceled', completed_at: 'now'}) + '\\n');
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(directory, "nested.mjs"),
+    `import {existsSync} from 'node:fs';import {runCaptured} from ${JSON.stringify(runner)};
+runCaptured("docker", ["build", "."], process.env, [], ${JSON.stringify(project)}).catch(() => {});
+const wait = setInterval(() => { if (existsSync(${JSON.stringify(started)})) { clearInterval(wait); process.kill(process.pid, "SIGKILL"); } }, 20);`,
+  );
+  const oldPath = process.env.PATH;
+  try {
+    process.env.PATH = `${directory}:${oldPath}`;
+    await assert.rejects(
+      runCaptured(process.execPath, [join(directory, "nested.mjs")], process.env, [], project),
+      (error) => error.status === 1,
+    );
+    assert.ok(
+      readFileSync(log, "utf8").includes("buildx history"),
+      "the ancestor read back the nested build",
+    );
+    // Acknowledged: nothing retained, so the namespace admits the next capture.
+    assert.match(await printRegistry(project), /\/build-groups-\d+-\d+-\d+$/);
+  } finally {
+    process.env.PATH = oldPath;
+    // However the assertions went, never leave the hanging fake client behind.
+    const client = existsSync(join(directory, "build.pid"))
+      ? Number(readFileSync(join(directory, "build.pid"), "utf8"))
+      : undefined;
+    if (client && processAlive(client)) process.kill(client, "SIGKILL");
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("run 49: a nested --build-only run inheriting a live run's project leaves that run alone", {
+  timeout: 120_000,
+}, async () => {
+  // The exact mechanism of run 49: a build-only CLI child inherits the enclosing
+  // run's KB_TEST_PROJECT and KB_TEST_BUILD_GROUPS. That namespace's artifacts
+  // stay readable to it, but it must not rebuild them, nor drain, cancel or
+  // remove the run's registry: it refuses before any build effect.
+  const project = `kb-nested-build-${process.pid}`;
+  const directory = mkdtempSync(join(tmpdir(), "kb-nested-build-"));
+  const log = join(directory, "cargo.log");
+  writeFileSync(
+    join(directory, "cargo"),
+    `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(log)}, 'build\\n');`,
+    { mode: 0o755 },
+  );
+  let outer;
+  const nested = async () => {
+    const child = spawn(
+      process.execPath,
+      [join(ROOT, "scripts/test-kb.mjs"), "--build-only", "device"],
+      {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          KB_TEST_PROJECT: project,
+          KB_TEST_BUILD_GROUPS: outer.registry,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.stdout.resume();
+    const [code] = await once(child, "exit");
+    return { code, stderr };
+  };
+  try {
+    outer = await liveForeignRun(project);
+    const refused = await nested();
+    assert.notEqual(refused.code, 0);
+    assert.match(refused.stderr, /Build namespace kb-nested-build-\d+ belongs to a live run/);
+    assert.equal(existsSync(log), false, "no build step ran in the live run's namespace");
+    assertForeignRunIntact(outer, "nested build-only");
+    // Once that run has ended, the same invocation owns the namespace and builds.
+    await outer.stop();
+    const built = await nested();
+    assert.equal(built.code, 0, built.stderr);
+    assert.ok(existsSync(log));
+  } finally {
+    await outer?.stop();
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("a suite never runs as a guest of a live run's namespace, nor cleans up its Docker resources", {
+  timeout: 60_000,
+}, async () => {
+  const project = `kb-registry-docker-${process.pid}`;
+  const directory = mkdtempSync(join(tmpdir(), "kb-registry-docker-"));
+  const log = join(directory, "docker.log");
+  // `build` fails (its daemon build acknowledged as Error); every inventory query
+  // reports the project image and a container.
+  const name = join(directory, "build.name");
+  writeFileSync(
+    join(directory, "docker"),
+    `#!${process.execPath}
+import {appendFileSync,existsSync,readFileSync,writeFileSync} from 'node:fs';
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, args.join(' ') + '\\n');
+if (args[0] === 'build') {
+  writeFileSync(${JSON.stringify(name)}, args[args.indexOf('--build-arg') + 1].split('=')[1]);
+  process.exit(1);
+}
+if (args[0] === 'buildx') {
+  if (existsSync(${JSON.stringify(name)}))
+    process.stdout.write(JSON.stringify({name: readFileSync(${JSON.stringify(name)}, 'utf8'), status: 'Error', completed_at: 'now'}) + '\\n');
+} else process.stdout.write('abc123\\n');
+`,
+    { mode: 0o755 },
+  );
+  const suite = { ...SUITES.backup, age: false };
+  const options = { buildOnly: true, project, files: [SUITES.backup.include[0]] };
+  const removals = () =>
+    readFileSync(log, "utf8")
+      .split("\n")
+      .filter((line) => /^(rmi|rm|container rm|image rm)\b/.test(line));
+  const oldPath = process.env.PATH;
+  let outer;
+  try {
+    process.env.PATH = `${directory}:${oldPath}`;
+    outer = await liveForeignRun(project);
+    const guest = /Build namespace kb-registry-docker-\d+ belongs to a live run/;
+    await assert.rejects(runSuite("backup", suite, options), guest);
+    // A normal (not build-only) suite naming that project is refused the same way.
+    await assert.rejects(
+      runSuite("backup", suite, { ...options, buildOnly: false, skipServices: true }),
+      guest,
+    );
+    assert.equal(existsSync(log), false, "a guest builds, starts and removes nothing");
+    assertForeignRunIntact(outer, "guest suites");
+    // The owner of the same namespace does clean up its own failed build.
+    await outer.stop();
+    writeFileSync(log, "");
+    await assert.rejects(runSuite("backup", suite, options), /native build tool failed: docker/);
+    assert.ok(
+      removals().some((line) => line.startsWith(`rmi ${project}-worker`)),
+      removals().join("; "),
+    );
+  } finally {
+    process.env.PATH = oldPath;
+    await outer?.stop();
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("an owner's final cleanup keeps a namespace a live guest still uses", {
+  timeout: 60_000,
+}, async () => {
+  const project = `kb-registry-guest-${process.pid}`;
+  const directory = mkdtempSync(join(tmpdir(), "kb-registry-guest-"));
+  for (const file of ["cargo", "pnpm"])
+    writeFileSync(join(directory, file), `#!${process.execPath}\n`, { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  let guest;
+  try {
+    guest = await liveForeignRun(project, { guest: true });
+    process.env.PATH = `${directory}:${oldPath}`;
+    await runSuite("device", SUITES.device, {
+      files: [SUITES.device.include[0]],
+      skipServices: true,
+      project,
+    });
+    assertForeignRunIntact(guest, "owner cleanup");
+    await guest.stop();
+    // Without a live guest the same normal run removes its whole namespace.
+    await runSuite("device", SUITES.device, {
+      files: [SUITES.device.include[0]],
+      skipServices: true,
+      project,
+    });
+    assert.equal(existsSync(buildArtifactDirectory(project)), false);
+    // Intent retained during the owner's last capture (an exited guest's) blocks removal.
+    const retained = buildArtifactPath("build-groups-1-0-1", project);
+    writeFileSync(
+      join(directory, "pnpm"),
+      `#!${process.execPath}\nimport {mkdirSync,writeFileSync} from 'node:fs';mkdirSync(${JSON.stringify(retained)},{recursive:true});writeFileSync(${JSON.stringify(join(retained, "docker-kb-build-x.json"))},'{"name":"kb-build-x"}');`,
+      { mode: 0o755 },
+    );
+    await runSuite("device", SUITES.device, {
+      files: [SUITES.device.include[0]],
+      skipServices: true,
+      project,
+    });
+    assert.ok(existsSync(join(retained, "docker-kb-build-x.json")), "retained intent survives");
+  } finally {
+    process.env.PATH = oldPath;
+    await guest?.stop();
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
+  }
+});
+
+it("a services-free suite runs its full normal path without Docker and removes its namespace", {
+  timeout: 120_000,
+}, async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kb-services-free-"));
+  const log = join(directory, "docker.log");
+  writeFileSync(
+    join(directory, "docker"),
+    `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';appendFileSync(${JSON.stringify(log)},process.argv.slice(2).join(' ')+'\\n');process.exit(1);`,
+    { mode: 0o755 },
+  );
+  const project = `kb-services-free-${process.pid}`;
+  const file = "packages/api/src/lib/kb/paths.test.ts";
+  const nodeTest = join(directory, "node-phase.test.mjs");
+  const marker = join(directory, "node-phase-ran");
+  writeFileSync(
+    nodeTest,
+    `import {writeFileSync} from 'node:fs';import {test} from 'node:test';test('node phase', () => writeFileSync(${JSON.stringify(marker)}, process.env.KB_TEST_SUITE));`,
+  );
+  const oldPath = process.env.PATH;
+  const oldContext = process.env.NODE_TEST_CONTEXT;
+  try {
+    process.env.PATH = `${directory}:${oldPath}`;
+    // The suite's own `node --test` must run as a top-level runner, not report into this one.
+    delete process.env.NODE_TEST_CONTEXT;
+    // Not build-only: real Vitest admission, then the node-test phase, then cleanup.
+    await runSuite(
+      "tree",
+      { include: [file], services: [], nodeTests: [relative(ROOT, nodeTest)] },
+      { files: [file], project },
+    );
+    assert.equal(readFileSync(marker, "utf8"), "tree", "the node-test phase ran under the suite");
+    assert.equal(existsSync(log), false, "no service, image or reaper step may contact Docker");
+    assert.equal(existsSync(buildArtifactDirectory(project)), false);
+  } finally {
+    process.env.PATH = oldPath;
+    if (oldContext !== undefined) process.env.NODE_TEST_CONTEXT = oldContext;
+    rmSync(directory, { recursive: true, force: true });
+    removeNamespace(project);
   }
 });
 
@@ -1108,7 +1745,10 @@ process.exit(${mode === "all" ? 77 : 0});
       const prebuild = commands.find((args) => args[0] === "build" && args.includes("-t"));
       const image = prebuild[prebuild.indexOf("-t") + 1];
       const project = image.split(":")[1];
-      assert.match(project, /^kb-test-deployment-\d+-[0-9a-f]{6}$/);
+      assert.match(
+        project,
+        new RegExp(`^${kbTestNamePrefixPattern()}kb-test-deployment-\\d+-[0-9a-f]{6}$`),
+      );
       const run = commands.find((args) => args[0] === "run");
       assert.equal(run.at(-1), image);
       assert.ok(run.includes("--pull=never"));
@@ -1162,8 +1802,25 @@ describe("flk4 build prerequisites", () => {
       parity: ["cli", "parity-fixture"],
       browser: ["cli", "browser-harness"],
     };
+    // Every Postgres suite also needs the child guard: the shared fixture's
+    // applyPrismaSchema() runs the owned Prisma engine under it, reached
+    // directly or through helpers. It is built just before the SSH image.
+    const withGuard = (name, list) => {
+      if (!SUITES[name].services.includes("postgres") || list.includes("child-guard")) return list;
+      const ssh = list.indexOf("ssh-image");
+      return ssh === -1
+        ? [...list, "child-guard"]
+        : [...list.slice(0, ssh), "child-guard", ...list.slice(ssh)];
+    };
     for (const name of Object.keys(SUITES))
-      assert.deepEqual(artifacts(name), expected[name] ?? [], name);
+      assert.deepEqual(artifacts(name), withGuard(name, expected[name] ?? []), name);
+    // The fixture regression: suites with no guard of their own still get one.
+    // The fixture regression: suites with no guard of their own still get one,
+    // including parity, whose tests reach applyPrismaSchema() through a helper.
+    for (const suite of ["asset-storage", "asset-migration", "admission", "parity"])
+      assert.ok(artifacts(suite).includes("child-guard"), suite);
+    for (const suite of ["topology", "tree", "egress", "client-interop"])
+      assert.ok(!artifacts(suite).includes("child-guard"), suite);
     for (const suite of ["device", "exports", "mcp", "parity"])
       assert.ok(artifacts(suite).includes("cli"), suite);
     assert.ok(artifacts("client-interop").includes("sdk-interop"));
@@ -1828,11 +2485,16 @@ it("flk4 uncertain Docker daemon drain retains intent and blocks retry without n
       runSuite("device", SUITES.device, options),
       (error) => error.drainIncomplete === true,
     );
-    const groups = join(buildArtifactDirectory(project), "build-groups");
+    const retained = readdirSync(buildArtifactDirectory(project)).filter((name) =>
+      name.startsWith("build-groups-"),
+    );
+    assert.equal(retained.length, 1, retained.join(", "));
+    const groups = join(buildArtifactDirectory(project), retained[0]);
     assert.ok(
       readdirSync(groups).some((name) => name.startsWith("docker-") && name.endsWith(".json")),
       "durable daemon intent must survive failure and suite cleanup",
     );
+    assert.ok(existsSync(join(groups, "retained")), "marked retained for other live processes");
     await assert.rejects(
       runSuite("device", SUITES.device, options),
       /Previous Docker build drain is incomplete/,
@@ -1973,7 +2635,7 @@ describe("image git lane (R3-W1)", () => {
       assert.throws(() => assertImageGitReached(bin, ["core git receive-pack"]), /not reached by/);
       cleaned(calls, p);
     } finally {
-      rmSync(buildArtifactPath("image-git", p), { recursive: true, force: true });
+      rmSync(buildArtifactDirectory(p), { recursive: true, force: true });
     }
   });
 
@@ -1987,7 +2649,7 @@ describe("image git lane (R3-W1)", () => {
       );
       cleaned(calls, p);
     } finally {
-      rmSync(buildArtifactPath("image-git", p), { recursive: true, force: true });
+      rmSync(buildArtifactDirectory(p), { recursive: true, force: true });
     }
   });
 
@@ -2012,7 +2674,7 @@ describe("image git lane (R3-W1)", () => {
       cleaned(calls, p);
       assert.ok(calls.some(({ args }) => args.join(" ") === `rm --force ${p}-git-version`));
     } finally {
-      rmSync(buildArtifactPath("image-git", p), { recursive: true, force: true });
+      rmSync(buildArtifactDirectory(p), { recursive: true, force: true });
     }
   });
 
@@ -2031,7 +2693,7 @@ describe("image git lane (R3-W1)", () => {
         await assert.rejects(installImageGit({ project: p, env: {}, secrets: [], run }), error);
         cleaned(calls, p);
       } finally {
-        rmSync(buildArtifactPath("image-git", p), { recursive: true, force: true });
+        rmSync(buildArtifactDirectory(p), { recursive: true, force: true });
       }
     }
   });
@@ -2044,8 +2706,17 @@ describe("image git lane (R3-W1)", () => {
       for (const { args, timeoutMs } of calls)
         if (args[0] !== "rm" && args[1] !== "rm") assert.ok(timeoutMs <= 5_000, args[0]);
     } finally {
-      rmSync(buildArtifactPath("image-git", p), { recursive: true, force: true });
+      rmSync(buildArtifactDirectory(p), { recursive: true, force: true });
     }
+  });
+
+  // Each case owns a whole build namespace (installImageGit creates it), not only
+  // its image-git directory; none may outlive this file in $TMPDIR.
+  it("leaves no image-git build namespace behind", () => {
+    const leaked = readdirSync(tmpdir()).filter((name) =>
+      new RegExp(`^kb-test-builds-kb-test-imagegit-[a-z]+-${process.pid}$`).test(name),
+    );
+    assert.deepEqual(leaked, []);
   });
 });
 

@@ -6,13 +6,17 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { removeDockerContainer } from "./docker.js";
 import { NODE_BASE_IMAGE } from "./node-image.mjs";
+import { kbTestName } from "./test-names.mjs";
 
 describe("CIMD production TLS connection boundary", () => {
   it("blocks non-global DNS at a real IPv6 socket and preserves public exceptions", async () => {
     const suffix = randomBytes(4).toString("hex");
     const part = (Number.parseInt(randomBytes(2).toString("hex"), 16) || 1).toString(16);
-    const networks = [`kb-r31b-blocked-${suffix}`, `kb-r31b-public-${suffix}`];
-    const container = `kb-r31b-cimd-${suffix}`;
+    const networks = [
+      kbTestName(`kb-r31b-blocked-${suffix}`),
+      kbTestName(`kb-r31b-public-${suffix}`),
+    ];
+    const container = kbTestName(`kb-r31b-cimd-${suffix}`);
     const dir = mkdtempSync(resolve(tmpdir(), "kb-r31b-cimd-"));
     const root = resolve(import.meta.dirname, "../../../..");
     const blocked = `2001:100:${part}::2`;

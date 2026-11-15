@@ -87,6 +87,15 @@ export async function runAccountTeardown(
   for (const handler of accountTeardownHandlers) await handler({ query, kbId, userId, opId });
 }
 
+/**
+ * The owned states that block ordinary removal and that admin-force removal
+ * tombstones: ACTIVE and REPAIR_REQUIRED (quarantined). A quarantined KB is
+ * still owned; leaving it out let the user delete below null its owner (FK
+ * SET NULL) and strand it ownerless. CREATING is settled by the barrier's
+ * prepare step (`recoverCreatingKnowledgeBase`) before either check runs.
+ */
+const OWNED_LIVE_STATES_SQL = `('ACTIVE'::"KnowledgeBaseState", 'REPAIR_REQUIRED'::"KnowledgeBaseState")`;
+
 async function tombstoneOwnedKnowledgeBases(
   query: LockQuery,
   userId: string,
@@ -98,7 +107,7 @@ async function tombstoneOwnedKnowledgeBases(
   for (;;) {
     const rows = await query<{ id: string }>(
       `SELECT id FROM "knowledge_base"
-        WHERE "ownerId" = $1 AND state = 'ACTIVE'::"KnowledgeBaseState"
+        WHERE "ownerId" = $1 AND state IN ${OWNED_LIVE_STATES_SQL}
           ${lastId ? `AND id > $3` : ""}
         ORDER BY id ASC
         LIMIT $2`,
@@ -112,7 +121,7 @@ async function tombstoneOwnedKnowledgeBases(
                 "ownerId" = NULL,
                 "metadataVersion" = "metadataVersion" + 1,
                 "updatedAt" = now()
-          WHERE id = $1 AND "ownerId" = $2 AND state = 'ACTIVE'::"KnowledgeBaseState"`,
+          WHERE id = $1 AND "ownerId" = $2 AND state IN ${OWNED_LIVE_STATES_SQL}`,
         [row.id, userId],
       );
       await runAccountTeardown(query, row.id, userId, removalOpId);
@@ -140,14 +149,13 @@ export async function removeUserAccount(
   actor: { actingUserId: string },
 ): Promise<{ tombstonedKbCount: number }> {
   if (!isAdminForceAccountDeletion()) {
-    try {
-      await assertOrdinaryAccountDeletionAllowed(runtime.prisma, targetUserId);
-    } catch (error) {
-      if (error instanceof Error && error.message === OWNED_ACTIVE_KB_BLOCK_MESSAGE) {
-        throw new AccountDeletionBlockedError();
-      }
-      throw error;
-    }
+    // Not `assertOrdinaryAccountDeletionAllowed` (which refuses any owned
+    // non-TOMBSTONED KB): a CREATING row is settled by the barrier below, and
+    // the in-reservation check then refuses whatever it left owned.
+    const owned = await runtime.prisma.knowledgeBase.count({
+      where: { ownerId: targetUserId, state: { in: ["ACTIVE", "REPAIR_REQUIRED"] } },
+    });
+    if (owned > 0) throw new AccountDeletionBlockedError();
   }
 
   const opId = randomUUID();
@@ -219,15 +227,18 @@ export async function removeUserAccount(
             opId,
             actor.actingUserId,
           );
-        } else {
-          const owned = await ctx.query<{ count: string }>(
-            `SELECT COUNT(*)::text AS count FROM "knowledge_base"
-              WHERE "ownerId" = $1 AND state = 'ACTIVE'::"KnowledgeBaseState"`,
-            [targetUserId],
-          );
-          if (Number(owned.rows[0]?.count ?? "0") > 0) {
-            throw new AccountDeletionBlockedError();
-          }
+        }
+        // No owned KB may survive the user row: the delete below would null
+        // its owner. Ordinary removal refuses any; after admin-force
+        // tombstoning only a state neither path settles (a CREATING row the
+        // prepare step could not resolve) can remain, and it refuses too.
+        const owned = await ctx.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM "knowledge_base"
+            WHERE "ownerId" = $1 AND state <> 'TOMBSTONED'::"KnowledgeBaseState"`,
+          [targetUserId],
+        );
+        if (Number(owned.rows[0]?.count ?? "0") > 0) {
+          throw new AccountDeletionBlockedError();
         }
         await destroyProviderCredentials(ctx.query, targetUserId);
         await destroySealedAuthority(ctx.query, { userId: targetUserId });

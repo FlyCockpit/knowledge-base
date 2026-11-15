@@ -2,21 +2,27 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
+import { kbTestName, kbTestNamePrefixPattern } from "./test-names.mjs";
 
 const exec = promisify(execFile);
 
 // Reuse the runner's ownership label; standalone fixtures own their process.
+// Both carry this run's `KB_TEST_NAME_PREFIX` (./test-names.mjs).
 const runnerProject = process.env.KB_TEST_PROJECT ?? "";
-const fixtureProject = /^kb-test-[a-z0-9-]+-\d+-[0-9a-f]{6}$/.test(runnerProject)
+const fixtureProject = new RegExp(
+  `^${kbTestNamePrefixPattern()}kb-test-[a-z0-9-]+-\\d+-[0-9a-f]{6}$`,
+).test(runnerProject)
   ? runnerProject
-  : `kb-test-fixture-${process.pid}-${randomBytes(3).toString("hex")}`;
+  : kbTestName(`kb-test-fixture-${process.pid}-${randomBytes(3).toString("hex")}`);
+/** Owned fixture names: `kbTestName("kb-…")`. */
+const OWNED_FIXTURE_NAME = new RegExp(`^${kbTestNamePrefixPattern()}kb-[a-zA-Z0-9_.-]+$`);
 
 export function dockerFixtureLabels(): string[] {
   return ["--label", `io.knowledge-base.test-project=${fixtureProject}`];
 }
 
 export async function removeDockerContainer(name: string): Promise<void> {
-  if (!/^kb-[a-zA-Z0-9_.-]+$/.test(name)) throw new Error("Invalid owned Docker fixture name");
+  if (!OWNED_FIXTURE_NAME.test(name)) throw new Error("Invalid owned Docker fixture name");
   try {
     await exec("docker", ["rm", "--force", name], { timeout: 60_000 });
   } catch (error) {
@@ -53,7 +59,7 @@ export async function drainDockerFixtures(): Promise<void> {
 }
 
 export function withDockerContainer<T>(name: string, run: () => T | Promise<T>): Promise<T> {
-  if (!/^kb-[a-zA-Z0-9_.-]+$/.test(name)) throw new Error("Invalid owned Docker fixture name");
+  if (!OWNED_FIXTURE_NAME.test(name)) throw new Error("Invalid owned Docker fixture name");
   // Register before invoking the action, including synchronous native clients.
   const action = Promise.resolve().then(async () => {
     try {

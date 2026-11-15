@@ -40,6 +40,22 @@ health checks, tmpfs, placement, init and stop-first policies. To review a real
 running deployment use `pnpm dokploy:verify` with its documented CLI flags.
 The generator is configuration preparation, not a deployment.
 
+For a new deployment, set only `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
+`KB_MASTER_KEY`, `BETTER_AUTH_SECRET` and `ADMIN_EMAIL` in Dokploy. Generate
+strong per-instance secrets privately (`KB_MASTER_KEY` is base64 of 32 random
+bytes). The generated Compose supplies database/cache URLs and the HTTPS auth
+origin. No SMTP, IdP, backup settings, backup volume or backup sidecar is needed.
+Public signup stays closed; bootstrap uses the configured admin identity.
+
+Backups default off: `BACKUP_ENABLED` defaults to `false`, including before
+migrations and due deletions. Startup prints one notice with opt-in
+instructions (the `migrate` job too); disabled
+backups do not affect health/readiness. To enable, regenerate with
+`--backups true`, set `BACKUP_ENABLED=true` and `BACKUP_AGE_RECIPIENT`, and keep
+the generated shared backup output mount. Set `BACKUP_SCHEDULE=daily` on one
+backup service to schedule runs. S3 upload is optional. See
+[backup configuration and custody](./backup-restore.md).
+
 ## Environment, roles and custody
 
 Env schema and `scripts/lib/env-manifest.ts` are authoritative; regenerate
@@ -55,7 +71,7 @@ credentials to development or commit filled env files.
 | BETTER_AUTH_SECRET / BETTER_AUTH_URL | Server; strong secret and exact HTTPS canonical origin; retain secret for restored TOTP/backup codes |
 | ADMIN_EMAIL | One canonical identity required for first production bootstrap, even with public signup on |
 | MIGRATE_ON_START | Server true; worker false. Optional one-shot migrate before rollout. |
-| BACKUP_AGE_RECIPIENT | Offline backup role public recipient; private identity separately held by operator |
+| BACKUP_ENABLED / BACKUP_AGE_RECIPIENT | Optional: default off; enable backups and supply the public recipient only when opting in; private identity separately held by operator |
 | BACKUP_S3_* | Optional private off-site backup target with distinct dump-writer key; not KB asset storage |
 | SMTP_* / SIGNUP_ENABLED | Server human invitations/signup policy; no-SMTP private links remain available |
 | TRUST_PROXY_HOPS | Server; exact count of trusted reverse proxies for the client-IP rate-limit key. Generated Compose sets `1` (Traefik). See below. |
@@ -87,10 +103,13 @@ their own bucket) but is wrong for production; set the hop count. With a value
 above `0`, the server must be reachable only through those proxies (the
 generated Compose publishes no host port and only the server joins the proxy
 network); a caller that can reach the port directly could otherwise forge the
-trusted entries. A request whose chain is shorter than the hop count, or whose
-trusted entry is not an IP address, is keyed on the socket peer, never on a
-client-supplied entry. Set the value higher than your real proxy count and
-clients choose their own key again, so count exactly.
+trusted entries. A proxy that appends the client's port (`1.2.3.4:5678` or
+`[2001:db8::1]:5678`, Azure Application Gateway's default) needs no change: the
+server strips the port from the selected entry before validating it. A request
+whose chain is shorter than the hop count, or whose trusted entry is still not
+an IP address, is keyed on the socket peer, never on a client-supplied entry.
+Set the value higher than your real proxy count and clients choose their own
+key again, so count exactly.
 
 A proxy only counts if the next one keeps what it wrote. Dokploy's Traefik
 does not trust incoming `X-Forwarded-For` by default: behind Cloudflare it
@@ -143,7 +162,7 @@ disk-quota account for repos, assets, models and the index.
 
 ## Schema, readiness and replacement
 
-The server image applies committed migrations before HTTP admission; the worker waits and registers. Use an explicit `migrate` one-shot with MIGRATE_ON_START=false on runtimes if your platform manages jobs. A proven-empty first `0_init` needs no backup; initialized-database migrations and due deletions require a verified encrypted Postgres + Git + file-store bundle. Provision BACKUP_AGE_RECIPIENT and the shared backup output volume before the next schema change; configured S3 upload failure blocks mutation. Pending restore blocks every admission branch. See [migration operations](./schema-migrations.md) and [offline restore](./backup-restore.md).
+The server image applies committed migrations before HTTP admission; the worker waits and registers. Use an explicit `migrate` one-shot with MIGRATE_ON_START=false on runtimes if your platform manages jobs. Backups default off, so migrations and due deletions proceed without backup settings or storage. When BACKUP_ENABLED=true, initialized-database migrations and due deletions require a verified encrypted Postgres + Git + file-store bundle; provision BACKUP_AGE_RECIPIENT and the shared backup output volume, and configured S3 upload failure blocks mutation. BACKUP_ENABLED=true with no destination (no `BACKUP_AGE_RECIPIENT`, or neither a volume mounted at `BACKUP_DIR` nor `BACKUP_S3_BUCKET`; the image's unmounted `/app/backups` does not count) refuses every start that migrates at startup, even with nothing pending, and refuses the migration, a brand-new database too: a proven-empty first `0_init` has nothing to back up, so the runner takes no bundle there but still runs the hook's destination check. Pending restore blocks every admission branch. See [migration operations](./schema-migrations.md) and [offline restore](./backup-restore.md).
 
 The worker wait is 300 seconds; a long bundle can outlast it. Keep automatic restart enabled and retry the worker after the leader completes. Stop-first replacement means a refused migration can cause downtime. Confirm the deployed commit with `pnpm deploy:check <url>`; DEPLOY_CHECK_URL enables the optional GitHub deploy check. The deeper host-side `pnpm dokploy:verify` remains available.
 
@@ -162,9 +181,13 @@ removal is not an upgrade or recovery step. See [hosting details](./hosting.md).
 S3 is default OFF. Follow [asset configuration and role custody](./assets.md#opt-in-s3-operation-and-role-configuration)
 before enabling it. The generated Compose explicitly forwards location/mode to
 server, worker and backup roles, and cache limit to both runtimes. Only the server gets the runtime asset secret. Full-bundle snapshot children need the operator asset reader and the actual runtime comparison ID; the backup/offline child must not receive the runtime writer secret. The server container receives the read-only asset operator pair for the startup
-pre-migrate snapshot, and the backup writer pair for its required off-site upload.
-After the runner finishes, the entrypoint removes both pairs and the backup
-heartbeat URL before starting the HTTP process. One-shot backup/restore/storage
+pre-migrate snapshot when backups are enabled, and the backup writer pair when off-site upload is configured.
+The entrypoint is PID 1 while it validates and migrates (both Dockerfiles set
+`ENTRYPOINT ["docker-entrypoint.sh"]`); after the runner finishes it removes both
+pairs and the backup heartbeat URL, then execs `tini` with the CMD, so neither
+`/proc/1/environ` nor the HTTP process carries them (`docker inspect` still shows
+every configured variable). A stop signal during startup reaches the running
+check or the runner, which drains before the container exits (143/130/129). One-shot backup/restore/storage
 commands retain their operator inputs. The runtime asset writer stays on the
 server only; the worker keeps only its ListBucket freshness-monitor credentials.
 BACKUP_S3_* keys must differ from both asset identities. Worker freshness uses its separate BACKUP_MONITOR_S3_* pair. Distinct IDs still require independently provisioned IAM.

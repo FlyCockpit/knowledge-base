@@ -34,6 +34,13 @@ export function scheduleConfig(env) {
   if (mode === "off") return { enabled: false };
   if (mode !== "daily")
     throw new Error(`BACKUP_SCHEDULE must be "off" or "daily" (got "${mode}").`);
+  if ((env.BACKUP_ENABLED || "false") === "false") {
+    console.warn(
+      "WARNING: BACKUP_SCHEDULE=daily but backups are off; daily backups are NOT running. Set BACKUP_ENABLED=true to enable them.",
+    );
+    return { enabled: false };
+  }
+  if (env.BACKUP_ENABLED !== "true") throw new Error("BACKUP_ENABLED must be true or false.");
   const hourUtc = Number((env.BACKUP_HOUR_UTC ?? "").trim() || 3);
   if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23)
     throw new Error("BACKUP_HOUR_UTC must be a whole hour from 0 to 23.");

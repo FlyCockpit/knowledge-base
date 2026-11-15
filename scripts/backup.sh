@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Scheduled/operator backup: quiesced, encrypted PostgreSQL + Git + CAS bundle.
-# Every backup is a full encrypted bundle. Required hooks fail if disabled.
+# Every enabled backup is a full encrypted bundle.
 # Connection credentials are passed via PG* variables, never argv.
 set -euo pipefail
 
@@ -10,22 +10,34 @@ source "$ROOT/scripts/lib/backup-env.sh"
 source "$ROOT/scripts/lib/owned-child.sh"
 
 label=manual
-if [ "$#" -gt 0 ]; then
-  [ "$#" -eq 2 ] && [ "$1" = --label ] || { echo 'usage: backup.sh [--label manual|pre-migrate|pre-drop|daily]' >&2; exit 2; }
+check_destination=false
+if [ "$#" -eq 1 ] && [ "$1" = --check-destination ]; then
+  check_destination=true
+elif [ "$#" -gt 0 ]; then
+  [ "$#" -eq 2 ] && [ "$1" = --label ] || { echo 'usage: backup.sh [--label manual|pre-migrate|pre-drop|daily] | --check-destination' >&2; exit 2; }
   label="$2"
 fi
 case "$label" in manual|pre-migrate|pre-drop|daily) ;; *) echo 'Invalid backup label.' >&2; exit 2 ;; esac
 
 if ! backup_enabled; then
-  if [ "${BACKUP_REQUIRED:-0}" = "1" ]; then
-    echo "FATAL: required full-bundle backup is disabled by BACKUP_ENABLED=false." >&2
-    exit 1
-  fi
+  # Nothing is required of a destination while backups are off.
+  [ "$check_destination" = false ] || exit 0
   echo "WARNING: BACKUP_ENABLED=false — skipping backup." >&2
   exit 0
 fi
 
-if [ -z "${DATABASE_URL:-}" ]; then
+# BACKUP_ENABLED=true needs a destination: every bundle is encrypted to the
+# operator's age recipient and written to BACKUP_DIR (then optionally S3).
+# Without a recipient no bundle can exist, so this refuses rather than skips.
+require_backup_recipient() {
+  if ! [[ "${BACKUP_AGE_RECIPIENT:-}" =~ ^age1(pq1)?[a-z0-9]+$ ]]; then
+    echo "FATAL: BACKUP_ENABLED=true but there is no backup destination: BACKUP_AGE_RECIPIENT is unset or not an age recipient." >&2
+    echo "       Set BACKUP_AGE_RECIPIENT and a writable BACKUP_DIR, or set BACKUP_ENABLED=false (docs/backup-restore.md)." >&2
+    exit 1
+  fi
+}
+
+if [ "$check_destination" = false ] && [ -z "${DATABASE_URL:-}" ]; then
   echo "FATAL: DATABASE_URL is not set." >&2
   echo "       Export it before running: DATABASE_URL=postgresql://... $0" >&2
   exit 1
@@ -36,6 +48,76 @@ if ! mkdir -p "$BACKUP_DIR" 2>/dev/null || [ ! -w "$BACKUP_DIR" ]; then
   echo "FATAL: backup directory '$BACKUP_DIR' is not writable by $(id -un)." >&2
   echo "       Set BACKUP_DIR to a writable path (containers should pass a mktemp dir)." >&2
   exit 1
+fi
+
+# A destination is a volume mounted at BACKUP_DIR or an S3 bucket. Every
+# bundle is staged in BACKUP_DIR, but a directory that is not a mount (the
+# image's own /app/backups without a volume) lives in the container's writable
+# layer and is lost with the container, so on its own it is no destination.
+is_mount() {
+  if command -v mountpoint >/dev/null 2>&1; then
+    mountpoint -q "$1"
+  else
+    [ "$(stat -c %d "$1")" != "$(stat -c %d "$1/..")" ]
+  fi
+}
+if [ -z "${BACKUP_S3_BUCKET:-}" ] && ! is_mount "$BACKUP_DIR"; then
+  echo "FATAL: BACKUP_ENABLED=true but there is no backup destination: BACKUP_DIR ($BACKUP_DIR) is not a mounted volume and BACKUP_S3_BUCKET is unset." >&2
+  echo "       Mount a volume at BACKUP_DIR (Dokploy generator: --backups true) and/or set BACKUP_S3_BUCKET with BACKUP_S3_*, or set BACKUP_ENABLED=false (docs/backup-restore.md)." >&2
+  exit 1
+fi
+
+# Backup-bucket configuration is enforced HERE, at the moment a dump would be
+# written — not in packages/env, which the web server and the worker boot on.
+# A backup-only mistake must never crash-loop the app; it must stop the backup
+# and say exactly what to fix. The same writer rules are re-checked in
+# scripts/lib/backup-s3-env.mjs (the upload/download helpers). Shared env boot
+# logs only bucket/region warnings because the normal worker does not hold this
+# dump-writer credential.
+check_backup_upload_settings() {
+  # Validate both unshadowed asset IDs even for full bundles.
+  node --input-type=module -e 'const {validateAssetDumpIdentity}=await import(process.argv[1]);validateAssetDumpIdentity();' "$ROOT/scripts/lib/backup-s3-env.mjs" || exit 1
+
+  if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
+    if [ -z "${BACKUP_S3_ACCESS_KEY_ID:-}" ] || [ -z "${BACKUP_S3_SECRET_ACCESS_KEY:-}" ]; then
+      echo "FATAL: BACKUP_S3_BUCKET is set but BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY are missing." >&2
+      echo "       Use a dedicated dump-writer key (GetObject/PutObject/AbortMultipartUpload only)." >&2
+      echo "       Never S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY." >&2
+      exit 1
+    fi
+    if [ -n "${S3_ACCESS_KEY_ID:-}" ] && [ "${BACKUP_S3_ACCESS_KEY_ID}" = "${S3_ACCESS_KEY_ID}" ]; then
+      echo "FATAL: BACKUP_S3_ACCESS_KEY_ID matches S3_ACCESS_KEY_ID. Backups need a distinct key so a" >&2
+      echo "       stolen app-upload credential cannot read database dumps." >&2
+      exit 1
+    fi
+    # "auto" is a Cloudflare R2 convention. With no endpoint the AWS SDK would
+    # address the bucket at the nonexistent host s3.auto.amazonaws.com and every
+    # upload would fail with a DNS error that names nothing useful.
+    if [ -z "${BACKUP_S3_ENDPOINT:-}" ] && [ "${BACKUP_S3_REGION:-auto}" = "auto" ]; then
+      echo "FATAL: BACKUP_S3_REGION must be a real AWS region when BACKUP_S3_ENDPOINT is unset." >&2
+      echo "       The default \"auto\" is an R2 convention — set BACKUP_S3_ENDPOINT for R2/MinIO/B2/Spaces." >&2
+      exit 1
+    fi
+  fi
+}
+
+# The destination is checked before any database access: a run that cannot
+# write a bundle refuses before it touches maintenance state.
+check_backup_upload_settings
+require_backup_recipient
+
+# --check-destination: the migration runner's check for a brand-new database,
+# which has nothing to back up yet (no application catalog), so no bundle is
+# taken; but BACKUP_ENABLED=true still refuses to migrate without a usable
+# destination. No database or network access; the age binary parses the
+# recipient exactly as a real bundle would.
+if [ "$check_destination" = true ]; then
+  if ! age -r "$BACKUP_AGE_RECIPIENT" </dev/null >/dev/null 2>&1; then
+    echo "FATAL: BACKUP_AGE_RECIPIENT is not a recipient the pinned age accepts." >&2
+    exit 1
+  fi
+  echo "Backup destination OK: encrypted bundles go to $BACKUP_DIR${BACKUP_S3_BUCKET:+ and s3://$BACKUP_S3_BUCKET}."
+  exit 0
 fi
 
 KB_BACKUP_RUN_ID="${KB_BACKUP_RUN_ID:-$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')}"
@@ -211,38 +293,6 @@ if ! pg_client_supports_server "$CLIENT_MAJOR" "$SERVER_MAJOR"; then
   exit 1
 fi
 echo "INFO: pg_dump client major $CLIENT_MAJOR, server major $SERVER_MAJOR."
-
-# Backup-bucket configuration is enforced HERE, at the moment a dump would be
-# written — not in packages/env, which the web server and the worker boot on.
-# A backup-only mistake must never crash-loop the app; it must stop the backup
-# and say exactly what to fix. The same writer rules are re-checked in
-# scripts/lib/backup-s3-env.mjs (the upload/download helpers). Shared env boot
-# logs only bucket/region warnings because the normal worker does not hold this
-# dump-writer credential.
-# Validate both unshadowed asset IDs even for full bundles.
-node --input-type=module -e 'const {validateAssetDumpIdentity}=await import(process.argv[1]);validateAssetDumpIdentity();' "$ROOT/scripts/lib/backup-s3-env.mjs" || exit 1
-
-if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
-  if [ -z "${BACKUP_S3_ACCESS_KEY_ID:-}" ] || [ -z "${BACKUP_S3_SECRET_ACCESS_KEY:-}" ]; then
-    echo "FATAL: BACKUP_S3_BUCKET is set but BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY are missing." >&2
-    echo "       Use a dedicated dump-writer key (GetObject/PutObject/AbortMultipartUpload only)." >&2
-    echo "       Never S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY." >&2
-    exit 1
-  fi
-  if [ -n "${S3_ACCESS_KEY_ID:-}" ] && [ "${BACKUP_S3_ACCESS_KEY_ID}" = "${S3_ACCESS_KEY_ID}" ]; then
-    echo "FATAL: BACKUP_S3_ACCESS_KEY_ID matches S3_ACCESS_KEY_ID. Backups need a distinct key so a" >&2
-    echo "       stolen app-upload credential cannot read database dumps." >&2
-    exit 1
-  fi
-  # "auto" is a Cloudflare R2 convention. With no endpoint the AWS SDK would
-  # address the bucket at the nonexistent host s3.auto.amazonaws.com and every
-  # upload would fail with a DNS error that names nothing useful.
-  if [ -z "${BACKUP_S3_ENDPOINT:-}" ] && [ "${BACKUP_S3_REGION:-auto}" = "auto" ]; then
-    echo "FATAL: BACKUP_S3_REGION must be a real AWS region when BACKUP_S3_ENDPOINT is unset." >&2
-    echo "       The default \"auto\" is an R2 convention — set BACKUP_S3_ENDPOINT for R2/MinIO/B2/Spaces." >&2
-    exit 1
-  fi
-fi
 
 # The coordinator owns all database, Git, CAS, encryption and upload children.
 run_backup_writer node "$ROOT/scripts/lib/kb-backup.mjs" coordinate "$label"

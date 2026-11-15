@@ -4,8 +4,8 @@
 
 _backup_env_truthy() {
   case "${1:-}" in
-    true | 1 | yes | on | TRUE | YES | ON) return 0 ;;
-    false | 0 | no | off | FALSE | NO | OFF | "") return 1 ;;
+    true) return 0 ;;
+    false | "") return 1 ;;
     *)
       echo "FATAL: invalid boolean value '$1' (use true or false)." >&2
       exit 1
@@ -13,9 +13,9 @@ _backup_env_truthy() {
   esac
 }
 
-# Required migration hooks reject disabled backups; manual backups may no-op.
+# Backups are opt-in, including migration hooks.
 backup_enabled() {
-  _backup_env_truthy "${BACKUP_ENABLED:-true}"
+  _backup_env_truthy "${BACKUP_ENABLED:-false}"
 }
 
 backup_s3_configured() {

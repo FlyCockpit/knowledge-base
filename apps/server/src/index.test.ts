@@ -64,8 +64,9 @@ describe("unknown API paths", () => {
     expect(source.indexOf('app.all("/api/*"')).toBeGreaterThan(
       source.indexOf('app.on(["POST", "GET"], "/api/auth/*"'),
     );
+    expect(source.indexOf("mountStaticClient(app, ")).toBeGreaterThan(-1);
     expect(source.indexOf('app.all("/api/*"')).toBeLessThan(
-      source.indexOf('app.use("/*", serveStatic'),
+      source.indexOf("mountStaticClient(app, "),
     );
     const res = await buildProductionLikeApp().request("/api/live");
     expect(res.status).toBe(200);

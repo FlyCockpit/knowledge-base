@@ -956,7 +956,9 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
         "sh",
         "-u",
         "0",
-        role,
+        // The generated server service carries the project stem (`compose()`
+        // maps it the same way); the worker service is plain `worker`.
+        role === "server" ? serverServiceName : role,
         "-c",
         `rm '${artifact}'; exec /usr/local/bin/docker-entrypoint.sh node apps/${role}/dist/index.mjs --fenced`,
       ];
@@ -979,9 +981,11 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
       submount: [{ type: "tmpfs", target: "/var/lib/knowledge-base/index" }],
     };
     for (const role of ["server", "worker"] as const) {
+      // The generated server service carries the project stem (see compose()).
+      const service = role === "server" ? serverServiceName : role;
       for (const [kind, volumes] of Object.entries(overrides)) {
         const override = join(scratch, `${role}-${kind}.json`);
-        await writeFile(override, JSON.stringify({ services: { [role]: { volumes } } }), {
+        await writeFile(override, JSON.stringify({ services: { [service]: { volumes } } }), {
           mode: 0o600,
         });
         const overrideArgs = ["compose", "--project-directory", ROOT, "-p", project, "-f", file];
@@ -991,7 +995,7 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
         ) as {
           services: Record<string, { volumes: { target: string; read_only?: boolean }[] }>;
         };
-        const targets = effective.services[role]!.volumes.filter((v) =>
+        const targets = effective.services[service]!.volumes.filter((v) =>
           v.target.startsWith("/var/lib/knowledge-base"),
         );
         if (kind === "ro")
@@ -1004,7 +1008,7 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
             "/var/lib/knowledge-base/index",
           ]);
         await expect(
-          docker([...overrideArgs, "run", "--rm", "--no-deps", role]),
+          docker([...overrideArgs, "run", "--rm", "--no-deps", service]),
           `${role} ${kind}`,
         ).rejects.toThrow(/KB runtime deployment invalid/);
       }

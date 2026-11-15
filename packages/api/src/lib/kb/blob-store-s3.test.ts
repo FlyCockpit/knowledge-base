@@ -191,6 +191,79 @@ describe("S3 publication", () => {
     expect(bodies[0]).not.toBe(bodies[1]);
     expect(bodies[1]).toEqual(bytes);
   });
+  // Every asset write is create-only: a plain PutObject (no multipart; a CAS
+  // blob is at most CAS_BLOB_MAX_BYTES) with If-None-Match: *. A refused
+  // conditional write is never success by itself: only an exact verification
+  // of the object already at the immutable content-addressed key is.
+  it("creates with If-None-Match on the normal missing-key path", async () => {
+    const f = fixture();
+    const puts: unknown[] = [];
+    sdk.send.mockImplementation(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) {
+        if (!puts.length) throw missing();
+        return metadata;
+      }
+      expect(command).toBeInstanceOf(PutObjectCommand);
+      puts.push((command as PutObjectCommand).input);
+      return {};
+    });
+    await f.publish();
+    expect(puts).toEqual([
+      expect.objectContaining({ Key: assetS3Key("instance", hash), IfNoneMatch: "*" }),
+    ]);
+  });
+  it.each([409, 412])(
+    "accepts a refused conditional create (%s) only after verifying the existing object",
+    async (code) => {
+      const f = fixture();
+      let puts = 0;
+      sdk.send.mockImplementation(async (command: unknown) => {
+        if (command instanceof PutObjectCommand) {
+          puts++;
+          throw Object.assign(new Error("condition"), { $metadata: { httpStatusCode: code } });
+        }
+        if (!puts) throw missing();
+        return metadata;
+      });
+      await f.publish();
+      expect(puts).toBe(1);
+      expect(f.publication.durable).toHaveBeenCalledOnce();
+    },
+  );
+  it.each([
+    // A mismatch fails at once; an unexplained refusal gets one bounded replay.
+    ["a different object", () => ({ ...metadata, Metadata: { sha256: "0".repeat(64) } }), 1],
+    ["no visible object", () => Promise.reject(missing()), 2],
+  ])("surfaces a refused conditional create when the key holds %s", async (_kind, head, max) => {
+    const f = fixture();
+    let puts = 0;
+    sdk.send.mockImplementation(async (command: unknown) => {
+      if (command instanceof PutObjectCommand) {
+        puts++;
+        throw Object.assign(new Error("precondition"), { $metadata: { httpStatusCode: 412 } });
+      }
+      if (!puts) throw missing();
+      return head();
+    });
+    await expect(f.publish()).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+    expect(puts).toBe(max);
+    expect(f.publication.durable).not.toHaveBeenCalled();
+    expect(f.cache.beginFill).not.toHaveBeenCalled();
+  });
+  it("does not replay a write the store rejected outright", async () => {
+    const f = fixture();
+    let puts = 0;
+    sdk.send.mockImplementation(async (command: unknown) => {
+      if (command instanceof PutObjectCommand) {
+        puts++;
+        throw Object.assign(new Error("bad request"), { $metadata: { httpStatusCode: 400 } });
+      }
+      throw missing();
+    });
+    await expect(f.publish()).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+    expect(puts).toBe(1);
+    expect(f.publication.durable).not.toHaveBeenCalled();
+  });
   it.each([
     { ...metadata, ContentLength: bytes.length + 1 },
     { ...metadata, Metadata: { sha256: "0".repeat(64) } },

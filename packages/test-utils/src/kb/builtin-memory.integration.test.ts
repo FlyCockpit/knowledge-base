@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { dockerFixtureLabels, drainDockerFixtures, withDockerContainer } from "./docker.js";
 import { NODE_BASE_IMAGE } from "./node-image.mjs";
+import { kbTestName } from "./test-names.mjs";
 
 afterEach(drainDockerFixtures, 300_000);
 
@@ -32,7 +33,7 @@ it.each([512, 1024, 1280, 1536, 2048, 4096])(
       catch { rejected++; }
     }
     console.log(JSON.stringify({budget,rows:builtinRecommendations(budget?.budgetBytes ?? null),spawns,releases,rejected}));`;
-    const name = `kb-memory-${randomUUID()}`;
+    const name = kbTestName(`kb-memory-${randomUUID()}`);
     const out = await withDockerContainer(name, () =>
       execFileSync(
         "docker",

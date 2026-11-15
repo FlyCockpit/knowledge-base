@@ -97,6 +97,8 @@ process.exitCode=await run({mode:${JSON.stringify(mode)},contracts:false,migrati
     const child = spawn(guard, [String(process.pid), process.execPath, file], {
       env: {
         ...process.env,
+        // These scenarios never back up; an inherited BACKUP_ENABLED must not change that.
+        BACKUP_ENABLED: "false",
         DATABASE_URL: url,
         PRISMA_SCHEMA_ENGINE_BINARY: wrapper,
         KB_TEST_REAL_ENGINE: engine,

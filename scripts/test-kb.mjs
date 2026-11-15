@@ -1,5 +1,5 @@
 /** Explicit KB integration suite runner. Owns uniquely named disposable fixtures. */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -17,7 +18,15 @@ import {
   buildArtifactDirectory,
   buildArtifactPath,
 } from "../packages/test-utils/src/kb/build-artifacts.mjs";
-import { createBuildSupervisor } from "./build-embedding-runtime.mjs";
+import {
+  kbTestNamePrefix,
+  kbTestNamePrefixPattern,
+} from "../packages/test-utils/src/kb/test-names.mjs";
+import {
+  createBuildSupervisor,
+  isBuildRegistryPath,
+  linkBuildRegistry,
+} from "./build-embedding-runtime.mjs";
 import { ensureKbDataSkeleton } from "./init-kb-volumes.mjs";
 import { assertPinnedAgeDir, ensureAge } from "./lib/age-pin.mjs";
 import {
@@ -644,7 +653,12 @@ export function buildPrerequisites(name, suite = SUITES[name], project) {
   if (
     name === "qwen-process" ||
     suite.qwenModel ||
-    usesSource(suite, 'buildArtifactPath("child-guard")')
+    usesSource(suite, 'buildArtifactPath("child-guard")') ||
+    // The shared Postgres fixture's applyPrismaSchema() runs the committed
+    // history through the owned Prisma engine, which execs under this guard.
+    // Suites reach it through helpers too (parity), so every Postgres suite
+    // gets the guard rather than a source scan that can miss a caller.
+    suite.services.includes("postgres")
   )
     gcc("child-guard", join(ROOT, "apps/worker/src/native/child-guard.c"));
   // Every suite that starts the SSH fixture (mirror, deployment) needs its image prebuilt.
@@ -1023,11 +1037,15 @@ function stopServices(project, secrets) {
 }
 
 /**
- * Run-owned resource names use `kb-test-<suite>-<runner pid>-<6 hex>` as a prefix.
+ * Run-owned resource names use `<KB_TEST_NAME_PREFIX>kb-test-<suite>-<runner pid>-<6 hex>`
+ * as a prefix. Only this run's namespace (its `KB_TEST_NAME_PREFIX`, empty by default)
+ * parses, so a reaper never considers another prefix's resources.
  * Container ownership requires a label; an image or container name alone is insufficient.
  */
-export function parseRunProject(name) {
-  const match = /^(kb-test-[a-z0-9-]+?-(\d+)-[0-9a-f]{6})(?=$|[-_:])/.exec(String(name ?? ""));
+export function parseRunProject(name, env = process.env) {
+  const match = new RegExp(
+    `^(${kbTestNamePrefixPattern(env)}kb-test-[a-z0-9-]+?-(\\d+)-[0-9a-f]{6})(?=$|[-_:])`,
+  ).exec(String(name ?? ""));
   return match ? { project: match[1], pid: Number(match[2]) } : null;
 }
 
@@ -1076,24 +1094,27 @@ const CONTAINER_FORMAT =
 // Exact names created by docker.ts callers and the SSH/fence fixtures.
 // A name alone never grants ownership: the runner label is still mandatory.
 const FIXTURE_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const FIXTURE_NAME = new RegExp(
-  `^(?:kb-(?:ssh|ssh-readonly|memory|push-hook|fence-smoke)-${FIXTURE_UUID}|kb-fence-\\d+-[0-9a-f]{1,6})$`,
-);
+const fixtureNamePattern = (env = process.env) =>
+  new RegExp(
+    `^${kbTestNamePrefixPattern(env)}(?:kb-(?:ssh|ssh-readonly|memory|push-hook|fence-smoke)-${FIXTURE_UUID}|kb-fence-\\d+-[0-9a-f]{1,6})$`,
+  );
 
 /** All explicit ownership signals must agree; never infer ownership from an image. */
-function containerRunProject([, names, image, composeOwner, testOwner]) {
+function containerRunProject([, names, image, composeOwner, testOwner], env = process.env) {
   const owners = [composeOwner, testOwner].filter(Boolean);
   if (owners.length === 0) return null;
-  const run = parseRunProject(owners[0]);
-  if (!run || owners.some((owner) => parseRunProject(owner)?.project !== run.project)) return null;
+  const run = parseRunProject(owners[0], env);
+  if (!run || owners.some((owner) => parseRunProject(owner, env)?.project !== run.project))
+    return null;
   const containerNames = String(names).split(",");
   let namedResource = false;
   for (const name of [image, ...containerNames]) {
-    const namedRun = parseRunProject(name);
+    const namedRun = parseRunProject(name, env);
     if (namedRun && namedRun.project !== run.project) return null;
     if (namedRun) namedResource = true;
   }
-  if (!namedResource && (!testOwner || !containerNames.every((name) => FIXTURE_NAME.test(name))))
+  const fixtureName = fixtureNamePattern(env);
+  if (!namedResource && (!testOwner || !containerNames.every((name) => fixtureName.test(name))))
     return null;
   return run.project;
 }
@@ -1104,10 +1125,15 @@ function containerRunProject([, names, image, composeOwner, testOwner]) {
  * busy for every later run. Remove only run-labelled KB resources whose runner is gone;
  * a live run's and every other project's resources are never listed for removal.
  */
-export function reapDeadRuns({ docker = dockerText, isLive = runIsLive, log = () => {} } = {}) {
+export function reapDeadRuns({
+  docker = dockerText,
+  isLive = runIsLive,
+  log = () => {},
+  env = process.env,
+} = {}) {
   const live = new Map();
   const dead = (name) => {
-    const run = parseRunProject(name);
+    const run = parseRunProject(name, env);
     if (!run || run.pid === process.pid) return null;
     if (!live.has(run.project)) live.set(run.project, isLive(run.project, run.pid));
     return live.get(run.project) ? null : run.project;
@@ -1130,7 +1156,7 @@ export function reapDeadRuns({ docker = dockerText, isLive = runIsLive, log = ()
   };
   const containers = lines(["ps", "-a", "--format", CONTAINER_FORMAT])
     .map((line) => line.split("\t"))
-    .filter((row) => dead(containerRunProject(row)))
+    .filter((row) => dead(containerRunProject(row, env)))
     .map(([id]) => id);
   remove("containers", ["rm", "-f", "-v"], containers);
   remove(
@@ -1151,11 +1177,11 @@ export function reapDeadRuns({ docker = dockerText, isLive = runIsLive, log = ()
 }
 
 /** Remove only explicitly owned containers, even when another project reuses this image. */
-export function removeImageContainers(image, project, docker = dockerText) {
+export function removeImageContainers(image, project, docker = dockerText, env = process.env) {
   const ids = docker(["ps", "-a", "--filter", `ancestor=${image}`, "--format", CONTAINER_FORMAT])
     .split("\n")
     .map((line) => line.split("\t"))
-    .filter((row) => row[0] && row[2] === image && containerRunProject(row) === project)
+    .filter((row) => row[0] && row[2] === image && containerRunProject(row, env) === project)
     .map(([id]) => id);
   if (ids.length > 0) docker(["rm", "-f", "-v", ...ids]);
 }
@@ -1331,42 +1357,239 @@ export function assertImageGitReached(binDir, required) {
   process.stdout.write(`test-kb: image git reached by ${required.join(", ")}\n`);
 }
 
-export async function runCaptured(file, args, env, secrets, project, timeoutMs, signal) {
-  let supervisor;
-  let drainIncomplete = false;
-  const groups = buildArtifactPath("build-groups", project);
+/** Kernel start time of a live (non-zombie) process; undefined once it has exited. */
+function processBirth(pid) {
   try {
-    let out;
-    if (
-      existsSync(groups) &&
-      readdirSync(groups).some((name) => name.startsWith("docker-") && name.endsWith(".json"))
-    )
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return ["Z", "X"].includes(fields[0]) ? undefined : fields[19];
+  } catch (error) {
+    if (["ENOENT", "ESRCH"].includes(error.code)) return undefined;
+    throw error;
+  }
+}
+
+const SELF = () => `${process.pid}-${processBirth(process.pid)}`;
+
+/**
+ * Whether an id (`<pid>-<kernel start time>[-<seq>]`) names a live process,
+ * this one included. A recycled pid is not that process; anything that cannot
+ * be verified (malformed id, unreadable /proc) fails closed: live.
+ */
+function idIsLive(id) {
+  const match = /^(\d+)-(\d+)(?:-\d+)?$/.exec(id ?? "");
+  if (!match) return true;
+  try {
+    return processBirth(Number(match[1])) === match[2];
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Every namespace lifecycle change (join, registry creation, leave, removal)
+ * runs under one host-wide flock, held by a child that exits with this process.
+ * The file lives outside every removable namespace, so it is never replaced.
+ * The holder has its own process group: a group signal aimed at this process
+ * (an ancestor's drain) cannot release the lock mid-section; stdin EOF, also on
+ * this process's death, is its only release.
+ */
+const LIFECYCLE_LOCK = join(tmpdir(), "kb-test-builds.lock");
+async function withLifecycleLock(fn) {
+  const holder = spawn(
+    "flock",
+    ["--exclusive", LIFECYCLE_LOCK, "sh", "-c", "printf locked; exec cat >/dev/null"],
+    { stdio: ["pipe", "pipe", "inherit"], detached: true },
+  );
+  const exited = new Promise((resolve) => holder.once("close", resolve));
+  try {
+    await new Promise((resolve, reject) => {
+      holder.once("error", reject);
+      exited.then((code) => reject(new Error(`build lifecycle lock failed (${code})`)));
+      holder.stdout.once("data", resolve);
+    });
+    return fn();
+  } finally {
+    holder.stdin.end();
+    await exited;
+  }
+}
+
+/** In-process namespace acquisitions and the registries this process's captures hold. */
+const namespaces = new Map();
+const activeRegistries = new Set();
+let lifecycleSequence = 0;
+const registryId = (name) => /^build-groups-(\d+-\d+-\d+)$/.exec(name)?.[1];
+
+/**
+ * Registries here with Docker intent that no live capture owns: retained for
+ * inspection. A capture that ended with an incomplete drain marks its registry
+ * `retained`, which holds even while its process lives on.
+ */
+function retainedRegistries(directory) {
+  const self = SELF();
+  return readdirSync(directory).filter((name) => {
+    const path = join(directory, name);
+    const id = registryId(name);
+    if (name !== "build-groups" && !id) return false;
+    if (activeRegistries.has(path)) return false;
+    if (id && !id.startsWith(`${self}-`) && idIsLive(id) && !existsSync(join(path, "retained")))
+      return false; // in flight
+    try {
+      return readdirSync(path).some((file) => file.startsWith("docker-") && file.endsWith(".json"));
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+      throw error;
+    }
+  });
+}
+
+/**
+ * Join a build namespace (`$TMPDIR/kb-test-builds-<project>`) for a suite or a
+ * captured command. Its first live joiner owns it; every other process joining
+ * while that owner lives is a guest that may build into and read its artifacts
+ * (KB_TEST_PROJECT lookup) but never removes it. Every joiner publishes a
+ * member record for its whole membership, so the owner's cleanup sees guests
+ * between their captures too.
+ */
+async function acquireNamespace(project) {
+  let pending = namespaces.get(project);
+  if (!pending) {
+    const directory = buildArtifactDirectory(project);
+    const id = `${SELF()}-${++lifecycleSequence}`;
+    pending = withLifecycleLock(() => {
+      mkdirSync(directory, { recursive: true });
+      let owner;
+      try {
+        owner = readFileSync(join(directory, "owner"), "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") owner = "unreadable";
+      }
+      const owns = owner === undefined || !idIsLive(owner);
+      if (owns) writeFileSync(join(directory, "owner"), id);
+      writeFileSync(join(directory, `member-${id}`), owns ? "owner" : "guest");
+      return { owner: owns, id, project, directory, count: 0 };
+    });
+    namespaces.set(project, pending);
+    pending.catch(() => namespaces.delete(project));
+  }
+  const entry = await pending;
+  entry.count++;
+  return entry;
+}
+
+/**
+ * Leave a namespace. The owner's last leave removes it only when asked, no
+ * other member is live and no registry retains Docker intent; otherwise it
+ * gives up ownership and leaves the artifacts. Guests never remove.
+ */
+async function releaseNamespace(entry, { remove = false } = {}) {
+  if (--entry.count > 0) return;
+  namespaces.delete(entry.project);
+  await withLifecycleLock(() => {
+    const { directory, id } = entry;
+    rmSync(join(directory, `member-${id}`), { force: true });
+    if (!entry.owner || !existsSync(directory)) return;
+    let owner;
+    try {
+      owner = readFileSync(join(directory, "owner"), "utf8");
+    } catch {}
+    if (owner !== id) return;
+    const members = readdirSync(directory).filter(
+      (name) => name.startsWith("member-") && idIsLive(name.slice("member-".length)),
+    );
+    if (remove && members.length === 0 && retainedRegistries(directory).length === 0) {
+      // Rename first: a later joiner starts a fresh namespace, never a half-removed one.
+      const trash = `${directory}.removing-${id}`;
+      renameSync(directory, trash);
+      rmSync(trash, { recursive: true, force: true });
+    } else rmSync(join(directory, "owner"), { force: true });
+  });
+}
+
+/**
+ * A fresh registry for one captured command, unique for all time
+ * (`build-groups-<pid>-<start time>-<seq>`), so a capture drains, cancels and
+ * removes only its own groups, and no stale link can ever name another run's
+ * registry. It is linked into the delegating ancestor's registry (inherited
+ * KB_TEST_BUILD_GROUPS), which therefore still drains its groups and Docker
+ * intent if this process is force-killed.
+ */
+function claimBuildRegistry(entry) {
+  return withLifecycleLock(() => {
+    const retained = retainedRegistries(entry.directory);
+    if (retained.length > 0)
       throw Object.assign(
         new Error(
-          "Previous Docker build drain is incomplete; retain the build namespace for inspection",
+          `Previous Docker build drain is incomplete (${retained.join(", ")}); retain the build namespace for inspection`,
         ),
         { drainIncomplete: true },
       );
-    mkdirSync(groups, { recursive: true });
+    const registry = join(entry.directory, `build-groups-${SELF()}-${++lifecycleSequence}`);
+    mkdirSync(registry);
+    activeRegistries.add(registry);
+    const parent = process.env.KB_TEST_BUILD_GROUPS;
+    try {
+      const link =
+        isBuildRegistryPath(parent) && existsSync(parent)
+          ? linkBuildRegistry(parent, registry)
+          : undefined;
+      return { registry, link };
+    } catch (error) {
+      activeRegistries.delete(registry);
+      rmSync(registry, { recursive: true, force: true });
+      throw error;
+    }
+  });
+}
+
+export async function runCaptured(file, args, env, secrets, project, timeoutMs, signal) {
+  let supervisor;
+  let drainIncomplete = false;
+  let namespace;
+  let claim;
+  try {
+    let out;
+    namespace = await acquireNamespace(project);
+    claim = await claimBuildRegistry(namespace);
     // Behavioral commands have no build deadline, but still own their descendants
     // until exit/cancellation. Synchronous exec blocked SIGINT and skipped cleanup.
     supervisor = createBuildSupervisor({
       timeoutMs: timeoutMs ?? null,
-      groupDirectory: groups,
+      groupDirectory: claim.registry,
       signal,
     });
-    out = (await supervisor.run(file, args, ROOT, { env, capture: true })).stdout;
+    out = (
+      await supervisor.run(file, args, ROOT, {
+        env: { ...env, KB_TEST_BUILD_GROUPS: claim.registry },
+        capture: true,
+      })
+    ).stdout;
     process.stdout.write(redactText(out, secrets));
     return out;
   } catch (error) {
     drainIncomplete = error.drainIncomplete === true;
     const combined = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message}`;
     process.stderr.write(redactText(combined, secrets));
-    writeFailureArtifact(project, error, secrets);
+    // A guest's failure never overwrites the namespace owner's diagnostic log.
+    writeFailureArtifact(
+      namespace?.owner === false ? `${project}-guest-${namespace.id}` : project,
+      error,
+      secrets,
+    );
     throw error;
   } finally {
     supervisor?.close();
-    if (supervisor && !drainIncomplete) rmSync(groups, { recursive: true, force: true });
+    if (claim) {
+      if (drainIncomplete) {
+        if (existsSync(claim.registry)) writeFileSync(join(claim.registry, "retained"), "");
+      } else {
+        rmSync(claim.registry, { recursive: true, force: true });
+        if (claim.link) rmSync(claim.link, { force: true });
+      }
+      activeRegistries.delete(claim.registry);
+    }
+    if (namespace) await releaseNamespace(namespace);
   }
 }
 
@@ -1468,8 +1691,9 @@ export async function runSuite(name, suite = SUITES[name], options = {}) {
   const project =
     options.project ??
     (options.buildOnly
-      ? ((options.env ?? process.env).KB_TEST_PROJECT ?? "standalone")
-      : `kb-test-${name}-${process.pid}-${randomBytes(3).toString("hex")}`);
+      ? ((options.env ?? process.env).KB_TEST_PROJECT ??
+        `${kbTestNamePrefix(options.env ?? process.env)}standalone`)
+      : `${kbTestNamePrefix(options.env ?? process.env)}kb-test-${name}-${process.pid}-${randomBytes(3).toString("hex")}`);
   const secrets = {
     pgPassword: randomBytes(16).toString("hex"),
   };
@@ -1505,9 +1729,19 @@ export async function runSuite(name, suite = SUITES[name], options = {}) {
   const ownsWorkerImage = workerImage !== undefined && !suppliedModelImage;
   const sshImage =
     usesSource(suite, "createSshFixture(") && !options.buildOnly
-      ? `kb-mirror-ssh-fixture:${project}`
+      ? `${kbTestNamePrefix(options.env ?? process.env)}kb-mirror-ssh-fixture:${project}`
       : undefined;
+  let namespace;
   try {
+    // Held for the whole suite, so its captures and final cleanup see one owner.
+    namespace = await acquireNamespace(project);
+    // A suite writes its namespace (artifacts, image names, Compose project). A
+    // live run that owns it (e.g. one whose KB_TEST_PROJECT this process
+    // inherited) keeps it: its artifacts stay readable, never rebuilt here.
+    if (!namespace.owner)
+      throw new Error(
+        `Build namespace ${project} belongs to a live run; give this run its own KB_TEST_PROJECT (or none) or wait for that run to end.`,
+      );
     const childEnv = {
       ...process.env,
       // Asset-enabled cases opt in with their own in-process fixture settings.
@@ -1776,7 +2010,9 @@ export async function runSuite(name, suite = SUITES[name], options = {}) {
       process.off("SIGINT", onInt);
       process.off("SIGTERM", onTerm);
       const images = [];
-      if (!drainIncomplete) {
+      // Project-labelled images and containers belong to the namespace owner: a
+      // guest (sharing a live run's KB_TEST_PROJECT) never removes them.
+      if (!drainIncomplete && namespace?.owner) {
         if (sshImage) images.push(sshImage);
         if (ownsWorkerImage && (!options.buildOnly || !built)) images.push(workerImage);
         images.push(...Object.values(deploymentImages ?? {}));
@@ -1784,8 +2020,12 @@ export async function runSuite(name, suite = SUITES[name], options = {}) {
       try {
         removeRunImages(images, project);
       } finally {
-        if (!drainIncomplete && (!options.buildOnly || !built))
-          rmSync(buildArtifactDirectory(project), { recursive: true, force: true });
+        // A guest (a build-only run that adopted a live run's KB_TEST_PROJECT)
+        // shares that run's artifacts and never removes them.
+        if (namespace)
+          await releaseNamespace(namespace, {
+            remove: !drainIncomplete && (!options.buildOnly || !built),
+          });
       }
     }
   }

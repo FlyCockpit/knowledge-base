@@ -26,17 +26,24 @@ describe("migration and full-bundle configuration", () => {
     expect(backupWarningCode(warnings[0] ?? "")).toBe("BUCKET_MISSING");
     expect(backupCommonConfigWarnings({ BACKUP_ENABLED: false })).toEqual([]);
   });
+  it("defaults backups off and ignores leftover bucket settings while off", () => {
+    expect(sharedVars.BACKUP_ENABLED.parse(undefined)).toBe(false);
+    const config = { BACKUP_ENABLED: false, BACKUP_S3_BUCKET: "fixture", BACKUP_S3_REGION: "auto" };
+    expect(backupCommonConfigWarnings(config)).toEqual([]);
+    expect(backupMonitorConfigWarnings(config)).toEqual([]);
+  });
   it("continues to require independent monitor credentials", () => {
     expect(
       backupMonitorConfigWarnings({
+        BACKUP_ENABLED: true,
         BACKUP_S3_BUCKET: "fixture",
         BACKUP_S3_ACCESS_KEY_ID: "writer",
         BACKUP_MONITOR_S3_ACCESS_KEY_ID: "writer",
         BACKUP_MONITOR_S3_SECRET_ACCESS_KEY: "fixture",
       }),
     ).toContain(BACKUP_WARNINGS.MONITOR_KEY_SHARED);
-    expect(backupMonitorConfigWarnings({ BACKUP_S3_BUCKET: "fixture" })).toContain(
-      BACKUP_WARNINGS.MONITOR_KEY_MISSING,
-    );
+    expect(
+      backupMonitorConfigWarnings({ BACKUP_ENABLED: true, BACKUP_S3_BUCKET: "fixture" }),
+    ).toContain(BACKUP_WARNINGS.MONITOR_KEY_MISSING);
   });
 });

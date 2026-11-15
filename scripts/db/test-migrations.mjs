@@ -3,6 +3,12 @@
  * `pnpm db:test-migrations` — end-to-end test of the migration tooling
  * against a DISPOSABLE Postgres (a throwaway `postgres:18` docker container,
  * or `--server-url <superuser url>` for one you already run, e.g. CI).
+ * `--container-prefix <name>` (or TEST_MIGRATIONS_CONTAINER_PREFIX) names the
+ * throwaway container `<name>-<hex>` (default `knowledge-base-test-migrations`),
+ * so a shared machine's containers stay in their own namespace. Every database
+ * and role it creates carries a per-run random suffix, so a `--server-url`
+ * server's real databases (`knowledge_base`, a dev checkout's) are never
+ * touched; the run removes exactly what it created.
  *
  * It copies the db tooling + packages/db into a temp git repo (so nothing in
  * this checkout is written) and exercises:
@@ -21,6 +27,9 @@
  *     once; a deterministic failure leaves no partial change and stops
  *   - runtime: an attempt killed after COMMIT is recorded applied (never
  *     re-run); one killed before COMMIT is retried; edited applied files refused
+ *   - runtime: BACKUP_ENABLED=true refuses even a fresh database when the
+ *     hook's destination check (`--check-destination`) fails or the hook is
+ *     missing; off never calls it
  *   - runtime: in-place breaking changes (and the retired marker) refused on a
  *     served database, nothing applied; a fresh database applies them;
  *     db-ahead refusal, no-history refusal, wait mode
@@ -86,8 +95,34 @@ function freePort() {
   });
 }
 
-async function startPostgres() {
-  const name = `knowledge-base-test-migrations-${randomBytes(4).toString("hex")}`;
+/** The throwaway container's name prefix: `--container-prefix`, then the env var. */
+function containerPrefix() {
+  const index = process.argv.indexOf("--container-prefix");
+  const prefix =
+    index >= 0
+      ? process.argv[index + 1]
+      : process.env.TEST_MIGRATIONS_CONTAINER_PREFIX || "knowledge-base-test-migrations";
+  if (!prefix || !/^[a-z0-9][a-z0-9_.-]*$/.test(prefix))
+    throw new Error("--container-prefix needs a Docker name prefix ([a-z0-9][a-z0-9_.-]*)");
+  return prefix;
+}
+
+/**
+ * @param {(stop: () => void) => void} register receives the container's
+ * removal before `docker run`, so a signal at any point during the startup
+ * (removing a container that does not exist yet is harmless) removes it.
+ */
+async function startPostgres(register) {
+  const name = `${containerPrefix()}-${randomBytes(4).toString("hex")}`;
+  const password = randomBytes(24).toString("hex");
+  // -v: a force-removed --rm container keeps its anonymous PGDATA volume.
+  let stopped = false;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    sh("docker", ["rm", "-f", "-v", name]);
+  };
+  register(stop);
   const run = sh("docker", [
     "run",
     "-d",
@@ -95,16 +130,19 @@ async function startPostgres() {
     "--name",
     name,
     "-e",
-    "POSTGRES_PASSWORD=postgres",
+    `POSTGRES_PASSWORD=${password}`,
     "-p",
     // A fixed host port (picked free just now): a random one would change
     // when the contract scenarios restart the container.
     `127.0.0.1:${await freePort()}:5432`,
     "postgres:18",
   ]);
-  if (run.code !== 0) throw new Error(`docker run failed: ${run.out}`);
+  if (run.code !== 0) {
+    stop();
+    throw new Error(`docker run failed: ${run.out}`);
+  }
   const port = sh("docker", ["port", name, "5432/tcp"]).out.trim().split("\n")[0].split(":").at(-1);
-  const url = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
+  const url = `postgresql://postgres:${password}@127.0.0.1:${port}/postgres`;
   for (let i = 0; i < 60; i++) {
     const client = new pg.Client({ connectionString: url });
     try {
@@ -116,14 +154,13 @@ async function startPostgres() {
       const again = new pg.Client({ connectionString: url });
       await again.connect();
       await again.end();
-      // -v: a force-removed --rm container keeps its anonymous PGDATA volume.
-      return { url, port, container: name, stop: () => sh("docker", ["rm", "-f", "-v", name]) };
+      return { url, port, container: name, stop };
     } catch {
       await client.end().catch(() => {});
       await delay(1000);
     }
   }
-  sh("docker", ["rm", "-f", "-v", name]);
+  stop();
   throw new Error("disposable Postgres did not become ready");
 }
 
@@ -225,15 +262,40 @@ INSERT INTO project (id,"updatedAt","ownerId",name,notes) VALUES ('fx_project_1'
 async function main() {
   const args = process.argv.slice(2);
   const serverIndex = args.indexOf("--server-url");
-  const server =
-    serverIndex >= 0
-      ? {
-          url: args[serverIndex + 1],
-          port: new URL(args[serverIndex + 1]).port || "5432",
-          container: null,
-          stop: () => {},
-        }
-      : await startPostgres();
+  // The container goes whatever happens: Ctrl-C / TERM while it starts or
+  // while the steps run (the step cleanup cannot run then; the container, and
+  // every scratch database in it, are removed with it), a startup that fails,
+  // a throw before the steps, or a failed step. The handlers are installed
+  // before the container is created.
+  let stopServer = () => {};
+  const onSignal = (signal) => {
+    stopServer();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  try {
+    const server =
+      serverIndex >= 0
+        ? {
+            url: args[serverIndex + 1],
+            port: new URL(args[serverIndex + 1]).port || "5432",
+            container: null,
+            stop: () => {},
+          }
+        : await startPostgres((stop) => {
+            stopServer = stop;
+          });
+    await runSteps(server);
+  } finally {
+    stopServer();
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  }
+}
+
+/** @param {{ url: string, port: string, container: string | null }} server */
+async function runSteps(server) {
   const { repo, git } = makeRepo();
   const migrations = path.join(repo, "packages/db/prisma/migrations");
   const schemaFile = path.join(repo, "packages/db/prisma/schema/projects.prisma");
@@ -243,13 +305,34 @@ async function main() {
     path.join(repo, "scripts/db/lib/scratch-db.mjs")
   );
   const localName = `knowledge_base_test_${runSuffix}`;
+  // The fixture checkout's own default name is the per-run scratch name, so a
+  // shared --server-url never sees the real `knowledge_base`. db:reset:local
+  // refuses EXPECTED_DB (and resets only DEFAULT_MAIN_DB), so rename
+  // DEFAULT_MAIN_DB in the fixture copy instead of exporting EXPECTED_DB.
+  const fixtureNames = path.join(repo, "scripts/db/lib/local-db-name.mjs");
+  const namesSource = readFileSync(fixtureNames, "utf8");
+  const renamed = namesSource.replace(
+    'export const DEFAULT_MAIN_DB = "knowledge_base";',
+    `export const DEFAULT_MAIN_DB = "${localName}";`,
+  );
+  assert.notEqual(renamed, namesSource, "fixture DEFAULT_MAIN_DB rewrite");
+  writeFileSync(fixtureNames, renamed);
   const env = {
     ...process.env,
     EXPECTED_PORT: server.port,
-    EXPECTED_DB: localName,
     CHECKPOINT_DISABLE: "1",
   };
-  delete env.DATABASE_URL;
+  // Never inherit the checkout's target or guard escapes into this fixture.
+  for (const name of [
+    "DATABASE_URL",
+    "SHADOW_DATABASE_URL",
+    "CHECK_DATABASE_URL",
+    "ASSERT_LOCAL_DB_ESCAPE",
+    "EXPECTED_DB",
+    "BACKUP_ENABLED",
+    ...Object.keys(env).filter((key) => key.startsWith("ALLOW_NONLOCAL_DB_")),
+  ])
+    delete env[name];
   const localUrl = withDatabase(server.url, localName);
   const node = (script, scriptArgs = [], extraEnv = {}) =>
     sh(process.execPath, [path.join(repo, "scripts/db", script), ...scriptArgs], {
@@ -515,6 +598,58 @@ async function main() {
     });
 
     await step(
+      "runtime: BACKUP_ENABLED=true refuses a fresh database on a failing or missing hook (no fresh exemption); off never calls it",
+      async () => {
+        const url = await freshDb("knowledge_base_test_fresh_backup");
+        const hook = path.join(repo, "failing-backup-hook.sh");
+        const calls = path.join(repo, "failing-backup-hook.log");
+        writeFileSync(hook, `echo "$*" >> ${JSON.stringify(calls)}\nexit 71\n`);
+        const applied = async () =>
+          (
+            await query(
+              url,
+              "SELECT count(*)::int AS n FROM pg_tables WHERE tablename = '_prisma_migrations'",
+            )
+          ).rows[0].n === 1
+            ? (
+                await query(
+                  url,
+                  "SELECT count(*)::int AS n FROM _prisma_migrations WHERE finished_at IS NOT NULL",
+                )
+              ).rows[0].n
+            : 0;
+        try {
+          const refused = await runtime(url, {
+            backupHook: hook,
+            env: { BACKUP_ENABLED: "true" },
+          });
+          assert.equal(refused.code, 1, refused.out);
+          assert.match(refused.out, /BACKUP_ENABLED=true but .*refusing to migrate/);
+          assert.doesNotMatch(refused.out, /prisma migrate deploy…/);
+          assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), ["--check-destination"]);
+          assert.equal(await applied(), 0, "nothing applied");
+
+          const missing = await runtime(url, {
+            backupHook: path.join(repo, "no-such-backup-hook.sh"),
+            env: { BACKUP_ENABLED: "true" },
+          });
+          assert.equal(missing.code, 1, missing.out);
+          assert.match(missing.out, /BACKUP_ENABLED=true but .*refusing to migrate/);
+          assert.equal(await applied(), 0, "nothing applied");
+
+          rmSync(calls, { force: true });
+          const off = await runtime(url, { backupHook: hook, env: { BACKUP_ENABLED: "false" } });
+          assert.equal(off.code, 0, off.out);
+          assert.throws(() => readFileSync(calls), /ENOENT/, "the hook never ran");
+          assert.equal(await applied(), readMigrationsFolder(migrations).length);
+        } finally {
+          rmSync(hook, { force: true });
+          rmSync(calls, { force: true });
+        }
+      },
+    );
+
+    await step(
       "runtime: an in-place breaking migration is refused on a served database, applied on a fresh one",
       async () => {
         // A brand-new database has no running release to break: its whole
@@ -773,7 +908,11 @@ async function main() {
       // A slow backup keeps the first leader inside its locked section
       // while the second one polls the runner lock.
       const hook = path.join(repo, "slow-backup-hook.sh");
-      writeFileSync(hook, `sleep 2\nbash ${JSON.stringify(fixtureHook)} "$@"\n`);
+      const hookLog = path.join(repo, "slow-backup-hook.log");
+      writeFileSync(
+        hook,
+        `echo "$*" >> ${JSON.stringify(hookLog)}\nsleep 2\nbash ${JSON.stringify(fixtureHook)} "$@"\n`,
+      );
       const lines = [];
       const original = { log: console.log, error: console.error };
       console.log = (...a) => lines.push(a.join(" "));
@@ -786,7 +925,7 @@ async function main() {
             pollMs: 200,
             waitTimeoutMs: 60_000,
             backupHook: hook,
-            env: { DATABASE_URL: db, PATH: process.env.PATH },
+            env: { DATABASE_URL: db, PATH: process.env.PATH, BACKUP_ENABLED: "true" },
           });
         codes = await Promise.all([leader(), leader()]);
       } finally {
@@ -794,9 +933,12 @@ async function main() {
         rmSync(hook, { force: true });
       }
       const out = lines.join("\n");
+      // Counted on the hook itself, not on a log line: one leader backs up.
+      const hookRuns = readFileSync(hookLog, "utf8").trim().split("\n");
+      rmSync(hookLog, { force: true });
       assert.deepEqual(codes, [0, 0], out);
       assert.equal(out.match(/prisma migrate deploy…/g)?.length, 1, out);
-      assert.equal(out.match(/running the pre-migration full-bundle backup hook/g)?.length, 1, out);
+      assert.deepEqual(hookRuns, ["--label pre-migrate"], out);
       assert.match(out, /another migration runner is working on this database/);
       const rows = await query(
         db,
@@ -1060,7 +1202,6 @@ async function main() {
         await client.end();
       }
     });
-    server.stop();
     rmSync(repo, { recursive: true, force: true });
   }
   const failed = results.filter((r) => !r.ok);

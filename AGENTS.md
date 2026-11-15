@@ -37,7 +37,7 @@ When you do ask: state the options, your recommendation, and what you will do if
 
 ## Scope discipline
 
-- **Prefer what exists.** Before adding a component, hook, procedure, or util, search for one that fits (`packages/ui/src/components/`, `apps/web/src/hooks/`, `packages/api/src/lib/`). A near-miss you extend beats a near-duplicate you add. Three call sites is the threshold for extracting an abstraction — not one. The one exception is authorization: a role or permission check needed by a second router becomes a registered builder or middleware in `packages/api/src/index.ts` (`procedureAccessLevels` / `middlewareAccessLevels`), because duplicated auth logic drifts and drift is a leak. `pnpm policy:access-matrix` fails on any procedure built on an unregistered gate.
+- **Prefer what exists.** Before adding a component, hook, procedure, or util, search for one that fits (`packages/ui/src/components/`, `apps/web/src/hooks/`, `packages/api/src/lib/`). A near-miss you extend beats a near-duplicate you add. Three call sites is the threshold for extracting an abstraction — not one. The one exception is authorization: a role or permission check needed by a second router becomes a registered builder or middleware in `packages/api/src/index.ts` (`procedureAccessLevels` / `middlewareAccessLevels`), because duplicated auth logic drifts and drift is a leak. `pnpm policy:access-matrix` fails on any procedure built on an unregistered gate. Admin authority is the single `checkAdminAuthority` there; `requireAdmin`, `requireAdminOr404` and `admin-session-gate.ts` call it and only map its failure.
 - **Don't invent a second way to do something this repo already does.**
 - **Keep the diff to the task.** If you spot something unrelated worth fixing, say so and let the user decide.
 
@@ -143,11 +143,11 @@ Prisma Migrate owns schema history. Edit `packages/db/prisma/schema/`, generate 
 - `prisma db push` (including `--force-reset` / `--accept-data-loss`) — bypasses migration history.
 - `prisma db drop`, `dropdb`, raw `DROP DATABASE|SCHEMA`, or ad-hoc `DROP TABLE`, `TRUNCATE`, unqualified `DELETE`.
 
-`migrate deploy|diff|resolve|status` are permitted through reviewed wrappers and documented recovery. Table drops/truncation/backfills belong only in reviewed `packages/db/prisma/migrations/*/{migration,contract}.sql`; database/schema drops remain forbidden there. CI summarizes destructive effects and verifies ordering, immutability, fixtures and replay consistency. The generated contract delays deletions until at least seven days of safe runtime admission.
+`migrate deploy|diff|resolve|status` are permitted through reviewed wrappers and documented recovery; agents never run a raw `prisma migrate deploy` or `prisma migrate resolve` (the hook denies both), and `pnpm db:migrate:apply` refuses while another session holds the runner, Prisma or DADP lock or a KB restore is pending. Table drops/truncation/backfills belong only in reviewed `packages/db/prisma/migrations/*/{migration,contract}.sql`; database/schema drops remain forbidden there. CI summarizes destructive effects and verifies ordering, immutability, fixtures and replay consistency. The generated contract delays deletions until at least seven days of safe runtime admission.
 
 **Exact sanctioned occurrences:** `scripts/policy-checks.sh` pins complete-line SHA-256 and counts: the local-only `scripts/db/lib/scratch-db.mjs` database removal (exact checkout/shadow or random scratch name, localhost-only), and declarative hook deny prefixes in `scripts/claude-hooks/settings.json`. Never add a blanket file exemption. `destructive:audited` is only for scanner-proven inert mentions, never executing code.
 
-Safe alternatives: `pnpm db:migrate` + `pnpm db:migrate:apply` for schema changes; `pnpm db:seed` for guarded local seed; explicit `pnpm db:reset:local` for disposable local rebuild. See `pnpm doctor` for unreachable services.
+Safe alternatives: `pnpm db:migrate` + `pnpm db:migrate:apply` for schema changes; `pnpm db:seed` for guarded local seed; explicit `pnpm db:reset:local` for disposable local rebuild (it drops only a database carrying the disposable-local mark and refuses `EXPECTED_DB`; a person adopts an older one with `pnpm db:worktree --adopt`; agents never run `--adopt` or write the mark). See `pnpm doctor` for unreachable services.
 
 ### Agent Safety Rules
 
@@ -204,7 +204,7 @@ Each hard-hittable surface gets its own limiter (`keyPrefix`). Do not lower a sh
 
 Dokploy on a VPS is the documented deployment target. Migrations, encrypted full-bundle backups and offline restore use the server image. `pnpm dokploy:config` emits Compose and a checklist; `--project` defaults to `knowledge-base-<environment>`, `--proxy-network` to `dokploy-network`. Confirm the deployed commit with `pnpm deploy:check <url>`; `pnpm dokploy:verify` is deeper host-side acceptance.
 
-`Dockerfile` and `Dockerfile.worker` stay in sync (COPY lists, pnpm pin, entrypoint). `pnpm docker:check-copy` gates builder COPY lists.
+`Dockerfile` and `Dockerfile.worker` stay in sync (COPY lists, pnpm pin, entrypoint). Both keep `ENTRYPOINT ["docker-entrypoint.sh"]`: it is PID 1 while validating and migrating, then drops the startup-only backup/asset operator keys and execs tini. `pnpm docker:check-copy` gates builder COPY lists.
 
 ### Dockerfiles — keep server and worker in sync
 
@@ -224,6 +224,6 @@ A snapshot holds maintenance coordination, DADP then Prisma `72707369` while cap
 
 `MIGRATE_ON_START` defaults true for server and false for worker. Waiting services register `KB_INSTANCE_ID` (fresh per-start UUID) and wait up to 300 seconds; wait mode never applies deletions. Long full-bundle backups can outlast a worker wait: keep automatic restart enabled and retry after the leader completes. One-shot commands do not register runtime instances.
 
-A proven-empty managed catalog with no applied history (`0_init` first) applies every pending folder without a backup — there is nothing to back up. Every initialized-database migration or due drop requires a verified encrypted Postgres + Git + file-store bundle; missing recipient/output, disabled backup or failed configured S3 upload blocks mutation. Local completed bundle pairs are valid. `BACKUP_SCHEDULE=off|daily` defaults off; UTC hour 3, local retention 14 daily pairs. No plain-dump fallback.
+A proven-empty managed catalog with no applied history (`0_init` first) has nothing to bundle: with backups enabled the runner runs the hook's `--check-destination` instead, and no destination refuses the migration, a brand-new database too. Backups default off (`BACKUP_ENABLED` defaults to `false`); with it on, every migrating start runs `pre-migrate.sh --startup-notice` and refuses without a destination (a volume mounted at `BACKUP_DIR` or `BACKUP_S3_BUCKET`; the unmounted image `/app/backups` does not count), even with nothing pending; initialized-database migrations and due drops proceed without a backup while off. When enabled, they require a verified encrypted Postgres + Git + file-store bundle; missing recipient/output or failed configured S3 upload blocks mutation. Local completed bundle pairs are valid. `BACKUP_SCHEDULE=off|daily` defaults off; UTC hour 3, local retention 14 daily pairs. No plain-dump fallback.
 
 Merged migrations are immutable; databases without migration history but with application objects are refused. Preserve restore intent, asset controls, authority/key validation and both native volume fences. Offline restore accepts a completed bundle and empty DB/data targets only; retain operator identities and original master/auth keys separately. Use the server image's `hold-deletions [days|--clear]` for an owner hold; never bypass safety with ad-hoc SQL.

@@ -352,7 +352,10 @@ describe("providers durable registry and real fake HTTP", () => {
     };
     // Exercise claim+release on real SQL first, then real idempotent Redis add+ack.
     for (let cycle = 0; cycle < 3; cycle++) await runDurableDispatcherCycle(failingDispatcher);
-    expect((await jobRow(unpublished.jobId)).state).toBe("PENDING");
+    // The dispatcher marks a row PUBLISHED before the Redis add (dispatch.ts);
+    // a failed add leaves it PUBLISHED for the idempotent republish scan. What
+    // must not happen is a renewal: the probe deadline stays where it was.
+    expect((await jobRow(unpublished.jobId)).state).toBe("PUBLISHED");
     expect((await jobRow(unpublished.jobId)).nextRunAt).toEqual(stale);
     // Exclude that sibling while testing real Redis publication of the other job.
     await prisma.durableJob.update({

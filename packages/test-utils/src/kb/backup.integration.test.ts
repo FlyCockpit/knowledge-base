@@ -19,6 +19,7 @@ import {
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
 import { type KbPostgresCluster, openKbPostgresClusterFromEnv } from "./postgres";
 import { createAssetS3Fixture } from "./s3-fixture";
+import { kbTestName } from "./test-names.mjs";
 
 const root = resolve(import.meta.dirname, "../../../..");
 let cluster: KbPostgresCluster;
@@ -78,7 +79,7 @@ async function encryptedInventory(file: string, identity: string) {
       const first = header.indexOf(10);
       const second = header.indexOf(10, first + 1);
       if (first >= 0 && second >= 0) {
-        expect(header.subarray(0, first).toString()).toBe("kb/backup/1");
+        expect(header.subarray(0, first).toString()).toBe("kb/backup/3");
         inventory = JSON.parse(header.subarray(first + 1, second).toString()).inventory;
         header = Buffer.alloc(0);
       } else if (header.length > 1024 * 1024)
@@ -187,7 +188,7 @@ it("drains a live Hono auth request and real worker job, denies late OAuth/uploa
     });
     // P6: only the fenced server may initialize storage authority on an empty instance.
     for (const role of ["server", "worker"]) {
-      const name = `kb-65-live-${role}-${randomUUID()}`;
+      const name = kbTestName(`kb-65-live-${role}-${randomUUID()}`);
       const env = {
         ...environment,
         SERVER_PORT: String(port),

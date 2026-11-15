@@ -39,7 +39,19 @@ Mirror recovery requires readable, valid helper and process-group ownership evid
 
 ## Quiesced backup bundles
 
-Scheduled/operator `scripts/backup.sh` backups require `BACKUP_AGE_RECIPIENT`.
+Backups default off: `BACKUP_ENABLED` defaults to `false`. No storage or
+scheduler is required, migrations proceed without backup hooks, and
+health/freshness does not degrade. Startup prints one notice explaining how to
+enable them. Opt in with `BACKUP_ENABLED=true`, `BACKUP_AGE_RECIPIENT` and a
+destination: a volume mounted at `BACKUP_DIR` and/or `BACKUP_S3_BUCKET` (the
+image's `/app/backups` without a volume does not count);
+regenerate Dokploy config with `--backups true` for the shared output volume and
+backup service. `BACKUP_SCHEDULE=daily` opts into daily runs; default is off.
+Scheduled/operator `scripts/backup.sh` backups require `BACKUP_AGE_RECIPIENT` only when enabled.
+Enabled with no recipient or no destination, every backup refuses before
+touching the database and every start that migrates refuses at startup, even
+with nothing pending and on a brand-new database (the runner takes no bundle of
+an empty catalog but still checks the destination).
 The server image backup role mounts the data volume read-only and inventories only repos/ and assets/.
 Use pinned age v1.3.2; recommend `age-keygen -pq` and its `age1pq1…` public
 recipient. Classic `age1…` recipients also work. Keep the private identity,
@@ -67,7 +79,7 @@ A successful backup clears admission only after the offline supervisor drains
 and releases its locks. Runtime Swarm policies restart on any exit (Compose
 uses unless-stopped), so scheduled maintenance returns both processes to service.
 While the request persists, replacement startup refuses admission and retries.
-Required pre-migration/pre-drop backups use these same encrypted full bundles; no database-only fallback exists.
+When enabled, required pre-migration/pre-drop backups use these same encrypted full bundles; no database-only fallback exists. Disabled backups skip these hooks without blocking migrations or due deletions.
 
 ## Offline restore
 

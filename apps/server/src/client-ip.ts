@@ -27,6 +27,10 @@ import type { Context } from "hono";
  *   generated Dokploy Compose sets 1 (Traefik). The app must be reachable
  *   ONLY through that chain, or a direct caller can forge the entries.
  *
+ * Some proxies (Azure Application Gateway by default) append the client's
+ * source port: `1.2.3.4:5678` or `[2001:db8::1]:5678`. The selected entry has
+ * that port removed before validation; a bare IPv6 literal is left alone.
+ *
  * There is no fallback to the leftmost (client-supplied) entry: when the
  * chain is shorter than N + 1, or the selected entry is not an IP literal,
  * the request did not arrive through the configured proxies and is keyed on
@@ -46,9 +50,39 @@ export function resolveClientIp(c: Context): string {
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
   // `forwarded[forwarded.length - hops]` is N-from-right in [...xff, socket].
-  const candidate = forwarded[forwarded.length - hops];
-  if (candidate === undefined || isIP(candidate) === 0) return socket;
+  const selected = forwarded[forwarded.length - hops];
+  if (selected === undefined) return socket;
+  const candidate = stripForwardedPort(selected);
+  if (isIP(candidate) === 0) return socket;
   return candidate;
+}
+
+const BRACKETED_V6 = /^\[([^\]]+)\](?::(\d{1,5}))?$/;
+const V4_WITH_PORT = /^([^:]+):(\d{1,5})$/;
+
+/**
+ * Remove a proxy-appended port from ONE selected entry: `1.2.3.4:5678` →
+ * `1.2.3.4`, `[2001:db8::1]:5678` (or `[2001:db8::1]`) → `2001:db8::1`. A
+ * bracket form must hold IPv6 and the `host:port` form IPv4; anything else is
+ * returned unchanged and fails the caller's `isIP` check. A bare IPv6 literal
+ * has several colons and never matches the IPv4 form.
+ */
+function stripForwardedPort(entry: string): string {
+  const bracketed = BRACKETED_V6.exec(entry);
+  if (bracketed) {
+    const [, host = "", port] = bracketed;
+    return isIP(host) === 6 && validPort(port) ? host : entry;
+  }
+  const v4 = V4_WITH_PORT.exec(entry);
+  if (v4) {
+    const [, host = "", port] = v4;
+    return isIP(host) === 4 && validPort(port) ? host : entry;
+  }
+  return entry;
+}
+
+function validPort(port: string | undefined): boolean {
+  return port === undefined || Number(port) <= 65535;
 }
 
 let warnedUntrustedForwarded = false;

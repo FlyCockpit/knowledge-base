@@ -223,7 +223,7 @@ type BootstrapPrismaTx = {
 type BootstrapPrisma = BootstrapPrismaTx & {
   $transaction: <T>(fn: (tx: BootstrapPrismaTx) => Promise<T>) => Promise<T>;
   knowledgeBase: {
-    count(args: { where: { ownerId: string; state: "ACTIVE" } }): Promise<number>;
+    count(args: { where: { ownerId: string; state: { not: "TOMBSTONED" } } }): Promise<number>;
   };
 };
 

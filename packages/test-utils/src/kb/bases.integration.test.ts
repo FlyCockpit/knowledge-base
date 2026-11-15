@@ -24,7 +24,12 @@ import {
   readDocumentAtRevision,
   resolvePinnedRevision,
 } from "@knowledge-base/api/lib/kb/documents-read";
-import { hardenedGitEnv, kbBareRepoPath, readHeadSha } from "@knowledge-base/api/lib/kb/git-read";
+import {
+  hardenedGitEnv,
+  kbBareRepoPath,
+  readHeadSha,
+  readRefOrBroken,
+} from "@knowledge-base/api/lib/kb/git-read";
 import { createTreeReuseCommit } from "@knowledge-base/api/lib/kb/git-write";
 import { createMemoryRatePort } from "@knowledge-base/api/lib/kb/limits";
 import { prismaAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
@@ -653,7 +658,8 @@ describe("kb lifecycle integration", () => {
       }
       const unpublished = stage === "before-init" || stage === "before-cas";
       const repair = !unpublished && stage !== "published";
-      const actual = readHeadSha(repo);
+      // A corrupt ref reads as BROKEN_REF, as journal recovery reads it.
+      const actual = await readRefOrBroken(() => readHeadSha(repo));
       const refBytes = unpublished ? null : readFileSync(join(repo, "refs/heads/main"), "utf8");
 
       return { user, intent, kbId, repo, unpublished, repair, actual, refBytes };
@@ -694,7 +700,7 @@ describe("kb lifecycle integration", () => {
             repair ? "REPAIR_REQUIRED" : unpublished ? "TOMBSTONED" : "ACTIVE",
           );
           expect(row.headSha).toBe(stage === "published" ? intent.newRef : null);
-          expect(readHeadSha(repo)).toBe(actual);
+          expect(await readRefOrBroken(() => readHeadSha(repo))).toBe(actual);
           if (refBytes !== null)
             expect(readFileSync(join(repo, "refs/heads/main"), "utf8")).toBe(refBytes);
           const settled = await prisma.operationIntent.findUniqueOrThrow({

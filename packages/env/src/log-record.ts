@@ -88,6 +88,18 @@ export const LOG_SITES = {
   ],
   "kb.staging-cleanup": ["error", "query data janitor failed"],
   "kb.recovery-sweep": ["error", "journal recovery sweep failed"],
+  "kb.recovery-kb": [
+    "error",
+    "journal recovery failed for one knowledge base; it is marked REPAIR_REQUIRED and the sweep continues",
+  ],
+  "kb.recovery-kb-quarantined": [
+    "error",
+    "journal recovery still fails for a knowledge base that is already REPAIR_REQUIRED; the sweep continues",
+  ],
+  "kb.recovery-kb-unmarked": [
+    "error",
+    "journal recovery failed for one knowledge base that is not ACTIVE (creating, tombstoned or absent); its state is unchanged and the sweep continues",
+  ],
   "kb.index-build": ["error", "index build failed"],
   "kb.index-missing": ["error", "integrity: index file missing for a complete generation"],
   "kb.index-reader": ["warn", "index reader thread lost; replacing it"],

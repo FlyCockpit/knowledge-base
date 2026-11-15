@@ -1,5 +1,5 @@
 /** Reproducible CPU embedding build. No npm install, git clone, or runtime network. */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -56,14 +56,15 @@ export function createBuildSupervisor({
     throw new Error("invalid native build deadline");
   if (inheritedFd !== undefined && (!Number.isSafeInteger(inheritedFd) || inheritedFd < 3))
     throw new Error("invalid native build lease descriptor");
-  // test-kb creates this registry before admission. Nested native/cache owners
+  // test-kb creates this registry before admission and delegates it to its
+  // command explicitly (KB_TEST_BUILD_GROUPS). Nested native/cache owners
   // register their detached groups too, so killing an intermediate owner cannot
-  // strand its writers. Standalone native builders retain their existing scope.
-  const project = process.env.KB_TEST_PROJECT;
-  const inheritedGroups =
-    project && /^[a-zA-Z0-9-]+$/.test(project)
-      ? join(tmpdir(), `kb-test-builds-${project}`, "build-groups")
-      : undefined;
+  // strand its writers. KB_TEST_PROJECT names only the artifact namespace: it
+  // never selects a registry, so an unrelated process naming a live run's
+  // project cannot join (or be drained by) that run. Standalone native builders
+  // retain their existing scope.
+  const delegated = process.env.KB_TEST_BUILD_GROUPS;
+  const inheritedGroups = isBuildRegistryPath(delegated) ? delegated : undefined;
   const registry =
     cleanupDirectory ??
     (groupDirectory === null
@@ -186,13 +187,20 @@ export function createBuildSupervisor({
       let dockerName;
       let dockerRecord;
       const drainDaemons = async () => {
+        // Linked descendants' intent too: a force-killed nested owner left it.
         const records = groupDirectory
-          ? readdirSync(groupDirectory)
-              .filter((name) => name.startsWith("docker-") && name.endsWith(".json"))
-              .map((name) => [
-                join(groupDirectory, name),
-                JSON.parse(readFileSync(join(groupDirectory, name), "utf8")),
-              ])
+          ? registryGraph(groupDirectory).flatMap(([dir, names]) =>
+              names
+                .filter((name) => name.startsWith("docker-") && name.endsWith(".json"))
+                .flatMap((name) => {
+                  try {
+                    return [[join(dir, name), JSON.parse(readFileSync(join(dir, name), "utf8"))]];
+                  } catch (error) {
+                    if (error.code === "ENOENT") return []; // its owner acknowledged it
+                    throw error;
+                  }
+                }),
+            )
           : dockerName
             ? [[dockerRecord, { name: dockerName }]]
             : [];
@@ -225,11 +233,8 @@ export function createBuildSupervisor({
       const termed = new Set();
       const killed = new Set();
       const refresh = () => {
-        if (!groupDirectory) return;
-        for (const name of readdirSync(groupDirectory)) {
-          const match = /^(\d+)-(\d+)$/.exec(name);
-          if (match) groups.set(Number(match[1]), BigInt(match[2]));
-        }
+        if (groupDirectory)
+          for (const [pid, birth] of registeredGroups(groupDirectory)) groups.set(pid, birth);
       };
       const stop = () => {
         if (stopAt !== undefined) return;
@@ -624,6 +629,125 @@ export async function buildEmbeddingRuntime(args = process.argv.slice(2)) {
   }
 }
 
+/**
+ * A test-kb build-group registry: `$TMPDIR/kb-test-builds-<project>/build-groups-<pid>-<start>-<seq>`.
+ * Each capture's registry name is unique for all time, so a path names one instance.
+ */
+export function isBuildRegistryPath(path) {
+  return (
+    typeof path === "string" &&
+    isAbsolute(path) &&
+    /^kb-test-builds-[a-zA-Z0-9-]+\/build-groups-\d+-\d+-\d+$/.test(relative(tmpdir(), path))
+  );
+}
+
+/** Where `parent` records that `child` (a descendant's own registry) belongs to its drain. */
+function buildRegistryLink(parent, child) {
+  return join(parent, `link-${hash(child).slice(0, 16)}`);
+}
+
+/**
+ * A registry and, transitively, every registry a descendant linked into it. An
+ * ancestor drains its descendants' tools and Docker intent even when the
+ * intermediate owner was force-killed; a descendant never reaches its ancestor.
+ */
+function registryGraph(directory) {
+  const graph = [];
+  const seen = new Set();
+  const visit = (dir, top) => {
+    if (seen.has(dir)) return;
+    seen.add(dir);
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch (error) {
+      if (top || error.code !== "ENOENT") throw error;
+      return; // a descendant removed its drained registry
+    }
+    graph.push([dir, names]);
+    for (const name of names) {
+      if (!name.startsWith("link-")) continue;
+      let target;
+      try {
+        target = readFileSync(join(dir, name), "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        continue;
+      }
+      if (isBuildRegistryPath(target)) visit(target, false);
+    }
+  };
+  visit(directory, true);
+  return graph;
+}
+
+function registeredGroups(directory) {
+  const groups = new Map();
+  for (const [, names] of registryGraph(directory))
+    for (const name of names) {
+      const match = /^(\d+)-(\d+)$/.exec(name);
+      if (match) groups.set(Number(match[1]), BigInt(match[2]));
+    }
+  return groups;
+}
+
+/**
+ * Link a descendant's registry into its delegating ancestor's, under the
+ * ancestor's admission lock: either the ancestor's later cancellation sees the
+ * link, or the descendant inherits an already-closed admission.
+ */
+export function linkBuildRegistry(parent, child) {
+  if (!isBuildRegistryPath(parent) || !isBuildRegistryPath(child) || parent === child)
+    throw new Error("invalid build registry link");
+  const result = spawnSync(
+    "flock",
+    [
+      "--exclusive",
+      join(parent, "admission.lock"),
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      "--link-build-registry",
+      parent,
+      child,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" },
+  );
+  if (result.error || result.status !== 0)
+    throw new Error(`build registry link failed: ${result.error?.message ?? result.stderr}`);
+  return buildRegistryLink(parent, child);
+}
+
+/** Close admission here and, under each one's own lock, in every linked descendant registry. */
+function closeBuildAdmission(directory) {
+  writeFileSync(join(directory, "cancelled"), "");
+  for (const name of readdirSync(directory)) {
+    if (!name.startsWith("link-")) continue;
+    let target;
+    try {
+      target = readFileSync(join(directory, name), "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      continue;
+    }
+    if (!isBuildRegistryPath(target) || !existsSync(target)) continue;
+    const result = spawnSync(
+      "flock",
+      [
+        "--exclusive",
+        join(target, "admission.lock"),
+        process.execPath,
+        fileURLToPath(import.meta.url),
+        "--close-build-admission",
+        target,
+      ],
+      { stdio: "ignore" },
+    );
+    // A descendant that removed its drained registry meanwhile has nothing to admit.
+    if (result.status !== 0 && existsSync(target))
+      throw new Error(`build admission close failed for ${target}`);
+  }
+}
+
 /** Child-side admission under flock; no tool effects precede registration. */
 async function admitBuildTool([directory, lease, purpose, cmd, ...argv]) {
   const lock = statSync(join(directory, "admission.lock"), { bigint: true });
@@ -674,7 +798,10 @@ async function admitBuildTool([directory, lease, purpose, cmd, ...argv]) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "--admit-build-tool") await admitBuildTool(process.argv.slice(3));
-  else if (process.argv[2] === "--close-build-admission")
-    writeFileSync(join(process.argv[3], "cancelled"), "");
-  else await buildEmbeddingRuntime();
+  else if (process.argv[2] === "--close-build-admission") closeBuildAdmission(process.argv[3]);
+  else if (process.argv[2] === "--link-build-registry") {
+    const [parent, child] = process.argv.slice(3);
+    if (existsSync(join(parent, "cancelled"))) writeFileSync(join(child, "cancelled"), "");
+    writeFileSync(buildRegistryLink(parent, child), child);
+  } else await buildEmbeddingRuntime();
 }

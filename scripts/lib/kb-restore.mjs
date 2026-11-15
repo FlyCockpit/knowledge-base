@@ -68,6 +68,41 @@ function fail(code, cause) {
   error.code = code;
   throw error;
 }
+
+/**
+ * True only when a read-only probe proves the target holds no pending restore
+ * attempt (no control table, or none in a state other than READY). Any probe
+ * failure (lost session, a lock it cannot get within 2 s) is "unknown", false.
+ */
+async function noPendingAttempt(client) {
+  try {
+    await client.query("SET lock_timeout = '2s'");
+    const control = await client.query(
+      "SELECT to_regclass('knowledge_base_control.kb_restore') IS NOT NULL AS present",
+    );
+    if (control.rows[0]?.present !== true) return true;
+    return (
+      (await client.query(`SELECT 1 FROM ${TABLE} WHERE singleton AND state<>'READY'`)).rows
+        .length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Exit status of the restore CLI, the contract `scripts/backup/host.sh` acts
+ * on: 0 restored; 3 refused before this run wrote any restore state to a
+ * target that holds no earlier attempt ("refused, nothing changed": bad
+ * arguments, a missing data root or fence, a busy or non-empty target, an
+ * unreadable bundle, a cancel before the first write), so the stopped writers
+ * may start again; 1 anything else (the target may hold a partial attempt:
+ * keep the writers stopped and retry the same attempt offline).
+ */
+export const REFUSED_EXIT = 3;
+export function restoreExitCode(error) {
+  return error?.nothingChanged === true ? REFUSED_EXIT : 1;
+}
 async function directory(path) {
   const fd = await openPath(path, constants.O_RDONLY | constants.O_DIRECTORY);
   await fd.close();
@@ -314,8 +349,22 @@ export function validateRestoreCompatibility(metadata, archived, image) {
   }
   if (expected.size !== required.size) unsupported();
   for (const [type, labels] of Object.entries(RESTORE_SURFACE.enums)) {
-    const actual = catalog.get(`enum:${type}`)?.split(",");
-    if (!actual || labels.split(" ").some((label) => !actual.includes(label))) unsupported();
+    // readApplicationCatalog (scripts/db/lib/migration-state.mjs) records an
+    // enum's labels as JSON array text (jsonb_agg(...)::text), as it records
+    // a column's definition; a label may itself contain a comma.
+    let actual;
+    try {
+      actual = JSON.parse(catalog.get(`enum:${type}`) ?? "null");
+    } catch {
+      unsupported();
+    }
+    if (
+      !Array.isArray(actual) ||
+      actual.some((label) => typeof label !== "string") ||
+      new Set(actual).size !== actual.length ||
+      labels.split(" ").some((label) => !actual.includes(label))
+    )
+      unsupported();
   }
   for (const row of metadata.sourceCatalog.filter((r) => r.kind === "column")) {
     if (!expected.has(row.identity) && insertTables.has(row.identity.split(".")[0])) {
@@ -357,12 +406,19 @@ export async function extractBundle(file, identity, stage, { maxBytes = 2 ** 40,
     stdio: ["ignore", "pipe", "ignore"],
   });
   void owner.done.catch(() => {});
+  // A missing `age` (ENOENT) also ends stdout at once; say so instead of
+  // blaming the bundle. Node emits the spawn error before stdout ends.
+  let spawnFailure;
+  owner.child.once("error", (error) => {
+    if (error.syscall?.startsWith("spawn")) spawnFailure = error;
+  });
   const iterator = owner.child.stdout[Symbol.asyncIterator]();
   let buffer = Buffer.alloc(0),
     total = 0;
   const more = async () => {
     signal?.throwIfAborted();
     const next = await iterator.next();
+    if (next.done && spawnFailure) fail("RESTORE_DECRYPT_CLIENT_MISSING", spawnFailure);
     if (next.done) fail("INCOMPLETE_RESTORE_BUNDLE");
     total += next.value.length;
     if (total > maxBytes) fail("RESTORE_BYTE_BUDGET");
@@ -991,18 +1047,37 @@ async function verifyPromotion(inventory, reposDir, assetsDir, signal) {
  * Lock order: native fences -> runner -> request -> maintenance -> DADP -> Prisma.
  * No app participates: a nonblocking acquisition refuses an active deployment.
  */
-export async function restoreOffline({
-  file,
-  identity,
-  attemptId,
-  connectionString,
-  dataDir,
-  masterKey,
-  authSecret,
-  assetSourceRemap = false,
-  signal,
-  barrier = async () => {},
-}) {
+export async function restoreOffline(options) {
+  // True until this run writes its restore intent, and only while the target
+  // holds no earlier attempt: every error thrown meanwhile is a refusal that
+  // changed nothing (restoreExitCode → 3). The idempotent skeleton directories
+  // and the empty control table created first are not restore state.
+  const progress = { nothingChanged: true };
+  try {
+    return await restoreTarget(options, progress);
+  } catch (error) {
+    if (progress.nothingChanged && error && typeof error === "object") error.nothingChanged = true;
+    throw error;
+  }
+}
+
+async function restoreTarget(
+  {
+    file,
+    identity,
+    attemptId,
+    connectionString,
+    dataDir,
+    masterKey,
+    authSecret,
+    assetSourceRemap = false,
+    signal,
+    barrier = async () => {},
+    // Test seam only (kb-restore.test.mjs); production always uses pg's Client.
+    createClient = (options) => new Client(options),
+  },
+  progress,
+) {
   if (prismaSchemaName(connectionString) !== "public") fail("RESTORE_UNSUPPORTED_TARGET_SCHEMA");
   // Whole-volume contract: one existing, node-writable data root that is empty
   // or skeleton-only. Refuse a missing/relative root before any IO.
@@ -1011,7 +1086,7 @@ export async function restoreOffline({
   await assertOfflineFence(reposDir);
   if (!UUID.test(attemptId)) fail("INVALID_RESTORE_ATTEMPT");
   const source = await verifyEncryptedBundle(file);
-  const client = new Client({
+  const client = createClient({
     connectionString,
     application_name: "kb-offline-restore",
     connectionTimeoutMillis: 5000,
@@ -1020,10 +1095,12 @@ export async function restoreOffline({
   // Keep lock ownership until every archive/Git child has drained on cancellation.
   client.on("error", () => {});
   let step = "FENCE";
+  let connected = false;
   const stage = join(reposDir, `.private/restore-${attemptId}`);
   try {
     signal?.throwIfAborted();
     await client.connect();
+    connected = true;
     for (const lock of [72707370, 0x4b424d52, 0x4b424d41, 1145389648, 72707369])
       if (
         !(await client.query("SELECT pg_try_advisory_lock($1::bigint) AS held", [lock])).rows[0]
@@ -1045,6 +1122,12 @@ export async function restoreOffline({
     );
     await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS asset_target jsonb`);
     let attempt = (await client.query(`SELECT * FROM ${TABLE} WHERE singleton`)).rows[0];
+    // A pending earlier attempt (any state but READY) is restore state: from
+    // here on no error means "nothing changed" (the writers must stay
+    // stopped). A READY row is a finished restore of a live target, which
+    // admits the writers: refusing a different attempt there changes nothing.
+    // Re-entering the same READY attempt writes (PROMOTING) below.
+    if (attempt && attempt.state !== "READY") progress.nothingChanged = false;
     if (attempt && (attempt.attempt_id !== attemptId || attempt.source_hash !== source.sha256))
       fail("RESTORE_ATTEMPT_CONFLICT");
     if (!attempt) {
@@ -1054,6 +1137,8 @@ export async function restoreOffline({
         )
       ).rows;
       if (occupied.length || !isSkeletonOnly(dataDir)) fail("RESTORE_EMPTY_TARGET_REQUIRED");
+      // Before the write is sent: a cancel racing it is not "nothing changed".
+      progress.nothingChanged = false;
       await client.query(
         `INSERT INTO ${TABLE}(attempt_id,source_hash,state) VALUES($1,$2,'STAGING')`,
         [attemptId, source.sha256],
@@ -1064,6 +1149,7 @@ export async function restoreOffline({
       // Re-entry must close durable admission BEFORE checking that the mounted
       // volumes still contain the promoted inventory. A failed check cannot
       // leave READY admitting a missing/replaced volume.
+      progress.nothingChanged = false;
       await client.query(`UPDATE ${TABLE} SET state='PROMOTING' WHERE singleton`);
       attempt.state = "PROMOTING";
       if (!Array.isArray(attempt.inventory)) fail("RESTORE_INVENTORY_MISSING");
@@ -1236,7 +1322,18 @@ export async function restoreOffline({
     syncDir(dirname(stage));
     return { epoch: attempt.epoch };
   } catch (error) {
-    if (error.code?.startsWith("RESTORE_") || error.code?.startsWith("INVALID_RESTORE"))
+    // A refusal before this run read the attempt row (busy, active
+    // connections, …) may still sit on a pending earlier attempt: it is only
+    // "nothing changed" when a read-only probe proves there is none. Probed
+    // after the refusal, so contention is still refused at the first query.
+    if (progress.nothingChanged && connected)
+      progress.nothingChanged = await noPendingAttempt(client);
+    // `code` is not always a string: an AbortSignal's reason is a DOMException
+    // whose `code` is a number (a cancel lands here).
+    if (
+      typeof error?.code === "string" &&
+      (error.code.startsWith("RESTORE_") || error.code.startsWith("INVALID_RESTORE"))
+    )
       throw error;
     fail(
       `RESTORE_FAILED_${step}${/^[0-9A-Z]{5}$/.test(error.code ?? "") ? `_${error.code}` : ""}`,
@@ -1251,8 +1348,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const name of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(name, () => controller.abort());
   try {
     const [file, identity, attemptId, ...flags] = process.argv.slice(2);
-    if (flags.length > 1 || flags.some((flag) => flag !== "--asset-source-remap"))
-      fail("RESTORE_INVALID_ARGUMENTS");
+    if (flags.length > 1 || flags.some((flag) => flag !== "--asset-source-remap")) {
+      const error = new Error("RESTORE_INVALID_ARGUMENTS");
+      error.code = "RESTORE_INVALID_ARGUMENTS";
+      error.nothingChanged = true;
+      throw error;
+    }
     await restoreOffline({
       file,
       identity,
@@ -1266,9 +1367,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
     console.log("Restore complete. Use a fresh login; restored credentials are revoked.");
   } catch (error) {
+    const code =
+      typeof error?.code === "string" &&
+      (error.code.startsWith("RESTORE_") || error.code.startsWith("INVALID_RESTORE"))
+        ? error.code
+        : "RESTORE_FAILED";
+    const status = restoreExitCode(error);
     console.error(
-      `FATAL: ${error.code?.startsWith("RESTORE_") ? error.code : "RESTORE_FAILED"}; keep staging for diagnosis and retry the same attempt offline.`,
+      status === REFUSED_EXIT
+        ? `REFUSED: ${code}; nothing was changed. Fix the cause and run the restore again.`
+        : `FATAL: ${code}; keep staging for diagnosis and retry the same attempt offline.`,
     );
-    process.exitCode = 1;
+    process.exitCode = status;
   }
 }

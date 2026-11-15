@@ -819,7 +819,7 @@ describe("kb members integration", () => {
     await shareAccept(runtime, recipient.id, { requestId: invite!.requestId });
 
     await expect(assertOrdinaryAccountDeletionAllowed(prisma, owner.id)).rejects.toThrow(
-      /active knowledge bases/i,
+      /still owns knowledge bases/i,
     );
 
     const { requestId } = await transferRequest(runtime, owner.id, {
@@ -945,6 +945,76 @@ describe("kb members integration", () => {
         store,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("admin-force removal tombstones quarantined (REPAIR_REQUIRED) KBs too, leaving none ownerless", async () => {
+    const owner = await user("quarantine-force-owner");
+    const admin = await user("quarantine-force-admin");
+    await prisma.user.update({ where: { id: admin.id }, data: { role: "admin" } });
+    const healthy = await createKnowledgeBase(runtime, owner.id, {
+      name: "Healthy",
+      slug: "quarantine-force-healthy",
+      description: "an active KB beside a quarantined one",
+      idempotencyKey: "quarantine-force-healthy",
+    });
+    const quarantined = await createKnowledgeBase(runtime, owner.id, {
+      name: "Quarantined",
+      slug: "quarantine-force-broken",
+      description: "a KB awaiting operator repair",
+      idempotencyKey: "quarantine-force-broken",
+    });
+    await prisma.knowledgeBase.update({
+      where: { id: quarantined.kb.id },
+      data: { state: "REPAIR_REQUIRED" },
+    });
+
+    await expect(
+      runWithAllowedAccountDeletion("admin-force", () =>
+        removeUserAccount(runtime, owner.id, { actingUserId: admin.id }),
+      ),
+    ).resolves.toEqual({ tombstonedKbCount: 2 });
+
+    expect(await prisma.user.findUnique({ where: { id: owner.id } })).toBeNull();
+    for (const kbId of [healthy.kb.id, quarantined.kb.id]) {
+      expect(await prisma.knowledgeBase.findUnique({ where: { id: kbId } })).toMatchObject({
+        state: "TOMBSTONED",
+        ownerId: null,
+      });
+      expect(await prisma.auditEvent.count({ where: { kbId, action: "kb_tombstone" } })).toBe(1);
+    }
+    // Nothing non-tombstoned is left without an owner.
+    expect(
+      await prisma.knowledgeBase.count({ where: { ownerId: null, state: { not: "TOMBSTONED" } } }),
+    ).toBe(0);
+  });
+
+  it("ordinary removal is refused while the account owns a quarantined KB", async () => {
+    const owner = await user("quarantine-ordinary-owner");
+    const quarantined = await createKnowledgeBase(runtime, owner.id, {
+      name: "Quarantined",
+      slug: "quarantine-ordinary-broken",
+      description: "a KB awaiting operator repair",
+      idempotencyKey: "quarantine-ordinary-broken",
+    });
+    await prisma.knowledgeBase.update({
+      where: { id: quarantined.kb.id },
+      data: { state: "REPAIR_REQUIRED" },
+    });
+
+    // The pre-check refuses it; the in-reservation check repeats the rule
+    // under the locks (any owned non-TOMBSTONED KB) for one that appears later.
+    await expect(assertOrdinaryAccountDeletionAllowed(prisma, owner.id)).rejects.toThrow(
+      /still owns knowledge bases/i,
+    );
+    await expect(
+      runWithAllowedAccountDeletion("ordinary", () =>
+        removeUserAccount(runtime, owner.id, { actingUserId: owner.id }),
+      ),
+    ).rejects.toMatchObject({ code: "ACCOUNT_DELETION_BLOCKED" });
+    expect(await prisma.user.count({ where: { id: owner.id } })).toBe(1);
+    expect(
+      await prisma.knowledgeBase.findUnique({ where: { id: quarantined.kb.id } }),
+    ).toMatchObject({ state: "REPAIR_REQUIRED", ownerId: owner.id });
   });
 
   it("delegated self-service removal commits with actor-equals-target audit", async () => {

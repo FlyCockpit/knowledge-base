@@ -366,7 +366,13 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Postgres over the network, so no chown of /app is needed.
 USER node
 
-ENTRYPOINT ["tini", "--", "docker-entrypoint.sh"]
+# The entrypoint is PID 1 while it validates and migrates (the runner, its
+# child, holds the backup writer and asset operator keys), then unsets the
+# startup-only keys and execs tini with the CMD, so tini becomes PID 1 with a
+# clean environment: tini -> node output supervisor -> kb-supervisor -> server.
+# The one-shot image commands run under tini too, except `migrate`: the entrypoint
+# supervises its runner and exits with its status (scripts/docker-entrypoint.sh).
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 3000
 

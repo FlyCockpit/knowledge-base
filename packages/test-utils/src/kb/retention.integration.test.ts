@@ -1162,6 +1162,126 @@ describe("operation receipt compaction", () => {
   });
 });
 
+describe("operation receipt compaction: quarantine exemption", () => {
+  /** An ABORTED intent on `kbId` with a held disk reservation, past the 30-day window. */
+  async function heldAbortedIntent(kbId: string, actorUserId: string, link: "opId" | "delta") {
+    const idem = key();
+    await tx((q) =>
+      recordFinalizedReceipt(q, {
+        kbId,
+        actorUserId,
+        operation: "CHANGES_APPLY",
+        idempotencyKey: idem,
+        requestHash: "h".repeat(64),
+        responseBody: { ok: true },
+      }),
+    );
+    const intent = (
+      await sql(`SELECT "opId"::text AS "opId" FROM operation_intent WHERE "idempotencyKey"=$1`, [
+        idem,
+      ])
+    ).rows[0];
+    mkdirSync(indexDir, { recursive: true });
+    const lease = await tx((q) =>
+      reserveQuota(
+        { transactionQuery: q },
+        {
+          // Linked by opId, or only by the id the prepared delta lists.
+          opId: link === "opId" ? intent.opId : `unrelated:${randomUUID()}`,
+          charges: [],
+          disks: [{ path: indexDir, bytes: 1n, meter: statfsDiskMeter(indexDir) }],
+          expiresAt: later(DAY),
+        },
+      ),
+    );
+    await sql(
+      `UPDATE operation_intent SET phase='ABORTED'::"OperationIntentPhase", "preparedDelta"=$2::jsonb
+        WHERE "opId"=$1::uuid`,
+      [
+        intent.opId,
+        JSON.stringify({
+          kind: "changes_apply",
+          headSha: "e".repeat(40),
+          changedPaths: ["doc.md"],
+          dreamMetadata: { summary: SOURCE_CANARY },
+          quotaReservationIds: link === "delta" ? lease.reservationIds : [],
+        }),
+      ],
+    );
+    return { opId: intent.opId as string, reservationIds: lease.reservationIds as string[] };
+  }
+
+  const compactedAt = async (opId: string) =>
+    (await sql(`SELECT "compactedAt" FROM operation_intent WHERE "opId"=$1::uuid`, [opId])).rows[0]
+      .compactedAt;
+  const pass = () =>
+    compactOperationReceipts({
+      connectionString: db.urls.runtime,
+      now: later(RETENTION.operationBodyMs + 60_000),
+    });
+
+  it("keeps a quarantined KB's intents while their reservations are held, then compacts once settled", async () => {
+    const f = await fixture();
+    const byOpId = await heldAbortedIntent(f.kbId, f.owner.id, "opId");
+    const byDelta = await heldAbortedIntent(f.kbId, f.owner.id, "delta");
+    await sql(
+      `UPDATE knowledge_base SET state='REPAIR_REQUIRED'::"KnowledgeBaseState" WHERE id=$1`,
+      [f.kbId],
+    );
+
+    await pass();
+    expect(await compactedAt(byOpId.opId)).toBeNull();
+    expect(await compactedAt(byDelta.opId)).toBeNull();
+    const kept = await sql(`SELECT "preparedDelta" FROM operation_intent WHERE "opId"=$1::uuid`, [
+      byDelta.opId,
+    ]);
+    expect(kept.rows[0].preparedDelta).toMatchObject({ dreamMetadata: { summary: SOURCE_CANARY } });
+
+    // Settling one intent's reservations lets the ordinary rule apply to it alone.
+    await sql(
+      `UPDATE quota_reservation SET outcome='RELEASED'::"QuotaReservationOutcome", "releasedAt"=now()
+        WHERE id = ANY($1::text[])`,
+      [byOpId.reservationIds],
+    );
+    await pass();
+    expect(await compactedAt(byOpId.opId)).not.toBeNull();
+    expect(await compactedAt(byDelta.opId)).toBeNull();
+  });
+
+  it("compacts an ACTIVE KB's intents even with a held reservation (the exemption is quarantine-only)", async () => {
+    const f = await fixture();
+    const held = await heldAbortedIntent(f.kbId, f.owner.id, "opId");
+    await pass();
+    expect(await compactedAt(held.opId)).not.toBeNull();
+  });
+
+  it("re-checks quarantine under the KB row lock: an intent quarantined after selection is skipped", async () => {
+    const f = await fixture();
+    const held = await heldAbortedIntent(f.kbId, f.owner.id, "opId");
+    const quarantinedAfterSelection: string[] = [];
+    await compactOperationReceipts({
+      connectionString: db.urls.runtime,
+      now: later(RETENTION.operationBodyMs + 60_000),
+      // The real compactor: selection saw an ACTIVE KB; quarantine lands
+      // before the row's locked recheck.
+      beforeRow: async (opId) => {
+        if (opId !== held.opId) return;
+        await sql(
+          `UPDATE knowledge_base SET state='REPAIR_REQUIRED'::"KnowledgeBaseState" WHERE id=$1`,
+          [f.kbId],
+        );
+        quarantinedAfterSelection.push(opId);
+      },
+    });
+    expect(quarantinedAfterSelection).toEqual([held.opId]);
+    expect(await compactedAt(held.opId)).toBeNull();
+    const kept = await sql(`SELECT "preparedDelta" FROM operation_intent WHERE "opId"=$1::uuid`, [
+      held.opId,
+    ]);
+    expect(kept.rows[0].preparedDelta).toMatchObject({ dreamMetadata: { summary: SOURCE_CANARY } });
+  });
+});
+
 describe("audit retention and export", () => {
   it("deletes events older than 90d, keeps younger ones, and exports pages to admins", async () => {
     const old = randomUUID();

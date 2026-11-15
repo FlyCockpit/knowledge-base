@@ -44,8 +44,8 @@ export function backupWarningCode(message: string): BackupWarningCode | undefine
 /** Shared location settings used by both backup writers and the monitor. */
 export function backupCommonConfigWarnings(value: BackupConfig): string[] {
   const warnings: string[] = [];
-  if (value.BACKUP_ENABLED && !value.BACKUP_S3_BUCKET)
-    warnings.push(BACKUP_WARNINGS.BUCKET_MISSING);
+  if (!value.BACKUP_ENABLED) return warnings;
+  if (!value.BACKUP_S3_BUCKET) warnings.push(BACKUP_WARNINGS.BUCKET_MISSING);
   if (!value.BACKUP_S3_BUCKET) return warnings;
   if (!value.BACKUP_S3_ENDPOINT && value.BACKUP_S3_REGION === "auto")
     warnings.push(BACKUP_WARNINGS.REGION_AUTO);
@@ -55,7 +55,7 @@ export function backupCommonConfigWarnings(value: BackupConfig): string[] {
 /** Freshness monitoring needs a distinct ListBucket-only identity. */
 export function backupMonitorConfigWarnings(value: BackupConfig): string[] {
   const warnings = backupCommonConfigWarnings(value);
-  if (!value.BACKUP_S3_BUCKET) return warnings;
+  if (!value.BACKUP_ENABLED || !value.BACKUP_S3_BUCKET) return warnings;
   if (!value.BACKUP_MONITOR_S3_ACCESS_KEY_ID || !value.BACKUP_MONITOR_S3_SECRET_ACCESS_KEY)
     warnings.push(BACKUP_WARNINGS.MONITOR_KEY_MISSING);
   const monitorKey = raw(value.BACKUP_MONITOR_S3_ACCESS_KEY_ID);

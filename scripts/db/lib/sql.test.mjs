@@ -414,16 +414,20 @@ const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const expandOf = (header = HEADER) => enumRemoveExpand(header);
 
 describe("templates (v1)", () => {
+  // v1 is in no release yet (no tag; no committed migration uses it). Its pins
+  // last changed when the sync trigger was renamed `0_knowledge_base_sync_*` so
+  // it fires before an app's own BEFORE triggers; from 1.0.0 on, a change
+  // needs v2.
   test("the v1 text is pinned byte for byte (never edit a released template: add v2)", () => {
     assert.equal(LATEST_TEMPLATE_VERSION, "v1");
     assert.deepEqual(Object.keys(TEMPLATES), ["v1"]);
     assert.equal(
       sha256(TEMPLATES.v1.enumRemoveExpand(HEADER)),
-      "83499cf5e4fd9a127cd6087d9b9f1c6c0da927ca66d7760c9e37926eb8886c65",
+      "b157b79434c600c03adab6c39c9df0217e24dc98ee18f1dd218201bd6f527eac",
     );
     assert.equal(
       sha256(TEMPLATES.v1.enumRemoveContract(HEADER)),
-      "6a9cd9f9ca58d581bdd67ec3fb49e81ecfc7e1c8d69a839c036d068fc5bf24d6",
+      "f8e198a622ca2e78445d4ee102cb2b92ad418407ef08dd332b0abb2365b36ae9",
     );
     assert.equal(
       sha256(TEMPLATES.v1.recoverBlock({ table: "t", from: "x", to: "x2" })),
@@ -435,9 +439,16 @@ describe("templates (v1)", () => {
     );
     assert.equal(
       expandOf().split("\n").slice(0, 2).join("\n"),
-      `-- knowledge-base:enum-remove v1 "Status" "OLD"->"NEW" columns "t"."c", "t"."tags"[]\nCREATE FUNCTION "knowledge_base_sync_b777ef7e"() RETURNS trigger LANGUAGE plpgsql AS $knowledge_base$`,
+      `-- knowledge-base:enum-remove v1 "Status" "OLD"->"NEW" columns "t"."c", "t"."tags"[]\nCREATE FUNCTION "0_knowledge_base_sync_b777ef7e"() RETURNS trigger LANGUAGE plpgsql AS $knowledge_base$`,
     );
-    assert.equal(syncTriggerName(FOLDER, "t"), "knowledge_base_sync_b777ef7e");
+    assert.equal(syncTriggerName(FOLDER, "t"), "0_knowledge_base_sync_b777ef7e");
+  });
+
+  test("the sync trigger sorts before app triggers (BEFORE triggers fire in byte order)", () => {
+    const sync = Buffer.from(syncTriggerName(FOLDER, "t"));
+    // Unquoted names (lower case, "_", non-ASCII letters) and quoted capitals.
+    for (const name of ["__w_note", "_audit", "a_w_note", "audit", "zz", "Audit", "Z", "é_note"])
+      assert.ok(Buffer.compare(sync, Buffer.from(name)) < 0, name);
   });
 
   test("headers round-trip, including quotes in names", () => {
@@ -1212,8 +1223,8 @@ describe("analyzeContract", () => {
       'ALTER TABLE "t" ALTER COLUMN "x" SET NOT NULL;',
       "DO $$ BEGIN PERFORM 1; END $$;",
       "BEGIN;",
-      `${DROP} TRIGGER "knowledge_base_sync_00000000" ON "t";`,
-      `${DROP} FUNCTION "knowledge_base_sync_00000000"();`,
+      `${DROP} TRIGGER "0_knowledge_base_sync_00000000" ON "t";`,
+      `${DROP} FUNCTION "0_knowledge_base_sync_00000000"();`,
       'ALTER FUNCTION "f"() COST 100;',
       'ALTER ROUTINE "f"() SECURITY INVOKER;',
       `${DROP} TABLE "t" CASCADE;`,
@@ -1399,12 +1410,96 @@ describe("findNameReuse", () => {
         'ALTER TABLE "u" ADD COLUMN "x" INTEGER;',
         'ALTER TABLE "u" ADD CONSTRAINT "t_k" UNIQUE ("id");',
         "ALTER TYPE \"Other\" ADD VALUE 'OLD';",
-        'CREATE TABLE "knowledge_base_sync_00000000" ("id" TEXT);',
+        'CREATE TABLE "0_knowledge_base_sync_00000000" ("id" TEXT);',
       ].join("\n"),
       contract: null,
     };
     assert.deepEqual(findNameReuse([...folders, later]), []);
     // The same folder's own migration, and earlier folders, never count.
     assert.deepEqual(findNameReuse(folders), []);
+  });
+
+  test("template object names, current and earlier sync prefixes, are excluded", () => {
+    const names = [
+      "0_knowledge_base_sync_00000000",
+      "knowledge_base_sync_00000000",
+      "knowledge_base_enum_new_00000000",
+      "knowledge_base_enum_old_00000000",
+    ];
+    const lookalike = "x_knowledge_base_sync_00000000";
+    const dropper = {
+      name: "1_drop",
+      sql: "SELECT 1;",
+      contract: { sql: [...names, lookalike].map((n) => `${DROP} TABLE "${n}";`).join("\n") },
+    };
+    const later = {
+      name: "2_create",
+      sql: [...names, lookalike].map((n) => `CREATE TABLE "${n}" ("id" TEXT);`).join("\n"),
+      contract: null,
+    };
+    assert.deepEqual(
+      findNameReuse([dropper, later]).map((m) => m.key),
+      [`table:public.${lookalike}`],
+    );
+  });
+
+  test("a label is matched on its enum type: a user label named like a template object still counts", () => {
+    // The template test runs on the label's enum type ("Status"), not on the
+    // label itself, so a re-added label is reported whatever it is called.
+    const label = "knowledge_base_enum_old_deadbeef";
+    const dropper = {
+      name: "1_drop",
+      sql: "SELECT 1;",
+      contract: {
+        sql: enumRemoveContract({
+          ...HEADER,
+          pairs: [{ from: label, to: "NEW" }],
+          folder: "1_drop",
+        }),
+      },
+    };
+    const later = {
+      name: "2_add",
+      sql: `ALTER TYPE "Status" ADD VALUE '${label}';`,
+      contract: null,
+    };
+    assert.deepEqual(
+      findNameReuse([dropper, later]).map((m) => m.key),
+      [`label:public.Status:${label}`],
+    );
+    // The same for a label listed in a CREATE TYPE.
+    const recreated = {
+      name: "2_recreate",
+      sql: `CREATE TYPE "Status" AS ENUM ('NEW', '${label}');`,
+      contract: null,
+    };
+    assert.ok(
+      findNameReuse([dropper, recreated])
+        .map((m) => m.key)
+        .includes(`label:public.Status:${label}`),
+    );
+  });
+
+  test("a quoted name containing a template name after a dot or colon is not a template object", () => {
+    // The template test runs on the object's own identifier, not on the key's
+    // last "."/":" segment, which a quoted name can contain.
+    const names = [
+      "ordinary.0_knowledge_base_sync_deadbeef",
+      "ordinary:knowledge_base_enum_new_deadbeef",
+    ];
+    const dropper = {
+      name: "1_drop",
+      sql: "SELECT 1;",
+      contract: { sql: names.map((n) => `${DROP} TABLE "${n}";`).join("\n") },
+    };
+    const later = {
+      name: "2_create",
+      sql: names.map((n) => `CREATE TABLE "${n}" ("id" TEXT);`).join("\n"),
+      contract: null,
+    };
+    assert.deepEqual(
+      findNameReuse([dropper, later]).map((m) => m.key),
+      names.map((n) => `table:public.${n}`),
+    );
   });
 });

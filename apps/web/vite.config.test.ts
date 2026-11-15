@@ -61,6 +61,7 @@ describe("the vite dev server host", () => {
       .filter((line) => line.startsWith("{"))
       .map((line) => validateLogRecord(JSON.parse(line)));
     expect(records).not.toContain(undefined);
-    expect(records).toContainEqual(expect.objectContaining({ site: "backup.config" }));
+    expect(records).not.toContainEqual(expect.objectContaining({ site: "backup.config" }));
+    expect(records).toContainEqual(expect.objectContaining({ site: "server.config" }));
   }, 120_000);
 });

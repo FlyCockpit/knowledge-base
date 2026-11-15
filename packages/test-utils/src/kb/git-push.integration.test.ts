@@ -46,6 +46,7 @@ afterEach(async () => {
 }, 300_000);
 
 import { openKbPostgresClusterFromEnv } from "./postgres";
+import { kbTestName } from "./test-names.mjs";
 
 type Actor = { principal: TokenPrincipal; verifier: CredentialVerifier; recheck(): Promise<void> };
 const { createGitHttp } = (await import(
@@ -1438,7 +1439,7 @@ it("container executes the bundled hook over a private socket and drains it on p
         const child=spawn(hook,[],{cwd:dir,env:{PATH:process.env.PATH,KB_PUSH_SOCKET:path,KB_PUSH_NONCE:'a'.repeat(64)},stdio:['pipe','inherit','inherit',Number(process.env.KB_FENCE_FD)]});
         child.on('error',()=>process.exit(3)); child.stdin.end('1'.repeat(40)+' '+'2'.repeat(40)+' refs/heads/main\\n');
       });`;
-      const name = `kb-push-hook-${randomUUID()}`;
+      const name = kbTestName(`kb-push-hook-${randomUUID()}`);
       const result = await withDockerContainer(name, () =>
         client(
           "docker",

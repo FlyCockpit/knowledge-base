@@ -371,9 +371,12 @@ function healthcheckStartPeriodErrors(
   ];
 }
 
-/** The shell hands off to the output owner. That owner launches the native
- * fence supervisor immediately above the application (proved by kb-process's
- * real-process tests); launching native directly here bypasses output ownership.
+/** The shell is PID 1 (ENTRYPOINT ["docker-entrypoint.sh"]) while it holds the
+ * startup-only keys, then hands off with `exec tini -- "$@"`: tini becomes PID 1
+ * with the cleaned environment and starts the output owner. That owner launches
+ * the native fence supervisor immediately above the application (proved by
+ * kb-process's real-process tests); launching native directly here bypasses
+ * output ownership.
  */
 function serviceOutputEntrypointErrors(
   service: "server" | "worker",
@@ -388,17 +391,19 @@ function serviceOutputEntrypointErrors(
     .filter((line) => line && !line.startsWith("#"));
   const execs = shell.filter((line) => /^exec\s/.test(line));
   if (
-    execs.filter((line) => line === 'exec "$@"').length !== 1 ||
-    shell.at(-1) !== 'exec "$@"' ||
-    execs.some((line) => line.includes("kb-supervisor"))
+    execs.filter((line) => line === 'exec tini -- "$@"').length !== 1 ||
+    shell.at(-1) !== 'exec tini -- "$@"' ||
+    execs.some((line) => line.includes("kb-supervisor") || !line.startsWith("exec tini -- "))
   )
     problems.push(
-      'scripts/docker-entrypoint.sh must hand off with exec "$@" to the output supervisor.',
+      'scripts/docker-entrypoint.sh must hand off with exec tini -- "$@" to the output supervisor.',
     );
   let runner = false;
   const commands: string[][] = [];
+  const entrypoints: string[] = [];
   for (const { line } of logicalLines(dockerfile)) {
     if (/^FROM\s/i.test(line)) runner = /\sAS\s+runner$/i.test(line);
+    if (runner && /^ENTRYPOINT\s/i.test(line)) entrypoints.push(line);
     if (!runner || !/^CMD\s/i.test(line)) continue;
     try {
       commands.push(JSON.parse(line.replace(/^CMD\s+/i, "")));
@@ -406,6 +411,12 @@ function serviceOutputEntrypointErrors(
       problems.push(`${service} image must use a JSON CMD for the output supervisor.`);
     }
   }
+  // The entrypoint itself is PID 1 while the runner holds the startup-only
+  // keys; it execs tini with the cleaned environment (docker-entrypoint.sh).
+  if (entrypoints.length !== 1 || entrypoints[0] !== 'ENTRYPOINT ["docker-entrypoint.sh"]')
+    problems.push(
+      `${service} image ENTRYPOINT must be ["docker-entrypoint.sh"] (it execs tini itself).`,
+    );
   const expected = ["node", `apps/${service}/dist/index.mjs`, "--fenced"];
   if (commands.length !== 1 || JSON.stringify(commands[0]) !== JSON.stringify(expected))
     problems.push(`${service} image CMD must start its output supervisor with --fenced.`);
@@ -420,8 +431,9 @@ function serviceOutputEntrypointErrors(
 
 if (process.argv.includes("--self-test")) {
   for (const service of ["server", "worker"] as const) {
-    const dockerfile = `FROM base AS runner\nCMD ["node", "apps/${service}/dist/index.mjs", "--fenced"]\n`;
-    const entrypoint = '#!/bin/sh\n# native is launched by the output supervisor\nexec "$@"\n';
+    const dockerfile = `FROM base AS runner\nENTRYPOINT ["docker-entrypoint.sh"]\nCMD ["node", "apps/${service}/dist/index.mjs", "--fenced"]\n`;
+    const entrypoint =
+      '#!/bin/sh\nexec tini -- node migrate.mjs hold\n# native is launched by the output supervisor\nexec tini -- "$@"\n';
     const config = 'entry: { index: "./src/output.ts", service: "./src/bootstrap.ts" }';
     const check = (image = dockerfile, shell = entrypoint, bundle = config) =>
       serviceOutputEntrypointErrors(service, image, shell, bundle);
@@ -431,11 +443,15 @@ if (process.argv.includes("--self-test")) {
       dockerfile.replace("dist/index.mjs", "dist/service.mjs"),
       dockerfile.replace('["node",', '["/usr/local/bin/kb-supervisor", "--", "node",'),
       dockerfile.replace(" AS runner", " AS builder"),
+      dockerfile.replace('["docker-entrypoint.sh"]', '["tini", "--", "docker-entrypoint.sh"]'),
+      dockerfile.replace('ENTRYPOINT ["docker-entrypoint.sh"]\n', ""),
     ])
       ok(check(image).length > 0, image);
     for (const shell of [
-      entrypoint.replace('exec "$@"', 'exec /usr/local/bin/kb-supervisor -- "$@"'),
-      entrypoint.replace('exec "$@"', '"$@"'),
+      entrypoint.replace('exec tini -- "$@"', 'exec /usr/local/bin/kb-supervisor -- "$@"'),
+      entrypoint.replace('exec tini -- "$@"', 'exec "$@"'),
+      entrypoint.replace('exec tini -- "$@"', '"$@"'),
+      entrypoint.replace("exec tini -- node migrate.mjs", "exec node migrate.mjs"),
       `${entrypoint}echo finished\n`,
       `exec /usr/local/bin/kb-supervisor -- node service.mjs\n${entrypoint}`,
     ])

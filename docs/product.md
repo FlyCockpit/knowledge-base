@@ -10,7 +10,7 @@ Instance admin (Better Auth `admin` role) and knowledge-base authority are indep
 
 - Instance admin: users, jobs, instance settings, invites, forced 2FA, web push. Developers seed a local database with `pnpm db:seed`; there is no admin seed page. Bootstrap is one `ADMIN_EMAIL` and a durable `BootstrapState` singleton.
 - KB authority bits expand before intersection: `manage => write, review`; `write => propose`; `propose => read`; `review => read`. Write never implies review.
-- Admin has no implicit private KB read or manage. Admin may force-tombstone owned KBs when deleting an account (with audit) but cannot browse private content by role.
+- Admin has no implicit private KB read or manage. Admin may force-tombstone owned KBs, quarantined (REPAIR_REQUIRED) ones included, when deleting an account (with audit) but cannot browse private content by role. Ordinary account deletion is refused while the account owns any KB that is not tombstoned (active, quarantined or still being created), so no KB is left ownerless.
 
 ## Human-only control plane
 

@@ -26,6 +26,10 @@
 # Renamed your local database or moved it off 5432? Export EXPECTED_DB /
 # EXPECTED_PORT (EXPECTED_DB applies to the main checkout only; worktree names
 # are always derived). The host allowlist is what keeps this local.
+# db:reset:local refuses EXPECTED_DB: it never widens which database a reset
+# drops (rename the default in scripts/db/lib/local-db-name.mjs instead), and
+# reset-local.mjs additionally requires the database's disposable-local mark
+# (scripts/db/lib/scratch-db.mjs), because a localhost URL can be a tunnel.
 #
 # Escape hatch — only for db:seed, db:studio, db:migrate:apply, and only for a
 # database you are willing to destroy (distinct per command):
@@ -188,6 +192,9 @@ if [[ "$CMD" == "--self-test" ]]; then
   self_test_guard db:seed "postgresql://localhost:5432/$here?options=-c%20search_path%3Dx" 1 "unknown parameter rejected"
   self_test_guard db:seed "postgresql://localhost:5432/$here?schema=public&sslmode=disable" 0 "routing-neutral parameters accepted"
   if [[ "$here" == "knowledge_base" ]]; then
+    self_test_guard db:reset:local "postgresql://localhost:5432/myapp" 1 "EXPECTED_DB does not widen db:reset:local" EXPECTED_DB=myapp
+    self_test_guard db:reset:local "postgresql://localhost:5432/knowledge_base" 1 "db:reset:local refuses any differing EXPECTED_DB" EXPECTED_DB=myapp
+    self_test_guard db:reset:local "postgresql://localhost:5432/knowledge_base" 0 "db:reset:local accepts the default name"
     self_test_guard db:seed "postgresql://localhost:5432/myapp" 0 "EXPECTED_DB override accepted" EXPECTED_DB=myapp
     self_test_guard db:seed "postgresql://db.example.com:5432/myapp" 1 "EXPECTED_DB does not widen the host allowlist" EXPECTED_DB=myapp
   fi
@@ -216,6 +223,21 @@ case "$WANT_SHADOW" in
   --shadow) ESCAPABLE=0 ;;
   *) echo "FATAL: unexpected argument $WANT_SHADOW" >&2; exit 1 ;;
 esac
+
+if [[ "$CMD" == "db:reset:local" && -n "${EXPECTED_DB:-}" ]]; then
+  default_main="$(env -u EXPECTED_DB node "$ROOT/scripts/db/lib/local-db-name.mjs" main --cwd "$ROOT")" || exit 1
+  if [[ "$EXPECTED_DB" != "$default_main" ]]; then
+    cat >&2 <<EOF
+FATAL: Refusing db:reset:local — EXPECTED_DB is set ($EXPECTED_DB).
+
+EXPECTED_DB never changes which database a reset drops. If you renamed this
+checkout's local database, change DEFAULT_MAIN_DB in
+scripts/db/lib/local-db-name.mjs in the same commit as the compose files, then
+unset EXPECTED_DB.
+EOF
+    exit 1
+  fi
+fi
 
 CMD_KEY="$(printf '%s' "$CMD" | sed 's/[:.-]/_/g' | tr '[:lower:]' '[:upper:]')"
 ESCAPE_VAR="ALLOW_NONLOCAL_${CMD_KEY}"

@@ -2,8 +2,11 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { kbTestName } from "./test-names.mjs";
 
-export function buildArtifactDirectory(project = process.env.KB_TEST_PROJECT ?? "standalone") {
+export function buildArtifactDirectory(
+  project = process.env.KB_TEST_PROJECT ?? kbTestName("standalone"),
+) {
   // Runner projects are unique; standalone prebuilds use a documented fixed namespace.
   if (!/^[a-zA-Z0-9-]+$/.test(project)) throw new Error("Invalid test build project");
   return join(tmpdir(), `kb-test-builds-${project}`);

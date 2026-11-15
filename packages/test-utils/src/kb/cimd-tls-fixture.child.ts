@@ -13,6 +13,9 @@ let observeRequest: ((request: IncomingMessage) => void) | undefined;
 const server = createServer({ cert: readFileSync(cert), key: readFileSync(key) }, (req, res) => {
   requests++;
   localAddresses.push(req.socket.localAddress);
+  // A metadata document: the transport hands over a body only for a 200 with
+  // a JSON media type (JSON_CONTENT_TYPE in @knowledge-base/auth/mcp-cimd).
+  res.setHeader("content-type", "application/json");
   observeRequest?.(req);
   observeRequest = undefined;
   if (req.url === "/stall") return;

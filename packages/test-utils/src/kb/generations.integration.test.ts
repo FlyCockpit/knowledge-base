@@ -756,7 +756,9 @@ describe("pinned generation build and activation", () => {
     await run(a.jobId, { embedder: counting });
     expect(seen).toHaveLength(35);
     const first = readIndexFile(generationFilePath(indexDir, f.kbId, a.generationId));
-    expect(first.meta.format).toBe(2);
+    // The single index format (packages/api/src/lib/kb/fixtures/index-format.json),
+    // which carries the chunk_hash reuse keys this rebuild relies on.
+    expect(first.meta.format).toBe(1);
     const sha = source(f.kbId, { "large.md": large, "other.md": "second version" }, f.sha);
     await prisma.knowledgeBase.update({ where: { id: f.kbId }, data: { headSha: sha } });
     const b = await requestIndexBuild(runtime, f.actor, {

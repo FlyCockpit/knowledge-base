@@ -54,6 +54,8 @@ import { z } from "zod";
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
 import { openKbPostgresClusterFromEnv } from "./index";
 
+const ACTIVE_HEAD_PLACEHOLDER = "0".repeat(40);
+
 const wiring = vi.hoisted(() => ({ runtime: {}, settings: vi.fn(), user: vi.fn() }));
 vi.mock("@knowledge-base/env/server", () => ({
   ADMIN_EMAIL: undefined,
@@ -711,6 +713,9 @@ describe("device HTTP/PG boundary", () => {
           slug: `registered-${randomUUID()}`,
           description: "Recipient binding fixture",
           state: "ACTIVE",
+          // An ACTIVE base needs an owner and a head (knowledge_base_active_requires_owner_head);
+          // these cases never read Git, so a placeholder head will do.
+          headSha: ACTIVE_HEAD_PLACEHOLDER,
         },
       });
       const record = await prisma.sealedRecord.create({
@@ -1378,6 +1383,9 @@ describe("device HTTP/PG boundary", () => {
           slug: `device-${randomUUID()}`,
           description: "Device share revocation fixture",
           state: "ACTIVE",
+          // An ACTIVE base needs an owner and a head (knowledge_base_active_requires_owner_head);
+          // these cases never read Git, so a placeholder head will do.
+          headSha: ACTIVE_HEAD_PLACEHOLDER,
         },
       });
       await prisma.kbShare.create({ data: { kbId: kb.id, userId: f.user.id, bits: ["read"] } });
@@ -1630,6 +1638,9 @@ describe("device HTTP/PG boundary", () => {
             slug: `device-${randomUUID()}`,
             description: "Selected recipient fixture",
             state: "ACTIVE",
+            // An ACTIVE base needs an owner and a head (knowledge_base_active_requires_owner_head);
+            // these cases never read Git, so a placeholder head will do.
+            headSha: ACTIVE_HEAD_PLACEHOLDER,
           },
         });
         const record = await prisma.sealedRecord.create({

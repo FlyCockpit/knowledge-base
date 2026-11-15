@@ -20,9 +20,9 @@ KB uses stop-first Dokploy replacement, and an admitted rollback can run old cod
 | Command | When |
 |---|---|
 | `pnpm db:migrate <name>` | After editing the schema. Generates the SQL (`migration.sql`, plus `contract.sql` when something is deleted); applies nothing. Use a short snake_case name: `add_phone_number`. Flags: `--remap 'Enum.OLD=NEW'` (removing an enum value), `--recover 'table.old=new'` (getting a field back before its deletion runs), `--empty`, `--no-transaction`. |
-| `pnpm db:migrate:apply` | After reviewing the SQL, and after every pull or rebase. Applies `migration.sql` to your local DB and regenerates the Prisma client. It prints how many scheduled deletions it did not apply; `pnpm db:reset:local` applies them. |
+| `pnpm db:migrate:apply` | After reviewing the SQL, and after every pull or rebase. Applies `migration.sql` to your local DB and regenerates the Prisma client. It prints how many scheduled deletions it did not apply; `pnpm db:reset:local` applies them. It takes the migration runner lock and refuses, changing nothing, while another session holds a migration lock or a KB restore is pending. |
 | `pnpm db:migrate:rebase` | After rebasing a branch that has migrations onto the default branch. |
-| `pnpm db:reset:local` | Your local DB is in a mess and you want a clean one (this checkout's DB only). |
+| `pnpm db:reset:local` | Your local DB is in a mess and you want a clean one (this checkout's DB only, and only when it carries the disposable-local mark — see [Local database troubleshooting](#local-database-troubleshooting)). |
 | `pnpm db:studio` | Look at local data in the browser. |
 
 Never run `prisma migrate dev`, `prisma migrate reset`, or `prisma db push` — see the Dangerous Commands section of AGENTS.md. All the wrappers refuse to touch anything but this checkout's own local database.
@@ -173,13 +173,21 @@ The PR job `migrations` runs `pnpm db:check-migrations` against a throwaway Post
 
 **"I need to fix a migration I already merged."** You can't edit it. Write a new migration that corrects it.
 
-**"My local database is out of sync / I want to start over."** `pnpm db:reset:local` — drops and rebuilds only this checkout's database, then seeds.
+**"My local database is out of sync / I want to start over."** `pnpm db:reset:local` — drops and rebuilds only this checkout's database, then seeds. If it refuses an unmarked database, see [Local database troubleshooting](#local-database-troubleshooting).
 
 **"Types are stale after applying."** `pnpm db:migrate:apply` regenerates the client; if the editor still complains, restart the TypeScript server (or run `pnpm db:generate`).
 
 **"Production refuses to start after my merge."** Read the log line: it names the state (`pending` with a migration the running release cannot tolerate, `failed`, `db-ahead`, `no-history-nonempty`). Follow [schema-migrations.md § Recovery runbook](./schema-migrations.md#recovery-runbook).
 
 **"The startup log says a scheduled deletion needs a person."** The deletion failed 3 times in this release. Nothing was deleted. Write a fix migration, or stop and ask the owner ([schema-migrations.md § Recovery runbook](./schema-migrations.md#recovery-runbook)).
+
+## Local database troubleshooting
+
+**`db:reset:local` says the database is not marked as disposable.** Reset drops only a database carrying the disposable-local mark (a database comment, `knowledge-base:disposable-local-database v1`), which `pnpm db:worktree` writes on databases it creates and the dev compose stack writes on a fresh volume (`scripts/db/dev-postgres-init/10-mark-local.sh`). It never marks a database that already existed. A localhost URL with the right name is not proof: an SSH tunnel or port-forward to another server passes every name and host check. Nothing was dropped. If it really is this checkout's own local database (one created before the mark existed), the user runs `pnpm db:worktree --adopt` once at a terminal and types the name back; agents hand that command to the user. `EXPECTED_DB` never widens a reset, and `--adopt` refuses it.
+
+**`db:migrate:apply` says another session holds a migration lock.** A deploy runner, an offline restore or another `prisma migrate deploy` holds the runner lock (72707370) or Prisma's lock (72707369), or a migration mutation, full-bundle snapshot, restore or asset-storage migration holds the KB lifecycle lock (DADP, 1145389648). Nothing was changed; wait and re-run. A failed-looking row may belong to a migration that is still running, so the wrapper never resolves it then. It also refuses while a KB restore is pending (`knowledge_base_control.kb_restore` not READY): finish the same offline restore attempt first.
+
+The Claude hook denies a raw `prisma migrate deploy` (it bypasses the runner's lock, backup gate and restore checks) and a raw `prisma migrate resolve`, `pnpm db:worktree --adopt`, running the init script, and SQL that writes the mark (`COMMENT ON DATABASE`, including through `docker exec … psql` or `echo … | psql`). It is defence in depth, not the guard: it cannot read SQL inside a file passed to `psql -f` or piped from `cat`. The guards that hold are `db:reset:local`'s mark check and `db:migrate:apply`'s lock checks.
 
 ## See also
 

@@ -56,63 +56,76 @@ const requireRequiredTwoFactor = o.middleware(async ({ context, next }) => {
 
 export const protectedProcedure = authenticatedProcedure.use(requireRequiredTwoFactor);
 
+export type AdminAuthorityFailure =
+  | "unauthenticated"
+  | "banned"
+  | "unverified"
+  | "not-admin"
+  | "two-factor";
+
+/**
+ * The admin authority rule, defined once and checked in this order: a signed-in
+ * user on a session that is not an impersonation, not banned, with a verified
+ * email, an admin role and the forced second factor. `requireAdmin`,
+ * `requireAdminOr404` and the server's cookie-only `requireVerifiedAdminSession`
+ * (apps/server/src/admin-session-gate.ts) all call this and only map the
+ * failure to their own response. Do not re-derive the rule elsewhere. The
+ * live-row re-check (`requireLiveAdminOr404`) runs after this, not instead.
+ */
+export async function checkAdminAuthority<S extends NonNullable<Context["session"]>>(
+  session: S | null | undefined,
+): Promise<{ ok: true; session: S } | { ok: false; reason: AdminAuthorityFailure }> {
+  if (!session?.user || isImpersonatedSession(session)) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+  if (isUserBanned(session.user)) return { ok: false, reason: "banned" };
+  if (!session.user.emailVerified) return { ok: false, reason: "unverified" };
+  if (!isAdminRole(session.user.role)) return { ok: false, reason: "not-admin" };
+  if (!(await isTwoFactorPolicySatisfied(session.user))) return { ok: false, reason: "two-factor" };
+  return { ok: true, session };
+}
+
+const ADMIN_FORBIDDEN_MESSAGES: Record<
+  Exclude<AdminAuthorityFailure, "unauthenticated" | "banned">,
+  string
+> = {
+  unverified: "Email verification required for admin access.",
+  "not-admin": "Admin access required.",
+  "two-factor": "Two-factor authentication setup is required.",
+};
+
 const requireAdmin = o.middleware(async ({ context, next }) => {
-  // `requireAuth` is always chained before this middleware, so session is
-  // non-null at runtime — but the middleware-chain types don't carry that
-  // narrowing through, so repeat the guard for the type checker.
-  if (!context.session?.user || isImpersonatedSession(context.session)) {
-    throw new ORPCError("UNAUTHORIZED");
-  }
-  if (!context.session.user.emailVerified) {
-    throw new ORPCError("FORBIDDEN", {
-      message: "Email verification required for admin access.",
-    });
-  }
-  if (!isAdminRole(context.session.user.role)) {
-    throw new ORPCError("FORBIDDEN", {
-      message: "Admin access required.",
-    });
-  }
-  if (!(await isTwoFactorPolicySatisfied(context.session.user))) {
-    throw new ORPCError("FORBIDDEN", {
-      message: "Two-factor authentication setup is required.",
-    });
+  // `requireAuth` is always chained before this middleware (and already
+  // refuses a missing, impersonated or banned session with UNAUTHORIZED); the
+  // rule repeats those checks anyway, which also narrows the type, and maps
+  // them to the same UNAUTHORIZED.
+  const authority = await checkAdminAuthority(context.session);
+  if (!authority.ok) {
+    if (authority.reason === "unauthenticated" || authority.reason === "banned") {
+      throw new ORPCError("UNAUTHORIZED");
+    }
+    throw new ORPCError("FORBIDDEN", { message: ADMIN_FORBIDDEN_MESSAGES[authority.reason] });
   }
   return next({
     context: {
-      session: context.session,
+      session: authority.session,
     },
   });
 });
 
 export const adminProcedure = publicProcedure.use(requireAuth).use(requireAdmin);
 
-// `adminOr404Procedure` mirrors the role check in `requireAdmin` but throws
-// NOT_FOUND for every failure mode (missing session, unverified email,
-// non-admin role). Mount it on procedures that back a 404-hidden surface
-// (e.g. the /admin route group) so existence of the endpoint is not leaked
-// to non-admins.
+// `adminOr404Procedure` applies the same rule as `requireAdmin`
+// (checkAdminAuthority) but throws NOT_FOUND for every failure mode (missing
+// or impersonated session, ban, unverified email, non-admin role, missing 2FA).
+// Mount it on procedures that back a 404-hidden surface (e.g. the /admin route
+// group) so existence of the endpoint is not leaked to non-admins.
 const requireAdminOr404 = o.middleware(async ({ context, next }) => {
-  const notFound = () => new ORPCError("NOT_FOUND", { message: "Not found" });
-  if (
-    !context.session?.user ||
-    isImpersonatedSession(context.session) ||
-    isUserBanned(context.session.user)
-  ) {
-    throw notFound();
-  }
-  if (!context.session.user.emailVerified) {
-    throw notFound();
-  }
-  if (!isAdminRole(context.session.user.role)) {
-    throw notFound();
-  }
-  if (!(await isTwoFactorPolicySatisfied(context.session.user))) {
-    throw notFound();
-  }
+  const authority = await checkAdminAuthority(context.session);
+  if (!authority.ok) throw new ORPCError("NOT_FOUND", { message: "Not found" });
   return next({
     context: {
-      session: context.session,
+      session: authority.session,
     },
   });
 });

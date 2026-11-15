@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcess, execFile, execFileSync, spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
@@ -308,7 +308,28 @@ const refAbsenceProbes = (refName: string) => [
   { args: ["for-each-ref", "--format=%(refname)", "--", refName], clean: 0 },
   { args: ["symbolic-ref", "-q", "--", refName], clean: 1 },
 ];
-function absenceAnswer(refName: string, answers: GitAnswer[], cause: unknown): null {
+/**
+ * True only when the loose ref file can be read and holds neither a SHA nor a
+ * symbolic ref: definite corruption. An unreadable file (EACCES, EIO, gone)
+ * proves nothing (git also says "ignoring broken ref" for a ref it cannot
+ * read), so it stays a retryable storage failure.
+ */
+function looseRefIsMalformed(repoPath: string, refName: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(join(repoPath, refName), "utf8");
+  } catch {
+    return false;
+  }
+  return !/^[0-9a-f]{40}\n?$/.test(text) && !/^ref: refs\/[^\s]+\n?$/.test(text);
+}
+
+function absenceAnswer(
+  repoPath: string,
+  refName: string,
+  answers: GitAnswer[],
+  cause: unknown,
+): null {
   const probes = refAbsenceProbes(refName);
   const bad = answers.find(
     (answer, i) =>
@@ -318,9 +339,49 @@ function absenceAnswer(refName: string, answers: GitAnswer[], cause: unknown): n
       answer.stdout.split("\n").some((line) => (i === 0 ? line === refName : line.trim() !== "")),
   );
   if (!bad) return null;
+  // The one definite answer among the failures: git reports the ref as broken
+  // AND its file is readable with garbage content, which no retry can repair.
+  // Every other unclean answer (an unreadable ref file included) may be transient. Callers still get STORAGE_UNAVAILABLE;
+  // only one that must settle a corrupt ref (create recovery) reads the flag.
+  const brokenRef =
+    answers[0]?.status === 0 &&
+    /\bignoring broken ref\b/.test(answers[0].stderr) &&
+    looseRefIsMalformed(repoPath, refName);
   throw Object.assign(new KbDomainError("STORAGE_UNAVAILABLE", `Ref ${refName} is unreadable`), {
     cause: bad.stderr.trim() ? new Error(bad.stderr.trim().slice(0, 500)) : cause,
+    brokenRef,
   });
+}
+
+/** True for the STORAGE_UNAVAILABLE a ref read throws when git reports that ref as broken. */
+export function isBrokenRefError(error: unknown): boolean {
+  return (
+    error instanceof KbDomainError &&
+    error.code === "STORAGE_UNAVAILABLE" &&
+    (error as { brokenRef?: unknown }).brokenRef === true
+  );
+}
+
+/** What a broken ref reads as for journal recovery: equal to no SHA, so it is divergence. */
+export const BROKEN_REF = "<broken ref>";
+
+/**
+ * A ref read for journal recovery: a ref git reports as broken answers
+ * BROKEN_REF, which recovery settles as divergence (REPAIR_REQUIRED, evidence
+ * kept) instead of failing the sweep on every pass; every other storage
+ * failure still throws, and journal recovery isolates it per KB
+ * (`runJournalRecoverySweep` in ./recovery.ts: it quarantines only a small
+ * minority of failing KBs per pass, and retries otherwise).
+ */
+export async function readRefOrBroken(
+  read: () => string | null | Promise<string | null>,
+): Promise<string | null> {
+  try {
+    return await read();
+  } catch (error) {
+    if (isBrokenRefError(error)) return BROKEN_REF;
+    throw error;
+  }
 }
 async function absentRefOrThrowAsync(
   repoPath: string,
@@ -350,7 +411,7 @@ async function absentRefOrThrowAsync(
       });
     }
   }
-  return absenceAnswer(refName, answers, cause);
+  return absenceAnswer(repoPath, refName, answers, cause);
 }
 function absentRefOrThrow(repoPath: string, refName: string, cause: unknown): null {
   const answers = refAbsenceProbes(refName).map(({ args }) => {
@@ -369,7 +430,7 @@ function absentRefOrThrow(repoPath: string, refName: string, cause: unknown): nu
       stderr: result.stderr || (result.error ? String(result.error.message) : ""),
     };
   });
-  return absenceAnswer(refName, answers, cause);
+  return absenceAnswer(repoPath, refName, answers, cause);
 }
 export async function readCommitTreeShaAsync(
   repoPath: string,

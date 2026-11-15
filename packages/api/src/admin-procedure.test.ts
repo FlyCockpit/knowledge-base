@@ -23,6 +23,7 @@ import {
   adminOr404Procedure,
   adminProcedure,
   authenticatedProcedure,
+  checkAdminAuthority,
   protectedProcedure,
 } from "./index";
 import { invalidateForceTwoFactorSettingsCache } from "./lib/two-factor-policy";
@@ -477,5 +478,97 @@ describe.each([
       }),
     });
     await expect(client.ping()).resolves.toEqual({ ok: true });
+  });
+});
+
+// The single admin rule every admin gate maps (requireAdmin, requireAdminOr404,
+// apps/server/src/admin-session-gate.ts). The ORDER is part of the contract:
+// each gate's status and message depend on which check fails first.
+describe("checkAdminAuthority", () => {
+  const session = (
+    user: Partial<Session["user"]>,
+    sessionFields: Partial<Session["session"]> = {},
+  ) => {
+    const ctx = buildContext({ user, session: sessionFields });
+    if (!ctx.session) throw new Error("expected a session");
+    return ctx.session;
+  };
+  const verifiedAdmin = { role: "admin", emailVerified: true, twoFactorEnabled: true };
+
+  beforeEach(() => {
+    // No live row: the 2FA live re-read cannot rescue a stale refusal here.
+    db.user.findUnique.mockResolvedValue(null);
+  });
+
+  it("admits a verified admin with a second factor and returns the same session", async () => {
+    const s = session(verifiedAdmin);
+    await expect(checkAdminAuthority(s)).resolves.toEqual({ ok: true, session: s });
+  });
+
+  it("checks session, then impersonation, then ban, then email, then role, then 2FA", async () => {
+    await expect(checkAdminAuthority(null)).resolves.toEqual({
+      ok: false,
+      reason: "unauthenticated",
+    });
+    await expect(checkAdminAuthority(undefined)).resolves.toEqual({
+      ok: false,
+      reason: "unauthenticated",
+    });
+    // Every later check also fails in each case below; the earliest is reported.
+    const worst = { role: "user", emailVerified: false, twoFactorEnabled: false };
+    await expect(
+      checkAdminAuthority(session({ ...worst, banned: true }, { impersonatedBy: "admin-1" })),
+    ).resolves.toEqual({ ok: false, reason: "unauthenticated" });
+    await expect(checkAdminAuthority(session({ ...worst, banned: true }))).resolves.toEqual({
+      ok: false,
+      reason: "banned",
+    });
+    await expect(checkAdminAuthority(session(worst))).resolves.toEqual({
+      ok: false,
+      reason: "unverified",
+    });
+    await expect(
+      checkAdminAuthority(session({ role: "user", emailVerified: true, twoFactorEnabled: false })),
+    ).resolves.toEqual({ ok: false, reason: "not-admin" });
+    // None of the refusals above reached the 2FA policy read.
+    expect(db.appSetting.findMany).not.toHaveBeenCalled();
+    await expect(
+      checkAdminAuthority(session({ role: "admin", emailVerified: true, twoFactorEnabled: false })),
+    ).resolves.toEqual({ ok: false, reason: "two-factor" });
+  });
+
+  it("admits a lapsed temporary ban", async () => {
+    await expect(
+      checkAdminAuthority(
+        session({ ...verifiedAdmin, banned: true, banExpires: new Date(Date.now() - 60_000) }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it("maps the earliest failure to requireAdmin's message", async () => {
+    const ctx = buildContext({ user: { role: "user", emailVerified: false } });
+    await expect(createRouterClient(testRouter, { context: ctx }).ping()).rejects.toSatisfy(
+      (error: ORPCError<string, unknown>) => {
+        expect(error.code).toBe("FORBIDDEN");
+        expect(error.message).toBe("Email verification required for admin access.");
+        return true;
+      },
+    );
+  });
+
+  it.each([
+    ["adminProcedure", testRouter, "UNAUTHORIZED"],
+    ["adminOr404Procedure", testRouter404, "NOT_FOUND"],
+  ] as const)("%s refuses an impersonated admin session with %s", async (_n, router, code) => {
+    const ctx = buildContext({ user: verifiedAdmin, session: { impersonatedBy: "admin-1" } });
+    await expect(createRouterClient(router, { context: ctx }).ping()).rejects.toMatchObject({
+      code,
+    });
+  });
+
+  it("requireAdmin answers UNAUTHORIZED to a missing session", async () => {
+    await expect(
+      createRouterClient(testRouter, { context: buildContext(null) }).ping(),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });

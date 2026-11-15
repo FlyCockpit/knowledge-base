@@ -571,6 +571,8 @@ describe("R45 cancellation and ownership at real child boundaries", () => {
       guardPath: guard,
       childEntry: FAKE_CHILD,
       modelPath: "/nonexistent/model.gguf",
+      // probeQwenRuntime resolves the built-in descriptor from the model id.
+      modelId: rt(1).modelId,
       config: rt(1).config,
       budgetBytes: () => 64 * 1024 ** 3,
       childEnv: { FAKE_QWEN_DIR: dir, FAKE_QWEN_MODE: "hold-probe" },
@@ -655,6 +657,7 @@ it("R45 runtime verification refuses precancellation and a successful verificati
     guardPath: guard,
     childEntry: FAKE_CHILD,
     modelPath: "/nonexistent/model.gguf",
+    modelId: rt(1).modelId,
     config: rt(1).config,
     budgetBytes: () => 64 * 1024 ** 3,
     childEnv: { FAKE_QWEN_DIR: dir },

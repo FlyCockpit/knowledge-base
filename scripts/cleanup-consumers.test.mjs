@@ -279,8 +279,15 @@ test("offline restore and storage refuse runner contention before mutable prefli
       () => coordinateStorageMigration({ ...common, to: 's3' })]) {
       events.length = 0;
       await assert.rejects(call(), /BUSY/);
+      // Contention is refused at the first query. Restore may then run its
+      // read-only pending-attempt probe (kb-restore.mjs noPendingAttempt), and
+      // nothing else.
+      const probe = (sql) =>
+        sql === "SET lock_timeout = '2s'" ||
+        sql.startsWith("SELECT to_regclass('knowledge_base_control.kb_restore')") ||
+        sql.startsWith("SELECT 1 FROM knowledge_base_control.kb_restore WHERE singleton AND state<>'READY'");
       const queries = events.filter(Array.isArray);
-      assert.equal(queries.length, 1);
+      assert.equal(queries.filter(([sql]) => !probe(sql)).length, 1);
       assert.equal(queries[0][1][0], 72707370);
       assert.ok(!events.includes('mutated-volume'));
       assert.equal(events.at(-1), 'closed');

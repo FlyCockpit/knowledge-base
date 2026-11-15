@@ -226,8 +226,10 @@ waits within the existing deadline and fails closed rather than bypassing cache.
 
 ## Storage-aware encrypted backup and restore (P5)
 
-Disk mode keeps `kb/backup/1`, including every retained disk CAS object. The
-explicit S3 variant, `kb/backup/2`, contains **no asset bytes or cache files**.
+Both storage modes write `kb/backup/3`, the migration-aware format (prerelease
+`kb/backup/1` and `kb/backup/2` bundles are refused). In disk mode the bundle
+includes every retained disk CAS object. In S3 mode it contains **no asset
+bytes or cache files**.
 It encrypts a sorted, streamed `asset-inventory.jsonl` of every catalog
 `{hash,size}`, including historical and tombstoned assets, with a credential-free
 source locator. Backup verifies remote size and hash metadata (or hashes a full

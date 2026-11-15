@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -318,4 +325,33 @@ test("failed private channel allocation never admits a child", () => {
     if owned_child_open "$channel" 6; then exit 42; fi
     [ ! -e "$FIXTURE/admitted" ]
   `);
+});
+
+test("the supervisor CLI fails clearly when psql or pg_restore is not installed", () => {
+  // Isolated PATH: a fixture dir holding only a `node` link, no Postgres client.
+  const directory = mkdtempSync(join(tmpdir(), "bounded-child-missing-"));
+  try {
+    symlinkSync(process.execPath, join(directory, "node"));
+    const script = fileURLToPath(new URL("./bounded-child.mjs", import.meta.url));
+    for (const args of [
+      ["75000", "psql", "-X", "-Atqc", "SELECT 1"],
+      ["75000", "--close-input", "psql", "-X"],
+      ["120000", "pg_restore", "--list"],
+    ]) {
+      const result = spawnSync("node", [script, ...args], {
+        env: { PATH: directory },
+        input: "",
+        encoding: "utf8",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+      assert.ifError(result.error);
+      assert.equal(result.signal, null, args.join(" "));
+      assert.equal(result.status, 1, `${args.join(" ")}: ${result.stderr}`);
+      assert.match(result.stderr, /FATAL: database\/preparation client failed/, args.join(" "));
+      assert.doesNotMatch(result.stderr, /SELECT 1|at .*bounded-child/, args.join(" "));
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

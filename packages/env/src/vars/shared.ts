@@ -45,7 +45,7 @@ export const sharedVars = {
   // "the newest bundle is too old" is the only signal that covers both "ran and
   // failed" and "never ran". The check runs whenever BACKUP_ENABLED is true —
   // including before a bucket exists (`setup-missing`) — and is omitted only on
-  // an explicitly disabled freshness monitor (BACKUP_ENABLED=false).
+  // disabled backups (BACKUP_ENABLED=false, the default).
   // BACKUP_S3_* must be a dedicated backup-bucket key with bundle-only grants.
   // Asset location and cache configuration shared by both runtime roles.
   KB_ASSET_S3_ENABLED: strictBooleanFlag(),
@@ -58,7 +58,7 @@ export const sharedVars = {
   KB_ASSET_S3_ACCESS_KEY_ID: z.string().optional().transform(toSecret),
   KB_ASSET_S3_OPERATOR_ACCESS_KEY_ID: z.string().optional().transform(toSecret),
   KB_ASSET_S3_OPERATOR_SECRET_ACCESS_KEY: z.string().optional().transform(toSecret),
-  BACKUP_ENABLED: strictBooleanFlag(true),
+  BACKUP_ENABLED: strictBooleanFlag(),
   BACKUP_AGE_RECIPIENT: z.string().optional(),
   BACKUP_S3_BUCKET: z.string().optional(),
   BACKUP_S3_ACCESS_KEY_ID: z.string().optional().transform(toSecret),

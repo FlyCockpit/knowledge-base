@@ -22,6 +22,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { kbTestName } from "../packages/test-utils/src/kb/test-names.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const ROOT = resolve(dirname(SELF), "..");
@@ -431,8 +432,10 @@ export async function runImageSmoke({
     throw new Error("Docker is required for the qwen-model image lane (daemon not reachable).");
   }
   const built = !image;
-  const container = `kb-model-smoke-${process.pid}-${randomBytes(6).toString("hex")}`;
-  const tag = image ?? `kb-worker-qwen-smoke:${process.pid}-${randomBytes(3).toString("hex")}`;
+  const container = kbTestName(`kb-model-smoke-${process.pid}-${randomBytes(6).toString("hex")}`);
+  const tag =
+    image ??
+    `${kbTestName("kb-worker-qwen-smoke")}:${process.pid}-${randomBytes(3).toString("hex")}`;
   try {
     if (built)
       docker(
@@ -472,6 +475,9 @@ export async function runImageSmoke({
       `${realpathSync(artifact.path)}:${IN_IMAGE.modelDir}/${identity.fileName}:ro`,
       "-v",
       `${SELF}:/smoke/test-qwen-image.mjs:ro`,
+      // SELF's relative `../packages/.../test-names.mjs` import resolves here.
+      "-v",
+      `${join(ROOT, "packages/test-utils/src/kb/test-names.mjs")}:/packages/test-utils/src/kb/test-names.mjs:ro`,
       "-v",
       `${artifactFixture}:${IN_IMAGE.fixture}:ro`,
       "-v",

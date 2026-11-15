@@ -15,25 +15,6 @@ minimumReleaseAgeIgnoreMissingTime: false
 # the build fails until the entry is deleted. Without it a carve-out taken for a
 # one-week security window quietly becomes a permanent exemption from the gate.
 # Restore as a block sequence, never flow style — the checker only parses blocks:
-minimumReleaseAgeExclude:
-  # GHSA-fvxx-76fc-893x (revoked sessions still accepted with cookieCache) and
-  # GHSA-9hm7-xhfp-cx58 (genericOAuth treats an unverified email as verified):
-  # better-auth 1.7.18 (released 2026-11-05) is the newest fixed release and is
-  # <7 days old. Every @better-auth/* package moves in lockstep (one
-  # @better-auth/core), so each 1.7.18 package is carved out exactly.
-  # Owner-approved 2026-11-09.
-  # drop-after: 2026-11-12
-  - better-auth@1.7.18
-  - "@better-auth/core@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/telemetry@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/kysely-adapter@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/prisma-adapter@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/drizzle-adapter@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/memory-adapter@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/mongo-adapter@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/mcp@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/cimd@1.7.18" # drop-after: 2026-11-12
-  - "@better-auth/oauth-provider@1.7.18" # drop-after: 2026-11-12
 # Each selector lifts a transitive out of its vulnerable range. All target
 # versions pass the 7-day minimumReleaseAge gate; selectors are scoped tight so
 # unrelated majors are untouched.

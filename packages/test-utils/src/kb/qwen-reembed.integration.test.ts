@@ -307,6 +307,8 @@ async function readyModel() {
   await prisma.localModel.create({
     data: {
       id: QWEN_MODEL_ID,
+      // The column defaults to the Gemma model; this row is the Qwen one.
+      modelId: QWEN_MODEL.modelId,
       state: "READY",
       runtimeIdentity: qwenModelIdentity(),
       epoch: 1,

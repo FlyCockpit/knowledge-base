@@ -107,7 +107,7 @@
     "db:test-migrations": "node scripts/db/test-migrations.mjs",
     "db:test-unit": "node --test 'scripts/db/*.test.mjs' 'scripts/db/lib/*.test.mjs'",
     "deploy:check": "node scripts/deploy-check.mjs",
-    "deploy:test-unit": "node --test scripts/deploy-check.test.mjs scripts/build-commit.test.mjs",
+    "deploy:test-unit": "node --test scripts/deploy-check.test.mjs scripts/build-commit.test.mjs scripts/docker-entrypoint.test.mjs",
     "backup:test-unit": "node --import tsx --test scripts/backup/*.test.mjs scripts/lib/kb-backup.test.mjs scripts/lib/kb-restore.test.mjs scripts/restore-archive.test.mjs scripts/lib/bounded-child.test.mjs scripts/cleanup-consumers.test.mjs scripts/lib/asset-storage-control.test.mjs",
     "backup:test": "node scripts/backup/test-backup-restore.mjs"
   },

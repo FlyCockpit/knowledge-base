@@ -5,7 +5,9 @@ import path from "node:path";
 import { describe, test } from "node:test";
 import {
   classify,
+  KB_DDL_LOCK_KEY,
   MIGRATION_RUNNER_LOCK_KEY,
+  migrationInFlight,
   PRISMA_ADVISORY_LOCK,
   pgConnectionString,
   prismaSchemaName,
@@ -183,8 +185,25 @@ test("readMigrationState reports the runner lock and Prisma's lock separately", 
     held.add(PRISMA_ADVISORY_LOCK);
     state = await read();
     assert.deepEqual([state.inProgress, state.runnerActive], [true, true]);
+    assert.equal(state.lifecycleActive, false);
+    held.add(KB_DDL_LOCK_KEY);
+    state = await read();
+    assert.equal(state.lifecycleActive, true);
     assert.equal(MIGRATION_RUNNER_LOCK_KEY, PRISMA_ADVISORY_LOCK + 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("migrationInFlight names Prisma's lock, then the runner lock, then the KB lifecycle lock, else null", () => {
+  assert.equal(migrationInFlight({ inProgress: false, runnerActive: false }), null);
+  assert.match(
+    migrationInFlight({ inProgress: true, runnerActive: true }) ?? "",
+    /Prisma's migration lock/,
+  );
+  assert.match(migrationInFlight({ inProgress: false, runnerActive: true }) ?? "", /runner lock/);
+  assert.match(
+    migrationInFlight({ inProgress: false, runnerActive: false, lifecycleActive: true }) ?? "",
+    /KB lifecycle lock/,
+  );
 });

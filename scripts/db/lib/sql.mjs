@@ -1027,9 +1027,18 @@ function templateHash(folder, key) {
   return createHash("sha256").update(`${folder}|${key}`).digest("hex").slice(0, 8);
 }
 
-/** Name of the enum-remove sync function and trigger for one table. */
+/**
+ * Name of the enum-remove sync function and trigger for one table. BEFORE
+ * triggers on one table fire in name order (byte order). An unquoted
+ * identifier starts with a lower-case letter or "_" (or a non-ASCII letter),
+ * all of which sort after "0", so the leading "0_" makes the sync trigger fire
+ * before every unquoted-named trigger and every quoted one starting with a
+ * capital letter: they see the remapped value, never the removed one. Only a
+ * quoted name starting with a space, punctuation below "0", or "0" itself
+ * could sort earlier.
+ */
 export function syncTriggerName(folder, table) {
-  return `knowledge_base_sync_${templateHash(folder, table)}`;
+  return `0_knowledge_base_sync_${templateHash(folder, table)}`;
 }
 
 /** Header line shared by the enum-remove expand block and contract `DO`. */
@@ -3196,7 +3205,9 @@ function parseIndexStatement(sql, statement) {
 
 // --- name reuse (§1.7) ------------------------------------------------------
 
-const TEMPLATE_OBJECT = /^knowledge_base_(sync|enum_new|enum_old)_[0-9a-f]{8}$/;
+// `knowledge_base_sync_` is the sync name before it was renamed to fire first.
+const TEMPLATE_OBJECT =
+  /^(0_knowledge_base_sync|knowledge_base_sync|knowledge_base_enum_new|knowledge_base_enum_old)_[0-9a-f]{8}$/;
 
 function createdKeys(sql) {
   const keys = [];
@@ -3209,38 +3220,45 @@ function createdKeys(sql) {
   for (const statement of parsed) {
     const { tokens, line } = statement;
     const words = tokens.map(kw);
-    const add = (key) => {
-      if (!TEMPLATE_OBJECT.test(key.split(/[:.]/).at(-1) ?? "")) keys.push({ key, line });
+    // `name` is the created object's own identifier (a label's: its enum
+    // type's). Keys join identifiers with "." and ":", which a quoted name can
+    // contain, so the key's last segment is not reliably the object's name.
+    const add = (key, name) => {
+      if (!TEMPLATE_OBJECT.test(name)) keys.push({ key, line });
     };
     if (words[0] === "CREATE" && words[1] === "TABLE") {
       const scratch = emptyCatalog();
       foldStatement(scratch, sql, statement, false);
       for (const [tableKey, table] of scratch.tables) {
-        add(`table:${tableKey}`);
-        for (const column of table.columns.keys()) add(`column:${tableKey}.${column}`);
+        add(`table:${tableKey}`, table.name);
+        for (const column of table.columns.keys()) add(`column:${tableKey}.${column}`, column);
       }
       for (const constraint of scratch.constraints.values())
-        add(`constraint:${constraint.table}.${constraint.name}`);
+        add(`constraint:${constraint.table}.${constraint.name}`, constraint.name);
     } else if (words[0] === "ALTER" && words[1] === "TABLE") {
       const parsedAlter = alterTable(tokens);
       for (const action of parsedAlter?.actions ?? []) {
-        if (action.kind === "add-column") add(`column:${parsedAlter.table}.${action.column}`);
+        if (action.kind === "add-column")
+          add(`column:${parsedAlter.table}.${action.column}`, action.column);
         else if (action.kind === "add-constraint" && action.constraint)
-          add(`constraint:${parsedAlter.table}.${action.constraint}`);
-        else if (action.kind === "rename-column") add(`column:${parsedAlter.table}.${action.to}`);
-        else if (action.kind === "rename-table") add(`table:${parsedAlter.schema}.${action.to}`);
+          add(`constraint:${parsedAlter.table}.${action.constraint}`, action.constraint);
+        else if (action.kind === "rename-column")
+          add(`column:${parsedAlter.table}.${action.to}`, action.to);
+        else if (action.kind === "rename-table")
+          add(`table:${parsedAlter.schema}.${action.to}`, action.to);
       }
     } else if (
       words[0] === "CREATE" &&
       (words[1] === "INDEX" || (words[1] === "UNIQUE" && words[2] === "INDEX"))
     ) {
       const index = parseIndexStatement(sql, statement);
-      if (index) add(`index:${index.table.split(".")[0]}.${index.name}`);
+      if (index) add(`index:${index.table.split(".")[0]}.${index.name}`, index.name);
     } else if (words[0] === "CREATE" && words[1] === "TYPE") {
       const created = parseCreateEnum(sql, statement);
       if (created) {
-        add(`type:${created.schema}.${created.name}`);
-        for (const label of created.labels) add(`label:${created.schema}.${created.name}:${label}`);
+        add(`type:${created.schema}.${created.name}`, created.name);
+        for (const label of created.labels)
+          add(`label:${created.schema}.${created.name}:${label}`, created.name);
       }
     } else if (words[0] === "ALTER" && words[1] === "TYPE") {
       const name = qualifiedName(tokens, 2);
@@ -3248,9 +3266,12 @@ function createdKeys(sql) {
         const at = name.next + (words[name.next + 2] === "IF" ? 5 : 2);
         add(
           `label:${name.schema}.${name.name}:${decodeLiteral(rawText(sql, statement, at, at + 1))}`,
+          name.name,
         );
-      } else if (name && words[name.next] === "RENAME" && words[name.next + 1] === "TO")
-        add(`type:${name.schema}.${ident(tokens[name.next + 2])}`);
+      } else if (name && words[name.next] === "RENAME" && words[name.next + 1] === "TO") {
+        const renamed = ident(tokens[name.next + 2]);
+        add(`type:${name.schema}.${renamed}`, renamed);
+      }
     }
   }
   return keys;

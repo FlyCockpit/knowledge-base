@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,6 +11,7 @@ const defaults = {
   environment: "development" as const,
   gitRef: "main",
   url: "https://dev.example.com",
+  backups: true,
 };
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const app = (role: string) =>
@@ -19,6 +20,24 @@ const service = (yaml: string, role: string) =>
   yaml
     .split(role === "server" ? /\n {2}[a-z0-9-]+-server:\n/ : `\n  ${role}:\n`)[1]!
     .split(/^ {2}[a-z][a-z-]*:\s*$/m)[0]!;
+
+test("new deployments need no backup service, volume or settings", () => {
+  const options = { ...defaults, backups: false };
+  const config = generateDokployConfig(options);
+  assert.equal(config.applications.length, 2);
+  assert.ok(config.applications.every((entry) => entry.mounts.length === 1));
+  assert.ok(
+    Object.keys(config.environmentVariablesToSetOnce).every((key) => !key.startsWith("BACKUP_")),
+  );
+  const yaml = generateDokployCompose(options);
+  assert.doesNotMatch(yaml, /^ {2}backup:|^ {2}backups:|backups:\/app\/backups/m);
+  assert.match(yaml, /BACKUP_ENABLED: "\$\{BACKUP_ENABLED:-false\}"/);
+  assert.equal(
+    generateDokployConfig({ environment: "development", gitRef: "main", url: defaults.url })
+      .applications.length,
+    2,
+  );
+});
 
 test("server leads migrations, worker waits, and optional scheduler shares the same source ref", () => {
   const config = generateDokployConfig(defaults);
@@ -316,11 +335,17 @@ test("entrypoint dispatches one-shots without registry identity and runtime appl
         `exec node '${join(root, "scripts/backup/drill.mjs")}' "$@"\n`,
       );
     writeFileSync(join(root, "scripts/lib/validate-kb-master-key.mjs"), "");
+    // The entrypoint execs the CMD and the one-shots under tini; a pass-through
+    // stub stands in for it (scripts/docker-entrypoint.test.mjs covers signals).
+    mkdirSync(join(root, "bin"));
+    writeFileSync(join(root, "bin/tini"), '#!/bin/sh\n[ "$1" = -- ] && shift\nexec "$@"\n', {
+      mode: 0o755,
+    });
     writeFileSync(join(root, "scripts/init-kb-volumes.mjs"), "");
     const shell = join(root, "entrypoint.sh");
     writeFileSync(shell, read("scripts/docker-entrypoint.sh").replaceAll("/app/", `${root}/`));
     const env = {
-      PATH: process.env.PATH,
+      PATH: `${join(root, "bin")}:${process.env.PATH}`,
       DATABASE_URL: "fixture",
       REDIS_URL: "fixture",
       BETTER_AUTH_SECRET: "fixture",
@@ -348,7 +373,9 @@ test("entrypoint dispatches one-shots without registry identity and runtime appl
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-    assert.equal(calls().length, 7);
+    // Seven one-shots; `migrate` runs the backups startup check first, as
+    // every migrating start does, then the runner.
+    assert.equal(calls().length, 8);
     for (const call of calls()) {
       assert.equal(call.id, null);
       assert.equal(call.writer, null);
@@ -356,34 +383,47 @@ test("entrypoint dispatches one-shots without registry identity and runtime appl
       assert.equal(call.backup, true);
       assert.equal(call.heartbeat, true);
     }
-    assert.deepEqual(calls()[0].args, ["apply"]);
-    assert.deepEqual(calls()[1].args, ["hold"]);
-    assert.deepEqual(calls()[2].args, ["--label", "manual"]);
-    assert.deepEqual(calls()[3].args, ["run"]);
-    for (const role of ["server", "worker"])
-      execFileSync("sh", [shell, "node", `apps/${role}/dist/index.mjs`, "--fenced"], {
+    assert.deepEqual(calls()[0].args, ["--startup-notice"]);
+    assert.deepEqual(calls()[1].args, ["apply"]);
+    assert.deepEqual(calls()[2].args, ["hold"]);
+    assert.deepEqual(calls()[3].args, ["--label", "manual"]);
+    assert.deepEqual(calls()[4].args, ["run"]);
+    for (const role of ["server", "worker"]) {
+      const result = spawnSync("sh", [shell, "node", `apps/${role}/dist/index.mjs`, "--fenced"], {
         env,
         cwd: root,
+        encoding: "utf8",
       });
-    const runtime = calls().slice(7);
-    assert.deepEqual(runtime[0].args, ["apply", "--role", "server"]);
-    assert.deepEqual(runtime[2].args, ["wait", "--role", "worker"]);
-    assert.match(runtime[0].id, /^[a-f0-9-]{36}$/);
-    assert.equal(runtime[0].id, runtime[1].id);
-    assert.equal(runtime[2].id, runtime[3].id);
-    assert.notEqual(runtime[0].id, runtime[2].id);
-    assert.equal(runtime[0].writer, null);
-    assert.equal(runtime[1].writer, "fixture-writer");
-    assert.equal(runtime[3].writer, null);
-    for (const call of [runtime[0], runtime[2]]) {
+      assert.equal(result.status, 0, result.stderr);
+    }
+    // The backups notice is printed by `pre-migrate.sh --startup-notice`
+    // (scripts/backup/pre-migrate.test.mjs covers its text), stubbed here: the
+    // migrating server runs that check first; the waiting worker does not.
+    const runtime = calls().slice(8);
+    assert.deepEqual(
+      runtime.map((call) => call.args[0]),
+      ["--startup-notice", "apply", "--fenced", "wait", "--fenced"],
+    );
+    const [notice, apply, server, wait, worker] = runtime;
+    assert.equal(notice.writer, null, "the startup check runs without the asset writer secret");
+    assert.deepEqual(apply.args, ["apply", "--role", "server"]);
+    assert.deepEqual(wait.args, ["wait", "--role", "worker"]);
+    assert.match(apply.id, /^[a-f0-9-]{36}$/);
+    assert.equal(apply.id, server.id);
+    assert.equal(wait.id, worker.id);
+    assert.notEqual(apply.id, wait.id);
+    assert.equal(apply.writer, null);
+    assert.equal(server.writer, "fixture-writer");
+    assert.equal(worker.writer, null);
+    for (const call of [apply, wait]) {
       assert.equal(call.operator, true, "startup child retains asset reader");
       assert.equal(call.backup, true, "startup child retains pre-migrate dump writer");
     }
-    for (const call of [runtime[1], runtime[3]]) {
+    for (const call of [server, worker]) {
       for (const key of ["operator", "operatorId", "backup", "backupId", "heartbeat"])
         assert.equal(call[key], false, `runtime must strip ${key}`);
     }
-    assert.equal(runtime[3].monitor, true, "worker retains ListBucket-only freshness key");
+    assert.equal(worker.monitor, true, "worker retains ListBucket-only freshness key");
     assert.throws(() =>
       execFileSync("sh", [shell, "node", "apps/server/dist/index.mjs"], {
         env: { ...env, MIGRATE_ON_START: "invalid" },
@@ -399,11 +439,18 @@ test("entrypoint dispatches one-shots without registry identity and runtime appl
         stdio: "pipe",
       }),
     );
-    assert.equal(calls().length, before + 1, "refused migration must not launch the app");
+    // The startup check, then the refused runner; never the app.
+    assert.equal(calls().length, before + 2, "refused migration must not launch the app");
+    assert.deepEqual(
+      calls()
+        .slice(before)
+        .map((call) => call.args[0]),
+      ["--startup-notice", "apply"],
+    );
     assert.throws(() =>
       execFileSync("sh", [shell, "migrate", "--role", "server"], { env, cwd: root, stdio: "pipe" }),
     );
-    assert.equal(calls().length, before + 1, "one-shot migrate never accepts registration flags");
+    assert.equal(calls().length, before + 2, "one-shot migrate never accepts registration flags");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

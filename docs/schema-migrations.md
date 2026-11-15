@@ -6,13 +6,13 @@ Knowledge Base uses Prisma Migrate with committed SQL. `packages/db/prisma/schem
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm db:worktree` | Create this checkout's local and shadow databases and write its DATABASE_URL. |
+| `pnpm db:worktree` | Create this checkout's local and shadow databases, mark each one it creates as disposable, and write its DATABASE_URL. `--adopt` (a person at a terminal) marks older ones. |
 | `pnpm db:migrate <name>` | Generate reviewed expand SQL and optional delayed contract; applies nothing. |
-| `pnpm db:migrate:apply` | Apply locally, recover intact transactional failures, regenerate Prisma client. Skips contracts. |
+| `pnpm db:migrate:apply` | Apply locally, recover intact transactional failures, regenerate Prisma client. Skips contracts. Takes the migration runner lock and refuses, changing nothing, while another session holds the runner/Prisma/DADP lock or a KB restore is pending. |
 | `pnpm db:migrate:rebase` | Reorder unmerged folders after rebasing and recheck consistency on scratch DBs. |
-| `pnpm db:reset:local` | Explicitly rebuild this checkout's disposable local DB, apply contracts and seed. |
+| `pnpm db:reset:local` | Explicitly rebuild this checkout's disposable local DB, apply contracts and seed, only when it carries the disposable-local mark; EXPECTED_DB is refused. |
 | `pnpm db:check-migrations --base <ref>` | Run five checks against a disposable CHECK_DATABASE_URL. |
-| `pnpm db:test-unit` / `pnpm db:test-migrations` | Database-free runner tests / isolated real-Postgres migration, contract and KB lock scenarios. |
+| `pnpm db:test-unit` / `pnpm db:test-migrations` | Database-free runner tests / isolated real-Postgres migration, contract and KB lock scenarios. `db:test-migrations` starts a throwaway `postgres:18` container named `<prefix>-<hex>` with a random password (`--container-prefix <prefix>` or `TEST_MIGRATIONS_CONTAINER_PREFIX`; default `knowledge-base-test-migrations`) and removes it at the end, also on Ctrl-C or TERM; `--server-url <superuser url>` uses a disposable server you already run. Every database and role it creates has a per-run random name, so it never touches `knowledge_base` or a checkout's database, and it does not inherit DATABASE_URL, EXPECTED_DB, guard escapes or BACKUP_ENABLED. |
 
 Main checkout uses `knowledge_base` (or EXPECTED_DB); worktrees use `knowledge_base_wt_<10 hex>`. Shadows use `<name>_shadow`. Guards require these exact names on localhost/127.0.0.1/::1 and reject query parameters that can redirect connections. EXPECTED_PORT defaults 5432. Never use a shared database for generation, reset or migration checks. Linux wrappers require `/usr/local/bin/kb-child-guard`; packaged development supplies it. Do not bypass the guard if it is missing.
 
@@ -46,21 +46,21 @@ The server image runs migrations before starting; MIGRATE_ON_START defaults true
 | State | Admission |
 | --- | --- |
 | up-to-date | Register and start; leader may run due safe contracts. |
-| pending | Leader validates and backs up, then deploys. Worker waits. |
+| pending | Leader validates, backs up only with `BACKUP_ENABLED=true`, then deploys. Worker waits. |
 | db-ahead | Admit only if all newer migrations are rollback-safe and none of their contracts ran; registry pauses deletions. |
 | failed | Wait for an active runner, or recover an intact transaction once; otherwise refuse. |
 | no-history-nonempty | Refuse. No automatic baseline or adoption. |
 | restore-pending | Refuse every apply/wait/rollback/hold branch until offline recovery reaches READY. |
 
-A genuinely empty managed catalog with no applied history and `0_init` first in the pending set permits a first-install backup exemption for all pending folders, rechecked under locks. Once any application schema or data exists, pending migrations and due contracts require the [full encrypted bundle](./backup-restore.md): Postgres, Git and disk CAS bytes or verified S3 references. Missing encryption recipient/output, disabled backup or failed configured upload blocks mutation. A verified local completed pair is valid when S3 is unconfigured. There is no database-only fallback.
+Backups default off (`BACKUP_ENABLED=false`): pending migrations and due contracts never call the backup hook, even if storage is present. With `BACKUP_ENABLED=true` the leader calls `scripts/backup/pre-migrate.sh --label pre-migrate` for the [full encrypted bundle](./backup-restore.md) (Postgres, Git and disk CAS bytes or verified S3 references) before every pending deploy on an initialized database. No hook in the image, a missing encryption recipient/output, a failed bundle, a missing or mismatched result, or a failed configured upload stops the migration before anything is applied. There is no first-install exemption from the destination: a brand-new database has nothing to bundle (and the bundle coordinates through the catalog `0_init` creates), so there the hook runs `--check-destination` (recipient, a writable BACKUP_DIR that is a mounted volume unless BACKUP_S3_BUCKET is set, BACKUP_S3_* settings; no bundle; the entrypoint runs the same check at every migrating start), and a failed check or a missing hook refuses the migration too. A verified local completed pair is valid when S3 is unconfigured. There is no database-only fallback. A genuinely empty managed catalog with no applied history and `0_init` first in the pending set (rechecked under locks) is still a first install for the in-place breaking-change refusal and the contract soak.
 
 Dokploy replaces KB containers stop-first on one host. Worker wait or a second leader may expire during a long bundle; keep restart enabled and retry after leader completion. Failed migration admission can mean downtime. Confirm the live commit with `pnpm deploy:check <url>` and use the deeper `pnpm dokploy:verify` on the host as needed.
 
 ## Expand and contract
 
-The generator moves table/column/type deletions into `contract.sql`; expand SQL keeps old writes possible using reviewed placeholder defaults or relaxed nullability. Enum removal uses `--remap 'Enum.OLD=NEW'`, a generated sync/remap block and later enum rebuild. Never reuse a retired database name. Primary-key changes require the new-table recipe.
+The generator moves table/column/type deletions into `contract.sql`; expand SQL keeps old writes possible using reviewed placeholder defaults or relaxed nullability. Enum removal uses `--remap 'Enum.OLD=NEW'`, a generated sync/remap block and later enum rebuild. The sync block adds a `BEFORE INSERT OR UPDATE` trigger per affected table that rewrites `OLD` to `NEW` during the overlap. It is named `0_knowledge_base_sync_<hash>`: BEFORE triggers on a table fire in name order (byte order), so it runs before every trigger with an unquoted name and every quoted one starting with a letter, and they see `NEW`, never `OLD`; only a quoted name starting with a space, punctuation or `0` could sort earlier. The contract drops it. Never reuse a retired database name. Primary-key changes require the new-table recipe.
 
-Contracts wait for at least seven days after ready admission of the new release, no live older registration and no active restore/cluster/owner hold. Restored registries are invalidated. The runner validates checksums, retained names, live catalog and templates again and takes a full pre-drop bundle before deleting. Dead registrations do not prove readiness; heartbeat starts only after KB maintenance admission, and ready follows actual server/consumer readiness. Deletion notices are retried by the worker.
+Contracts wait for at least seven days after ready admission of the new release, no live older registration and no active restore/cluster/owner hold. Restored registries are invalidated. The runner validates checksums, retained names, live catalog and templates again and, with `BACKUP_ENABLED=true`, takes a full pre-drop bundle (`--label pre-drop`) before deleting unless this run already took the pre-migration one; a failed bundle or a missing hook skips every deletion this run (the app still starts). A fresh database takes no pre-drop bundle. Dead registrations do not prove readiness; heartbeat starts only after KB maintenance admission, and ready follows actual server/consumer readiness. Deletion notices are retried by the worker.
 
 ### No in-place breaking changes
 

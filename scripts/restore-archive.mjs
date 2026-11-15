@@ -90,7 +90,55 @@ export async function applyArchive(
   }
 }
 
+// pg_restore writes each large object (TOC entries BLOB / BLOBS / BLOB
+// METADATA) inside its own BEGIN … COMMIT. Streamed through psql
+// --single-transaction, that COMMIT would end the outer transaction early and
+// leave a partial import behind, so such archives are refused up front.
+// Entry lines look like `1234; 2613 16391 BLOB - 16391 owner` (PG 18.7 -l).
+const LARGE_OBJECT_ENTRY = /^\d+;\s+\d+\s+\d+\s+BLOB(S| METADATA)?\s/m;
+
+export async function refuseLargeObjects(
+  path,
+  { env = process.env, signal, maxBytes = 64 * 1024 * 1024 } = {},
+) {
+  const input = await open(path, "r");
+  let list = "";
+  let oversized = false;
+  try {
+    const owner = boundedChild("pg_restore", ["--list"], {
+      env,
+      signal,
+      timeout: 120000,
+      stdio: [input.fd, "pipe", "ignore"],
+    });
+    owner.child.stdout?.on("data", (bytes) => {
+      list += bytes;
+      if (list.length > maxBytes) {
+        oversized = true;
+        owner.stop();
+      }
+    });
+    await owner.done;
+  } catch (error) {
+    if (oversized) {
+      const refused = new Error("RESTORE_ARCHIVE_LIST_BUDGET", { cause: error });
+      refused.code = "RESTORE_ARCHIVE_LIST_BUDGET";
+      throw refused;
+    }
+    throw error;
+  } finally {
+    await input.close();
+  }
+  if (LARGE_OBJECT_ENTRY.test(list)) {
+    const refused = new Error("RESTORE_LARGE_OBJECTS");
+    refused.code = "RESTORE_LARGE_OBJECTS";
+    throw refused;
+  }
+}
+
 export async function prepareArchive(path, output, { env = process.env, signal } = {}) {
+  // Read the archive's TOC before writing any script: nothing is imported yet.
+  await refuseLargeObjects(path, { env, signal });
   const input = await open(path, "r"),
     out = await open(output, "w", 0o600);
   try {
