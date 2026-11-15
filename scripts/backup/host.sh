@@ -91,7 +91,43 @@ discover_app() {
   mapfile -t servers < <(docker ps -a -q -f "label=com.docker.compose.project=$project" -f label=io.knowledge-base.role=server)
   [ ${#servers[@]} -eq 1 ] || die "Expected one server container for this project."
   server="${servers[0]}"
+  # The server container's own image ID, never its tag: the one-off container
+  # must run exactly the code the app runs.
   image="$(docker inspect -f '{{.Image}}' "$server")"
+  # A redeploy that rebuilt an identical image can retag the name to a new ID
+  # and drop the old one (Docker 29's containerd image store) while the server
+  # still points at it. Falling back to the tag could run other code than the
+  # app's, so stop before anything runs or stops and name the fix.
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    local dir service files file_args="" file
+    dir="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$server" 2>/dev/null || true)"
+    service="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$server" 2>/dev/null || true)"
+    # The compose file(s) the deploy used (comma-separated), so the command
+    # finds the same configuration (Dokploy's file is not docker-compose.yml).
+    files="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$server" 2>/dev/null || true)"
+    case "$dir" in
+      "" | "<no value>") dir="<the compose's directory>" ;;
+      *) dir="$(printf '%q' "$dir")" ;;
+    esac
+    case "$service" in
+      "" | "<no value>") service="<the server's compose service>" ;;
+      *) service="$(printf '%q' "$service")" ;;
+    esac
+    case "$files" in
+      "" | "<no value>") file_args=" -f <the deploy's compose file>" ;;
+      *)
+        local -a list
+        IFS=, read -r -a list <<<"$files"
+        for file in "${list[@]}"; do
+          [ -n "$file" ] && file_args+=" -f $(printf '%q' "$file")"
+        done
+        ;;
+    esac
+    die "The server container's image (${image:0:19}) is no longer on this machine: a redeploy
+  replaced it without recreating the server. Recreate the server from the current image
+  (it restarts the app), then re-run this command:
+    cd $dir && docker compose -p $(printf '%q' "$project")$file_args up -d --no-build --force-recreate $service"
+  fi
   # Derive the private network from Postgres, never the shared proxy network.
   postgres="$(docker ps -a -q -f "label=com.docker.compose.project=$project" -f label=com.docker.compose.service=postgres)"
   [ -n "$postgres" ] || die "No project Postgres container found."

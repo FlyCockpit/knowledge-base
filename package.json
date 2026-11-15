@@ -77,7 +77,7 @@
     "policy:access-matrix": "node scripts/check-access-matrix.ts",
     "policy:access-matrix:self-test": "node scripts/check-access-matrix.ts --self-test",
     "setup": "tsx scripts/setup.ts",
-    "test:setup": "node --import tsx --test scripts/lib/admin-email-env.test.ts scripts/lib/protocol-only-bundle.test.mjs scripts/lib/smtp-env.test.ts scripts/init-kb-volumes.test.mjs scripts/sqlite-native.test.mjs scripts/sync-cli-vendor-inventory.test.mjs scripts/bench-index-quantization.test.mjs scripts/generate-kb-protocol.test.ts scripts/dev-docker.test.mjs",
+    "test:setup": "node --import tsx --test scripts/lib/admin-email-env.test.ts scripts/lib/protocol-only-bundle.test.mjs scripts/lib/smtp-env.test.ts scripts/init-kb-volumes.test.mjs scripts/sqlite-native.test.mjs scripts/sync-cli-vendor-inventory.test.mjs scripts/bench-index-quantization.test.mjs scripts/generate-kb-protocol.test.ts scripts/dev-docker.test.mjs scripts/test-runtime-operations.test.mjs",
     "bench:index-cold-diagnosis": "node --import tsx scripts/bench-index-cold-diagnosis.mjs",
     "bench:index-quantization": "node --import tsx scripts/bench-index-quantization.mjs",
     "doctor": "tsx scripts/doctor.ts",

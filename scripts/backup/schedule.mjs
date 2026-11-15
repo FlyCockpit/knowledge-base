@@ -13,6 +13,7 @@ import {
 } from "../db/lib/migration-state.mjs";
 import { boundedChild } from "../lib/bounded-child.mjs";
 import {
+  backupFailureCode,
   deliverBackup,
   digest,
   openPath,
@@ -232,6 +233,57 @@ export async function pruneCompletedPairs(directory, keep) {
   }
 }
 
+/** The bundle child's deadline: the snapshot plus one bounded upload. */
+const BUNDLE_TIMEOUT_MS = 4_000_000;
+const TIMED_OUT = new Set(["UPLOAD_TIMEOUT", "CHILD_DEADLINE"]);
+const coded = (message, code) => Object.assign(new Error(message), { code });
+
+/**
+ * One stable, greppable line per scheduled attempt outcome, e.g.
+ *   kb-backup-schedule attempt=started kind=bundle run=<uuid>
+ *   kb-backup-schedule attempt=uploaded kind=upload run=<uuid>
+ *   kb-backup-schedule attempt=local-only kind=bundle run=<uuid>
+ *   kb-backup-schedule attempt=failed kind=bundle run=<uuid> code=S3_HTTP_403
+ *   kb-backup-schedule attempt=timed-out kind=upload run=<uuid> code=UPLOAD_TIMEOUT
+ * `kind` is `bundle` (a new snapshot, then its upload), `upload` (retrying a
+ * completed pair's upload), `discover` (reading the completed pairs first),
+ * or `gate`/`prune` for the scheduler's own steps.
+ * Only codes, never messages: the line can't carry provider or secret detail.
+ */
+export function attemptLine(outcome, fields) {
+  return [
+    `kb-backup-schedule attempt=${outcome}`,
+    ...Object.entries(fields)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}=${value}`),
+  ].join(" ");
+}
+const defaultLog = (line, failure) => (failure ? console.error : console.log)(line);
+// Retried uploads run in this process. One that ignored its abort may still
+// hold a socket, so once the loop has ended the process exits explicitly.
+let abandonedUploads = 0;
+/** How many in-process upload retries were abandoned (see exitAfterLoop). */
+export const abandonedUploadCount = () => abandonedUploads;
+/** After `run` ends: exit if an abandoned upload could keep the process alive. */
+export function exitAfterLoop(exit = process.exit) {
+  if (abandonedUploads > 0) exit(process.exitCode ?? 0);
+}
+
+function logFailure(log, kind, run, code) {
+  log(attemptLine(TIMED_OUT.has(code) ? "timed-out" : "failed", { kind, run, code }), true);
+}
+
+/** Why the bundle child failed: its deadline, else the upload failure it
+ * recorded beside the pair, else the bundle itself. */
+async function bundleFailureCode(error, resultFile) {
+  if (error?.code === "CHILD_DEADLINE" || error?.code === "CHILD_CANCELLED") return error.code;
+  try {
+    const recorded = JSON.parse(await readFile(resultFile, "utf8")).upload?.code;
+    if (typeof recorded === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(recorded)) return recorded;
+  } catch {}
+  return error?.code === "CHILD_EXIT" ? "BUNDLE_FAILED" : backupFailureCode(error);
+}
+
 export async function scheduledAttempt({
   directory,
   connectionString,
@@ -241,37 +293,78 @@ export async function scheduledAttempt({
       env,
       signal,
       cooperative: true,
-      timeout: 4_000_000,
+      timeout: BUNDLE_TIMEOUT_MS,
     }).done;
   },
   deliver = deliverBackup,
+  log = defaultLog,
 }) {
-  const pairs = (await completedPairs(directory)).filter((r) => r.label === "daily");
+  let pairs;
+  try {
+    pairs = (await completedPairs(directory)).filter((r) => r.label === "daily");
+  } catch (error) {
+    logFailure(log, "discover", undefined, backupFailureCode(error));
+    throw error;
+  }
   const pending = pairs
     .filter((r) => !delivered(r))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-  if (pending)
-    return deliver({
-      file: pending.bundlePath,
-      label: "daily",
-      createdAt: pending.createdAt,
-      connectionString,
-      resultFile: `${pending.bundlePath}.result.json`,
-      signal,
-    });
+  const succeeded = (kind, result) => {
+    log(
+      attemptLine(result.upload?.outcome === "uploaded" ? "uploaded" : "local-only", {
+        kind,
+        run: result.runId,
+      }),
+      false,
+    );
+    return result;
+  };
+  if (pending) {
+    log(attemptLine("started", { kind: "upload", run: pending.runId }), false);
+    try {
+      return succeeded(
+        "upload",
+        await deliver({
+          file: pending.bundlePath,
+          label: "daily",
+          createdAt: pending.createdAt,
+          connectionString,
+          resultFile: `${pending.bundlePath}.result.json`,
+          signal,
+        }),
+      );
+    } catch (error) {
+      if (error?.abandoned === true) abandonedUploads += 1;
+      logFailure(log, "upload", pending.runId, backupFailureCode(error));
+      throw error;
+    }
+  }
   const runId = randomUUID(),
     resultFile = join(directory, `backup-${runId}.age.result.json`);
-  await run({
-    ...process.env,
-    BACKUP_DIR: directory,
-    KB_BACKUP_RUN_ID: runId,
-    BACKUP_RESULT_FILE: resultFile,
-  });
-  const result = JSON.parse(await readFile(resultFile, "utf8"));
-  if (!delivered(result)) throw new Error("Backup delivery is incomplete.");
-  const verified = (await completedPairs(directory)).find((r) => r.runId === runId);
-  if (!verified || !delivered(verified)) throw new Error("Backup result has no completed pair.");
-  return result;
+  log(attemptLine("started", { kind: "bundle", run: runId }), false);
+  try {
+    await run({
+      ...process.env,
+      BACKUP_DIR: directory,
+      KB_BACKUP_RUN_ID: runId,
+      BACKUP_RESULT_FILE: resultFile,
+    });
+  } catch (error) {
+    logFailure(log, "bundle", runId, await bundleFailureCode(error, resultFile));
+    throw error;
+  }
+  try {
+    const result = JSON.parse(await readFile(resultFile, "utf8"));
+    if (!delivered(result))
+      throw coded("Backup delivery is incomplete.", result.upload?.code ?? "DELIVERY_INCOMPLETE");
+    const verified = (await completedPairs(directory)).find((r) => r.runId === runId);
+    if (!verified || !delivered(verified))
+      throw coded("Backup result has no completed pair.", "NO_COMPLETED_PAIR");
+    return succeeded("bundle", result);
+  } catch (error) {
+    logFailure(log, "bundle", runId, backupFailureCode(error));
+    throw error;
+  }
 }
 
 async function migrationFacts(client, schema) {
@@ -359,6 +452,8 @@ export async function runLoop(env = process.env) {
     while (!controller.signal.aborted) {
       if (nextAt > Date.now()) await sleep(Math.min(60000, nextAt - Date.now()));
       if (nextAt > Date.now()) continue;
+      // The step a failure came from; scheduledAttempt logs its own outcome.
+      let phase = "gate";
       try {
         const gate = migrationGate(
           await migrationFacts(client, prismaSchemaName(env.DATABASE_URL)),
@@ -367,7 +462,9 @@ export async function runLoop(env = process.env) {
           nextAt = Date.now() + 15000;
           continue;
         }
-        if (gate !== "ready") throw new Error("An unfinished migration requires recovery.");
+        if (gate !== "ready")
+          throw coded("An unfinished migration requires recovery.", "MIGRATION_UNFINISHED");
+        phase = "attempt";
         const result = await scheduledAttempt({
           directory,
           connectionString: env.DATABASE_URL,
@@ -375,12 +472,14 @@ export async function runLoop(env = process.env) {
         });
         status.lastSuccess = Date.parse(result.createdAt);
         status.lastFailure = null;
+        phase = "prune";
         // Retention never discards undelivered pairs or runs after a failed delivery.
         await pruneCompletedPairs(directory, config.keep);
         nextAt = dueAtStart(status.lastSuccess, Date.now(), config.hourUtc)
           ? Date.now()
           : nextRunAt(Date.now(), config.hourUtc);
       } catch (error) {
+        if (phase !== "attempt") logFailure(defaultLog, phase, undefined, backupFailureCode(error));
         if (controller.signal.aborted) throw error;
         status.lastFailure = Date.now();
         console.error(
@@ -413,4 +512,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = 1;
     }
   }
+  exitAfterLoop();
 }

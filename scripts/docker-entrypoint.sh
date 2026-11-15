@@ -311,12 +311,14 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-if [ "$NODE_ENV" = "production" ] && [ -z "$ADMIN_EMAIL" ]; then
+if [ "$kb_volume_role" = server ] && [ "$NODE_ENV" = "production" ] && [ -z "$ADMIN_EMAIL" ]; then
   # Matches the Node env-layer boot guard in packages/env/src/server.ts:
   # production first-user creation requires ADMIN_EMAIL even when public
   # signup is enabled. The server keeps booting (provisioned installs hold
   # their admins in the database) — this is the best-effort early signal for
-  # the fresh-install case.
+  # the fresh-install case. Only the server bootstraps admins, and the Dokploy
+  # generator gives ADMIN_EMAIL to the server alone, so the worker and the
+  # one-shot commands never warn.
   echo "WARNING: ADMIN_EMAIL is empty. A fresh production instance cannot" >&2
   echo "         bootstrap its first admin (including when SIGNUP_ENABLED=true)." >&2
   echo "         Set ADMIN_EMAIL to one operator address before the first signup." >&2

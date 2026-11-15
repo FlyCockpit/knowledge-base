@@ -127,6 +127,9 @@ networks and volumes, and the build-only `standalone` namespace. Containers
 started without a name get Docker's own unique names. Runs from different checkouts can then share a
 daemon, and the reaper only considers names in its own prefix's namespace
 (unset is the unprefixed namespace).
+`pnpm runtime:test-operations` names its throwaway Postgres, Valkey and worker
+containers and its worker base image under the same prefix
+(`<prefix>-knowledge-base-runtime-…`).
 
 The Rust CLI lives in `apps/cli` (outside pnpm/turbo):
 

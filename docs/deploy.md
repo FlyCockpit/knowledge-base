@@ -29,12 +29,29 @@ PostgreSQL 18 mounts its volume at `/var/lib/postgresql`, with PGDATA at
 Generate the reviewable configuration and environment checklist from source:
 
 ```sh
-pnpm dokploy:config --environment production --git-ref release/0123456789abcdef0123456789abcdef01234567 --url https://kb.example --project knowledge-base-production --proxy-network dokploy-network
+pnpm dokploy:config --environment production --git-ref release/0123456789abcdef0123456789abcdef01234567 --git-url https://github.com/<owner>/knowledge-base.git --url https://kb.example --project knowledge-base-production --proxy-network dokploy-network
 ```
 
 The SHA above is a placeholder: use the deployed immutable release tag.
 The command writes `docker-compose.dokploy.yml` and emits the settings JSON.
-Import that Compose in Dokploy; supply complete env values privately. Generated Compose uses
+Import that Compose in Dokploy; supply complete env values privately.
+
+The generated file is gitignored, so Dokploy can't build it from a checkout of
+the repository. Every build context is therefore the pinned Git context
+`"<git-url>#<git-ref>"`: the Dokploy server's Docker fetches that ref itself,
+and a pasted (raw) Compose needs no source tree or repository connection.
+`--git-url` defaults to the checkout's `origin` remote; with neither, the
+generator stops and names the flag. It accepts `https://`, `ssh://` and
+`git@host:owner/repo.git` URLs and refuses credentials (the file is stored in
+Dokploy), `#`, queries, quotes, `$`, backslashes and spaces. A private
+repository needs an SSH URL the Dokploy server's Docker can fetch. The server
+build keeps `.git` in the Git context (`BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"`)
+because the image reads its commit from `.git/HEAD` when `BUILD_VERSION` is
+unset, so `/ready` and `pnpm deploy:check` still see the release.
+`--git-url local` keeps `context: .`, only for plain `docker compose` from a
+checkout. The
+checklist records the choice as `compose.buildContext` and fills
+`customGitUrl` for native applications. Generated Compose uses
 server-led migrations and a dedicated waiting worker. Preserve generated mounts,
 health checks, tmpfs, placement, init and stop-first policies. To review a real
 running deployment use `pnpm dokploy:verify` with its documented CLI flags.
@@ -46,6 +63,15 @@ strong per-instance secrets privately (`KB_MASTER_KEY` is base64 of 32 random
 bytes). The generated Compose supplies database/cache URLs and the HTTPS auth
 origin. No SMTP, IdP, backup settings, backup volume or backup sidecar is needed.
 Public signup stays closed; bootstrap uses the configured admin identity.
+The native-application checklist matches: `applications[].environment`
+references only `DATABASE_URL`, `REDIS_URL`, `KB_MASTER_KEY`,
+`BETTER_AUTH_SECRET` and `ADMIN_EMAIL` from Dokploy's environment (native
+applications use separate database and cache services, so they take URLs
+instead of the two passwords; listed under `environmentVariablesToSetOnce`).
+Every other key is either a literal default (`BACKUP_ENABLED=false`,
+`SIGNUP_ENABLED=false`, `SMTP_PORT=587`, ...) or left out; to opt in to SMTP,
+backups, S3 assets or a provider, add the keys listed for that application in
+`optionalEnvironmentKeys` (each role lists only what it may receive).
 
 Backups default off: `BACKUP_ENABLED` defaults to `false`, including before
 migrations and due deletions. Startup prints one notice with opt-in
@@ -170,7 +196,7 @@ Health includes schema and the actual queue consumer inventory, beyond a Redis
 ping. Native helper/hook/model child/SSH wrapper/Prisma runtime closure must be
 present before admission. Server shutdown closes HTTP admissions and joins
 publication/cleanup; worker stops effects and drains model/mirror children.
-Generated server grace is 100 s, worker 30 s. A failed observation leaves the
+Generated server and backup grace is 100 s, worker 30 s. A failed observation leaves the
 fence closed; inspect durable intent and process ownership before retrying.
 For upgrade replace stop-first, verify schema/readiness, then exercise the public
 workflow. Preserve volumes and all operator key custody. Production volume

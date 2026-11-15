@@ -930,6 +930,96 @@ export async function publishBackupResult(path, result) {
     });
   }
 }
+/** A bound on one upload of a completed pair (both objects, with their
+ * read-back verification). The scheduler's bundle child has its own, larger
+ * deadline around the snapshot plus this upload. */
+const BACKUP_UPLOAD_TIMEOUT_MS = 3_600_000;
+
+/**
+ * A stable, greppable code for a backup failure: never the message, which may
+ * carry provider detail. A Node/child/backup code (`ECONNREFUSED`,
+ * `CHILD_DEADLINE`, `UPLOAD_TIMEOUT`, ...) as is; an S3 response as
+ * `S3_HTTP_<status>`; otherwise `UNKNOWN`.
+ */
+export function backupFailureCode(error) {
+  const code = error?.code;
+  if (typeof code === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(code)) return code;
+  const status = error?.$metadata?.httpStatusCode;
+  if (Number.isInteger(status) && status >= 100 && status <= 599) return `S3_HTTP_${status}`;
+  if (error?.name === "AbortError") return "CANCELLED";
+  return "UNKNOWN";
+}
+
+/** How long an upload gets to finish its own cleanup (a multipart abort)
+ * after its signal aborts, before it is abandoned. */
+const UPLOAD_ABORT_GRACE_MS = 30_000;
+
+/**
+ * `work(signal)` within `timeoutMs`. Past it, or on the caller's abort, the
+ * signal aborts and `work` gets `graceMs` to settle (the SDK then aborts its
+ * multipart upload). Settled in time: this rejects with code UPLOAD_TIMEOUT,
+ * or for the caller's abort with an AbortError (code CANCELLED). Not settled
+ * (it ignores its signal): the same error with `abandoned: true`, because that
+ * work may still hold a socket, so a one-shot process must end itself
+ * (exitAfterAbandonedUpload).
+ */
+async function withinUploadTimeout(timeoutMs, signal, work, graceMs = UPLOAD_ABORT_GRACE_MS) {
+  const expired = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, expired.signal]) : expired.signal;
+  let settled = false;
+  const running = work(combined).finally(() => {
+    settled = true;
+  });
+  const outcome = running.then((value) => ({ value }));
+  outcome.catch(() => {});
+  let timer;
+  let onAbort;
+  const stopped = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      expired.abort();
+      resolve(
+        Object.assign(new Error(`Backup upload exceeded ${timeoutMs} ms.`), {
+          code: "UPLOAD_TIMEOUT",
+        }),
+      );
+    }, timeoutMs);
+    onAbort = () =>
+      resolve(
+        Object.assign(new Error("Backup upload cancelled."), {
+          name: "AbortError",
+          code: "CANCELLED",
+        }),
+      );
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    const first = await Promise.race([outcome, stopped]);
+    if (!(first instanceof Error)) return first.value;
+    // Let the upload finish its own cleanup; only then give up on it.
+    let grace;
+    await Promise.race([
+      running.catch(() => {}),
+      new Promise((resolve) => {
+        grace = setTimeout(resolve, graceMs);
+      }),
+    ]);
+    clearTimeout(grace);
+    if (!settled) first.abandoned = true;
+    throw first;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** A one-shot backup process ends once it has reported a failure whose upload
+ * was abandoned: that upload may still hold a live socket that would keep the
+ * process (and so the scheduler's child) running past every deadline. */
+export function exitAfterAbandonedUpload(error, exit = process.exit) {
+  if (error?.abandoned === true) exit(process.exitCode ?? 1);
+}
+
 export async function deliverBackup({
   file,
   label = "manual",
@@ -938,6 +1028,8 @@ export async function deliverBackup({
   configured = Boolean(process.env.BACKUP_S3_BUCKET),
   connectionString,
   upload,
+  uploadTimeoutMs = BACKUP_UPLOAD_TIMEOUT_MS,
+  uploadAbortGraceMs = UPLOAD_ABORT_GRACE_MS,
   heartbeat,
   createdAt = new Date().toISOString(),
 }) {
@@ -975,8 +1067,17 @@ export async function deliverBackup({
     let auditClient;
     try {
       if (connectionString) auditClient = await connect(connectionString);
-      upload ??= (await import("../upload-backup-to-s3.mjs")).uploadBackup;
-      const remote = await upload({ file, signal });
+      // The import is inside the bound too: a hang there (once a module cycle
+      // under a top-level await) must end as UPLOAD_TIMEOUT, not silence.
+      const remote = await withinUploadTimeout(
+        uploadTimeoutMs,
+        signal,
+        async (bounded) => {
+          upload ??= (await import("../upload-backup-to-s3.mjs")).uploadBackup;
+          return upload({ file, signal: bounded });
+        },
+        uploadAbortGraceMs,
+      );
       if (auditClient) await audit(auditClient, runId, "BACKUP_UPLOAD", "SUCCESS", "UPLOADED");
       result.upload = { ...remote, configured: true, outcome: "uploaded" };
       await publish();
@@ -989,6 +1090,12 @@ export async function deliverBackup({
         : undefined;
       await heartbeat?.();
     } catch (error) {
+      // Record why beside the pair, so the scheduler (which ran this in a
+      // child) and an operator can name the failure. Still not delivered.
+      if (result.upload.outcome !== "uploaded") {
+        result.upload = { configured: true, outcome: "failed", code: backupFailureCode(error) };
+        await publish().catch(() => {});
+      }
       if (auditClient)
         await audit(auditClient, runId, "BACKUP_UPLOAD", "FAILURE", "UNKNOWN").catch(() => {});
       throw error;
@@ -1034,11 +1141,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         await pruneCompletedPairs(dirname(file));
         console.log("Backup completed.");
       }
-    } catch {
+    } catch (error) {
       console.error(
-        "FATAL: quiesced backup failed; no partial bundle is valid. Retry offline recovery before restarting if maintenance remains closed.",
+        `FATAL: quiesced backup failed (code=${backupFailureCode(error)}); no partial bundle is valid. Retry offline recovery before restarting if maintenance remains closed.`,
       );
       process.exitCode = 1;
+      exitAfterAbandonedUpload(error);
     }
   })();
 }

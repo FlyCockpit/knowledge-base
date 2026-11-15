@@ -422,6 +422,21 @@ test("server and worker run their checks and apply / wait before the CMD (under 
   assert.equal(invalid.commands.length, 0);
 });
 
+test("only the server warns about an empty ADMIN_EMAIL in production; the worker never does", async (t) => {
+  const { run } = await entrypointFixture(t);
+  const warning = /WARNING: ADMIN_EMAIL is empty/;
+  for (const [cmd, env, warns] of [
+    [serverCmd, { NODE_ENV: "production" }, true],
+    [serverCmd, { NODE_ENV: "production", ADMIN_EMAIL: "ops@example.test" }, false],
+    [serverCmd, {}, false],
+    [workerCmd, { NODE_ENV: "production" }, false],
+  ]) {
+    const result = await run(cmd, { ...serverEnv, ...env });
+    assert.equal(result.code, 0, result.output);
+    assert.equal(warning.test(result.output), warns, `${cmd[1]} ${JSON.stringify(env)}`);
+  }
+});
+
 test("BACKUP_ENABLED is strict for every command, before anything runs", async (t) => {
   const { run } = await entrypointFixture(t);
   for (const args of [["migrate"], ["backup"], ["restore"], serverCmd, workerCmd]) {

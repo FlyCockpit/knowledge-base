@@ -7,9 +7,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { deliverBackup, publishBackupResult } from "../lib/kb-backup.mjs";
 import {
+  abandonedUploadCount,
+  attemptLine,
   completedPairs,
   dailyPrunePlan,
   dueAtStart,
+  exitAfterLoop,
   healthOf,
   migrationGate,
   nextAction,
@@ -155,6 +158,211 @@ test("failed upload retries the exact completed pair after restart without anoth
   assert.equal(uploads, 1);
   assert.equal((await completedPairs(dir))[0].upload.outcome, "uploaded");
 });
+/** A scheduledAttempt `log` that records [line, isFailure] pairs. */
+function lines() {
+  const seen = [];
+  const log = (line, failure) => seen.push([line, failure]);
+  return { seen, log };
+}
+
+test("attempt lines are stable key=value lines without undefined fields", () => {
+  assert.equal(
+    attemptLine("failed", { kind: "gate", run: undefined, code: "MIGRATION_UNFINISHED" }),
+    "kb-backup-schedule attempt=failed kind=gate code=MIGRATION_UNFINISHED",
+  );
+});
+
+test("a retried upload logs started then uploaded, or failed with a stable code", async (t) => {
+  const dir = await directory(t),
+    original = await pair(dir, { uploaded: false });
+  const ok = lines();
+  await scheduledAttempt({
+    directory: dir,
+    log: ok.log,
+    deliver: (args) =>
+      deliverBackup({ ...args, configured: true, upload: async () => ({ key: "verified" }) }),
+  });
+  assert.deepEqual(ok.seen, [
+    [`kb-backup-schedule attempt=started kind=upload run=${original.runId}`, false],
+    [`kb-backup-schedule attempt=uploaded kind=upload run=${original.runId}`, false],
+  ]);
+  const next = await pair(dir, { uploaded: false });
+  const denied = lines();
+  await assert.rejects(
+    scheduledAttempt({
+      directory: dir,
+      log: denied.log,
+      deliver: (args) =>
+        deliverBackup({
+          ...args,
+          configured: true,
+          upload: async () => {
+            throw Object.assign(new Error("Access Denied for bucket x"), {
+              $metadata: { httpStatusCode: 403 },
+            });
+          },
+        }),
+    }),
+  );
+  assert.deepEqual(denied.seen, [
+    [`kb-backup-schedule attempt=started kind=upload run=${next.runId}`, false],
+    [`kb-backup-schedule attempt=failed kind=upload run=${next.runId} code=S3_HTTP_403`, true],
+  ]);
+  // The pair records why, and stays pending for the next attempt.
+  const recorded = JSON.parse(await readFile(`${next.bundlePath}.result.json`, "utf8"));
+  assert.deepEqual(recorded.upload, { configured: true, outcome: "failed", code: "S3_HTTP_403" });
+  // A failed (not abandoned) upload never forces the scheduler's exit.
+  assert.equal(abandonedUploadCount(), 0);
+  exitAfterLoop(() => assert.fail("no exit without an abandoned upload"));
+  assert.ok((await completedPairs(dir)).some((r) => r.runId === next.runId));
+});
+
+test("a pair-discovery failure is logged as failed kind=discover with its code", async (t) => {
+  const missing = join(await directory(t), "absent");
+  const seen = lines();
+  await assert.rejects(scheduledAttempt({ directory: missing, log: seen.log }), { code: "ENOENT" });
+  assert.deepEqual(seen.seen, [
+    ["kb-backup-schedule attempt=failed kind=discover code=ENOENT", true],
+  ]);
+});
+
+test("a hung upload is bounded: the attempt logs timed-out (UPLOAD_TIMEOUT) and the pair stays pending", async (t) => {
+  const dir = await directory(t),
+    original = await pair(dir, { uploaded: false });
+  const hung = lines();
+  let aborted = false;
+  const before = abandonedUploadCount();
+  const started = Date.now();
+  await assert.rejects(
+    scheduledAttempt({
+      directory: dir,
+      log: hung.log,
+      deliver: (args) =>
+        deliverBackup({
+          ...args,
+          configured: true,
+          uploadTimeoutMs: 100,
+          uploadAbortGraceMs: 100,
+          // Never settles, even on abort: the bound must not depend on it.
+          upload: ({ signal }) => {
+            signal.addEventListener("abort", () => {
+              aborted = true;
+            });
+            return new Promise(() => {});
+          },
+        }),
+    }),
+    { code: "UPLOAD_TIMEOUT" },
+  );
+  assert.ok(Date.now() - started < 10_000);
+  assert.equal(aborted, true, "the upload's signal is aborted at the deadline");
+  // It ignored the abort: the scheduler counts it and exits after its loop.
+  assert.equal(abandonedUploadCount(), before + 1);
+  let exited = null;
+  exitAfterLoop((code) => {
+    exited = code;
+  });
+  assert.equal(exited, 0);
+  const source = await readFile(new URL("./schedule.mjs", import.meta.url), "utf8");
+  assert.match(source, /\n {2}exitAfterLoop\(\);\n\}\n?$/);
+  assert.deepEqual(hung.seen, [
+    [`kb-backup-schedule attempt=started kind=upload run=${original.runId}`, false],
+    [
+      `kb-backup-schedule attempt=timed-out kind=upload run=${original.runId} code=UPLOAD_TIMEOUT`,
+      true,
+    ],
+  ]);
+  const pending = (await completedPairs(dir)).find((r) => r.runId === original.runId);
+  assert.deepEqual(pending.upload, { configured: true, outcome: "failed", code: "UPLOAD_TIMEOUT" });
+});
+
+test("a new bundle logs started then local-only; a failing child names its cause", async (t) => {
+  const dir = await directory(t);
+  const bundle = async (env, { uploaded = false, fail } = {}) => {
+    const file = join(env.BACKUP_DIR, `backup-${env.KB_BACKUP_RUN_ID}.age`);
+    const bytes = Buffer.from("age-encryption.org/v1\nsynthetic test bytes, not a recovery bundle");
+    await writeFile(file, bytes);
+    await writeFile(
+      `${file}.complete`,
+      JSON.stringify({
+        version: 1,
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      }),
+    );
+    await deliverBackup({
+      file,
+      label: "daily",
+      resultFile: env.BACKUP_RESULT_FILE,
+      configured: uploaded || Boolean(fail),
+      upload: async () => {
+        if (fail) throw fail;
+        return { key: "verified" };
+      },
+    }).catch(() => {});
+    if (fail)
+      throw Object.assign(new Error("Client exited with status 1."), { code: "CHILD_EXIT" });
+  };
+  const local = lines();
+  const result = await scheduledAttempt({
+    directory: dir,
+    log: local.log,
+    run: (env) => bundle(env),
+  });
+  assert.deepEqual(local.seen, [
+    [`kb-backup-schedule attempt=started kind=bundle run=${result.runId}`, false],
+    [`kb-backup-schedule attempt=local-only kind=bundle run=${result.runId}`, false],
+  ]);
+  const uploaded = lines();
+  const sent = await scheduledAttempt({
+    directory: dir,
+    log: uploaded.log,
+    run: (env) => bundle(env, { uploaded: true }),
+  });
+  assert.equal(
+    uploaded.seen[1][0],
+    `kb-backup-schedule attempt=uploaded kind=bundle run=${sent.runId}`,
+  );
+  // The child's upload failed: the code it recorded beside the pair.
+  const refused = lines();
+  await assert.rejects(
+    scheduledAttempt({
+      directory: dir,
+      log: refused.log,
+      run: (env) => bundle(env, { fail: Object.assign(new Error("x"), { code: "ECONNREFUSED" }) }),
+    }),
+  );
+  assert.match(
+    refused.seen[1][0],
+    /^kb-backup-schedule attempt=failed kind=bundle run=\S+ code=ECONNREFUSED$/,
+  );
+  // The pair is now pending; clear it so the next attempt bundles again.
+  for (const r of await completedPairs(dir))
+    if (r.upload?.outcome === "failed")
+      for (const suffix of ["", ".complete", ".result.json"]) await rm(`${r.bundlePath}${suffix}`);
+  for (const [error, expected] of [
+    [Object.assign(new Error("deadline"), { code: "CHILD_DEADLINE" }), "timed-out"],
+    [Object.assign(new Error("exit"), { code: "CHILD_EXIT" }), "failed"],
+  ]) {
+    const child = lines();
+    await assert.rejects(
+      scheduledAttempt({
+        directory: dir,
+        log: child.log,
+        run: async () => {
+          throw error;
+        },
+      }),
+    );
+    const code = error.code === "CHILD_EXIT" ? "BUNDLE_FAILED" : error.code;
+    assert.match(
+      child.seen[1][0],
+      new RegExp(`^kb-backup-schedule attempt=${expected} kind=bundle run=\\S+ code=${code}$`),
+    );
+    assert.equal(child.seen[1][1], true);
+  }
+});
+
 test("local result is atomic and configured failure cannot become success or heartbeat", async (t) => {
   const dir = await directory(t),
     result = await pair(dir, { uploaded: false });

@@ -51,6 +51,18 @@ Use the generated server-image `backup` command or opt-in `backup-schedule` serv
 
 `BACKUP_SCHEDULE=off` is the default. Set daily, BACKUP_HOUR_UTC=3 and BACKUP_KEEP=14 for one verified daily full bundle, retaining local completed pairs by UTC day. Successful manual, pre-migrate and pre-drop deliveries each retain their newest seven pairs, including when daily scheduling is off; failed deliveries and staging files are preserved. Pair verification is cached by both files’ inode, size and timestamps during a scheduler process. The scheduler catches up after restart with an initial five-minute delay and retries a failed upload hourly using the same immutable pair. Success/health requires verified delivery; partial uploads never count. S3 retention is an operator lifecycle policy. Keep backup and monitor credentials separate.
 
+The scheduler logs one line per attempt outcome, so `docker logs <backup container> | grep kb-backup-schedule` shows its history:
+
+```text
+kb-backup-schedule attempt=started kind=bundle run=<uuid>
+kb-backup-schedule attempt=uploaded kind=bundle run=<uuid>
+kb-backup-schedule attempt=local-only kind=bundle run=<uuid>
+kb-backup-schedule attempt=failed kind=upload run=<uuid> code=S3_HTTP_403
+kb-backup-schedule attempt=timed-out kind=upload run=<uuid> code=UPLOAD_TIMEOUT
+```
+
+`kind=bundle` is a new snapshot and its upload, `kind=upload` the hourly retry of a completed pair's upload, `kind=discover` reading the completed pairs before either, and `kind=gate` / `kind=prune` the scheduler's own migration check and retention. `code` is stable and never a provider message: a Node or child code (`ECONNREFUSED`, `CHILD_DEADLINE`), `S3_HTTP_<status>`, `UPLOAD_TIMEOUT`, `BUNDLE_FAILED` (the snapshot child failed before delivery), `MIGRATION_UNFINISHED` or `UNKNOWN`. One upload of a pair (both objects, read back and verified) is bounded at one hour (`UPLOAD_TIMEOUT`, also for manual and pre-migration backups), and a new bundle with its upload at 4,000 seconds (`CHILD_DEADLINE`). A timed-out or cancelled upload gets 30 seconds to finish its own cleanup (a multipart abort); one that still hasn't stopped is abandoned, and the backup process (or the scheduler, once it stops) then exits even if that upload still holds a connection. A failed upload records its code in the pair's `.result.json` sidecar (`upload.code`), and a manual backup's `FATAL` line carries it too. An `IfNoneMatch` 412 on a re-delivered object is expected (the remote bytes are then verified by digest) and is not logged.
+
 With BACKUP_ENABLED=true, the initialized-database runner requires this full bundle before pending migrations or due deletions. Missing recipient/output or failed configured upload blocks mutation. Disabled backups skip the hook entirely. A brand-new database (proven-empty managed catalog, no applied history, `0_init` first) gets no bundle, since there is nothing to back up; but with BACKUP_ENABLED=true the hook still runs `--check-destination` (recipient, a writable BACKUP_DIR that is a mounted volume unless BACKUP_S3_BUCKET is set, BACKUP_S3_* settings), and a failed check or a missing hook refuses the migration. A stop signal during a startup backup sends the hook one TERM (backup.sh drains its writer) and the start ends without migrating. A bundle interrupted while it is written never gets its `.complete` marker, so it is never used; one interrupted during S3 delivery keeps its completed, verified local pair (valid for restore, and the upload is retried). The hook publishes structured identity after completion; no prose parsing or plain-dump fallback. Labels manual/pre-migrate/pre-drop/daily are metadata on immutable backup-UUID.age files.
 
 A durable maintenance request closes server writes/uploads and worker effects.
@@ -140,6 +152,14 @@ read-only. `list`, `backup`, `restore` and `drill` need the backups mount
 (`BACKUP_DIR`), which a deployment generated with backups off (the default)
 does not have: regenerate it with `pnpm dokploy:config --backups true` and
 redeploy first; only `hold-deletions` works without it.
+Every command runs the server container's own image ID, never its tag. If a
+redeploy that changed nothing dropped that image (Docker 29's containerd image
+store can retag the name and remove the old ID while the server still points at
+it), the helper stops with exit 1 before anything runs or stops and prints the
+fix: `cd <compose directory> && docker compose -p <project> -f <compose file>
+up -d --no-build --force-recreate <server service>` (directory, file and service
+come from the server container's Compose labels), which recreates the server from the current
+image (it restarts the app); then re-run the command.
 `restore <bundle|latest> <host-identity> <attempt-uuid>` asks you to
 type the compose project name, then stops the server, worker and backup
 writers (stopped ones included, so a completed retry starts every one of them

@@ -14,7 +14,12 @@ import {
 } from "@aws-sdk/client-s3";
 import { backupNamespace } from "./lib/backup-identity.mjs";
 import { backupS3Config } from "./lib/backup-s3-env.mjs";
-import { deliverBackup, digest, verifyEncryptedBundle } from "./lib/kb-backup.mjs";
+import {
+  deliverBackup,
+  digest,
+  exitAfterAbandonedUpload,
+  verifyEncryptedBundle,
+} from "./lib/kb-backup.mjs";
 
 // Keep one part in flight. createReadStream's high-water mark bounds memory;
 // the part size is a request range, not a Buffer allocation. 512 MiB keeps an
@@ -26,6 +31,42 @@ export const MULTIPART_PART_SIZE_BYTES = 512 * 1024 * 1024;
 export const MULTIPART_THRESHOLD_BYTES = 5_000_000_000;
 export const MAX_MULTIPART_PARTS = 10_000;
 export const S3_MAX_ATTEMPTS = 3;
+
+// The SDK's retry middleware warns this (on console, when the client has no
+// logger) for every failed request with a streaming body, before rethrowing
+// the error. Our PUTs always stream, so the expected 412 (IfNoneMatch on a
+// re-delivered pair, then verified by digest) printed it as if something
+// broke. It carries no detail; the error itself still reaches the caller,
+// which reports real failures loudly (the scheduler's `kb-backup-schedule
+// attempt=failed` line, the CLI's FATAL). Every other SDK warning still goes
+// to the console. trace/debug/info/error stay silent exactly like the SDK's
+// default no-op logger: its logger middleware sends every command's input and
+// output to info and every failed command (the 412 too) to error.
+export const SDK_STREAMING_RETRY_WARNING =
+  "An error was encountered in a non-retryable streaming request.";
+export const backupS3Logger = {
+  trace() {},
+  debug() {},
+  info() {},
+  warn(...args) {
+    if (args.length === 1 && args[0] === SDK_STREAMING_RETRY_WARNING) return;
+    console.warn(...args);
+  },
+  error() {},
+};
+
+/** The one S3 client shape backup uploads use. */
+export function backupS3Client(config) {
+  return new S3Client({
+    region: config.region,
+    endpoint: config.endpoint,
+    forcePathStyle: config.forcePathStyle,
+    credentials: config.credentials,
+    // Stream retries are owned above so each attempt can open a fresh range.
+    maxAttempts: 1,
+    logger: backupS3Logger,
+  });
+}
 
 async function sendWithRetry(client, makeCommand, signal) {
   let lastError;
@@ -158,14 +199,7 @@ async function multipartUpload({ client, file, size, base, config, key, partSize
 export async function uploadObject({
   file,
   config = backupS3Config(),
-  client = new S3Client({
-    region: config.region,
-    endpoint: config.endpoint,
-    forcePathStyle: config.forcePathStyle,
-    credentials: config.credentials,
-    // Stream retries are owned above so each attempt can open a fresh range.
-    maxAttempts: 1,
-  }),
+  client = backupS3Client(config),
   multipartThresholdBytes = MULTIPART_THRESHOLD_BYTES,
   partSizeBytes = MULTIPART_PART_SIZE_BYTES,
   signal,
@@ -199,13 +233,7 @@ export async function uploadBackup({
   partSizeBytes = MULTIPART_PART_SIZE_BYTES,
 } = {}) {
   await verifyEncryptedBundle(file);
-  client ??= new S3Client({
-    region: config.region,
-    endpoint: config.endpoint,
-    forcePathStyle: config.forcePathStyle,
-    credentials: config.credentials,
-    maxAttempts: 1,
-  });
+  client ??= backupS3Client(config);
   const send = async (path) => {
     const expected = await digest(path);
     const key = `${backupNamespace(config.prefix)}/${basename(path)}`;
@@ -270,6 +298,7 @@ async function main() {
       `FATAL: backup upload failed: ${error instanceof Error ? error.message : String(error)}`,
     );
     process.exitCode = 1;
+    exitAfterAbandonedUpload(error);
   }
 }
 

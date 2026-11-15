@@ -409,3 +409,143 @@ console.error("EVALUATED");`;
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/** A structurally valid completed pair (not a recovery bundle). */
+async function syntheticPair(dir) {
+  const file = join(dir, "backup-11111111-2222-4333-8444-555555555555.age");
+  const bytes = Buffer.from("age-encryption.org/v1\nsynthetic test bytes, not a recovery bundle");
+  await writeFile(file, bytes);
+  await writeFile(
+    `${file}.complete`,
+    JSON.stringify({
+      version: 1,
+      size: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
+  );
+  return file;
+}
+
+test("a hung upload that ignores its signal and holds a live handle still ends the one-shot process", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kb-backup-abandoned-"));
+  try {
+    const file = await syntheticPair(dir);
+    const entry = new URL("./kb-backup.mjs", import.meta.url).pathname;
+    const script = `import { deliverBackup, exitAfterAbandonedUpload } from ${JSON.stringify(entry)};
+try {
+  await deliverBackup({
+    file: ${JSON.stringify(file)},
+    configured: true,
+    uploadTimeoutMs: 200,
+    uploadAbortGraceMs: 200,
+    // A live handle and no reaction to abort: only an explicit exit ends this.
+    upload: () => { setInterval(() => {}, 1000); return new Promise(() => {}); },
+  });
+} catch (error) {
+  console.error("code=" + error.code);
+  process.exitCode = 1;
+  exitAfterAbandonedUpload(error);
+}`;
+    const started = Date.now();
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    assert.equal(result.status, 1, `${result.signal ?? ""} ${result.stderr}`);
+    assert.match(result.stderr, /code=UPLOAD_TIMEOUT/);
+    assert.ok(Date.now() - started < 10_000);
+    const recorded = JSON.parse(await readFile(`${file}.result.json`, "utf8"));
+    assert.deepEqual(recorded.upload, {
+      configured: true,
+      outcome: "failed",
+      code: "UPLOAD_TIMEOUT",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  // Both one-shot CLIs end themselves after reporting such a failure.
+  for (const path of ["./kb-backup.mjs", "../upload-backup-to-s3.mjs"]) {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    assert.match(source, /process\.exitCode = 1;\n\s*exitAfterAbandonedUpload\(error\);/, path);
+  }
+});
+
+test("a cancel gives the upload time to clean up; only an upload that ignores it is abandoned", async () => {
+  const { deliverBackup, exitAfterAbandonedUpload } = await import("./kb-backup.mjs");
+  const dir = await mkdtemp(join(tmpdir(), "kb-backup-cancel-"));
+  try {
+    const file = await syntheticPair(dir);
+    // Honours its signal, but its cleanup (a multipart abort) takes a while.
+    let cleaned = false;
+    const honouring = new AbortController();
+    await assert.rejects(
+      deliverBackup({
+        file,
+        configured: true,
+        signal: honouring.signal,
+        uploadAbortGraceMs: 5_000,
+        upload: ({ signal }) =>
+          new Promise((_, reject) => {
+            signal.addEventListener("abort", () =>
+              setTimeout(() => {
+                cleaned = true;
+                reject(signal.reason);
+              }, 200),
+            );
+            // Cancel only once the upload is running.
+            honouring.abort();
+          }),
+      }),
+      (error) => {
+        assert.equal(error.code, "CANCELLED");
+        assert.equal(error.name, "AbortError");
+        assert.equal(error.abandoned, undefined);
+        return true;
+      },
+    );
+    assert.equal(cleaned, true, "deliverBackup waited for the upload's cleanup");
+    // Ignores its signal: settles after the grace, abandoned.
+    const ignoring = new AbortController();
+    const started = Date.now();
+    await assert.rejects(
+      deliverBackup({
+        file,
+        configured: true,
+        signal: ignoring.signal,
+        uploadAbortGraceMs: 100,
+        upload: () => {
+          ignoring.abort();
+          return new Promise(() => {});
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, "CANCELLED");
+        assert.equal(error.abandoned, true);
+        return true;
+      },
+    );
+    assert.ok(Date.now() - started < 5_000);
+    // An upload that failed by itself is not abandoned: no forced exit.
+    let exited = false;
+    await assert.rejects(
+      deliverBackup({
+        file,
+        configured: true,
+        upload: async () => {
+          throw Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+        },
+      }),
+      (error) => {
+        exitAfterAbandonedUpload(error, () => {
+          exited = true;
+        });
+        return error.code === "ECONNREFUSED";
+      },
+    );
+    assert.equal(exited, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

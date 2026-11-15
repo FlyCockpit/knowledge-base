@@ -4,7 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { generateDokployCompose, generateDokployConfig } from "./generate-dokploy-config.js";
+import {
+  assertGitUrl,
+  generateDokployCompose,
+  generateDokployConfig,
+  resolveGitUrl,
+} from "./generate-dokploy-config.js";
 import { validateAssetDumpIdentity } from "./lib/backup-s3-env.mjs";
 
 const defaults = {
@@ -55,6 +60,16 @@ test("server leads migrations, worker waits, and optional scheduler shares the s
   assert.equal(app("server").environment.TRUST_PROXY_HOPS, "1");
   assert.equal(app("worker").environment.TRUST_PROXY_HOPS, undefined);
   assert.equal(app("backup").command, "backup-schedule");
+  // Native stop grace matches the Compose stop_grace_period per role.
+  const yaml = generateDokployCompose(defaults);
+  for (const [role, seconds] of [
+    ["server", 100],
+    ["worker", 30],
+    ["backup", 100],
+  ] as const) {
+    assert.equal(app(role).stopGracePeriodSwarm, seconds * 1_000_000_000, role);
+    assert.match(service(yaml, role), new RegExp(`stop_grace_period: ${seconds}s`), role);
+  }
   assert.equal(app("backup").optional, true);
   for (const entry of config.applications) {
     assert.equal(entry.autoDeploy, true);
@@ -169,8 +184,49 @@ test("both public generator APIs validate refs, project, network and URL before 
   assert.equal(app("server").environment.BETTER_AUTH_URL, defaults.url);
 });
 
+test("native applications reference only the five set-once keys; the rest are literal defaults or omitted", () => {
+  const config = generateDokployConfig(defaults);
+  const setOnce = [
+    "DATABASE_URL",
+    "REDIS_URL",
+    "KB_MASTER_KEY",
+    "BETTER_AUTH_SECRET",
+    "ADMIN_EMAIL",
+  ];
+  const referenced = new Set<string>();
+  for (const entry of config.applications)
+    for (const value of Object.values(entry.environment))
+      for (const match of value.matchAll(/\$\{\{environment\.([A-Z0-9_]+)\}\}/g))
+        referenced.add(match[1]!);
+  assert.deepEqual([...referenced].sort(), [...setOnce].sort());
+  assert.deepEqual(Object.keys(config.environmentVariablesToSetOnce).sort(), [...setOnce].sort());
+  // Defaults are literal, matching the Compose `${KEY:-default}` values.
+  assert.equal(app("server").environment.BACKUP_ENABLED, "false");
+  assert.equal(app("server").environment.SIGNUP_ENABLED, "false");
+  assert.equal(app("server").environment.SMTP_PORT, "587");
+  assert.equal(app("backup").environment.BACKUP_SCHEDULE, "off");
+  assert.equal(app("backup").environment.BACKUP_KEEP, "14");
+  // Keys without a default are left out and listed as that role's optional keys.
+  for (const [role, key] of [
+    ["server", "SMTP_HOST"],
+    ["server", "BACKUP_AGE_RECIPIENT"],
+    ["worker", "SMTP_HOST"],
+    ["backup", "BACKUP_S3_SECRET_ACCESS_KEY"],
+  ] as const) {
+    assert.ok(!(key in app(role).environment), `${role} ${key}`);
+    assert.ok(config.optionalEnvironmentKeys[role]?.includes(key), `${role} ${key}`);
+  }
+  // Without the backup service there is no backup list.
+  assert.equal(
+    generateDokployConfig({ ...defaults, backups: false }).optionalEnvironmentKeys.backup,
+    undefined,
+  );
+});
+
 test("backup settings reach the leader and scheduler; SMTP and monitor keys reach worker", () => {
-  for (const role of ["server", "backup"]) {
+  const config = generateDokployConfig(defaults);
+  const optional = config.optionalEnvironmentKeys;
+  for (const role of ["server", "backup"] as const) {
     for (const key of [
       "BACKUP_AGE_RECIPIENT",
       "BACKUP_S3_BUCKET",
@@ -178,11 +234,12 @@ test("backup settings reach the leader and scheduler; SMTP and monitor keys reac
       "BACKUP_S3_SECRET_ACCESS_KEY",
       "KB_ASSET_S3_OPERATOR_SECRET_ACCESS_KEY",
     ])
-      assert.equal(app(role).environment[key], `\${{environment.${key}}}`);
+      assert.ok(optional[role]?.includes(key), `${role} ${key}`);
   }
-  for (const role of ["server", "worker"]) {
-    for (const key of ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"])
-      assert.equal(app(role).environment[key], `\${{environment.${key}}}`);
+  for (const role of ["server", "worker"] as const) {
+    for (const key of ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"])
+      assert.ok(optional[role].includes(key), `${role} ${key}`);
+    assert.equal(app(role).environment.SMTP_PORT, "587");
     assert.equal(app(role).environment.KB_MASTER_KEY, `\${{environment.KB_MASTER_KEY}}`);
   }
   for (const key of [
@@ -190,23 +247,23 @@ test("backup settings reach the leader and scheduler; SMTP and monitor keys reac
     "KB_ASSET_S3_SECRET_ACCESS_KEY",
     "KB_ASSET_S3_OPERATOR_SECRET_ACCESS_KEY",
     "BETTER_AUTH_SECRET",
-  ])
+  ]) {
     assert.ok(!(key in app("worker").environment));
-  assert.ok(app("worker").environment.BACKUP_MONITOR_S3_SECRET_ACCESS_KEY);
-  const config = generateDokployConfig(defaults);
-  for (const optional of Object.values(config.optionalEnvironmentKeys)) {
-    assert.ok(optional.includes("OPENROUTER_API_KEY"));
-    assert.ok(!optional.includes("KB_INSTANCE_ID"));
+    assert.ok(!optional.worker.includes(key), key);
   }
-  for (const role of Object.values(config.assetStorageRoles).filter(
-    (value) => typeof value === "object",
-  )) {
-    assert.equal(
-      role.KB_ASSET_S3_ACCESS_KEY_ID,
-      app("server").environment.KB_ASSET_S3_ACCESS_KEY_ID,
-    );
-    assert.ok(role.KB_ASSET_S3_OPERATOR_ACCESS_KEY_ID);
-    assert.ok(!("KB_ASSET_S3_SECRET_ACCESS_KEY" in role));
+  assert.ok(optional.worker.includes("BACKUP_MONITOR_S3_SECRET_ACCESS_KEY"));
+  for (const keys of [optional.server, optional.worker]) {
+    assert.ok(keys.includes("OPENROUTER_API_KEY"));
+    assert.ok(!keys.includes("KB_INSTANCE_ID"));
+  }
+  for (const role of [
+    config.assetStorageRoles.schemaLeader,
+    config.assetStorageRoles.scheduledBackup,
+    config.assetStorageRoles.offlineOperator,
+  ]) {
+    assert.ok(role.includes("KB_ASSET_S3_ACCESS_KEY_ID"));
+    assert.ok(role.includes("KB_ASSET_S3_OPERATOR_ACCESS_KEY_ID"));
+    assert.ok(!role.includes("KB_ASSET_S3_SECRET_ACCESS_KEY"));
     assert.throws(
       () =>
         validateAssetDumpIdentity({
@@ -539,4 +596,82 @@ test("two projects resolve private services through distinct private-network ali
     const other = project === "kb-team-a" ? "kb-team-b" : "kb-team-a";
     assert.ok(!yaml.includes(`@${other}-`));
   }
+});
+
+test("--git-url pins every Compose build to <url>#<ref> and keeps .git for the server's commit", () => {
+  const gitUrl = "https://github.com/example/knowledge-base.git";
+  const production = {
+    ...defaults,
+    environment: "production" as const,
+    gitRef: `release/${"b".repeat(40)}`,
+    gitUrl,
+  };
+  const yaml = generateDokployCompose(production);
+  const pinned = `context: "${gitUrl}#release/${"b".repeat(40)}"`;
+  for (const role of ["server", "worker"]) assert.ok(service(yaml, role).includes(pinned), role);
+  // backup and asset-operator reuse the server build.
+  for (const role of ["backup", "asset-operator"])
+    assert.match(service(yaml, role), /build: \*server-build/);
+  assert.doesNotMatch(yaml, /context: \.$/m);
+  assert.equal(yaml.split('BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"').length - 1, 1);
+  assert.ok(service(yaml, "server").includes('BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"'));
+  assert.match(yaml, new RegExp(`^# .*--git-url ${gitUrl.replaceAll(".", "\\.")}\\.$`, "m"));
+  const config = generateDokployConfig(production);
+  assert.ok(config.applications.every((entry) => entry.customGitUrl === gitUrl));
+  assert.match(config.compose.buildContext, /needs no source tree/);
+  // Unset (the CLI's `local`): a checkout build, no Git context.
+  const local = generateDokployCompose(defaults);
+  assert.equal(local.split("context: .\n").length - 1, 2);
+  assert.doesNotMatch(local, /BUILDKIT_CONTEXT_KEEP_GIT_DIR|#main"/);
+  assert.match(generateDokployConfig(defaults).compose.buildContext, /^local/);
+  assert.match(generateDokployConfig(defaults).applications[0]!.customGitUrl, /^<your repository/);
+});
+
+test("--git-url accepts https/ssh/scp-like URLs and refuses credentials, fragments and YAML syntax", () => {
+  for (const ok of [
+    "https://github.com/example/kb.git",
+    "ssh://git@github.com/example/kb.git",
+    "git@github.com:example/kb.git",
+  ]) {
+    assert.doesNotThrow(() => assertGitUrl(ok), ok);
+    assert.doesNotThrow(() => generateDokployCompose({ ...defaults, gitUrl: ok }), ok);
+  }
+  for (const bad of [
+    "",
+    "https://user:token@github.com/example/kb.git",
+    "https://token@github.com/example/kb.git",
+    "https://github.com/example/kb.git#main",
+    "https://github.com/example/kb.git?x=1",
+    "git@github.com:example/kb.git?x=1",
+    'https://github.com/example/kb".git',
+    "https://github.com/$HOME/kb.git",
+    "https://github.com/example/kb .git",
+    "http://github.com/example/kb.git",
+    "file:///srv/kb.git",
+    "https://github.com/",
+  ]) {
+    assert.throws(() => assertGitUrl(bad), /--git-url/, bad);
+    for (const generate of [generateDokployConfig, generateDokployCompose])
+      assert.throws(() => generate({ ...defaults, gitUrl: bad }), /--git-url/, bad);
+  }
+});
+
+test("--git-url defaults to the origin remote; local is a checkout build; neither is an error", () => {
+  assert.equal(
+    resolveGitUrl(undefined, () => "git@github.com:example/kb.git\n"),
+    "git@github.com:example/kb.git",
+  );
+  assert.equal(
+    resolveGitUrl("local", () => "git@github.com:example/kb.git"),
+    undefined,
+  );
+  assert.equal(
+    resolveGitUrl("https://example.com/kb.git", () => undefined),
+    "https://example.com/kb.git",
+  );
+  assert.throws(
+    () => resolveGitUrl(undefined, () => undefined),
+    /--git-url <repository URL>.*--git-url local/,
+  );
+  assert.throws(() => resolveGitUrl(undefined, () => "  \n"), /--git-url/);
 });

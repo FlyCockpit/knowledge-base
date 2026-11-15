@@ -44,7 +44,12 @@ if (args[0] === 'ps') {
   ].join('\\n'));
   else if (template.includes('.NetworkSettings.Networks')) out('kb_private');
   else if (template.includes('.Image')) out('image-id');
+  else if (template.includes('project.working_dir')) out(fixture.workingDir ?? '<no value>');
+  else if (template.includes('compose.service')) out(fixture.service ?? '<no value>');
+  else if (template.includes('config_files')) out(fixture.configFiles ?? '<no value>');
   else process.exit(2);
+} else if (args[0] === 'image' && args[1] === 'inspect') {
+  if (fixture.imageGone) process.exit(1);
 } else if (args[0] === 'run') {
   const names = process.env.FIXTURE_NAMES.split('\\n').filter(Boolean).sort();
   fs.writeFileSync(process.env.RESULT, JSON.stringify({ args, names }));
@@ -224,6 +229,42 @@ test("host forwards only the KB allowlist through the private Postgres network",
     "KB_DATA_ROOT",
     "KB_MASTER_KEY",
   ]);
+});
+
+test("host stops with the recreate command when the server's image is gone; never falls back to the tag", () => {
+  const gone = {
+    imageGone: true,
+    workingDir: "/etc/dokploy/compose/kb prod/code",
+    service: "kb-web",
+    configFiles: "/etc/dokploy/compose/kb prod/code/docker-compose.dokploy.yml,/srv/override.yml",
+  };
+  for (const body of [
+    `main list --project ${project}`,
+    `main backup --project ${project}`,
+    `main drill latest "$IDENTITY" --project ${project}`,
+    restoreBody,
+  ]) {
+    const result = run(gone, { body });
+    assert.equal(result.status, 1, body);
+    assert.match(result.stderr, /image \(image-id\) is no longer on this machine/, body);
+    assert.ok(
+      result.stderr.includes(
+        `cd /etc/dokploy/compose/kb\\ prod/code && docker compose -p ${project} -f /etc/dokploy/compose/kb\\ prod/code/docker-compose.dokploy.yml -f /srv/override.yml up -d --no-build --force-recreate kb-web`,
+      ),
+      result.stderr,
+    );
+    assert.deepEqual(verbs(result), [], `${body}: nothing ran, stopped or started`);
+    assert.equal(result.invocation, null, body);
+  }
+  // Without the compose labels the placeholders are printed verbatim, unquoted.
+  const unlabelled = run({ imageGone: true });
+  assert.equal(unlabelled.status, 1);
+  assert.ok(
+    unlabelled.stderr.includes(
+      "cd <the compose's directory> && docker compose -p knowledge-base-prod -f <the deploy's compose file> up -d --no-build --force-recreate <the server's compose service>",
+    ),
+    unlabelled.stderr,
+  );
 });
 
 test("host restore refuses before stopping anything when stdin is not a terminal", () => {

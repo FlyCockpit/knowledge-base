@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { kbTestName } from "../packages/test-utils/src/kb/test-names.mjs";
 import { prisma, tempConfig } from "./db/lib/prisma.mjs";
 import { POSTGRES_IMAGE } from "./test-kb.mjs";
 
@@ -129,12 +130,19 @@ async function main() {
       throw new Error(`Runtime Docker ${args[0]} failed (${error.code ?? "nonzero"}).`);
     }
   };
+  // Every Docker name this run chooses carries KB_TEST_NAME_PREFIX (validated
+  // here, before any Docker call), like `pnpm test:kb`.
+  const runId = randomUUID();
+  const ownedName = (kind) => kbTestName(`knowledge-base-runtime-${kind}-${runId}`);
+  const workerImage = `${ownedName("worker-base")}:latest`;
+  const postgresName = ownedName("pg");
+  const redisName = ownedName("redis");
+  const workerName = ownedName("worker");
   for (const image of [POSTGRES_IMAGE, REDIS_IMAGE]) {
     docker("image", "inspect", image, "--format", "{{.Id}}");
   }
-  const temporary = mkdtempSync(resolve(tmpdir(), "template-runtime-operations-"));
+  const temporary = mkdtempSync(resolve(tmpdir(), "knowledge-base-runtime-operations-"));
   const containers = [];
-  const workerImage = `template-runtime-worker-base:${randomUUID()}`;
   let ownsWorkerImage = false;
   try {
     // The runtime checks Git >=2.45 during startup; the bare Node image lacks Git.
@@ -155,8 +163,6 @@ async function main() {
     );
     ownsWorkerImage = true;
     const password = randomUUID();
-    const postgresName = `template-runtime-pg-${randomUUID()}`;
-    const redisName = `template-runtime-redis-${randomUUID()}`;
     containers.push(postgresName, redisName);
     const postgres = docker(
       "run",
@@ -256,7 +262,6 @@ async function main() {
         .join("\n"),
       { mode: 0o600 },
     );
-    const workerName = `template-runtime-worker-${randomUUID()}`;
     containers.push(workerName);
     const result = execFileSync(
       "docker",

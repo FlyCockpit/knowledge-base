@@ -584,7 +584,20 @@ test("installed S3 client sends immutable conditional PUT and collision leaves p
   const result = await uploadBackup({ file, config });
   assert.equal(result.eTag, '"fixture-etag"');
   await writeFile(file, "replacement");
-  await assert.rejects(uploadBackup({ file, config }));
+  // The expected 412 reaches the caller as an error, and the SDK prints
+  // nothing about it (no "non-retryable streaming request" warning).
+  const warn = t.mock.method(console, "warn", () => {});
+  const error = t.mock.method(console, "error", () => {});
+  await assert.rejects(uploadBackup({ file, config }), (rejection) => {
+    assert.equal(rejection.$metadata?.httpStatusCode, 412);
+    return true;
+  });
+  assert.deepEqual(
+    [...warn.mock.calls, ...error.mock.calls].map((call) => call.arguments),
+    [],
+  );
+  warn.mock.restore();
+  error.mock.restore();
   assert.equal(stored.toString(), "previous bytes");
   assert.equal(bodies.length, 4);
   pause = true;
@@ -683,6 +696,24 @@ test("required bundle shell and direct upload consumers preserve both asset comp
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("the backup S3 logger drops only the SDK's detail-free streaming warning", async (t) => {
+  const { SDK_STREAMING_RETRY_WARNING, backupS3Client, backupS3Logger } = await import(
+    "./upload-backup-to-s3.mjs"
+  );
+  const warn = t.mock.method(console, "warn", () => {});
+  backupS3Logger.warn(SDK_STREAMING_RETRY_WARNING);
+  backupS3Logger.warn("a different SDK warning");
+  backupS3Logger.warn(SDK_STREAMING_RETRY_WARNING, "with detail");
+  assert.deepEqual(
+    warn.mock.calls.map((call) => call.arguments),
+    [["a different SDK warning"], [SDK_STREAMING_RETRY_WARNING, "with detail"]],
+  );
+  const client = backupS3Client(inertS3Config);
+  t.after(() => client.destroy());
+  assert.equal(client.config.logger, backupS3Logger);
+  assert.equal(await client.config.maxAttempts(), 1);
 });
 
 test("full encrypted uploads verify both remote objects, retry completed pairs and refuse collisions", async (t) => {
