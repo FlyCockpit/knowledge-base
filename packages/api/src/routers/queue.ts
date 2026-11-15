@@ -21,7 +21,6 @@ import { z } from "zod";
 import { adminOr404Procedure, liveAdminOr404Procedure } from "../index";
 import {
   backupFreshnessEnabled,
-  misconfiguredBackupFreshness,
   readBackupFreshness,
   setupMissingBackupFreshness,
 } from "../lib/backup-freshness";
@@ -66,8 +65,9 @@ export const queueRouter = {
   /**
    * Last backup-freshness verdict for the admin dashboard. `configured: false`
    * means logical backups are off (provider-only profile) and there is nothing
-   * to show. A bucket that is set but unusable is NOT that case: it reports
-   * `configured: true` with a `misconfigured` verdict, because a backup that
+   * to show. A bucket that is set but unusable is NOT that case: the worker
+   * records a `misconfigured` verdict (only it holds the monitor key pair, so
+   * the server must not judge those credentials itself), because a backup that
    * can never run has to be louder than one that is merely late, not quieter.
    * `status: null` with `configured: true` means the worker has not recorded a
    * verdict within its TTL — treat as unknown, not healthy.
@@ -76,8 +76,6 @@ export const queueRouter = {
     if (!backupFreshnessEnabled()) return { configured: false as const, status: null };
     const setupMissing = setupMissingBackupFreshness();
     if (setupMissing) return { configured: true as const, status: setupMissing };
-    const misconfigured = misconfiguredBackupFreshness();
-    if (misconfigured) return { configured: true as const, status: misconfigured };
     return { configured: true as const, status: await readBackupFreshness(redisConnection) };
   }),
 
