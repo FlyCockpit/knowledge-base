@@ -409,7 +409,7 @@
     "pg": "catalog:",
     "rate-limiter-flexible": "catalog:",
     "sqlite-vec": "catalog:",
-    "web-push": "^3.6.7",
+    "web-push": "^4.0.0",
     "zod": "catalog:"
   },
   "devDependencies": {

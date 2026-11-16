@@ -79,7 +79,7 @@ ENV PATH="$PNPM_HOME:$PATH"
 # Corepack verifies the packageManager sha512,
 # and the first run fetches pnpm 12's signature-checked native binary here,
 # at build time, never at runtime.
-RUN npm install --global --no-fund --no-audit corepack@0.36.0 && mkdir -p "$PNPM_HOME" && corepack enable --install-directory "$PNPM_HOME" pnpm && corepack prepare pnpm@12.17.0+sha512.b8d223ebec04b580a89ed206daa71d1bccb6a1ee1d52efa95cc3b0db75271561df8f0d8e2c43add39c5ec08018af7a8a95108e7090f95a29f88727b7a40fd53d --activate && test "$(pnpm --version)" = "12.17.0"
+RUN npm install --global --no-fund --no-audit corepack@0.36.0 && mkdir -p "$PNPM_HOME" && corepack enable --install-directory "$PNPM_HOME" pnpm && corepack prepare pnpm@12.18.0+sha512.9d7882d5dc82147ecfc4e062aa34834e0ad0296710a1837a1115ae012127d36b7109e321ac1598a1dd0a65597681b1e99917e12ed0d749eae91187943363beb3 --activate && test "$(pnpm --version)" = "12.18.0"
 
 # --- Builder stage ---
 # pnpm install runs here with source files present so workspace symlinks resolve correctly

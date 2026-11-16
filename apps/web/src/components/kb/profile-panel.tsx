@@ -13,6 +13,7 @@ import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -129,7 +130,7 @@ type ProbeFailure = NonNullable<ProviderRow["probe"]["failure"]>;
 function probeFailureText(
   failure: ProbeFailure,
   dimensions: number,
-  t: (key: string, options?: Record<string, unknown>) => string,
+  t: TFunction<"settings">,
 ): string {
   switch (failure.kind) {
     case "unreachable":

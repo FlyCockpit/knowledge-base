@@ -27,7 +27,7 @@
     "@knowledge-base/env": "workspace:*",
     "@knowledge-base/locales": "workspace:*",
     "@knowledge-base/ui": "workspace:*",
-    "@tailwindcss/vite": "^4.3.4",
+    "@tailwindcss/vite": "^4.3.5",
     "@tanstack/react-form": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
@@ -49,10 +49,10 @@
     "remark-gfm": "catalog:",
     "sileo": "catalog:",
     "zod": "catalog:",
-    "zustand": "^5.0.16"
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@tanstack/react-query-devtools": "catalog:",
     "@tanstack/react-router-devtools": "catalog:",
     "@types/node": "catalog:",
