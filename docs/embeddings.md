@@ -327,8 +327,8 @@ once; causal batches capped at 512. Gemma commit
 It uses `task: search result | query: ` and `title: none | text: ` prefixes,
 BOS 2/EOS 1 and one full-input noncausal batch. Both return the raw pooled vector; the index normalizes it (above).
 
-Worker uses Node26 Debian glibc x64/arm64, `node-llama-cpp` 3.22.2 (the 3.22.x
-line) with a pinned, unpatched source-built llama.cpp v0.7.0;
+Worker uses Node26 Debian glibc x64/arm64, `node-llama-cpp` 3.22.3 (the 3.22.x
+line) with a pinned, unpatched source-built llama.cpp v0.9.0;
 [embedding runtime pins](../packages/api/src/lib/kb/fixtures/embedding-runtime.json)
 and [Rust vendor notes](../apps/cli/vendor/README.md) define the source closure.
 Alpine/musl is not a supported worker image runtime (the static musl `kb` CLI

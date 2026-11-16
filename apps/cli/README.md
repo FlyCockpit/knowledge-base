@@ -226,7 +226,7 @@ and 1024 dimensions respectively (the index normalizes them once).
 
 Building the CLI now needs CMake, a C++ compiler, libclang and OpenMP (plus
 C++/OpenMP shared runtime libraries where linked). The approved embedding-only
-0.1.160 bindings and unpatched llama.cpp v0.7.0 source are under `vendor/`;
+0.1.161 bindings and unpatched llama.cpp v0.9.0 source are under `vendor/`;
 see its README for source pins. Native builds are capped
 at three jobs. Standard Cargo tests use real child processes with fake
 inference; real-model tests are ignored only in ordinary tests. Explicit smoke:

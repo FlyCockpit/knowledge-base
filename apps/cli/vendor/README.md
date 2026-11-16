@@ -1,8 +1,8 @@
 # Embedding-only Rust bindings
 
-This directory contains the vendored llama-cpp-2 / llama-cpp-sys-2 0.1.160 fork.
-The sys source is llama.cpp v0.7.0, commit
-`620d2225cc436ab0b001e3200e590e3b286ef9ab`, from the SHA-256-verified archive
+This directory contains the vendored llama-cpp-2 / llama-cpp-sys-2 0.1.161 fork.
+The sys source is llama.cpp v0.9.0, commit
+`cd959bae99ff4bed22bef2604f45241c09bbb8c8`, from the SHA-256-verified archive
 in `packages/api/src/lib/kb/fixtures/embedding-runtime.json` (the same release
 the server worker builds). Only the source directories included by the
 upstream sys crate are retained. No model weights or compiled libraries belong
@@ -34,8 +34,8 @@ regenerate the inventory, and rerun token/vector and memory parity for both
 models on every release platform. Upstream crate code keeps its MIT OR Apache-2.0 license; llama.cpp
 is MIT (LICENSE in its source directory).
 
-The six unused GPU/multimodal shell/Python test/generator scripts from the
-upstream source archive are omitted; those backends are forced OFF in this
+The unused GPU/multimodal shell/Python test/generator scripts from the
+upstream source archive (`llamaCpp.omitted` in `inventory.json`) are omitted; those backends are forced OFF in this
 embedding-only build. Vendored files carry no executable bit, so the
 repository automation policy treats none of them as runnable scripts. Crate attributes in our Rust fixtures follow a Rust doc
 header so they are not mistaken for interpreter shebangs by the existing
@@ -51,9 +51,12 @@ build script reads the MSVC `INCLUDE` path through cc's `Tool::get_envs`
 `RUSTFLAGS=-D warnings`.
 
 `LlamaTimings::new` zero-initializes the two graph-reallocation counters
-llama.cpp v0.7.0 adds to `llama_perf_context_data` (0.1.160 targets v0.6.0);
-it is the only source adaptation to the newer headers.
+llama.cpp v0.7.0 adds to `llama_perf_context_data` (0.1.161 still targets
+v0.6.0; no crate release targets v0.9.0 yet); it is the only source adaptation
+to the newer headers. 0.1.161's `with_tensor_split` uses the `tensor_split`
+field outside `common`, so that field is no longer gated; in `model/params.rs`
+only the `common`-only import is.
 
-Binding source archive revision: `0dd5814c9b061930965d144c1653cd4d05054873`.
+Binding source archive revision: `e7af607ebd5ec2932709ef918c17cca2f9b0fce4`.
 The original MIT and Apache texts from that revision accompany both crates;
 llama.cpp and its retained dependencies keep their original license notices.

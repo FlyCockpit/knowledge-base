@@ -59,8 +59,8 @@ not shipped as part of the application.
 
 ## llama-cpp-2 / llama-cpp-sys-2 and llama.cpp — MIT / Apache-2.0
 
-The CPU-only Rust CLI statically links the approved vendored 0.1.160 bindings
-(MIT OR Apache-2.0) and pinned, unpatched llama.cpp v0.7.0 (MIT). Sources,
+The CPU-only Rust CLI statically links the approved vendored 0.1.161 bindings
+(MIT OR Apache-2.0) and pinned, unpatched llama.cpp v0.9.0 (MIT). Sources,
 upstream license texts and pins are retained under `apps/cli/vendor/`. Preserve these notices
 when redistributing the CLI. Model weights are downloaded separately after
 owner opt-in and are never included in the binary or images.

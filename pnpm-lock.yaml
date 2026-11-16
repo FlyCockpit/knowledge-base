@@ -279,8 +279,8 @@ catalogs:
       specifier: ^0.4.6
       version: 0.4.6
     node-llama-cpp:
-      specifier: 3.22.2
-      version: 3.22.2
+      specifier: 3.22.3
+      version: 3.22.3
     nodemailer:
       specifier: ^10.4.0
       version: 10.4.0
@@ -725,7 +725,7 @@ importers:
         version: 6.0.0
       node-llama-cpp:
         specifier: 'catalog:'
-        version: 3.22.2(typescript@7.0.2)
+        version: 3.22.3(typescript@7.0.2)
       sharp:
         specifier: 'catalog:'
         version: 0.35.5(@types/node@26.6.6)
@@ -2688,15 +2688,15 @@ packages:
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
-  '@node-llama-cpp/linux-arm64@3.22.2':
-    resolution: {integrity: sha512-ulAPe+pqZtO1LrX3wa8Yvnw4VZiMJxdL500ebJdAxLxXt+HnqY2vksJ/ZBW+f+ZwwBu2wIS2auwVvS8JkZHffQ==}
+  '@node-llama-cpp/linux-arm64@3.22.3':
+    resolution: {integrity: sha512-gfgVXMi2ptics3eJ+7iC+MRgvL3hrqcUPWaefXyOvbam1gIT6/oSPdNTt6OCf/yLab0obCVndW1GwzyfkSLz7w==}
     engines: {node: '>=20.0.0'}
     cpu: [arm64, x64]
     os: [linux]
     libc: [glibc]
 
-  '@node-llama-cpp/linux-x64@3.22.2':
-    resolution: {integrity: sha512-JwSanJFqX2qsxPNwgQo/QMkijBzQKot7YaybXz7kjxfHq+RgXuw7Z/NyUPC1psQHOOnF6vV4FXBd8jmI2KZUJw==}
+  '@node-llama-cpp/linux-x64@3.22.3':
+    resolution: {integrity: sha512-g4lPKFwGoghQfKSDFVTtSFf+fqQalsU02nmYKU/YAaWs8j+K0d/yJrKN9uwDCh8LVyWR7HyZfgTph+8mam0K4Q==}
     engines: {node: '>=20.0.0'}
     cpu: [x64]
     os: [linux]
@@ -7168,8 +7168,8 @@ packages:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
 
-  node-llama-cpp@3.22.2:
-    resolution: {integrity: sha512-kHggUzq5+8aShET07hlGllyo+t7gNOl+xLQyEeyERStkm8JdBGVh+Yh4Jd/uZ15xYt8lYJIDYkzToLjhe0eyZw==}
+  node-llama-cpp@3.22.3:
+    resolution: {integrity: sha512-B1gM/ra5WwXFSd40fdiFCMC4+HHYz+1000Muoj7FBMdhsSuSxcbwbRNNvq9opgBLYYEqMu6Zo9BP/aIhq1XFLw==}
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
@@ -10525,10 +10525,10 @@ snapshots:
 
   '@noble/hashes@2.4.0': {}
 
-  '@node-llama-cpp/linux-arm64@3.22.2':
+  '@node-llama-cpp/linux-arm64@3.22.3':
     optional: true
 
-  '@node-llama-cpp/linux-x64@3.22.2':
+  '@node-llama-cpp/linux-x64@3.22.3':
     optional: true
 
   '@nodelib/fs.scandir@2.1.5':
@@ -14755,7 +14755,7 @@ snapshots:
 
   node-gyp-build@4.8.4: {}
 
-  node-llama-cpp@3.22.2(typescript@7.0.2):
+  node-llama-cpp@3.22.3(typescript@7.0.2):
     dependencies:
       '@huggingface/jinja': 0.5.11
       async-retry: 1.3.3
@@ -14786,8 +14786,8 @@ snapshots:
       which: 6.0.1
       yargs: 17.7.3
     optionalDependencies:
-      '@node-llama-cpp/linux-arm64': 3.22.2
-      '@node-llama-cpp/linux-x64': 3.22.2
+      '@node-llama-cpp/linux-arm64': 3.22.3
+      '@node-llama-cpp/linux-x64': 3.22.3
       typescript: 7.0.2
     transitivePeerDependencies:
       - supports-color

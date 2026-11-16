@@ -1,7 +1,7 @@
 # Pinned embedding runtime
 
-The worker uses node-llama-cpp 3.22.2 with llama.cpp v0.7.0, commit
-`620d2225cc436ab0b001e3200e590e3b286ef9ab`. The source archive is SHA-256
+The worker uses node-llama-cpp 3.22.3 with llama.cpp v0.9.0, commit
+`cd959bae99ff4bed22bef2604f45241c09bbb8c8`. The source archive is SHA-256
 pinned in `packages/api/src/lib/kb/fixtures/embedding-runtime.json`.
 `scripts/build-embedding-runtime.mjs` builds CPU-only with at most three jobs,
 packages the addon and its shared libraries, and writes a file-hash receipt.
@@ -18,7 +18,7 @@ by Git and is never part of the model download volume.
 The source is built unpatched. Upstream llama.cpp now skips the LM head and the
 logits buffer for pooled embedding contexts (ggml-org/llama.cpp#30445, in
 v0.7.0), which is what the former `output-buffer.patch` did for the Qwen graph;
-node-llama-cpp 3.22.2 fills batches itself, retiring `node-batch-compat.patch`.
+node-llama-cpp 3.22.x fills batches itself, retiring `node-batch-compat.patch`.
 The real-model lanes still assert maximum-input peak memory, so a source that
 allocated logits again cannot pass them. Neither change touched the tokenizer
 or pooling.

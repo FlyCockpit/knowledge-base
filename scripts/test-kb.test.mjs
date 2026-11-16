@@ -594,7 +594,7 @@ describe("test-kb runner", () => {
       node: "v26.13.0",
       arch: "x64",
       libc: "glibc",
-      nodeLlamaCpp: "3.22.2",
+      nodeLlamaCpp: "3.22.3",
       buildType: "localBuild",
       nativeRuntime: JSON.parse(
         readFileSync(join(ROOT, "packages/api/src/lib/kb/fixtures/embedding-runtime.json"), "utf8"),

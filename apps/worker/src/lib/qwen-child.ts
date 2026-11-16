@@ -112,7 +112,7 @@ export function parseQwenChildConfig(
 }
 
 /**
- * node-llama-cpp options for a runtime config (names verified in the 3.22.2
+ * node-llama-cpp options for a runtime config (names verified in the 3.22.3
  * LlamaModel.d.ts). Qwen retains causal 512-token batches through its KV
  * cache. Gemma requires one full sequence: the binding sets native
  * n_batch and n_ubatch to batchSize (AddonContext.cpp), and the embedding

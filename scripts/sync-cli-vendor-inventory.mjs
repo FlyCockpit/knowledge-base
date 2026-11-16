@@ -52,7 +52,7 @@ export const FORK_EDITS = {
     "sys dependency without its default `common` feature; macOS without automatic Metal; upstream test target dropped",
   "llama-cpp-2/src/lib.rs": "feature-gate imports used only by `common`",
   "llama-cpp-2/src/log.rs": "feature-gate the `mtmd` log module",
-  "llama-cpp-2/src/model/params.rs": "feature-gate `common`-only import and field",
+  "llama-cpp-2/src/model/params.rs": "feature-gate `common`-only import",
   "llama-cpp-2/src/sampling.rs": "feature-gate `common`-only import and helper",
   "llama-cpp-2/src/timing.rs": "zero-initialize the llama.cpp v0.7.0 graph-reallocation counters",
   "llama-cpp-sys-2/Cargo.toml": "cc >= 1.7.0 build dependency",

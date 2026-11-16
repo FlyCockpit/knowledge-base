@@ -256,7 +256,7 @@ test("model documentation pins artifacts and separates host evidence from archit
   };
   for (const artifact of artifacts.models) assert.ok(text.includes(artifact.sha256));
   for (const term of [
-    "3.22.2",
+    "3.22.3",
     "4096",
     "1024",
     "1/(60+rank1)",

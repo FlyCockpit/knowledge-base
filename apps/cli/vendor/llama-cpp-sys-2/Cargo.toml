@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "llama-cpp-sys-2"
-version = "0.1.160"
+version = "0.1.161"
 build = "build.rs"
 links = "llama"
 include = [
