@@ -47,6 +47,7 @@ export const LOG_SITES = {
   "server.shutdown-start": ["info", "graceful shutdown started"],
   "server.startup": ["error", "server startup failed"],
   "worker.startup": ["error", "worker startup failed"],
+  "worker.startup-stopped": ["info", "worker startup stopped by a planned shutdown"],
   "git.unsupported": ["error", "git >= 2.45 is required; use the trixie-based images"],
   "server.shutdown": ["error", "server shutdown failed"],
   "server.control-socket": ["error", "process fence control socket failed"],

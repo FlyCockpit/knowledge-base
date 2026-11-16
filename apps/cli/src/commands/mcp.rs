@@ -6,7 +6,7 @@ use kb_client::{
     types::{KbId, Uuid},
 };
 use kb_local::{
-    LocalPrincipal, Store,
+    LocalPrincipal, RuntimeReconcile, Store,
     credentials::NativeCredentials,
     dispatch::{Session, SessionIo},
     egress::{NativeDns, NativeHttp, PinnedEgress},
@@ -139,6 +139,12 @@ fn run_local(
             tracing::warn!("embedding worker unavailable, searching by keyword only: {why}");
         }
     }
+    // A CLI upgrade that changed the native embedding runtime re-embedded
+    // nothing yet: opening the store scheduled every affected rebuild.
+    let reembed = Arc::new(RuntimeReembed::new(
+        store.builtin_runtime_stale_kbs()?,
+        store.runtime_reconcile(),
+    ));
     let control: Arc<IndexControl> = Arc::new(IndexControl::new(INDEX_BUILDERS));
     let paths = store.paths().clone();
     let store_uuid = store.store_uuid().clone();
@@ -188,6 +194,7 @@ fn run_local(
             exe,
             model,
             control: control.clone(),
+            reembed,
         },
         finished,
     );
@@ -344,6 +351,64 @@ struct Builders {
     exe: PathBuf,
     model: Arc<ModelRuntime>,
     control: Arc<IndexControl>,
+    reembed: Arc<RuntimeReembed>,
+}
+
+/// Progress of the re-embedding a native runtime change scheduled
+/// (`Store::reconcile_builtin_runtime`), on stderr: once at startup, then
+/// as each affected KB is served by its re-embedded generation. Those KBs
+/// serve keyword search meanwhile.
+/// It also carries the launch reconcile the startup open could not run
+/// (another writer held the store): every builder handle shares the launch
+/// handle's one owing, so whichever store lock comes first runs it, once.
+struct RuntimeReembed {
+    total: usize,
+    pending: Mutex<Vec<KbId>>,
+    reconcile: RuntimeReconcile,
+}
+impl RuntimeReembed {
+    fn new(pending: Vec<KbId>, reconcile: RuntimeReconcile) -> Self {
+        if !pending.is_empty() {
+            tracing::info!(
+                knowledge_bases = pending.len(),
+                "the built-in embedding runtime changed with this kb version; re-embedding \
+                 every document of the affected knowledge bases in the background (keyword \
+                 search serves them until each rebuild activates)"
+            );
+        }
+        Self {
+            total: pending.len(),
+            pending: Mutex::new(pending),
+            reconcile,
+        }
+    }
+    /// A builder's freshly (re)opened handle shares the launch's reconcile.
+    fn adopt(&self, s: &Store) {
+        s.share_runtime_reconcile(&self.reconcile);
+    }
+    fn observe(&self, s: &Store) {
+        // The reconcile runs under the store lock; busy means next time.
+        if self.reconcile.pending()
+            && let Ok(Some(guard)) = s.try_lock_write(&[])
+        {
+            drop(guard);
+        }
+        let Ok(mut pending) = self.pending.lock() else {
+            return;
+        };
+        if pending.is_empty() {
+            return;
+        }
+        let before = pending.len();
+        pending.retain(|kb| !s.builtin_runtime_reembedded(kb).unwrap_or(false));
+        if pending.len() < before {
+            tracing::info!(
+                done = self.total - pending.len(),
+                total = self.total,
+                "re-embedded knowledge bases after the embedding runtime change"
+            );
+        }
+    }
 }
 
 /// Start the session's `INDEX_BUILDERS` builders (R3-L5). Each opens the
@@ -636,7 +701,7 @@ fn run_builder(slot: usize, b: &Builders) -> anyhow::Result<()> {
     while !b.control.is_stopped() {
         let opened = match store.take() {
             Some(s) => s.verify_identity().map(|()| s),
-            None => Store::reopen(&b.paths, &b.store_uuid),
+            None => Store::reopen(&b.paths, &b.store_uuid).inspect(|s| b.reembed.adopt(s)),
         };
         let s = match opened {
             Ok(s) => store.insert(s),
@@ -665,6 +730,7 @@ fn run_builder(slot: usize, b: &Builders) -> anyhow::Result<()> {
             &mut after,
             &mut diagnostics,
         )?;
+        b.reembed.observe(s);
         std::thread::sleep(Duration::from_millis(100));
     }
     Ok(())
@@ -856,6 +922,7 @@ mod tests {
                         }
                         Arc::new(control)
                     },
+                    reembed: Arc::new(RuntimeReembed::new(Vec::new(), store.runtime_reconcile())),
                 },
                 finished,
             );
@@ -942,5 +1009,122 @@ mod tests {
         let token = kb_client::CancellationToken::new();
         let _registered = control.register(0, FakeBuild(token.clone()));
         assert!(token.is_cancelled());
+    }
+
+    /// The launch reconcile an upgraded `kb mcp` could not run at open
+    /// (another writer held the store) runs exactly once across the
+    /// session's handles, and none still owes it afterwards: a later launch
+    /// of another runtime that re-pins the store is never re-pinned back by
+    /// this session (the launch-only guarantee).
+    #[test]
+    fn a_deferred_runtime_reconcile_runs_once_across_the_sessions_handles() {
+        let old: &'static str = Box::leak(format!("sha256:{}", "0".repeat(64)).into());
+        let foreign: &'static str = Box::leak(format!("sha256:{}", "f".repeat(64)).into());
+        let current = kb_local::qwen::runtime_identity();
+        let temp = tempfile::tempdir().expect("fixture");
+        let root = temp.path().join("managed");
+        // What the previous CLI left: a KB pinned to the built-in under its runtime.
+        let previous = Store::open(&root).expect("managed store");
+        let state_db = previous.paths().state_db();
+        let pin = || -> String {
+            rusqlite::Connection::open(&state_db)
+                .expect("fixture")
+                .query_row(
+                    "SELECT json_extract(profile_json,'$.builtin.runtimeIdentity') FROM kbs",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("built-in pin")
+        };
+        let kb = previous
+            .create_kb(
+                &previous.owner(),
+                kb_local::CreateKbRequest {
+                    name: "Runtime".into(),
+                    slug: "runtime".into(),
+                    description: "Deferred reconcile".into(),
+                    idempotency_key: "runtime-reconcile-create-01".into(),
+                },
+            )
+            .expect("kb")
+            .kb_id;
+        rusqlite::Connection::open(previous.paths().state_db())
+            .expect("fixture")
+            .execute("UPDATE builtin_model SET enabled=1 WHERE id=1", [])
+            .expect("enable");
+        previous.set_runtime_identity_for_tests(old);
+        let revision = previous.model_state().expect("state").epoch + 1;
+        previous
+            .embedding_profile_set(
+                &previous.owner(),
+                serde_json::from_value(serde_json::json!({"kbId":kb,"providerId":"builtin","revision":revision,"idempotencyKey":"runtime-reconcile-profile-01","confirm":"RUN"}))
+                    .expect("input"),
+            )
+            .expect("profile");
+        assert_eq!(pin(), old);
+        let paths = previous.paths().clone();
+        let uuid = previous.store_uuid().clone();
+        let writer = Store::reopen(&paths, &uuid).expect("writer");
+
+        // The upgraded `kb mcp` launches while another writer holds the
+        // store, and both builders see the reconcile it still owes while
+        // that writer keeps it busy.
+        let held = writer.lock_write(&[]).expect("held");
+        let session = Store::open(&root).expect("upgraded launch");
+        assert!(session.runtime_reconcile_pending());
+        let reembed = RuntimeReembed::new(
+            session.builtin_runtime_stale_kbs().expect("due"),
+            session.runtime_reconcile(),
+        );
+        let builders = [
+            Store::reopen(&paths, &uuid).expect("builder 0"),
+            Store::reopen(&paths, &uuid).expect("builder 1"),
+        ];
+        for b in &builders {
+            assert!(!b.runtime_reconcile_pending());
+            reembed.adopt(b);
+            assert!(b.runtime_reconcile_pending());
+            reembed.observe(b);
+        }
+        assert_eq!(pin(), old);
+        drop(held);
+        // One builder runs it under its next store lock (a try: under load
+        // another store's spawn can briefly own the lock registry).
+        for _ in 0..500 {
+            reembed.observe(&builders[0]);
+            if !reembed.reconcile.pending() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!builders[1].runtime_reconcile_pending());
+        assert!(!session.runtime_reconcile_pending());
+        assert_eq!(pin(), current);
+
+        // Another runtime's `kb` launches next and re-pins the store
+        // (contended too, so it runs under that launch's first lock).
+        let held = writer.lock_write(&[]).expect("held");
+        let relaunch = Store::open(&root).expect("foreign launch");
+        relaunch.set_runtime_identity_for_tests(foreign);
+        drop(held);
+        drop(relaunch.lock_write(&[]).expect("foreign lock"));
+        assert_eq!(pin(), foreign);
+
+        // No handle of this session owes the reconcile any more: neither
+        // builder nor the launch handle re-pins the store back.
+        for b in &builders {
+            drop(b.lock_write(&[]).expect("builder lock"));
+            reembed.observe(b);
+        }
+        drop(session.lock_write(&[]).expect("session lock"));
+        assert!(!session.runtime_reconcile_pending());
+        assert!(builders.iter().all(|b| !b.runtime_reconcile_pending()));
+        assert_eq!(pin(), foreign);
+        // A new handle the session reopens later owes nothing either.
+        let reopened = Store::reopen(&paths, &uuid).expect("builder reopen");
+        reembed.adopt(&reopened);
+        reembed.observe(&reopened);
+        drop(reopened.lock_write(&[]).expect("reopened lock"));
+        assert_eq!(pin(), foreign);
     }
 }

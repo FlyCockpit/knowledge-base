@@ -179,6 +179,13 @@ and one that cannot start here (for example a socket path too long without
 `--json`). `kb mcp` says the same on stderr, at startup when a built-in is
 enabled and once per new reason after a failed start; searches meanwhile use
 keyword search with the `EMBEDDING_PROFILE_UNAVAILABLE` notice.
+Upgrading `kb` to a release with another native embedding runtime (llama.cpp
+source or vendored bindings) re-embeds every KB on the built-in once, when the
+new `kb` first opens the store: the same work as building those KBs from
+scratch, resumable, while each one is searched by keyword with the
+`EMBEDDING_MODEL_CHANGED` notice until its new index activates. `kb mcp`
+reports the affected count at startup and each completion on stderr (details
+in [embeddings](./embeddings.md)).
 
 Local rate limits are the store's own, far above the server's
 multi-tenant budgets but still bounded so a runaway agent loop stops: 600

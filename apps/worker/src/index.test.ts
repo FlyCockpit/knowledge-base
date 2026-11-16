@@ -12,9 +12,16 @@ const state = vi.hoisted(() => ({
   close: vi.fn(),
   on: vi.fn(),
   alert: vi.fn(),
+  logEvent: vi.fn(),
+  logStartupFailure: vi.fn(),
 }));
 vi.mock("@knowledge-base/env/load-dotenv", () => ({}));
 vi.mock("@knowledge-base/env/shared", () => ({ env: { NODE_ENV: "production" } }));
+vi.mock("@knowledge-base/env/log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@knowledge-base/env/log")>()),
+  logEvent: state.logEvent,
+  logStartupFailure: state.logStartupFailure,
+}));
 vi.mock("@knowledge-base/db/instance-heartbeat", () => ({
   startInstanceHeartbeat: (options: unknown) => {
     state.instanceStart(options);
@@ -110,6 +117,42 @@ describe("worker process entrypoint", () => {
       expect(process.exit).toHaveBeenCalledWith(event.startsWith("SIG") ? 0 : 1);
     },
   );
+
+  it.each([
+    ["maintenance", false],
+    ["SIGTERM", false],
+    ["unhandledRejection", true],
+  ] as const)("startup aborted by %s is logged as a failure: %s", async (event, failure) => {
+    let maintenance: (() => void) | undefined;
+    state.start.mockImplementation((options) => {
+      maintenance = options.onMaintenance;
+      options.onStartupStage("consumers");
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+    const starting = import("./index");
+    await vi.waitFor(() => expect(state.start).toHaveBeenCalled());
+    if (event === "maintenance") maintenance?.();
+    else listeners.get(event)?.(new Error("fatal"));
+    await starting;
+    await vi.advanceTimersByTimeAsync(0);
+    if (failure) {
+      expect(state.logStartupFailure).toHaveBeenCalledWith(
+        "worker",
+        expect.any(Error),
+        "consumers",
+      );
+      expect(state.logEvent).not.toHaveBeenCalledWith("worker.startup-stopped", expect.anything());
+    } else {
+      expect(state.logStartupFailure).not.toHaveBeenCalled();
+      expect(state.logEvent).toHaveBeenCalledWith("worker.startup-stopped", {
+        signal: event,
+        stage: "consumers",
+      });
+    }
+    expect(process.exit).toHaveBeenCalledWith(failure ? 1 : 0);
+  });
 
   it("does not register an instance when maintenance admission fails", async () => {
     state.start.mockRejectedValue(new Error("maintenance refused"));

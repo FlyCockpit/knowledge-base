@@ -26,6 +26,13 @@ use std::{
 
 const DATA: &str =
     include_str!("../../../../../packages/api/src/lib/kb/fixtures/builtin-models.json");
+/// The llama.cpp source pin shared with the server worker (its
+/// `builtinModelIdentity` hashes the same file).
+const RUNTIME_PIN: &str =
+    include_str!("../../../../../packages/api/src/lib/kb/fixtures/embedding-runtime.json");
+/// Per-file hashes of the vendored bindings and llama.cpp source this binary
+/// compiles (`pnpm cli:vendor:check` keeps it equal to the tree and the pin).
+const VENDOR_INVENTORY: &str = include_str!("../../../vendor/inventory.json");
 pub(crate) const MAX_TEXT_BYTES: usize = 64 * 1024;
 // JSON may encode each UTF-8 byte as six ASCII bytes (e.g. U+0000).
 // Include envelope/newline overhead, and use the same bound on both peers.
@@ -71,6 +78,45 @@ pub(crate) struct Descriptors {
     pub qwen_kv_elements_per_token: u32,
     pub context_padding: u32,
     pub context_extra: u32,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimePin {
+    /// The server's Node binding, not this binary's (the CLI's own bindings
+    /// are in the vendor inventory). Every pin field is named so a new one
+    /// fails closed here until it is classified.
+    #[serde(rename = "nodeLlamaCpp")]
+    _node_llama_cpp: String,
+    release: String,
+    commit: String,
+    source_url: String,
+    source_sha256: String,
+}
+/// Identity of the native embedding runtime this binary runs: the shared
+/// llama.cpp source pin plus the exact vendored bindings and source (fork
+/// edits included). Vectors from different runtimes never share a space, so
+/// it is part of every built-in fingerprint and model state: a CLI upgrade
+/// that changes it re-embeds every built-in KB (`Store::reconcile_builtin_runtime`).
+pub fn runtime_identity() -> &'static str {
+    static IDENTITY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        derive_runtime_identity(RUNTIME_PIN, VENDOR_INVENTORY)
+            .expect("checked-in runtime pin is valid")
+    })
+}
+fn derive_runtime_identity(pin: &str, inventory: &str) -> Result<String, serde_json::Error> {
+    let pin: RuntimePin = serde_json::from_str(pin)?;
+    let inventory = kb_client::snapshot::content_hash(inventory.as_bytes());
+    let text = serde_json::json!([
+        "CLI_EMBEDDING_RUNTIME",
+        pin.release,
+        pin.commit,
+        pin.source_url,
+        pin.source_sha256,
+        inventory.as_str(),
+    ])
+    .to_string();
+    Ok(kb_client::snapshot::content_hash(text.as_bytes()).to_string())
 }
 pub(crate) fn data() -> Result<Descriptors, StoreError> {
     serde_json::from_str(DATA).map_err(|_| unavailable())
@@ -294,8 +340,32 @@ pub struct ModelState {
     pub enabled: bool,
     pub reloading: bool,
     pub slot: u8,
+    /// Not stored: this binary's [`runtime_identity`]. A pin carries the
+    /// runtime it was taken under.
+    pub runtime_identity: String,
 }
-fn read_model_state(conn: &rusqlite::Connection) -> Result<ModelState, StoreError> {
+impl ModelState {
+    /// Same vector space: the same model under the same native runtime
+    /// (server `builtinModelIdentity`). Query vectors of another identity
+    /// never match a generation's document vectors.
+    pub fn same_identity(&self, other: &Self) -> bool {
+        self.model_id == other.model_id && self.runtime_identity == other.runtime_identity
+    }
+    /// The same stored configuration, whatever runtime each side runs:
+    /// liveness is the store's shared state, so processes of different `kb`
+    /// versions agree on it (only a process of the pin's runtime may embed
+    /// for it, see `Store::claim_generation`).
+    pub fn same_config(&self, other: &Self) -> bool {
+        Self {
+            runtime_identity: other.runtime_identity.clone(),
+            ..self.clone()
+        } == *other
+    }
+}
+fn read_model_state(
+    conn: &rusqlite::Connection,
+    runtime_identity: &str,
+) -> Result<ModelState, StoreError> {
     Ok(conn.query_row(
         "SELECT model_id,context_tokens,epoch,enabled,reloading,slot FROM builtin_model WHERE id=1",
         [],
@@ -307,6 +377,7 @@ fn read_model_state(conn: &rusqlite::Connection) -> Result<ModelState, StoreErro
                 enabled: r.get(3)?,
                 reloading: r.get(4)?,
                 slot: r.get(5)?,
+                runtime_identity: runtime_identity.into(),
             })
         },
     )?)
@@ -370,7 +441,7 @@ impl Store {
         }
     }
     pub fn model_state(&self) -> Result<ModelState, StoreError> {
-        read_model_state(&self.conn)
+        read_model_state(&self.conn, self.runtime_identity())
     }
     /// Configuration lease held, no store fence held. Settle an interrupted
     /// probe intent (its prober died); never auto-retry it.
@@ -391,7 +462,8 @@ impl Store {
         )?;
         tx.execute("DELETE FROM model_probe WHERE id=1", [])?;
         tx.execute("INSERT INTO model_events(id,epoch,event) SELECT ?1,epoch,'model_probe_failed' FROM builtin_model WHERE id=1", [crate::state::new_uuid_v4()?.as_str()])?;
-        self.schedule_builtin_rebuilds()?;
+        // Any process settles it, of whatever runtime: refresh, never re-pin.
+        self.schedule_builtin_rebuilds(crate::generations::PinRuntime::Kept)?;
         tx.commit()?;
         Ok(())
     }
@@ -584,6 +656,7 @@ impl ModelRuntime {
                 enabled: true,
                 reloading: false,
                 slot: 1 - old.slot,
+                runtime_identity: s.runtime_identity().into(),
             };
             let tx = s.conn.unchecked_transaction()?;
             tx.execute("INSERT INTO model_probe(id,attempt,base_epoch,model_id,context_tokens,slot) VALUES(1,?1,?2,?3,?4,?5)", (&attempt,old.epoch,&candidate.model_id,candidate.context_tokens,candidate.slot))?;
@@ -623,7 +696,8 @@ impl ModelRuntime {
                 "INSERT INTO model_events(id,epoch,event) VALUES(?1,?2,'model_enable')",
                 (crate::state::new_uuid_v4()?.as_str(), candidate.epoch),
             )?;
-            s.schedule_builtin_rebuilds()?;
+            // The owner's explicit promotion, under this process's runtime.
+            s.schedule_builtin_rebuilds(crate::generations::PinRuntime::Current)?;
             tx.commit()?;
             Ok(())
         })();
@@ -1191,4 +1265,39 @@ pub fn native_engine() -> Result<Engine, StoreError> {
 pub fn run_native_worker(args: impl Iterator<Item = std::ffi::OsString>) -> Result<(), StoreError> {
     let host = ModelHost::from_worker_args(std::env::current_exe().map_err(StoreError::Io)?, args)?;
     crate::embed_service::serve(&host, native_engine()?)
+}
+
+#[cfg(test)]
+mod runtime_identity_tests {
+    use super::*;
+    #[test]
+    fn runtime_identity_names_the_shared_pin_and_the_vendored_source() {
+        let id = runtime_identity();
+        assert!(id.starts_with("sha256:") && id.len() == 71);
+        assert_eq!(
+            derive_runtime_identity(RUNTIME_PIN, VENDOR_INVENTORY).expect("pin"),
+            id
+        );
+        let mut pin: serde_json::Value = serde_json::from_str(RUNTIME_PIN).expect("pin");
+        // The server's Node binding is not this binary's runtime.
+        pin["nodeLlamaCpp"] = "0.0.0".into();
+        assert_eq!(
+            derive_runtime_identity(&pin.to_string(), VENDOR_INVENTORY).expect("pin"),
+            id
+        );
+        // Another llama.cpp source, or another vendored file, is another space.
+        let mut source = pin.clone();
+        source["sourceSha256"] = "0".repeat(64).into();
+        assert_ne!(
+            derive_runtime_identity(&source.to_string(), VENDOR_INVENTORY).expect("pin"),
+            id
+        );
+        assert_ne!(
+            derive_runtime_identity(RUNTIME_PIN, &format!("{VENDOR_INVENTORY} ")).expect("pin"),
+            id
+        );
+        // A pin field nobody classified fails closed.
+        pin["patches"] = "x".into();
+        assert!(derive_runtime_identity(&pin.to_string(), VENDOR_INVENTORY).is_err());
+    }
 }

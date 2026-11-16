@@ -421,7 +421,7 @@ impl Store {
                 let live = self.model_state()?;
                 Ok::<_, StoreError>(if live.reloading {
                     Some(RebuildPendingReason::EmbeddingRuntimeReloading)
-                } else if live.model_id != b.model_id {
+                } else if !live.same_identity(b) {
                     Some(RebuildPendingReason::EmbeddingModelChanged)
                 } else if live.context_tokens != b.context_tokens {
                     Some(RebuildPendingReason::EmbeddingSettingsChanged)
@@ -1229,7 +1229,7 @@ impl Store {
                 Some(b),
             ) => {
                 let live = self.model_state()?;
-                if live.model_id != b.model_id {
+                if !live.same_identity(b) {
                     return Err(StoreError::IndexUnavailable);
                 }
                 Ok(runtime

@@ -55,6 +55,19 @@ impl From<GenerationReadError> for StoreError {
 /// Internal registry identity of the built-in model in pinned snapshots. It
 /// never crosses the wire: the protocol and the CLI call it `builtin`.
 pub const BUILTIN_PROVIDER_ID: &str = "builtinembeddingmodel000";
+
+/// Which native runtime [`Store::schedule_builtin_rebuilds`] pins to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PinRuntime {
+    /// This process's: its launch reconcile, or an owner's model
+    /// enable/configure it promoted.
+    Current,
+    /// Each pin's own: automatic upkeep any process runs (settling an
+    /// abandoned probe) refreshes the configuration but never moves a KB to
+    /// its own runtime, so a `kb` of another version never re-pins the
+    /// store's latest launch's KBs back (nor supersedes its re-embedding).
+    Kept,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileSnapshot {
     pub provider_id: KbId,
@@ -430,6 +443,13 @@ fn generation_file_disposable(state: Option<&str>, cancel_intent: bool, active: 
         Phase::Queued | Phase::Terminal => true,
     }
 }
+/// SQL: generation `g` was embedded under a built-in runtime other than
+/// the identity bound to parameter `?{param}`.
+fn stale_builtin_sql(g: &str, param: u8) -> String {
+    format!(
+        "(json_type({g}.snapshot_json,'$.profile.builtin')='object' AND json_extract({g}.snapshot_json,'$.profile.builtin.runtimeIdentity') IS NOT ?{param})"
+    )
+}
 /// Concurrent built-in builds per store (R3-L5); they share one worker.
 pub const BUILTIN_BUILD_SLOTS: usize = 2;
 /// Concurrent external-provider builds per store.
@@ -444,31 +464,43 @@ fn read_permit(id: &KbId) -> String {
     format!("index-read-{id}.lock")
 }
 impl Store {
+    /// The built-in pin (`id`) of configuration `b`, under the runtime `b`
+    /// names, at `revision`.
+    fn builtin_pin(
+        id: &KbId,
+        b: crate::qwen::ModelState,
+        revision: i64,
+    ) -> Result<ProfileSnapshot, StoreError> {
+        let d = crate::qwen::descriptor(&b.model_id)?;
+        // The native runtime is part of the vector space (server
+        // `builtinModelIdentity`): a CLI that runs another one re-embeds.
+        let fingerprint = kb_client::snapshot::content_hash(
+            json(&(
+                &d,
+                b.context_tokens,
+                &b.runtime_identity,
+                &crate::fingerprint::EMBEDDING_VERSIONS,
+            ))?
+            .as_bytes(),
+        )
+        .to_string();
+        Ok(ProfileSnapshot {
+            provider_id: id.clone(),
+            revision,
+            dimensions: d.dimensions,
+            fingerprint,
+            model: b.model_id.clone(),
+            name: d.model_id.clone(),
+            builtin: Some(b),
+        })
+    }
     fn profile_pin(&self, id: &KbId, revision: i64) -> Result<ProfileSnapshot, StoreError> {
         if id.as_str() == BUILTIN_PROVIDER_ID {
             let b = self.model_state()?;
             if !b.enabled || b.reloading || revision != b.epoch + 1 {
                 return Err(StoreError::IndexUnavailable);
             }
-            let d = crate::qwen::descriptor(&b.model_id)?;
-            let fingerprint = kb_client::snapshot::content_hash(
-                json(&(
-                    &d,
-                    b.context_tokens,
-                    &crate::fingerprint::EMBEDDING_VERSIONS,
-                ))?
-                .as_bytes(),
-            )
-            .to_string();
-            return Ok(ProfileSnapshot {
-                provider_id: id.clone(),
-                revision,
-                dimensions: d.dimensions,
-                fingerprint,
-                model: b.model_id.clone(),
-                name: d.model_id.clone(),
-                builtin: Some(b),
-            });
+            return Self::builtin_pin(id, b, revision);
         }
         // One contract with the server: an unknown or revoked provider is
         // NOT_FOUND; a revision it never had, or an older one that a newer
@@ -531,7 +563,7 @@ impl Store {
     ) -> Result<bool, StoreError> {
         if let Some(b) = &pin.builtin {
             let live = self.model_state()?;
-            return Ok(live.enabled && (!activation || (!live.reloading && live == *b)));
+            return Ok(live.enabled && (!activation || (!live.reloading && live.same_config(b))));
         }
         Ok(self.conn.query_row("SELECT EXISTS(SELECT 1 FROM providers p JOIN provider_revisions r ON r.provider_id=p.id WHERE p.id=?1 AND r.revision=?2 AND p.revoked=0 AND r.state='READY' AND r.fingerprint=?3 AND r.dimensions=?4)",rusqlite::params![pin.provider_id.as_str(),pin.revision,&pin.fingerprint,pin.dimensions as i64],|r|r.get(0))?)
     }
@@ -547,7 +579,7 @@ impl Store {
             let live = self.model_state()?;
             return Ok(live.enabled
                 && !live.reloading
-                && live.model_id == b.model_id
+                && live.same_identity(b)
                 && self.builtin_present(&b.model_id)?);
         }
         self.profile_live(pin, false)
@@ -561,7 +593,7 @@ impl Store {
         let live = self.model_state()?;
         Ok(live.enabled
             && !live.reloading
-            && live.model_id == b.model_id
+            && live.same_identity(b)
             && !self.builtin_present(&b.model_id)?)
     }
     /// Profile liveness applies only to hybrid generations: a lexical one is
@@ -1188,6 +1220,15 @@ impl Store {
             self.settle_pending_generation(id, "FAILED", "FAILED")?;
             return Err(StoreError::IndexUnavailable);
         }
+        // Pinned to another native runtime (a `kb` of another version shares
+        // this store): only a process of that runtime may embed for it; this
+        // one leaves it pending, never fails it.
+        if snapshot
+            .builtin()
+            .is_some_and(|b| b.runtime_identity != self.runtime_identity())
+        {
+            return Err(StoreError::RateLimited(1));
+        }
         // This new claimant exclusively owns the KB writer permit. Previous
         // terminal attempts cannot still write, including an error path that
         // was unable to obtain the store fence for its final ledger release.
@@ -1508,7 +1549,9 @@ impl Store {
         })
     }
     /// Model promotion/rollback caller owns the store fence and transaction.
-    pub(crate) fn schedule_builtin_rebuilds(&self) -> Result<(), StoreError> {
+    /// Re-pins every built-in KB whose pin is not the live configuration
+    /// under `runtime`'s rule (see [`PinRuntime`]).
+    pub(crate) fn schedule_builtin_rebuilds(&self, runtime: PinRuntime) -> Result<(), StoreError> {
         let live = self.model_state()?;
         if !live.enabled || live.reloading {
             return Ok(());
@@ -1531,8 +1574,18 @@ impl Store {
                 )?;
                 if let Some(raw) = raw {
                     let pin: ProfileSnapshot = decode(&raw)?;
-                    if pin.builtin.as_ref().is_some_and(|b| b != &live) {
-                        let pin = self.profile_pin(&pin.provider_id, live.epoch + 1)?;
+                    let Some(b) = &pin.builtin else {
+                        continue;
+                    };
+                    let target = match runtime {
+                        PinRuntime::Current => live.clone(),
+                        PinRuntime::Kept => crate::qwen::ModelState {
+                            runtime_identity: b.runtime_identity.clone(),
+                            ..live.clone()
+                        },
+                    };
+                    if b != &target {
+                        let pin = Self::builtin_pin(&pin.provider_id, target, live.epoch + 1)?;
                         // A warm probe/restart changes runtime fencing, not the
                         // embedding. Refresh future job pins without rebuilding
                         // an already current, compatible active generation.
@@ -1553,6 +1606,105 @@ impl Store {
             }
         }
         Ok(())
+    }
+    /// Upgrade reconcile (store guard held): a KB pinned to the built-in
+    /// under another native runtime (a CLI upgrade changed
+    /// [`crate::qwen::runtime_identity`]) is re-pinned to the current one and
+    /// its generation re-embedded, exactly as for a model change. Until the
+    /// new generation activates, its old one serves keyword search only
+    /// (`EMBEDDING_MODEL_CHANGED`): old document vectors never meet query
+    /// vectors from another runtime. A disabled or reloading built-in is
+    /// left alone; its next enable or probe completion schedules the same
+    /// rebuilds. Once per launch ([`Store::open`]; when the open could not
+    /// take the store lock, the first lock of any handle sharing that
+    /// launch's [`crate::RuntimeReconcile`]): a `kb` of another version still
+    /// serving this store never re-pins on its own reopens or locks, so two
+    /// versions cannot keep replacing each other's rebuilds.
+    pub(crate) fn reconcile_builtin_runtime(
+        &self,
+        guard: &locks::WriteGuard,
+    ) -> Result<(), StoreError> {
+        let owed = self.runtime_reconcile.borrow().clone();
+        if !owed.pending() {
+            return Ok(());
+        }
+        self.check_guard(guard)?;
+        let live = self.model_state()?;
+        if !live.enabled || live.reloading {
+            owed.settle(guard);
+            return Ok(());
+        }
+        let stale: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM kbs WHERE state='ACTIVE' AND json_type(profile_json,'$.builtin')='object' AND json_extract(profile_json,'$.builtin.runtimeIdentity') IS NOT ?1)",
+            [&live.runtime_identity],
+            |r| r.get(0),
+        )?;
+        if !stale {
+            owed.settle(guard);
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        self.schedule_builtin_rebuilds(PinRuntime::Current)?;
+        tx.commit()?;
+        owed.settle(guard);
+        Ok(())
+    }
+    /// Live KBs on the built-in whose re-embedding after a runtime change
+    /// is still due: their pin, or a generation of theirs, names another
+    /// runtime, and no semantic generation of this runtime serves them yet
+    /// (they search by keyword meanwhile). The work an upgrade reconcile
+    /// ([`Store::reconcile_builtin_runtime`]) schedules, whether or not it
+    /// has run yet. None while the built-in is disabled (nothing re-embeds
+    /// until it is enabled again).
+    pub fn builtin_runtime_stale_kbs(&self) -> Result<Vec<KbId>, StoreError> {
+        if !self.model_state()?.enabled {
+            return Ok(Vec::new());
+        }
+        // pagination:audited — bounded by the live-KB quota (`limits.rs`).
+        let mut q = self.conn.prepare(&format!(
+            "SELECT k.id FROM kbs k WHERE k.state='ACTIVE' AND json_type(k.profile_json,'$.builtin')='object' \
+             AND (json_extract(k.profile_json,'$.builtin.runtimeIdentity') IS NOT ?1 \
+                  OR EXISTS(SELECT 1 FROM index_generations g WHERE g.kb_id=k.id AND {})) \
+             AND NOT EXISTS(SELECT 1 FROM index_generations a WHERE a.id=k.active_generation_id \
+                  AND json_type(a.snapshot_json,'$.profile')='object' AND NOT {}) ORDER BY k.id",
+            stale_builtin_sql("g", 1),
+            stale_builtin_sql("a", 1)
+        ))?;
+        let ids = q
+            .query_map([self.runtime_identity()], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.iter()
+            .map(|id| KbId::parse(id).map_err(|_| StoreError::IndexUnavailable))
+            .collect()
+    }
+    /// Whether this handle still owes a launch reconcile (the open could not
+    /// take the store lock, and no handle sharing it has run it since).
+    pub fn runtime_reconcile_pending(&self) -> bool {
+        self.runtime_reconcile.borrow().pending()
+    }
+    /// This handle's launch reconcile, for the handles the same process
+    /// reopens to share ([`Store::share_runtime_reconcile`]).
+    pub fn runtime_reconcile(&self) -> crate::store::RuntimeReconcile {
+        self.runtime_reconcile.borrow().clone()
+    }
+    /// Run `launch`'s reconcile at this handle's store locks while it is
+    /// owed: a reopened handle of the launching process. One owing for every
+    /// sharing handle, settled by whichever runs it first.
+    pub fn share_runtime_reconcile(&self, launch: &crate::store::RuntimeReconcile) {
+        *self.runtime_reconcile.borrow_mut() = launch.clone();
+    }
+    /// Whether `kb`'s re-embedding after a runtime change is over: it is no
+    /// longer live, or a semantic generation not embedded under another
+    /// built-in runtime serves it (a lexical companion does not count).
+    pub fn builtin_runtime_reembedded(&self, kb: &KbId) -> Result<bool, StoreError> {
+        Ok(self.conn.query_row(
+            &format!(
+                "SELECT NOT EXISTS(SELECT 1 FROM kbs k WHERE k.id=?1 AND k.state='ACTIVE') OR EXISTS(SELECT 1 FROM kbs k JOIN index_generations g ON g.id=k.active_generation_id WHERE k.id=?1 AND json_type(g.snapshot_json,'$.profile')='object' AND NOT {})",
+                stale_builtin_sql("g", 2)
+            ),
+            (kb.as_str(), self.runtime_identity()),
+            |r| r.get(0),
+        )?)
     }
     pub(crate) fn recover_completed_indexes(
         &self,

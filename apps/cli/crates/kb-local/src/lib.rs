@@ -179,7 +179,9 @@ pub use locks::WriteGuard;
 pub use paths::StorePaths;
 pub use recovery::{ConsolidationDeferral, READ_GATE_TIMEOUT, RecoveryReport};
 pub use state::{Bits, ConnectionSettings, LocalPrincipal, PrincipalKind};
-pub use store::{KbRecord, KbState, NewKb, OpenStage, Store, StoreError, local_attachment};
+pub use store::{
+    KbRecord, KbState, NewKb, OpenStage, RuntimeReconcile, Store, StoreError, local_attachment,
+};
 
 #[cfg(test)]
 #[path = "../tests/support/temp_dir.rs"]

@@ -10,9 +10,11 @@
 //!   directory, with the peer UID checked on both sides; on Windows a named
 //!   pipe with an owner-only DACL whose random name is published in an
 //!   owner-only file of the same runtime directory (so it cannot be squatted).
-//! * One worker per identity (`PROTOCOL`, crate version, executable, model
-//!   directory): an OS file lock is held for the worker's lifetime, so a
-//!   stale socket left by a crash is removed by the next worker that wins it.
+//! * One worker per identity (`PROTOCOL`, crate version, native runtime
+//!   identity, executable, model directory): a client never reaches a worker
+//!   that embeds with another native runtime than its own. An OS file lock
+//!   is held for the worker's lifetime, so a stale socket left by a crash
+//!   is removed by the next worker that wins it.
 //! * The wire is bounded newline-delimited JSON. A worker never trusts a
 //!   model file without its pinned size and SHA-256 (`ModelCache`).
 use crate::{
@@ -118,7 +120,8 @@ impl ModelHost {
     }
     fn identity(&self) -> String {
         let text = format!(
-            "{PROTOCOL}\0{VERSION}\0{}\0{}\0{}",
+            "{PROTOCOL}\0{VERSION}\0{}\0{}\0{}\0{}",
+            crate::qwen::runtime_identity(),
             self.executable.display(),
             self.cache.dir().display(),
             self.cache.private_dir().display()

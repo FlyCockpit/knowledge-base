@@ -329,7 +329,7 @@ impl Store {
                     let live = self.model_state()?;
                     Ok::<_, StoreError>(if live.reloading {
                         Some(kb_client::types::RebuildPendingReason::EmbeddingRuntimeReloading)
-                    } else if live.model_id != b.model_id {
+                    } else if !live.same_identity(b) {
                         Some(kb_client::types::RebuildPendingReason::EmbeddingModelChanged)
                     } else if live.context_tokens != b.context_tokens {
                         Some(kb_client::types::RebuildPendingReason::EmbeddingSettingsChanged)

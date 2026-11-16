@@ -295,14 +295,14 @@ jobs:
             cargo test --locked -p kb-local --target ${{ matrix.target }} --lib --test store --test model_download --test qwen_process \
               -- --test-threads=1 --skip native_initialization_file_and_directory_fsync_eio_prevents_publication_and_retry_succeeds
           docker image rm kb-musl-builder:smoke
-      - name: Explicit real-model selection must execute all three tests (both models + retrieval)
+      - name: Explicit real-model selection must execute all four tests (both models, retrieval, runtime upgrade)
         env:
           TMPDIR: ${{ runner.temp }}
           KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.GEMMA_FILE }}
           KB_QWEN_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.QWEN_FILE }}
         run: |
           cargo test --locked -p kb-local --test qwen_model -- --ignored --test-threads=1 2>&1 | tee "${{ runner.temp }}/rust-model-evidence.txt"
-          grep -Eq 'test result: ok\. 3 passed; 0 failed' "${{ runner.temp }}/rust-model-evidence.txt"
+          grep -Eq 'test result: ok\. 4 passed; 0 failed' "${{ runner.temp }}/rust-model-evidence.txt"
       - name: Record actual architecture and compiler
         run: |
           rustc -vV >> "${{ runner.temp }}/rust-model-evidence.txt"

@@ -331,6 +331,29 @@ Worker uses Node26 Debian glibc x64/arm64, `node-llama-cpp` 3.22.3 (the 3.22.x
 line) with a pinned, unpatched source-built llama.cpp v0.9.0;
 [embedding runtime pins](../packages/api/src/lib/kb/fixtures/embedding-runtime.json)
 and [Rust vendor notes](../apps/cli/vendor/README.md) define the source closure.
+The native runtime is part of the vector space on both sides. The server's
+built-in model identity hashes the whole runtime pin. The CLI's runtime
+identity hashes the same pin's llama.cpp source fields together with its
+vendored-source inventory (`apps/cli/vendor/inventory.json`, bindings and
+fork edits included). That identity enters every CLI built-in fingerprint,
+the pin of every built-in KB and the shared `kb embed-worker` identity.
+After an upgrade changes either side's runtime, every KB on the built-in is
+re-embedded once, as after a model change. The CLI reconciles once when a `kb` process launches on a store (if another writer holds the store then, once
+under that process's first store lock, never again after it): each KB
+pinned under another runtime is re-pinned and gets a new generation, unless
+the built-in is disabled, in which case enabling it schedules the rebuilds.
+A `kb` of the previous version still serving the store (an MCP session
+started before the upgrade) never re-pins back on its own, not even when it
+settles an abandoned model probe; it leaves builds
+pinned to the new runtime pending for a process that runs it, and serves
+those KBs by keyword. The cost is one
+full re-embedding of every document of those KBs on the local model, the same
+CPU time as building them from scratch (no vector is copied across runtimes),
+checkpointed and resumable like any build. Until each new generation activates, that KB is searched by keyword
+only, with `EMBEDDING_REBUILD_PENDING`/`EMBEDDING_MODEL_CHANGED` (old
+document vectors never meet query vectors from another runtime). `kb mcp`
+logs the affected count at startup and each completion on stderr;
+`index_status` reports `rebuildPending` per KB.
 Alpine/musl is not a supported worker image runtime (the static musl `kb` CLI
 is separate: see [CLI](./cli.md)). Only a forked child loads the addon;
 the API process never loads it. Native work is serial and bounded. After 15

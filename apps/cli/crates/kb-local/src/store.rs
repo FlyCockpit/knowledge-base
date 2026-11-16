@@ -407,6 +407,32 @@ pub fn local_attachment(store: &Uuid, kb: &KbId) -> (String, Uuid) {
     )
 }
 
+/// A launch's one upgrade reconcile (`Store::reconcile_builtin_runtime`):
+/// owed by the launch ([`Store::open`]) until it ran, under whichever store
+/// lock first finds it owed. The handles a launched process reopens (`kb
+/// mcp` builders) share it ([`Store::share_runtime_reconcile`]), so it is
+/// one owing across them all: consumed exactly once, under the store lock,
+/// and no handle still owes it afterwards to re-pin the store back after a
+/// later launch of another runtime. A reopen owes none of its own.
+#[derive(Clone, Debug)]
+pub struct RuntimeReconcile(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl RuntimeReconcile {
+    fn new(owed: bool) -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            owed,
+        )))
+    }
+    /// Whether the launch still owes it.
+    pub fn pending(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// Settled for every sharing handle. Only under the store lock: the
+    /// lock serializes every check-and-settle across those handles.
+    pub(crate) fn settle(&self, _guard: &WriteGuard) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// An open managed store. Reads need no lock; every mutation takes a
 /// [`WriteGuard`] from this store.
 #[derive(Debug)]
@@ -425,6 +451,13 @@ pub struct Store {
     pub(crate) pending_index_recovery: Cell<bool>,
     /// Explicitly frozen test clock (seconds) for cursor expiry.
     clock_for_tests: Cell<Option<u64>>,
+    /// The native embedding runtime this handle pins built-in profiles to:
+    /// always [`crate::qwen::runtime_identity`] outside tests.
+    runtime_identity: Cell<&'static str>,
+    /// The launch's upgrade reconcile this handle runs when owed: the
+    /// launch's own, or one a reopened handle shares; a reopen's own is
+    /// never owed.
+    pub(crate) runtime_reconcile: std::cell::RefCell<RuntimeReconcile>,
     /// Review r2 #4: the per-user model cache, so effective availability
     /// sees whether the built-in's file is actually there.
     model_cache: std::cell::RefCell<Option<crate::model_download::ModelCache>>,
@@ -781,6 +814,8 @@ impl Store {
         expected: Option<&Uuid>,
         observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
     ) -> Result<Store, StoreError> {
+        // A launch opens by path; a reopen names the identity it expects.
+        let launched = expected.is_none();
         paths.check_identity().map_err(|e| match e {
             StoreError::Io(e) if e.kind() == io::ErrorKind::NotFound => {
                 StoreError::RecoveryRequired("launched store root is missing".into())
@@ -841,6 +876,8 @@ impl Store {
             response_limit: Cell::new(crate::limits::RESPONSE_MAX_BYTES),
             pending_index_recovery: Cell::new(true),
             clock_for_tests: Cell::new(None),
+            runtime_identity: Cell::new(crate::qwen::runtime_identity()),
+            runtime_reconcile: std::cell::RefCell::new(RuntimeReconcile::new(launched)),
             model_cache: std::cell::RefCell::new(None),
             _upload_timer: upload_timer,
         };
@@ -855,6 +892,7 @@ impl Store {
         if let Some(guard) = locks::acquire_for_open(&store.paths)? {
             store.reconcile_indexes()?;
             store.recover(&guard)?;
+            store.reconcile_builtin_runtime(&guard)?;
             store.recover_completed_indexes(&guard)?;
             store.pending_index_recovery.set(false);
             drop(guard);
@@ -994,6 +1032,19 @@ impl Store {
         }));
     }
 
+    /// The native embedding runtime this handle's built-in pins name.
+    pub(crate) fn runtime_identity(&self) -> &'static str {
+        self.runtime_identity.get()
+    }
+
+    /// Pin built-in profiles to `identity`, as a CLI built with another
+    /// native runtime would (tests only: the store a CLI upgrade finds).
+    /// Does not survive reopen; the embedding worker is unaffected.
+    #[doc(hidden)]
+    pub fn set_runtime_identity_for_tests(&self, identity: &'static str) {
+        self.runtime_identity.set(identity);
+    }
+
     /// Set this handle's cursor clock to an absolute time (tests only).
     /// It stays fixed until explicitly changed and does not survive reopen.
     #[doc(hidden)]
@@ -1018,6 +1069,7 @@ impl Store {
             .ok_or_else(|| StoreError::Internal("blocking lock returned early".into()))?;
         self.reconcile_indexes()?;
         self.recover(&guard)?;
+        self.reconcile_builtin_runtime(&guard)?;
         self.recover_completed_indexes(&guard)?;
         self.pending_index_recovery.set(false);
         Ok(guard)
@@ -1031,6 +1083,7 @@ impl Store {
         };
         self.reconcile_indexes()?;
         self.recover(&guard)?;
+        self.reconcile_builtin_runtime(&guard)?;
         self.recover_completed_indexes(&guard)?;
         self.pending_index_recovery.set(false);
         Ok(Some(guard))

@@ -24,6 +24,7 @@ let runtime: WorkerRuntime | undefined;
 let starting: Promise<WorkerRuntime> | undefined;
 let closing = false;
 let exitCode = 0;
+let stopReason: string | undefined;
 const startup = new AbortController();
 let startupStage: StartupStage = "config";
 // Loopback only: no public unauthenticated operational surface.
@@ -35,6 +36,7 @@ async function shutdown(reason: string, code = 0) {
   if (code) exitCode = code;
   if (closing) return;
   closing = true;
+  stopReason = reason;
   instanceHeartbeat?.stop();
   // Best effort only: dependency failure must never delay the process watchdog.
   if (code)
@@ -99,6 +101,10 @@ try {
   // a separate container and are the only callers of this image health probe.
   if (!closing && env.NODE_ENV === "production") health.listen(3001, "127.0.0.1");
 } catch (error) {
-  logStartupFailure("worker", error, startupStage);
+  // A planned stop (backup quiesce, SIGTERM/SIGINT) aborts startup on purpose;
+  // a failure-driven shutdown sets a nonzero exit code first.
+  if (startup.signal.aborted && exitCode === 0)
+    logEvent("worker.startup-stopped", { signal: stopReason, stage: startupStage });
+  else logStartupFailure("worker", error, startupStage);
   void shutdown("startup failure", startup.signal.aborted ? 0 : 1);
 }

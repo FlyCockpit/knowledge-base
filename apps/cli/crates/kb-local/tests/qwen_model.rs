@@ -562,3 +562,174 @@ fn gemma_retrieval_quality() {
     );
     drop(r);
 }
+/// Real-model lane: a CLI upgrade that changes the native embedding runtime.
+/// A KB embedded by the real Gemma worker under the previous runtime's
+/// identity is found stale when the upgraded CLI opens the store, served by
+/// keyword only meanwhile, and re-embedded through the real worker (every
+/// chunk again, no vector copied from the old file); the new generation
+/// serves hybrid search with real query vectors.
+#[test]
+#[ignore = "required real-model lane, weights are never bundled"]
+fn gemma_runtime_upgrade_reembeds() {
+    use kb_client::types::{IndexNotice, RebuildPendingReason, SearchMode};
+    use kb_local::{StoreError, index::IndexEmbedder, search::SearchControl};
+    let id = "embeddinggemma-2-q8_0";
+    let old_runtime: &'static str = Box::leak(format!("sha256:{}", "0".repeat(64)).into());
+    let current = kb_local::qwen::runtime_identity();
+    let f = search_support::Fixture::new(768);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&f.root, std::fs::Permissions::from_mode(0o700))
+            .expect("private fixture root");
+    }
+    let m = descriptor(id).expect("gemma");
+    let host = kb_local::qwen::ModelHost::new(
+        PathBuf::from(std::env::var("KB_MODEL_EXECUTABLE").expect("built kb executable required")),
+        support::model_host::runtime_dir(&f.root),
+        f.root.join("m"),
+        Duration::from_secs(30),
+    )
+    .expect("model host");
+    host.cache()
+        .adopt(
+            &m,
+            &PathBuf::from(std::env::var("KB_GEMMA_MODEL_PATH").expect("verified GGUF path")),
+        )
+        .expect("verified weights adopted");
+    let r = ModelRuntime::new(&f.store, host.clone()).expect("runtime");
+    r.configure(
+        &f.store,
+        &f.store.owner(),
+        kb_local::qwen::ModelConfiguration {
+            model_id: id,
+            context_tokens: 1024,
+            acknowledge_memory_warning: false,
+            available_bytes: Some(16 << 30),
+            timeout: Duration::from_secs(900),
+        },
+    )
+    .expect("gemma 1K");
+    search_support::publish(
+        &f,
+        vec![
+            (
+                "index.md",
+                Some("# Garden\n\nTomatoes need full sun and steady watering.\n".into()),
+            ),
+            (
+                "bikes.md",
+                Some("# Bicycles\n\nA chain needs oil every few hundred kilometres.\n".into()),
+            ),
+            (
+                "bread.md",
+                Some("# Bread\n\nSourdough rises slowly in a cool kitchen.\n".into()),
+            ),
+        ],
+        "runtime-upgrade-real-01",
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let embedded = std::cell::Cell::new(0usize);
+    let build = |store: &kb_local::Store, generation: &kb_client::types::KbId| {
+        rt.block_on(f.settle_companion(generation));
+        let a = store
+            .claim_generation(generation, Duration::from_secs(900))
+            .expect("claim");
+        let built = rt
+            .block_on(store.build_generation(
+                a,
+                async |_, texts| {
+                    texts
+                        .iter()
+                        .map(|t| {
+                            embedded.set(embedded.get() + 1);
+                            Ok::<_, StoreError>(
+                                r.embed(store, t, Purpose::Document, Duration::from_secs(180))?
+                                    .vector
+                                    .into_iter()
+                                    .map(f64::from)
+                                    .collect(),
+                            )
+                        })
+                        .collect()
+                },
+                &mut |_| Ok(()),
+            ))
+            .expect("real build");
+        assert!(store.activate_built(built).expect("activate"));
+    };
+    let search = |store: &kb_local::Store| {
+        rt.block_on(store.search(
+            &store.owner(),
+            search_support::input(
+                &f,
+                serde_json::json!({"query":"how much sun do tomatoes need"}),
+            ),
+            IndexEmbedder::Builtin(&r),
+            &SearchControl::default(),
+        ))
+        .expect("search")
+    };
+    // The previous CLI: the KB embedded under its runtime identity.
+    f.store.set_runtime_identity_for_tests(old_runtime);
+    let revision = f.store.model_state().expect("state").epoch + 1;
+    let job = f.store.embedding_profile_set(&f.store.owner(),serde_json::from_value(serde_json::json!({"kbId":f.kb,"providerId":"builtin","revision":revision,"idempotencyKey":"runtime-upgrade-real-profile","confirm":"RUN"})).expect("input")).expect("profile");
+    build(&f.store, &job.generation_id);
+    let first = embedded.replace(0);
+    assert!(first >= 3, "every chunk embedded by the real worker");
+    let old = f
+        .store
+        .generation_snapshot(&job.generation_id)
+        .expect("old")
+        .profile
+        .expect("hybrid");
+
+    // The upgraded CLI launches on the store.
+    f.store.set_runtime_identity_for_tests(current);
+    let upgraded = kb_local::Store::open(&f.root).expect("upgraded launch");
+    assert_eq!(
+        upgraded.builtin_runtime_stale_kbs().expect("progress"),
+        vec![f.kb.clone()]
+    );
+    let out = search(&upgraded);
+    assert_eq!(
+        out.results[0].mode,
+        SearchMode::Lexical,
+        "keyword search meanwhile"
+    );
+    assert!(matches!(
+        &out.index_notices[0],
+        IndexNotice::RebuildPending(n) if n.detail == RebuildPendingReason::EmbeddingModelChanged
+    ));
+    let status = f.status();
+    let desired = status.desired_generation_id.expect("re-embed scheduled");
+    assert_ne!(desired, job.generation_id);
+    let pin = upgraded
+        .generation_snapshot(&desired)
+        .expect("desired")
+        .profile
+        .expect("hybrid");
+    assert_ne!(pin.fingerprint, old.fingerprint);
+    assert_eq!(
+        pin.builtin.as_ref().expect("builtin").runtime_identity,
+        current
+    );
+
+    // Re-embedded through the real worker: every chunk again.
+    build(&upgraded, &desired);
+    assert_eq!(embedded.get(), first, "no vector copied across runtimes");
+    assert!(
+        upgraded
+            .builtin_runtime_reembedded(&f.kb)
+            .expect("progress")
+    );
+    assert_eq!(f.status().rebuild_pending, None);
+    let out = search(&upgraded);
+    assert_eq!(out.results[0].mode, SearchMode::Hybrid);
+    assert_eq!(out.results[0].path.as_str(), "index.md");
+    assert!(out.index_notices.is_empty());
+    drop(r);
+}
