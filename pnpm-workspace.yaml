@@ -115,7 +115,7 @@ ignoredOptionalDependencies:
   - "@node-llama-cpp/mac-arm64-metal"
 catalog:
   # Binding pin: exact 3.22.2 within the 3.22.x line.
-  node-llama-cpp: 3.22.2
+  node-llama-cpp: 3.22.3
   pg: ^8.23.1
   "@babel/parser": 8.1.0
   dotenv: ^18.0.10
