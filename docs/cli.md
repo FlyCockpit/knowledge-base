@@ -185,7 +185,9 @@ new `kb` first opens the store: the same work as building those KBs from
 scratch, resumable, while each one is searched by keyword with the
 `EMBEDDING_MODEL_CHANGED` notice until its new index activates. `kb mcp`
 reports the affected count at startup and each completion on stderr (details
-in [embeddings](./embeddings.md)).
+in [embeddings](./embeddings.md)). A store last used by a `kb` whose pins
+name no runtime is upgraded the same way: it opens, and its built-in KBs
+re-embed once.
 
 Local rate limits are the store's own, far above the server's
 multi-tenant budgets but still bounded so a runaway agent loop stops: 600

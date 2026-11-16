@@ -3707,6 +3707,166 @@ async fn runtime_upgrade_reembeds_builtin_kbs_and_serves_keywords_meanwhile() {
     no_leases(&f);
 }
 
+/// A store whose built-in pins predate recorded runtimes (no
+/// `runtimeIdentity` in the KB pin or its generations' snapshots) opens:
+/// such a pin is of the unknown runtime, never this binary's, so the launch
+/// lists the KB stale, serves it by keyword and re-embeds it once, after
+/// which it is hybrid again; the new pin, naming this runtime, is left
+/// alone by later launches.
+#[tokio::test]
+async fn pins_without_a_runtime_reembed_at_launch() {
+    let current = kb_local::qwen::runtime_identity();
+    let f = Fixture::new(2);
+    publish(
+        &f,
+        vec![("index.md", Some("# Index\n\nalpha keyword body".into()))],
+        "unknown-runtime-publish-01",
+    );
+    f.db()
+        .execute("UPDATE builtin_model SET enabled=1 WHERE id=1", [])
+        .expect("enable");
+    // What a `kb` from before recorded runtimes left: a built-in KB whose
+    // pin and generation snapshot carry no `runtimeIdentity` (the unknown
+    // runtime is never written).
+    f.store
+        .set_runtime_identity_for_tests(kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY);
+    let revision = f.store.model_state().expect("state").epoch + 1;
+    let job = f.store.embedding_profile_set(&f.store.owner(),serde_json::from_value(json!({"kbId":f.kb,"providerId":"builtin","revision":revision,"idempotencyKey":"unknown-runtime-profile-01","confirm":"RUN"})).expect("input")).expect("profile");
+    assert!(
+        f.store
+            .activate_built(f.build(&job.generation_id).await)
+            .expect("old generation")
+    );
+    f.store.set_runtime_identity_for_tests(current);
+    let db = f.db();
+    let recorded: (i64, i64) = db
+        .query_row(
+            "SELECT json_type(k.profile_json,'$.builtin.runtimeIdentity') IS NULL AND json_type(k.profile_json,'$.builtin')='object', json_type(g.snapshot_json,'$.profile.builtin.runtimeIdentity') IS NULL AND json_type(g.snapshot_json,'$.profile.builtin')='object' FROM kbs k JOIN index_generations g ON g.id=k.active_generation_id WHERE k.id=?1",
+            [f.kb.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("old pins");
+    assert_eq!(recorded, (1, 1), "old-format pins name no runtime");
+    let old = f
+        .store
+        .generation_snapshot(&job.generation_id)
+        .expect("old pin decodes")
+        .profile
+        .expect("hybrid");
+    assert_eq!(
+        old.builtin.as_ref().expect("builtin").runtime_identity,
+        kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY
+    );
+    assert_ne!(kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY, current);
+
+    // The upgraded launch opens the store and re-pins it to this runtime.
+    let upgraded = kb_local::Store::open(&f.root).expect("old-format store opens");
+    assert!(!upgraded.runtime_reconcile_pending());
+    assert_eq!(
+        upgraded.builtin_runtime_stale_kbs().expect("progress"),
+        vec![f.kb.clone()]
+    );
+    let status = f.status();
+    assert_eq!(
+        status.rebuild_pending,
+        Some(RebuildPendingReason::EmbeddingModelChanged)
+    );
+    assert_eq!(status.active_generation_id, Some(job.generation_id.clone()));
+    let desired = status.desired_generation_id.expect("re-embed scheduled");
+    assert_ne!(desired, job.generation_id);
+    let pin: Option<String> = db
+        .query_row(
+            "SELECT json_extract(profile_json,'$.builtin.runtimeIdentity') FROM kbs WHERE id=?1",
+            [f.kb.as_str()],
+            |r| r.get(0),
+        )
+        .expect("pin");
+    assert_eq!(pin.as_deref(), Some(current));
+    let snapshot = f
+        .store
+        .generation_snapshot(&desired)
+        .expect("desired")
+        .profile
+        .expect("hybrid");
+    assert_eq!(
+        snapshot.builtin.as_ref().expect("builtin").runtime_identity,
+        current
+    );
+    // Once: another launch schedules nothing more.
+    drop(kb_local::Store::open(&f.root).expect("relaunch"));
+    assert_eq!(f.status().desired_generation_id, Some(desired.clone()));
+
+    // Meanwhile: keyword search, no query embedding, the pending notice.
+    f.settle_companion(&desired).await;
+    let out = f
+        .store
+        .search_generation(
+            &f.store.owner(),
+            input(&f, json!({"query":"alpha"})),
+            &SearchControl::default(),
+            async |_, _| panic!("vectors of an unknown runtime never meet query vectors"),
+            &mut |_| Ok(()),
+        )
+        .await
+        .expect("keyword search");
+    assert_eq!(out.results[0].mode, SearchMode::Lexical);
+    assert!(matches!(
+        &out.index_notices[0],
+        IndexNotice::RebuildPending(n) if n.detail == RebuildPendingReason::EmbeddingModelChanged
+    ));
+
+    // The re-embedded generation activates: hybrid again, nothing pending.
+    assert!(
+        f.store
+            .activate_built(f.build(&desired).await)
+            .expect("re-embedded")
+    );
+    assert!(
+        upgraded
+            .builtin_runtime_reembedded(&f.kb)
+            .expect("progress")
+    );
+    assert!(
+        upgraded
+            .builtin_runtime_stale_kbs()
+            .expect("progress")
+            .is_empty()
+    );
+    let status = f.status();
+    assert_eq!(status.active_generation_id, Some(desired.clone()));
+    assert_eq!(status.rebuild_pending, None);
+    // A semantic generation of this runtime serves it. (No model file in
+    // this fixture's cache: hybrid serving with the real worker is the
+    // `qwen_model` lane's.)
+    let active = f
+        .store
+        .generation_snapshot(&desired)
+        .expect("active")
+        .profile
+        .expect("hybrid");
+    assert_eq!(
+        active.builtin.as_ref().expect("builtin").runtime_identity,
+        current
+    );
+    let out = f
+        .store
+        .search_generation(
+            &f.store.owner(),
+            input(&f, json!({"query":"alpha"})),
+            &SearchControl::default(),
+            async |p, _| Ok(vec![1.; p.dimensions]),
+            &mut |_| Ok(()),
+        )
+        .await
+        .expect("search");
+    assert!(
+        !out.index_notices
+            .iter()
+            .any(|n| matches!(n, IndexNotice::RebuildPending(_)))
+    );
+    no_leases(&f);
+}
+
 /// Settling an abandoned model probe (any process, any open) refreshes the
 /// built-in pins to the new configuration epoch but keeps the runtime each
 /// pin names: a `kb` of another runtime than the store's latest launch

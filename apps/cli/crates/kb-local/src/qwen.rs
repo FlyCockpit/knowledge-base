@@ -340,9 +340,28 @@ pub struct ModelState {
     pub enabled: bool,
     pub reloading: bool,
     pub slot: u8,
-    /// Not stored: this binary's [`runtime_identity`]. A pin carries the
-    /// runtime it was taken under.
+    /// Not stored in `builtin_model`: there it is this binary's
+    /// [`runtime_identity`]. A pin carries the runtime it was taken under;
+    /// a pin written before pins recorded one (no `runtimeIdentity`) decodes
+    /// as [`UNKNOWN_RUNTIME_IDENTITY`], which is never written back.
+    #[serde(
+        default = "unknown_runtime_identity",
+        skip_serializing_if = "is_unknown_runtime_identity"
+    )]
     pub runtime_identity: String,
+}
+/// The runtime of a built-in pin that recorded none (written by a `kb`
+/// before pins named their runtime). Never equal to a real
+/// [`runtime_identity`] (always a `sha256:` content hash), so every
+/// comparison treats such a pin as embedded under another runtime: the
+/// launch reconcile re-embeds it, it is searched by keyword meanwhile, and
+/// no process claims a build pinned to it.
+pub const UNKNOWN_RUNTIME_IDENTITY: &str = "unknown-runtime";
+fn unknown_runtime_identity() -> String {
+    UNKNOWN_RUNTIME_IDENTITY.into()
+}
+fn is_unknown_runtime_identity(identity: &str) -> bool {
+    identity == UNKNOWN_RUNTIME_IDENTITY
 }
 impl ModelState {
     /// Same vector space: the same model under the same native runtime
@@ -1299,5 +1318,30 @@ mod runtime_identity_tests {
         // A pin field nobody classified fails closed.
         pin["patches"] = "x".into();
         assert!(derive_runtime_identity(&pin.to_string(), VENDOR_INVENTORY).is_err());
+    }
+    #[test]
+    fn a_pin_without_a_runtime_decodes_as_the_unknown_runtime() {
+        let old = r#"{"modelId":"m","contextTokens":512,"epoch":3,"enabled":true,"reloading":false,"slot":1}"#;
+        let state: ModelState = serde_json::from_str(old).expect("old pin decodes");
+        assert_eq!(state.runtime_identity, UNKNOWN_RUNTIME_IDENTITY);
+        // Never a real runtime: no comparison takes it for this binary's.
+        assert_ne!(state.runtime_identity, runtime_identity());
+        assert!(!state.same_identity(&ModelState {
+            runtime_identity: runtime_identity().into(),
+            ..state.clone()
+        }));
+        // Written back as it was read: still no recorded runtime.
+        assert_eq!(serde_json::to_string(&state).expect("encode"), old);
+        // A pin naming its runtime keeps it, both ways.
+        let new = ModelState {
+            runtime_identity: runtime_identity().into(),
+            ..state
+        };
+        let raw = serde_json::to_string(&new).expect("encode");
+        assert!(raw.contains(runtime_identity()));
+        assert_eq!(
+            serde_json::from_str::<ModelState>(&raw).expect("decode"),
+            new
+        );
     }
 }

@@ -342,6 +342,9 @@ re-embedded once, as after a model change. The CLI reconciles once when a `kb` p
 under that process's first store lock, never again after it): each KB
 pinned under another runtime is re-pinned and gets a new generation, unless
 the built-in is disabled, in which case enabling it schedules the rebuilds.
+A pin written by a `kb` from before pins recorded their runtime counts as an
+unknown runtime, never equal to any real one: such a store opens normally and
+its built-in KBs are re-embedded the same way (there is no need to recreate it).
 A `kb` of the previous version still serving the store (an MCP session
 started before the upgrade) never re-pins back on its own, not even when it
 settles an abandoned model probe; it leaves builds
