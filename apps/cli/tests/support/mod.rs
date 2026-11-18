@@ -105,6 +105,14 @@ impl Drop for Server {
     }
 }
 
+/// Credential paths refuse symlinked ancestors, and macOS's temporary root sits
+/// under the `/var` → `/private/var` link: credential fixtures use its
+/// canonical path.
+pub fn canonical_tempdir() -> tempfile::TempDir {
+    let root = std::env::temp_dir().canonicalize().unwrap();
+    tempfile::tempdir_in(root).unwrap()
+}
+
 pub fn empty_credential_store(
     dir: &std::path::Path,
     resource: &kb_client::origin::McpResource,

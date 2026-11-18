@@ -96,9 +96,8 @@ jobs:
       - name: Native CPU build prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install llvm libomp cmake
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       # Offline cargo metadata inspects every target, including non-host crates.
       - run: cargo fetch --locked
       - run: node --test scripts/test-clean.test.mjs
@@ -106,6 +105,13 @@ jobs:
       - name: Real SQLite FTS5 and sqlite-vec generations
         run: node scripts/test-clean.mjs cargo test -p kb-local --test index --test index_recovery --locked
       # Every native platform selects the real adapter; no mock or skipped lane.
+      # The hosted Ubuntu image ships neither a session bus launcher nor a
+      # Secret Service; the smoke starts its own disposable instance of both.
+      - name: Native Linux keystore smoke prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dbus-daemon dbus-bin gnome-keyring
       - name: Native Linux/macOS disposable keystore smoke
         if: runner.os != 'Windows'
         shell: bash
@@ -148,9 +154,8 @@ jobs:
       - name: Native CPU build prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install llvm libomp cmake
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets --all-features --locked
 
   # ── Minimum Supported Rust Version: full test lane on the pinned toolchain ──
@@ -172,9 +177,8 @@ jobs:
       - name: Native CPU build prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install llvm libomp cmake
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       # Offline cargo metadata inspects every target, including non-host crates.
       - run: cargo fetch --locked
       - run: node --test scripts/test-clean.test.mjs
@@ -210,9 +214,8 @@ jobs:
       - name: Native CPU build prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install llvm libomp cmake
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       - run: cargo fetch --locked
       - run: cargo check --workspace --all-targets --locked --target ${{ matrix.target }}
       - name: Real SQLite on remaining release architecture
@@ -266,7 +269,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: typos-cli
+          tool: typos-cli@1.52.0
       - run: typos
 
   # ── Project policy greps (things the compiler/clippy can't see) ─────────────

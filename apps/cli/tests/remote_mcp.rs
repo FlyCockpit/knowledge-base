@@ -154,7 +154,7 @@ impl Drop for Peer {
 #[test]
 fn full_catalog_forwarding_preserves_outputs_ciphertext_and_locator() {
     let server = Server::new(|_, wire, _| answer(wire));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     save(dir.path(), &server.origin);
     let mut peer = Peer::start(
         dir.path(),
@@ -240,7 +240,7 @@ fn scoped_answer(wire: &str) -> (u16, String, String) {
 #[test]
 fn scoped_server_list_and_instructions_are_advertised_and_enforced() {
     let server = Server::new(|_, wire, _| scoped_answer(wire));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     save(dir.path(), &server.origin);
     let mut peer = Peer::start(
         dir.path(),
@@ -278,7 +278,7 @@ fn scoped_server_list_and_instructions_are_advertised_and_enforced() {
 
 #[test]
 fn empty_config_ambiguous_config_and_explicit_backend_selection() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let resource = McpResource::parse("https://kb.example", TransportPolicy::HttpsOnly).unwrap();
     let _ = empty_credential_store(dir.path(), &resource);
     cli(dir.path()).arg("mcp").assert().failure();
@@ -332,7 +332,7 @@ fn changed_server_redirects_and_ambient_proxy_never_forward_a_token_to_b() {
     let b = Server::new(|_, wire, _| answer(wire));
     let target = b.origin.clone();
     let a = Server::new(move |_, _, _| (307, format!("location: {target}/mcp\r\n"), String::new()));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     save(dir.path(), &a.origin);
     let result = remote(dir.path(), "mcp", &b.origin)
         .assert()
@@ -392,7 +392,7 @@ fn incompatible_catalog_fails_before_advertising_any_tools() {
                 answer(wire)
             }
         });
-        let dir = tempfile::tempdir().unwrap();
+        let dir = support::canonical_tempdir();
         save(dir.path(), &server.origin);
         let result = remote(dir.path(), "mcp", &server.origin)
             .assert()
@@ -411,7 +411,7 @@ fn incompatible_catalog_fails_before_advertising_any_tools() {
 #[test]
 fn remote_read_only_and_local_principal_cannot_bypass_the_backend_boundary() {
     let server = Server::new(|_, wire, _| answer(wire));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     save(dir.path(), &server.origin);
     remote(dir.path(), "mcp", &server.origin)
         .args(["--principal", "owner"])

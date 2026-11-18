@@ -717,8 +717,7 @@ impl YamlParser {
     }
 
     fn peek_content_line(&self) -> Option<(usize, usize)> {
-        for scan in self.index..self.lines.len() {
-            let candidate = &self.lines[scan];
+        for (scan, candidate) in self.lines.iter().enumerate().skip(self.index) {
             if trim_sep(candidate).is_empty() || trim_sep_start(candidate).first() == Some(&'#') {
                 continue;
             }

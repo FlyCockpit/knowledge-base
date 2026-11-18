@@ -11,6 +11,10 @@
  * Static imports/re-exports come from V8's own parser; dynamic `import("x")`
  * with a string literal is matched textually outside block comments. Prints
  * one JSON summary line.
+ *
+ * OPTIONAL_PEERS are optional peer dependencies that a bundled package only
+ * ever loads through a guarded dynamic import; they are absent by design. Such
+ * a specifier is accepted only when no file imports it statically.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
@@ -34,6 +38,12 @@ const bare = (specifier) =>
   !/^(\.{1,2}\/|\/|[a-z][a-z0-9+.-]*:)/i.test(specifier) &&
   !specifier.startsWith("#");
 
+const OPTIONAL_PEERS = new Map([
+  // web-push → https-proxy-agent → proxy-agent-negotiate: Negotiate/SPNEGO
+  // proxy auth only, behind try { await import("kerberos") } catch.
+  ["kerberos", "optional peer of proxy-agent-negotiate"],
+]);
+
 const DYNAMIC = /\bimport\(\s*(["'])([^"'`\s]+)\1\s*\)/g;
 let files = 0;
 let checked = 0;
@@ -44,9 +54,12 @@ for (const root of roots) {
     files += 1;
     const source = readFileSync(file, "utf8");
     const specifiers = new Set();
+    const staticSpecifiers = new Set();
     try {
-      for (const request of new vm.SourceTextModule(source, { identifier: file }).moduleRequests)
+      for (const request of new vm.SourceTextModule(source, { identifier: file }).moduleRequests) {
         specifiers.add(request.specifier);
+        staticSpecifiers.add(request.specifier);
+      }
     } catch {
       // Not an ES module (e.g. a CommonJS helper); dynamic imports still apply.
       unparsed.push(file);
@@ -61,6 +74,7 @@ for (const root of roots) {
       try {
         import.meta.resolve(specifier, parent);
       } catch (error) {
+        if (OPTIONAL_PEERS.has(specifier) && !staticSpecifiers.has(specifier)) continue;
         failures.push({ file, specifier, code: error?.code ?? String(error) });
       }
     }

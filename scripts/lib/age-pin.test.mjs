@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { AGE_SHA256, AGE_VERSION, ageArch, ensureAge, isPinnedAgeDir } from "./age-pin.mjs";
+import {
+  AGE_SHA256,
+  AGE_VERSION,
+  ageArch,
+  ensureAge,
+  isPinnedAgeDir,
+  putPinnedAgeOnPath,
+} from "./age-pin.mjs";
 
 // Local fixture archive shaped like the official release (age/age, age/age-keygen).
 async function fixture(t, version = AGE_VERSION) {
@@ -107,4 +114,81 @@ test("a cached binary reporting another version is replaced, and a wrong archive
     /age and age-keygen v1\.3\.2 not found/,
   );
   assert.equal(existsSync(other.dir), false);
+});
+
+test("a pinned install published concurrently is kept, never removed under its users", async (t) => {
+  const f = await fixture(t);
+  const winner = async () => {
+    // Another test process finishes its install while this one downloads.
+    await mkdir(f.dir, { recursive: true });
+    for (const bin of ["age", "age-keygen"]) {
+      await writeFile(join(f.dir, bin), `#!/bin/sh\necho ${AGE_VERSION}\n`);
+      await chmod(join(f.dir, bin), 0o755);
+    }
+    await writeFile(join(f.dir, "in-use"), "");
+    return f.bytes;
+  };
+  assert.equal(
+    await ensureAge({ dir: f.dir, arch: "amd64", sha256: f.sha256, download: winner }),
+    f.dir,
+  );
+  assert.equal(existsSync(join(f.dir, "in-use")), true);
+  assert.deepEqual(
+    (await readdir(join(f.dir, ".."))).filter((name) => name.includes(".tmp-")),
+    [],
+  );
+});
+
+test("outside Linux only a host age reporting the pinned version is put on PATH", async (t) => {
+  const f = await fixture(t);
+  const pinned = join(f.root, "src", "age");
+  const other = await fixture(t, "v1.2.1");
+  const env = { PATH: [join(other.root, "src", "age"), pinned].join(delimiter) };
+  assert.equal(await putPinnedAgeOnPath(env, "darwin"), pinned);
+  assert.equal(env.PATH.split(delimiter)[0], pinned);
+  statSync(join(pinned, "age"));
+  await assert.rejects(
+    putPinnedAgeOnPath({ PATH: join(other.root, "src", "age") }, "darwin"),
+    /pinned archives are Linux-only/,
+  );
+});
+
+test("replacing a stale install waits for a concurrent replacer and keeps its install", async (t) => {
+  const f = await fixture(t);
+  await mkdir(f.dir, { recursive: true });
+  await writeFile(join(f.dir, "age"), "#!/bin/sh\necho v1.2.1\n");
+  // Another process holds the replacement lock, then publishes a pinned install.
+  await mkdir(`${f.dir}.lock`);
+  const other = (async () => {
+    await new Promise((done) => setTimeout(done, 300));
+    await rm(f.dir, { recursive: true, force: true });
+    await mkdir(f.dir);
+    for (const bin of ["age", "age-keygen"]) {
+      await writeFile(join(f.dir, bin), `#!/bin/sh\necho ${AGE_VERSION}\n`);
+      await chmod(join(f.dir, bin), 0o755);
+    }
+    await writeFile(join(f.dir, "in-use"), "");
+    await rm(`${f.dir}.lock`, { recursive: true });
+  })();
+  assert.equal(
+    await ensureAge({ dir: f.dir, arch: "amd64", sha256: f.sha256, download: async () => f.bytes }),
+    f.dir,
+  );
+  await other;
+  assert.equal(existsSync(join(f.dir, "in-use")), true);
+  assert.equal(existsSync(`${f.dir}.lock`), false);
+  await assert.rejects(
+    (async () => {
+      await writeFile(join(f.dir, "age"), "#!/bin/sh\necho v1.2.1\n");
+      await mkdir(`${f.dir}.lock`);
+      await ensureAge({
+        dir: f.dir,
+        arch: "amd64",
+        sha256: f.sha256,
+        download: async () => f.bytes,
+        lockWaitMs: 200,
+      });
+    })(),
+    /\.lock is held; remove it if no install is running/,
+  );
 });

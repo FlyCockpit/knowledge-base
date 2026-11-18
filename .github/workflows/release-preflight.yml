@@ -51,6 +51,6 @@ jobs:
           manifest-path: apps/cli/Cargo.toml
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: typos-cli
+          tool: typos-cli@1.52.0
       - run: typos
       - run: bash scripts/policy-checks.sh

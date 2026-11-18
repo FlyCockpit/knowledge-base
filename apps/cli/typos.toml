@@ -1,18 +1,32 @@
 # typos-cli configuration — catches spelling mistakes in code, comments, and
-# docs. Run locally with: typos   (install: cargo install typos-cli)
+# docs. Run locally with: typos   (install: cargo install typos-cli@1.52.0 --locked;
+# CI pins the same version in cli-ci.yml and release-preflight.yml)
 
 [files]
 extend-exclude = [
     "Cargo.lock",
     "target/",
+    # Vendored upstream llama.cpp bindings and sources (checked by inventory, not edited here).
+    "vendor/",
     "*.svg",
     "*.png",
 ]
 
 [default]
 # Rust Unicode escapes (`\u{13ba}`) are code points, not words.
-extend-ignore-re = ["\\\\u\\{[0-9a-fA-F]+\\}"]
+extend-ignore-re = [
+    "\\\\u\\{[0-9a-fA-F]+\\}",
+    # Ordinals in identifiers (`invalid_32nd_change`).
+    "[0-9]+nd",
+]
 
 [default.extend-words]
 # Words/acronyms the checker shouldn't "correct". Map a word to itself.
 kb = "kb"
+# MP4 box four-character codes parsed by kb-local's MIME sniffer.
+trak = "trak"
+trun = "trun"
+# `tasklist.exe /FO CSV` (output format flag) in Windows test fixtures.
+FO = "FO"
+# A tampered copy of the `abc` model-download test payload.
+abd = "abd"

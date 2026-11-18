@@ -5,12 +5,16 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { putPinnedAgeOnPath } from "./age-pin.mjs";
 import {
   coordinateBackup,
   encryptBundle,
   readBundle,
   verifyEncryptedBundle,
 } from "./kb-backup.mjs";
+
+// Real age for fixtures and the code under test: the repo's pinned release.
+await putPinnedAgeOnPath();
 
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), "kb-backup-test-"));

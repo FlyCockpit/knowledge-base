@@ -386,6 +386,16 @@ fn acl(path: &Path, directory: bool, set: bool) -> Result<()> {
     )?;
     Ok(())
 }
+/// Credential paths refuse symlinked ancestors, and macOS's temporary root sits
+/// under the `/var` → `/private/var` link: fixtures use its canonical path.
+#[cfg(test)]
+pub(crate) fn canonical_tempdir() -> tempfile::TempDir {
+    let root = std::env::temp_dir()
+        .canonicalize()
+        .expect("canonical temporary root");
+    tempfile::tempdir_in(root).expect("temporary directory")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,7 +512,7 @@ mod tests {
 
     #[test]
     fn first_save_creates_private_parents_and_replacement_keeps_valid_state() {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = canonical_tempdir();
         let root = dir.path().join("data/credentials");
         let store = CredentialStore::new(root.clone());
         let resource = McpResource::parse(
@@ -533,7 +543,7 @@ mod tests {
 
     #[test]
     fn closing_the_writer_control_pipe_discards_the_unpublished_temp() {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = canonical_tempdir();
         let root = dir.path().join("credentials");
         ensure_private_dir(&root).expect("private directory");
         let mut writer = atomic_writer_fixture(&root);
@@ -556,7 +566,7 @@ mod tests {
 
     #[test]
     fn killed_atomic_writer_preserves_old_private_state() {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = canonical_tempdir();
         let root = dir.path().join("credentials");
         let store = CredentialStore::new(root.clone());
         let resource = McpResource::parse(
@@ -596,7 +606,7 @@ mod tests {
 
     #[test]
     fn recovery_waits_for_live_writer_even_for_another_origin() {
-        let dir = tempfile::tempdir().expect("temporary directory");
+        let dir = canonical_tempdir();
         let root = dir.path().join("credentials");
         ensure_private_dir(&root).expect("private directory");
         std::thread::scope(|scope| {

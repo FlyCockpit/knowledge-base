@@ -493,7 +493,7 @@ mod tests {
     }
     #[test]
     fn recipient_import_preserves_the_host_key_and_rejects_malformed_or_public_files() {
-        let directory = tempfile::tempdir().expect("private fixture directory");
+        let directory = crate::state::canonical_tempdir();
         let path = directory.path().join("recipient.json");
         let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
         std::fs::write(

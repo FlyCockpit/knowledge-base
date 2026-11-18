@@ -91,6 +91,23 @@ cargo deny check
 
 Unit tests mock database, queue and other import-time IO. Integration suites use disposable services through `pnpm test:kb -- <suite>`; never point them at shared data. Do not skip hooks with `git commit --no-verify`; fix the failing check instead.
 
+On Linux, the native credential smoke starts its own throwaway D-Bus session and Secret Service, so it never touches your keyring. It needs `dbus-daemon`, `dbus-bin` and `gnome-keyring`:
+
+```sh
+cd apps/cli && TMPDIR=/tmp bash scripts/native-keystore-smoke.sh
+```
+
+### Test baseline
+
+`main` stays green: a change that leaves a failing or newly flaky test does not land. Tests that need the backup tooling find the repo's pinned, checksum-verified `age` through `scripts/lib/age-pin.mjs`; it does not have to be on `PATH`.
+
+As of 2026-11-18, all of these pass on Linux, with every Rust step run on both the stable toolchain and the newest one (1.100): `pnpm check:ci`, the `policy:*` checks, `check-types`, `test`, `test:setup`, `knip`, `env:check`, the `*:test-unit` suites, `build`, every cargo command above, `node --test scripts/test-clean.test.mjs`, `typos` (1.52.0), `cargo deny` and the native keystore smoke. These GitHub reds were already failing and remain open:
+
+- CLI CI on macOS: `kb-local` tests `index_reuse` (1), `owner_only` (6) and `qwen_process` (2).
+- CLI CI on Windows: credential-protection (DPAPI/ACL) tests fail on the hosted runner.
+- KB model smoke: the arm64 Gemma normalization parity is 0.99980, below the 0.9999 threshold, against the shared x64 fixture. This needs a decision on the threshold or a fixture per architecture.
+- Image Trivy scan: the pinned `age` v1.3.2 binaries are built with Go 1.27.0 and carry stdlib CVEs. This needs a decision: rebuild `age` from pinned source, or add a dated ignore.
+
 ## Pull requests
 
 - Keep each pull request focused on one change, and describe what it does and why.

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Disposable native store; no real credentials. Never run against a user keychain.
 set -euo pipefail
+if [[ ${1:-} != --inside ]]; then
+  # Compile before the bounded session: the timeout covers the smoke, not a cold build.
+  cargo build -p kb --locked
+  cargo test -p kb-local --test providers --locked --no-run
+fi
 if [[ $(uname -s) == Linux && ${1:-} != --inside ]]; then
-  command -v dbus-run-session >/dev/null
-  command -v gnome-keyring-daemon >/dev/null
+  for tool in dbus-run-session dbus-send gnome-keyring-daemon; do
+    command -v "$tool" >/dev/null || { echo "native keystore smoke: $tool not found (install dbus-daemon, dbus-bin, gnome-keyring)" >&2; exit 1; }
+  done
   exec timeout 120s dbus-run-session -- bash "$0" --inside
 fi
 scratch=$(mktemp -d "${TMPDIR:?}/kb-native-smoke.XXXXXX")
@@ -41,5 +47,4 @@ else
   security unlock-keychain -p disposable-smoke "$scratch/smoke.keychain-db"
   security default-keychain -d user -s "$scratch/smoke.keychain-db"
 fi
-cargo build -p kb --locked
 cargo test -p kb-local --test providers actual_native_ --locked -- --ignored --test-threads=1 --nocapture

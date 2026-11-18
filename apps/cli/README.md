@@ -65,8 +65,9 @@ glibc version floor and no C++/OpenMP runtime to install; local embeddings keep
 llama.cpp's OpenMP threading. Being static, the Linux binary resolves host
 names from `/etc/hosts` and DNS only: it does not load NSS modules, so names
 that only resolve through `/etc/nsswitch.conf` plugins (mDNS `*.local`, LDAP,
-sssd) need DNS or an `/etc/hosts` entry. macOS and Windows binaries link their
-platform C++/OpenMP runtimes, as described in the build requirements below.
+sssd) need DNS or an `/etc/hosts` entry. Windows binaries link the platform
+C++/OpenMP runtimes; macOS binaries link only libc++ and run llama.cpp's own
+threadpool (macOS has no system OpenMP runtime), as described below.
 
 Remote credentials are separate from `config.toml`:
 
@@ -265,8 +266,8 @@ Gemma uses MEAN pooling and a single full-input batch; Qwen uses LAST pooling
 and causal 512-token batches. Outputs are finite raw pooled vectors of 768
 and 1024 dimensions respectively (the index normalizes them once).
 
-Building the CLI now needs CMake, a C++ compiler, libclang and OpenMP (plus
-C++/OpenMP shared runtime libraries where linked). The approved embedding-only
+Building the CLI now needs CMake, a C++ compiler, libclang and OpenMP (not on
+macOS; plus C++/OpenMP shared runtime libraries where linked). The approved embedding-only
 0.1.161 bindings and unpatched llama.cpp v0.9.0 source are under `vendor/`;
 see its README for source pins. Native builds are capped
 at three jobs. Standard Cargo tests use real child processes with fake

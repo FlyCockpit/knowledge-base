@@ -46,6 +46,13 @@ async function readyStatus(origin: string): Promise<number> {
 }
 
 describe("dedicated worker topology", () => {
+  // Every fixture container runs --pull=never, including the timeout tests that
+  // run before the volume suite: fetch the digest-pinned base once if absent.
+  beforeAll(async () => {
+    if ((await docker(["image", "inspect", NODE_BASE_IMAGE], { reject: false })).status !== 0)
+      await docker(["pull", NODE_BASE_IMAGE], { timeout: 300_000 });
+  }, 330_000);
+
   it("server source never imports or starts a worker consumer", () => {
     const lifecycle = readFileSync(join(ROOT, "apps/server/src/lifecycle.ts"), "utf8");
     const index = readFileSync(join(ROOT, "apps/server/src/index.ts"), "utf8");
@@ -216,9 +223,6 @@ describe("dedicated worker topology", () => {
         root = mkdtempSync(join(tmpdir(), "kb-topo-"));
         data = join(root, "data");
         mkdirSync(data);
-        // The containers run --pull=never; fetch the digest-pinned base once if absent.
-        if ((await docker(["image", "inspect", NODE_BASE_IMAGE], { reject: false })).status !== 0)
-          await docker(["pull", NODE_BASE_IMAGE], { timeout: 300_000 });
         const starts = await Promise.allSettled(
           [server, worker].map((name) =>
             docker(

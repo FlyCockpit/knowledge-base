@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { putPinnedAgeOnPath } from "../lib/age-pin.mjs";
 
 // The entrypoint's backups notice / check (`--startup-notice`) and the
 // destination rule every enabled backup shares (scripts/backup.sh): a volume
@@ -14,10 +15,8 @@ import { fileURLToPath } from "node:url";
 const hook = fileURLToPath(new URL("./pre-migrate.sh", import.meta.url));
 const backupScript = fileURLToPath(new URL("../backup.sh", import.meta.url));
 
-function hasAge() {
-  return spawnSync("age-keygen", ["--version"]).status === 0;
-}
-const needsAge = hasAge() ? {} : { skip: "needs age / age-keygen on PATH" };
+// Real age for recipient fixtures and backup.sh: the repo's pinned release.
+await putPinnedAgeOnPath();
 
 function fixture(t, { mounted = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "kb-pre-migrate-test-"));
@@ -81,59 +80,51 @@ test("startup notice: BACKUP_ENABLED is strict", (t) => {
   }
 });
 
-test(
-  "startup check, BACKUP_ENABLED=true: no recipient or no destination refuses; a mount or S3 passes",
-  needsAge,
-  (t) => {
-    const unmounted = fixture(t);
-    const key = recipient(unmounted.root);
-    const on = { BACKUP_ENABLED: "true", BACKUP_AGE_RECIPIENT: key };
+test("startup check, BACKUP_ENABLED=true: no recipient or no destination refuses; a mount or S3 passes", (t) => {
+  const unmounted = fixture(t);
+  const key = recipient(unmounted.root);
+  const on = { BACKUP_ENABLED: "true", BACKUP_AGE_RECIPIENT: key };
 
-    // The image default without a volume: a directory, writable, but no mount.
-    const noDestination = unmounted.run(hook, ["--startup-notice"], on);
-    assert.equal(noDestination.status, 1);
-    assert.match(
-      noDestination.stderr,
-      /no backup destination: BACKUP_DIR \(.*\) is not a mounted volume and BACKUP_S3_BUCKET is unset/,
-    );
+  // The image default without a volume: a directory, writable, but no mount.
+  const noDestination = unmounted.run(hook, ["--startup-notice"], on);
+  assert.equal(noDestination.status, 1);
+  assert.match(
+    noDestination.stderr,
+    /no backup destination: BACKUP_DIR \(.*\) is not a mounted volume and BACKUP_S3_BUCKET is unset/,
+  );
 
-    const s3 = unmounted.run(hook, ["--startup-notice"], {
-      ...on,
-      BACKUP_S3_BUCKET: "fixture-bucket",
-      BACKUP_S3_ACCESS_KEY_ID: "fixture-writer-id",
-      BACKUP_S3_SECRET_ACCESS_KEY: "fixture-writer-secret",
-      BACKUP_S3_REGION: "us-east-1",
-    });
-    assert.equal(s3.status, 0, s3.stderr);
-    assert.match(s3.stdout, /Backup destination OK: .* and s3:\/\/fixture-bucket\./);
-    assert.doesNotMatch(s3.stdout + s3.stderr, /fixture-writer-secret/);
+  const s3 = unmounted.run(hook, ["--startup-notice"], {
+    ...on,
+    BACKUP_S3_BUCKET: "fixture-bucket",
+    BACKUP_S3_ACCESS_KEY_ID: "fixture-writer-id",
+    BACKUP_S3_SECRET_ACCESS_KEY: "fixture-writer-secret",
+    BACKUP_S3_REGION: "us-east-1",
+  });
+  assert.equal(s3.status, 0, s3.stderr);
+  assert.match(s3.stdout, /Backup destination OK: .* and s3:\/\/fixture-bucket\./);
+  assert.doesNotMatch(s3.stdout + s3.stderr, /fixture-writer-secret/);
 
-    const mounted = fixture(t, { mounted: true });
-    const noRecipient = mounted.run(hook, ["--startup-notice"], { BACKUP_ENABLED: "true" });
-    assert.equal(noRecipient.status, 1);
-    assert.match(noRecipient.stderr, /BACKUP_AGE_RECIPIENT is unset or not an age recipient/);
+  const mounted = fixture(t, { mounted: true });
+  const noRecipient = mounted.run(hook, ["--startup-notice"], { BACKUP_ENABLED: "true" });
+  assert.equal(noRecipient.status, 1);
+  assert.match(noRecipient.stderr, /BACKUP_AGE_RECIPIENT is unset or not an age recipient/);
 
-    const local = mounted.run(hook, ["--startup-notice"], on);
-    assert.equal(local.status, 0, local.stderr);
-    assert.match(local.stdout, /Backup destination OK: encrypted bundles go to .*backups\.$/m);
+  const local = mounted.run(hook, ["--startup-notice"], on);
+  assert.equal(local.status, 0, local.stderr);
+  assert.match(local.stdout, /Backup destination OK: encrypted bundles go to .*backups\.$/m);
 
-    for (const f of [unmounted, mounted]) assert.deepEqual(readdirSync(f.backups), []);
-  },
-);
+  for (const f of [unmounted, mounted]) assert.deepEqual(readdirSync(f.backups), []);
+});
 
-test(
-  "every enabled backup refuses an unmounted BACKUP_DIR without S3, before any database access",
-  needsAge,
-  (t) => {
-    const f = fixture(t);
-    const result = f.run(backupScript, ["--label", "manual"], {
-      BACKUP_ENABLED: "true",
-      BACKUP_AGE_RECIPIENT: recipient(f.root),
-      DATABASE_URL: "postgresql://inert:inert@mock-db.example:5432/mock",
-    });
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /is not a mounted volume and BACKUP_S3_BUCKET is unset/);
-    assert.doesNotMatch(result.stderr, /must not run/);
-    assert.deepEqual(readdirSync(f.backups), []);
-  },
-);
+test("every enabled backup refuses an unmounted BACKUP_DIR without S3, before any database access", (t) => {
+  const f = fixture(t);
+  const result = f.run(backupScript, ["--label", "manual"], {
+    BACKUP_ENABLED: "true",
+    BACKUP_AGE_RECIPIENT: recipient(f.root),
+    DATABASE_URL: "postgresql://inert:inert@mock-db.example:5432/mock",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /is not a mounted volume and BACKUP_S3_BUCKET is unset/);
+  assert.doesNotMatch(result.stderr, /must not run/);
+  assert.deepEqual(readdirSync(f.backups), []);
+});

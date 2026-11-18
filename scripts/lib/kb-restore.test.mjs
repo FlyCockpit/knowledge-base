@@ -6,8 +6,12 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { putPinnedAgeOnPath } from "./age-pin.mjs";
 import { encryptBundle } from "./kb-backup.mjs";
 import { extractBundle, RESTORE_SURFACE, restoreOffline } from "./kb-restore.mjs";
+
+// Real age for fixtures and the code under test: the repo's pinned release.
+await putPinnedAgeOnPath();
 
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), "kb-restore-unit-"));

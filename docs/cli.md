@@ -60,14 +60,16 @@ glibc version floor and no C++/OpenMP runtime to install; local embeddings keep
 llama.cpp's OpenMP threading. Being static, the Linux binary resolves host
 names from `/etc/hosts` and DNS only: it does not load NSS modules, so names
 that only resolve through `/etc/nsswitch.conf` plugins (mDNS `*.local`, LDAP,
-sssd) need DNS or an `/etc/hosts` entry. macOS and Windows binaries link their
-platform C++/OpenMP runtimes, as described in the build requirements below.
+sssd) need DNS or an `/etc/hosts` entry. Windows binaries link the platform
+C++/OpenMP runtimes; macOS binaries link only libc++ and run llama.cpp's own
+threadpool (macOS has no system OpenMP runtime), as described below.
 
 ## Build and platforms
 
 The workspace is outside pnpm/Turbo. Build from `apps/cli` with Rust 1.96+
 (the pinned CI toolchain is 1.96.1), Git, CMake, a C++ compiler, libclang resource
-headers and OpenMP; linked C++/OpenMP runtimes must exist on the destination.
+headers and OpenMP (except on macOS); linked C++/OpenMP runtimes must exist on
+the destination.
 See [vendored native build pins](../apps/cli/vendor/README.md). Native builds use
 at most three jobs; reuse the existing target directory for incremental work.
 

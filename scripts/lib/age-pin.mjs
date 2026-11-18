@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const AGE_VERSION = "v1.3.2";
@@ -65,7 +65,7 @@ export function isPinnedAgeDir(dir, version = AGE_VERSION) {
 }
 
 /** Throw a clear error unless dir holds the pinned age binaries. */
-export function assertPinnedAgeDir(dir, label = dir) {
+function assertPinnedAgeDir(dir, label = dir) {
   if (!isPinnedAgeDir(dir))
     throw new Error(
       `${label}: age and age-keygen ${AGE_VERSION} not found (each must print ${AGE_VERSION})`,
@@ -79,10 +79,40 @@ async function fetchArchive(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+async function withInstallLock(lock, waitMs, body) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      if (Date.now() > deadline)
+        throw new Error(`age ${AGE_VERSION}: ${lock} is held; remove it if no install is running`);
+      await new Promise((done) => setTimeout(done, 100));
+    }
+  }
+  try {
+    body();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+function tryRename(from, to) {
+  try {
+    renameSync(from, to);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Ensure the pinned age binaries are installed in `dir` and return it.
  * Options (tests only): `download(url)` returns the archive bytes, `sha256`
- * overrides the expected digest, `tarBin` overrides the extractor.
+ * overrides the expected digest, `tarBin` overrides the extractor,
+ * `lockWaitMs` bounds the wait for a concurrent stale-install replacement.
  */
 export async function ensureAge(options = {}) {
   const arch = ageArch(options.arch);
@@ -106,18 +136,63 @@ export async function ensureAge(options = {}) {
     execFileSync(options.tarBin ?? "tar", ["-xzf", archive, "-C", tree], { stdio: "pipe" });
     const extracted = join(tree, "age");
     assertPinnedAgeDir(extracted, `age ${AGE_VERSION} archive`);
-    // A stale or foreign install is replaced, never trusted.
-    rmSync(dir, { recursive: true, force: true });
-    try {
-      renameSync(extracted, dir);
-    } catch (error) {
-      // A concurrent installer won the rename: accept its install only if pinned.
-      if (!isPinnedAgeDir(dir)) throw error;
+    // Publish without ever removing a pinned install that a concurrent process
+    // (parallel test files share this cache) may already be running: the
+    // rename lands only where no install exists and a pinned winner is
+    // accepted. Replacing a stale or foreign install is serialized by a lock
+    // directory and re-checked under it, so it never deletes a fresh install.
+    if (!tryRename(extracted, dir) && !isPinnedAgeDir(dir)) {
+      await withInstallLock(`${dir}.lock`, options.lockWaitMs ?? 120_000, () => {
+        if (isPinnedAgeDir(dir)) return;
+        // Move the stale install aside in one atomic step (never delete in
+        // place, where an unlocked rename could fill the emptied directory),
+        // then publish; an unlocked first install that lands in the gap wins.
+        tryRename(dir, join(stage, "stale"));
+        if (!tryRename(extracted, dir) && !isPinnedAgeDir(dir))
+          throw new Error(`age ${AGE_VERSION}: could not install into ${dir}`);
+      });
     }
     return assertPinnedAgeDir(dir);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
+}
+
+/**
+ * Directory holding the pinned age binaries for code that runs real age.
+ * KB_AGE_DIR (an operator-provided install) wins but must hold exactly the
+ * pinned version; otherwise ensureAge downloads the official archive,
+ * verifies its SHA-256 and caches it per user. Never a skip.
+ */
+export async function resolveAgeDir(env = process.env, ensure = ensureAge) {
+  if (env.KB_AGE_DIR)
+    return assertPinnedAgeDir(resolve(env.KB_AGE_DIR), `KB_AGE_DIR=${env.KB_AGE_DIR}`);
+  return ensure({ env });
+}
+
+/**
+ * The pinned archives are Linux builds. Elsewhere a host age install is used
+ * only when it reports exactly the pinned version.
+ */
+function pinnedAgeOnPath(env) {
+  const dir = (env.PATH ?? "").split(delimiter).find((entry) => entry && isPinnedAgeDir(entry));
+  if (!dir)
+    throw new Error(
+      `age ${AGE_VERSION}: the pinned archives are Linux-only; put age and age-keygen ${AGE_VERSION} on PATH or set KB_AGE_DIR`,
+    );
+  return dir;
+}
+
+/**
+ * Unit tests that run real age (and the code they exercise) resolve the
+ * pinned binaries and put them first on this process's PATH, so they never
+ * depend on whatever age happens to be installed.
+ */
+export async function putPinnedAgeOnPath(env = process.env, platform = process.platform) {
+  const dir =
+    platform === "linux" || env.KB_AGE_DIR ? await resolveAgeDir(env) : pinnedAgeOnPath(env);
+  env.PATH = [dir, env.PATH].filter(Boolean).join(delimiter);
+  return dir;
 }
 
 async function main(argv) {

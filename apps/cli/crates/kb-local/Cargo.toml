@@ -40,7 +40,7 @@ zeroize = { version = "1.9.1", features = ["serde"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio = { version = "1.54.1", features = ["rt", "net", "sync", "time", "macros", "io-std", "io-util"] }
-llama-cpp-2 = { version = "=0.1.161", default-features = false, features = ["openmp"] }
+llama-cpp-2 = { version = "=0.1.161", default-features = false }
 
 # Only the pinned native backend and its required platform features.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -51,6 +51,12 @@ zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = fal
 keyring-core = "=1.0.1"
 apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
 
+
+# OpenMP everywhere but Apple, where no system OpenMP runtime exists for the
+# shipped binary to link (only Homebrew's libomp); ggml's own threadpool runs
+# there instead.
+[target.'cfg(not(target_vendor = "apple"))'.dependencies]
+llama-cpp-2 = { version = "=0.1.161", default-features = false, features = ["openmp"] }
 
 [target.'cfg(unix)'.dependencies]
 # `O_NOFOLLOW`/`O_DIRECTORY` values differ per Unix target; libc is already in

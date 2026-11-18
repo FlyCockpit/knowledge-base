@@ -566,6 +566,7 @@ fn acquire_with_admission(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::git_read::read_fixture::ChildGuard;
 
     #[cfg(unix)]

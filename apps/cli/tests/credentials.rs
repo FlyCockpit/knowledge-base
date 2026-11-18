@@ -32,7 +32,7 @@ fn import(dir: &std::path::Path, origin: &str) {
 
 #[test]
 fn fixture_credentials_are_private_origin_bound_state_without_config() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     assert!(!dir.path().join("data").exists());
     import(dir.path(), origin);
@@ -58,7 +58,7 @@ fn fixture_credentials_are_private_origin_bound_state_without_config() {
 
 #[test]
 fn stdin_import_exact_token_cap_accepts_line_endings_and_rejects_every_suffix() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     let store = empty_credential_store(dir.path(), &resource(origin));
     let token = "a".repeat(8192);
@@ -102,7 +102,7 @@ fn stdin_import_exact_token_cap_accepts_line_endings_and_rejects_every_suffix() 
 #[test]
 fn private_file_import_exact_token_cap_does_not_discard_suffix_or_change_old_state() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     let store = empty_credential_store(dir.path(), &resource(origin));
     let path = dir.path().join("token");
@@ -155,7 +155,7 @@ fn private_file_import_exact_token_cap_does_not_discard_suffix_or_change_old_sta
 
 #[test]
 fn logout_reclaims_private_orphans_with_and_without_a_published_credential() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     import(dir.path(), origin);
     let root = dir.path().join("data/credentials");
@@ -200,7 +200,7 @@ fn logout_reclaims_private_orphans_with_and_without_a_published_credential() {
 #[test]
 fn orphan_cleanup_spares_unknown_files_and_refuses_symlinks_and_hardlinks() {
     use std::os::unix::fs::symlink;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = resource("https://kb.example");
     let root = dir.path().join("credentials");
     let store = CredentialStore::new(root.clone());
@@ -237,7 +237,7 @@ fn orphan_cleanup_spares_unknown_files_and_refuses_symlinks_and_hardlinks() {
 fn default_logout_revokes_exact_pat_no_body_and_clears_only_its_origin() {
     let server = Server::new(|_, _, _| (204, String::new(), String::new()));
     let other = Server::new(|_, _, _| (204, String::new(), String::new()));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     import(dir.path(), &server.origin);
     import(dir.path(), &other.origin);
     remote(dir.path(), "logout", &server.origin)
@@ -269,7 +269,7 @@ fn override_config_proxy_and_redirect_never_borrow_a_different_origin_token() {
             "{}".into(),
         )
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     import(dir.path(), &original.origin);
     fs::create_dir_all(dir.path().join("config")).unwrap();
     fs::write(
@@ -319,7 +319,7 @@ fn override_config_proxy_and_redirect_never_borrow_a_different_origin_token() {
 
 #[test]
 fn offline_keeps_retryable_local_state_and_local_only_warns_without_network() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "http://127.0.0.1:1";
     import(dir.path(), origin);
     let out = remote(dir.path(), "logout", origin)
@@ -345,7 +345,7 @@ fn offline_keeps_retryable_local_state_and_local_only_warns_without_network() {
 
 #[test]
 fn canonical_state_binding_debug_redaction_and_corrupt_state_fail_closed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let store = CredentialStore::new(dir.path().join("credentials"));
     let a = resource("HTTPS://KB.EXAMPLE:443/");
     assert!(store.load(&a).unwrap().is_none());
@@ -399,7 +399,7 @@ fn canonical_state_binding_debug_redaction_and_corrupt_state_fail_closed() {
 
 #[test]
 fn import_never_uses_argv_or_config_and_redacts_invalid_input() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     let store = empty_credential_store(dir.path(), &resource(origin));
     let out = cli(dir.path())
@@ -437,7 +437,7 @@ fn import_never_uses_argv_or_config_and_redacts_invalid_input() {
 #[test]
 fn private_modes_symlink_parent_file_import_and_loose_permissions_are_rejected() {
     use std::os::unix::fs::{PermissionsExt, symlink};
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let origin = "https://kb.example";
     import(dir.path(), origin);
     let parent = dir.path().join("data/credentials");
@@ -568,7 +568,7 @@ fn removing_an_old_credential_cannot_delete_a_concurrent_relogin() {
             }
             (204, String::new(), String::new())
         });
-        let dir = tempfile::tempdir().unwrap();
+        let dir = support::canonical_tempdir();
         if !empty {
             import(dir.path(), &server.origin);
         }
@@ -686,7 +686,7 @@ fn removing_an_old_credential_cannot_delete_a_concurrent_relogin() {
 #[cfg(windows)]
 #[test]
 fn windows_acl_is_current_user_only_and_broad_import_is_rejected() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     import(dir.path(), "https://kb.example");
     let parent = dir.path().join("data/credentials");
     // The same validation used for imports must reject inherited/broad ACLs,
@@ -711,7 +711,7 @@ fn windows_acl_is_current_user_only_and_broad_import_is_rejected() {
 
 #[test]
 fn malformed_config_and_credential_urls_never_echo_their_canaries() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     fs::create_dir(dir.path().join("config")).unwrap();
     for text in [
         "server = \"disposable-config-canary",

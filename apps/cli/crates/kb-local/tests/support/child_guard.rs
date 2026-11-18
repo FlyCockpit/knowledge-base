@@ -8,6 +8,28 @@ use std::{
     time::Duration,
 };
 
+/// A final binary of this workspace in `target/<profile>/`. Integration tests
+/// find it beside their own package's `CARGO_BIN_EXE_*`. Unit tests get none:
+/// there it is the nearest ancestor of the test executable holding it
+/// (`deps/` before Cargo 1.100, `build/<pkg>/<hash>/out/` since).
+pub fn workspace_bin(name: &str) -> PathBuf {
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    if let Some(own) =
+        option_env!("CARGO_BIN_EXE_kb-test-owner").or(option_env!("CARGO_BIN_EXE_kb"))
+    {
+        return std::path::Path::new(own)
+            .parent()
+            .expect("target profile")
+            .join(file);
+    }
+    let exe = std::env::current_exe().expect("test exe");
+    exe.ancestors()
+        .skip(1)
+        .map(|directory| directory.join(&file))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("no `{file}` beside any ancestor of `{}`", exe.display()))
+}
+
 pub struct ChildGuard {
     child: Child,
     owner: Option<PathBuf>,
@@ -48,19 +70,7 @@ impl ChildGuard {
         }
         #[cfg(not(unix))]
         std::fs::create_dir(&root)?;
-        let mut owner = Command::new(
-            option_env!("CARGO_BIN_EXE_kb-test-owner")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .expect("test exe")
-                        .parent()
-                        .expect("deps")
-                        .parent()
-                        .expect("target profile")
-                        .join(format!("kb-test-owner{}", std::env::consts::EXE_SUFFIX))
-                }),
-        );
+        let mut owner = Command::new(workspace_bin("kb-test-owner"));
         owner
             .arg(&root)
             .arg("--hold")

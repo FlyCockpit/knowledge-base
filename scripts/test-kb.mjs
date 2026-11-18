@@ -28,7 +28,7 @@ import {
   linkBuildRegistry,
 } from "./build-embedding-runtime.mjs";
 import { ensureKbDataSkeleton } from "./init-kb-volumes.mjs";
-import { assertPinnedAgeDir, ensureAge } from "./lib/age-pin.mjs";
+import { resolveAgeDir } from "./lib/age-pin.mjs";
 import {
   loadArtifactIdentity,
   nativeDockerPlatform,
@@ -909,18 +909,6 @@ export function checkPrerequisites(options = {}) {
   if (options.git !== false) {
     requireBin(options.gitBin ?? "git", ["--version"], "Git is required for pnpm test:kb.");
   }
-}
-
-/**
- * Directory holding the pinned age v1.3.2 binaries for suites that run real
- * age. KB_AGE_DIR (an operator-provided install) wins but must hold exactly the
- * pinned version; otherwise scripts/lib/age-pin.mjs downloads the official
- * archive, verifies its SHA-256 and caches it per user. Never a skip.
- */
-export async function resolveAgeDir(env = process.env, ensure = ensureAge) {
-  if (env.KB_AGE_DIR)
-    return assertPinnedAgeDir(resolve(env.KB_AGE_DIR), `KB_AGE_DIR=${env.KB_AGE_DIR}`);
-  return ensure({ env });
 }
 
 export function redactText(text, secrets = []) {

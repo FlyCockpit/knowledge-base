@@ -19,7 +19,7 @@ fn snake_case_pending_then_success_and_exact_orpc_envelope() {
             },
         )
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let resource = McpResource::parse(&server.origin, TransportPolicy::AllowLoopbackHttp).unwrap();
     let store = empty_credential_store(dir.path(), &resource);
     let out = remote(dir.path(), "login", &server.origin)
@@ -79,7 +79,7 @@ fn slow_down_from_http_stops_when_next_poll_would_reach_expiry() {
             },
         )
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let out = remote(dir.path(), "login", &server.origin)
         .assert()
         .code(1)
@@ -111,7 +111,7 @@ fn first_poll_authorization_persists_the_default_credential() {
             },
         )
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let resource = McpResource::parse(&server.origin, TransportPolicy::AllowLoopbackHttp).unwrap();
     let store = empty_credential_store(dir.path(), &resource);
     let out = remote(dir.path(), "login", &server.origin)
@@ -145,7 +145,7 @@ fn denied_expired_consumed_and_untagged_errors_stop_without_saving_or_echoing() 
                 },
             )
         });
-        let dir = tempfile::tempdir().unwrap();
+        let dir = support::canonical_tempdir();
         let out = remote(dir.path(), "login", &server.origin)
             .assert()
             .failure()
@@ -177,7 +177,7 @@ fn rejects_foreign_resource_plain_success_redirect_and_wrong_status_tag() {
                 _ => (500, String::new(), flow("authorization_pending")),
             }
         });
-        let dir = tempfile::tempdir().unwrap();
+        let dir = support::canonical_tempdir();
         remote(dir.path(), "login", &server.origin)
             .assert()
             .failure();
@@ -190,7 +190,7 @@ fn rejects_foreign_resource_plain_success_redirect_and_wrong_status_tag() {
 #[test]
 fn deadline_stops_before_an_exchange_and_https_is_default() {
     let server = Server::new(|_, _, origin| (200, String::new(), start(origin, 2, 1)));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     cli(dir.path())
         .args(["login", "--server", &server.origin])
         .assert()
@@ -215,7 +215,7 @@ fn lost_consumed_response_does_not_retry_exchange() {
             },
         )
     });
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     let out = remote(dir.path(), "login", &server.origin)
         .assert()
         .failure()
@@ -298,7 +298,7 @@ fn stalled_exchange_is_cancelled_at_device_deadline_without_retry_or_state() {
     });
     // Drop before Server::drop on unwind, releasing its blocked response thread.
     let release = release;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = support::canonical_tempdir();
     // Keep the cancellation watchdog independent of durable-save scheduling.
     let out = remote(dir.path(), "login", &server.origin)
         .timeout(Duration::from_secs(30))

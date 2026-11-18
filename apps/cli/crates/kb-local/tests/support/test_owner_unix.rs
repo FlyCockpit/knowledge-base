@@ -154,7 +154,7 @@ impl Owned {
         // SAFETY: group leader is still our unreaped child, pinning this PGID.
         if unsafe { libc::kill(-(self.child.id() as i32), signal) } != 0 {
             let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
+            if !group_has_no_live_member(&error) {
                 return Err(error);
             }
         }
@@ -168,6 +168,15 @@ impl Owned {
         }
         Ok(())
     }
+}
+
+// ESRCH: the group is empty. Darwin instead fails a group signal with EPERM
+// when every remaining member is a zombie, which is exactly the state WNOWAIT
+// keeps an exited leader in; all members are this owner's own descendants, so
+// there is nothing left it could signal.
+fn group_has_no_live_member(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ESRCH)
+        || (cfg!(target_vendor = "apple") && error.raw_os_error() == Some(libc::EPERM))
 }
 
 fn spawn(mut command: Command, session: bool, reply: Option<UnixStream>) -> io::Result<Owned> {

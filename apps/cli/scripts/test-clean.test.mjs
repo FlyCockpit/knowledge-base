@@ -179,8 +179,14 @@ for (const ownership of process.platform === "win32"
               ? ["ignore", "pipe", "pipe", "ipc"]
               : ["ignore", "pipe", "pipe"],
         });
+        // A wrapper that already drained has disconnected its IPC channel. A
+        // later signal is then a no-op there, exactly as kill() is on Unix.
         const sendSignal = (signal) =>
-          process.platform === "win32" ? wrapper.send(signal) : wrapper.kill(signal);
+          process.platform === "win32"
+            ? wrapper.send(signal, (error) => {
+                if (error && error.code !== "ERR_IPC_CHANNEL_CLOSED") throw error;
+              })
+            : wrapper.kill(signal);
         let output = "";
         wrapper.stdout.on("data", (chunk) => {
           output += chunk;

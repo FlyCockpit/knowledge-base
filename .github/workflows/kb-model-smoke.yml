@@ -217,9 +217,8 @@ jobs:
       - name: macOS CPU prerequisites
         if: runner.os == 'macOS'
         run: |
-          brew install llvm libomp cmake
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix libomp)" >> "$GITHUB_ENV"
       - name: Restore checksum-keyed weights
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -279,7 +278,10 @@ jobs:
           echo "KB_MODEL_EXECUTABLE=$bin" >> "$GITHUB_ENV"
       - name: Execute native store durability and process regression checks
         if: ${{ !endsWith(matrix.target, '-musl') }}
-        run: cargo test --locked -p kb-local --lib --test store --test model_download --test qwen_process -- --test-threads=1
+        # Through the test owner, as in CLI CI: a private temp/home namespace per
+        # run and drained descendants (bare cargo on Windows sees the shared
+        # runner TEMP and user profile).
+        run: node scripts/test-clean.mjs cargo test --locked -p kb-local --lib --test store --test model_download --test qwen_process -- --test-threads=1
       # The same checks compiled for musl, in the builder (the shipped libc).
       # The one skipped test injects fsync EIO with LD_PRELOAD, which a static
       # binary cannot load; it runs on the GNU legs.

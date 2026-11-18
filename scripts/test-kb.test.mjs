@@ -26,6 +26,7 @@ import {
   kbTestNamePrefix,
   kbTestNamePrefixPattern,
 } from "../packages/test-utils/src/kb/test-names.mjs";
+import { resolveAgeDir } from "./lib/age-pin.mjs";
 import {
   assertBrowserReport,
   assertImageGitReached,
@@ -40,7 +41,6 @@ import {
   reapDeadRuns,
   redactText,
   removeImageContainers,
-  resolveAgeDir,
   resolveSuiteName,
   resolveTestTimeZones,
   runCaptured,
@@ -590,15 +590,17 @@ describe("test-kb runner", () => {
   });
 
   describe("qwen-model lane", () => {
+    // The pin under test is the shared runtime fixture, never a copied version.
+    const runtime = JSON.parse(
+      readFileSync(join(ROOT, "packages/api/src/lib/kb/fixtures/embedding-runtime.json"), "utf8"),
+    );
     const good = {
       node: "v26.13.0",
       arch: "x64",
       libc: "glibc",
-      nodeLlamaCpp: "3.22.3",
+      nodeLlamaCpp: runtime.nodeLlamaCpp,
       buildType: "localBuild",
-      nativeRuntime: JSON.parse(
-        readFileSync(join(ROOT, "packages/api/src/lib/kb/fixtures/embedding-runtime.json"), "utf8"),
-      ),
+      nativeRuntime: runtime,
       modelId: "qwen3-embedding-0.6b-q8_0",
       dimensions: 1024,
       maxNormError: 0,
@@ -698,7 +700,10 @@ describe("test-kb runner", () => {
         [{ libc: "musl" }, /glibc/],
         [{ buildType: "prebuilt" }, /build/],
         [{ nativeRuntime: {} }, /runtime/],
-        [{ nodeLlamaCpp: "3.22.0" }, /not the pinned 3\.22\.2/],
+        [
+          { nodeLlamaCpp: "0.0.0" },
+          new RegExp(`not the pinned ${runtime.nodeLlamaCpp.replaceAll(".", "\\.")}$`),
+        ],
         [{ dimensions: 768 }, /dimensions/],
         [{ maxNormError: 0.01 }, /unit norm/],
         [{ topDocument: "tides" }, /ordering/],

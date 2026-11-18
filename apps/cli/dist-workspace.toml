@@ -58,4 +58,3 @@ libclang-dev = '*'
 [dist.dependencies.homebrew]
 cmake = '*'
 llvm = '*'
-libomp = '*'

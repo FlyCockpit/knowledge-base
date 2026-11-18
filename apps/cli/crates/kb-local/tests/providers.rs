@@ -711,15 +711,7 @@ fn timeout_shutdown_empty_batch_and_narrowed_principal_have_no_late_result() {
 #[test]
 #[ignore = "requires a disposable native OS credential store; run explicitly in platform CI"]
 fn actual_native_keystore_smoke() {
-    let native = NativeCredentials::new(
-        std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(if cfg!(windows) { "kb.exe" } else { "kb" }),
-    );
+    let native = NativeCredentials::new(fixture::child_guard::workspace_bin("kb"));
     let (_fixture, store, _) = setup("native-smoke");
     // Even an assertion failure must revoke every allocated account before
     // the fixture removes its state. Exercise controlled native calls through
@@ -1307,13 +1299,7 @@ fn actual_native_stall_cancel_shutdown() {
             })
         }
     }
-    let exe = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("kb");
+    let exe = fixture::child_guard::workspace_bin("kb");
     let native = NativeCredentials::new(exe.clone());
     let (_fixture, s, _) = setup("native-lifecycle");
     let r = s
@@ -1500,13 +1486,7 @@ fn actual_native_crash_reentry_waits_for_native_effect_drain() {
         }
         None
     }
-    let exe = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("kb");
+    let exe = fixture::child_guard::workspace_bin("kb");
     let native = NativeCredentials::new(exe.clone());
     let (f, s, _) = setup("native-crash");
     // Kill the production owner after durable identity and before native set returns.
@@ -1658,6 +1638,7 @@ fn actual_native_crash_reentry_waits_for_native_effect_drain() {
                 "--root",
                 s.paths().root().to_str().unwrap(),
                 "revoke",
+                "--provider",
                 done.provider_id.as_str(),
             ])
             .stdout(Stdio::null())
