@@ -48,7 +48,7 @@ pnpm dev
 ## Installation
 
 - **Server.** Dokploy on a Linux VPS is the supported target, with one server and one dedicated worker on the same host. See [deployment and key custody](./docs/deploy.md).
-- **CLI.** Download `kb` from [GitHub Releases](https://github.com/FlyCockpit/knowledge-base/releases), or build it from `apps/cli` with Rust 1.96 or newer. Native dependencies, release targets and remote login are covered in the [CLI guide](./docs/cli.md) and the [CLI README](./apps/cli/README.md).
+- **CLI.** Every server serves a one-line installer for the `kb` release of its own version: `curl -fsSL https://kb.example.com/install.sh | sh` (Linux, macOS) or `irm https://kb.example.com/install.ps1 | iex` (Windows PowerShell). It checks the archive against the release's `sha256.sum`, refuses on a mismatch, then logs `kb` in to that server through browser approval. Settings → MCP access shows both commands for your server. You can also download `kb` from [GitHub Releases](https://github.com/FlyCockpit/knowledge-base/releases) (each archive carries signed build provenance: `gh attestation verify <archive> --repo FlyCockpit/knowledge-base`), or build it from `apps/cli` with Rust 1.96 or newer. Native dependencies, release targets and remote login are covered in the [CLI guide](./docs/cli.md) and the [CLI README](./apps/cli/README.md).
 
 ## Configuration
 

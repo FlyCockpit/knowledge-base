@@ -34,6 +34,8 @@ const BASE_ENV: EnvMap = {
   DATABASE_POOL_MAX: undefined,
   KB_MASTER_KEY: undefined,
   KB_DATA_ROOT: undefined,
+  KB_CLI_RELEASE_BASE_URL: undefined,
+  KB_CLI_SOURCE_REV: undefined,
 };
 
 const ENV_SNAPSHOT: EnvMap = { ...process.env };
@@ -109,6 +111,42 @@ describe("server env — rate-limit budget defaults", () => {
   it("rejects a non-positive budget points/window", async () => {
     await expect(importServerEnv({ RATE_LIMIT_AUTH_POINTS: "0" })).rejects.toThrow();
     await expect(importServerEnv({ RATE_LIMIT_AUTH_WINDOW_SECONDS: "0" })).rejects.toThrow();
+  });
+});
+
+describe("server env — /install.sh settings", () => {
+  it("are optional", async () => {
+    const mod = await importServerEnv();
+    expect(mod.env.KB_CLI_RELEASE_BASE_URL).toBeUndefined();
+    expect(mod.env.KB_CLI_SOURCE_REV).toBeUndefined();
+  });
+
+  it("accept an https release URL and drop its trailing slash", async () => {
+    const mod = await importServerEnv({
+      KB_CLI_RELEASE_BASE_URL: "https://mirror.example.com:8443/kb/v1.0.0/",
+    });
+    expect(mod.env.KB_CLI_RELEASE_BASE_URL).toBe("https://mirror.example.com:8443/kb/v1.0.0");
+  });
+
+  // The scripts embed the URL in single quotes and download over https only.
+  it.each([
+    "http://mirror.example.com/kb",
+    "https://mirror.example.com/it's",
+    "https://mirror.example.com/$(id)",
+    "https://mirror.example.com/a b",
+    "https://mirror.example.com/a?b=c",
+    "ftp://mirror.example.com/kb",
+  ])("refuse release URL %s", async (value) => {
+    await expect(importServerEnv({ KB_CLI_RELEASE_BASE_URL: value })).rejects.toThrow();
+  });
+
+  it("accept only a full lowercase commit as the source revision", async () => {
+    const rev = "0123456789abcdef0123456789abcdef01234567";
+    expect((await importServerEnv({ KB_CLI_SOURCE_REV: rev })).env.KB_CLI_SOURCE_REV).toBe(rev);
+    for (const value of ["main", "v1.0.0", rev.slice(1), rev.toUpperCase(), `${rev}; id`]) {
+      vi.resetModules();
+      await expect(importServerEnv({ KB_CLI_SOURCE_REV: value })).rejects.toThrow();
+    }
   });
 });
 

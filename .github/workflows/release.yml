@@ -95,6 +95,14 @@ jobs:
             echo "apps/cli/Cargo.toml absent (CLI removed); skipping Cargo version check."
           fi
 
+          # The server's /install.sh and /install.ps1 install the CLI release of
+          # exactly this version (apps/server/src/cli-install.ts).
+          server_version="$(sed -n 's/^export const SERVER_VERSION = "\(.*\)";$/\1/p' apps/server/src/version.ts)"
+          if [ "$server_version" != "$version" ]; then
+            echo "::error::SERVER_VERSION in apps/server/src/version.ts is $server_version, expected $version."
+            exit 1
+          fi
+
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
 
           {
@@ -547,6 +555,13 @@ jobs:
       && needs.plan-cli-release.result == 'success'
       && (needs.build-cli-global-artifacts.result == 'skipped' || needs.build-cli-global-artifacts.result == 'success')
       && (needs.build-cli-local-artifacts.result == 'skipped' || needs.build-cli-local-artifacts.result == 'success')
+    # Job-level permissions replace the workflow's: contents to upload the
+    # release, id-token and attestations to sign build provenance for the CLI
+    # archives (keyless, no repository secret involved).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: ubuntu-latest
@@ -603,6 +618,40 @@ jobs:
       - name: Cleanup
         run: rm -f apps/cli/artifacts/*-dist-manifest.json
 
+      # The server's /install.sh and /install.ps1 download these archives and
+      # verify them against sha256.sum (fail closed). Refuse to publish a
+      # release that lacks either, so a machine never meets a half-published one.
+      - name: Check CLI archives and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/cli/artifacts
+          # cargo-dist ends sha256.sum with a blank line, which `sha256sum --strict`
+          # refuses as improperly formatted. Drop blank lines so the published
+          # file passes a strict check.
+          sed -i '/^[[:space:]]*$/d' sha256.sum
+          for archive in kb-x86_64-unknown-linux-musl.tar.xz kb-aarch64-unknown-linux-musl.tar.xz kb-x86_64-apple-darwin.tar.xz kb-aarch64-apple-darwin.tar.xz kb-x86_64-pc-windows-msvc.zip; do
+            if [ ! -f "$archive" ]; then
+              echo "::error::$archive is missing from the release artifacts."
+              exit 1
+            fi
+            if ! awk -v f="$archive" '($2 == f || $2 == "*" f) && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 { found = 1 } END { exit !found }' sha256.sum; then
+              echo "::error::sha256.sum has no entry for $archive."
+              exit 1
+            fi
+          done
+          sha256sum --check --strict sha256.sum
+
+      # Signed SLSA build provenance for every CLI archive and the checksum
+      # file. Verify with `gh attestation verify <file> --repo FlyCockpit/knowledge-base`.
+      - name: Attest CLI build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            apps/cli/artifacts/kb-*.tar.xz
+            apps/cli/artifacts/kb-*.zip
+            apps/cli/artifacts/sha256.sum
+
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
@@ -629,5 +678,5 @@ jobs:
             echo
             echo "- App container: \`${{ needs.validate.outputs.image }}:${{ needs.validate.outputs.tag }}\`"
             echo "- Worker container: \`${{ needs.validate.outputs.image }}-worker:${{ needs.validate.outputs.tag }}\`"
-            echo "- CLI artifacts: GitHub Release \`${{ needs.validate.outputs.tag }}\`"
+            echo "- CLI artifacts: GitHub Release \`${{ needs.validate.outputs.tag }}\` (sha256.sum, build provenance attested)"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -366,5 +366,14 @@
       "invalid": "Check the values and try again.",
       "retry": "Couldn't complete this. Try again."
     }
+  },
+  "cli": {
+    "title": "Command line (kb)",
+    "description": "Connect another computer to this server: run the command below on it. It installs the kb release that matches this server, checks it against the release's checksums, then prints a sign-in link. Open the link, sign in and approve the device to log it in.",
+    "unix": "Linux and macOS",
+    "windows": "Windows (PowerShell)",
+    "copyUnix": "Copy the Linux and macOS install command",
+    "copyWindows": "Copy the Windows install command",
+    "hint": "kb is installed in ~/.cargo/bin (%USERPROFILE%\\.cargo\\bin on Windows). An approved device appears under Personal access tokens, where you can revoke it."
   }
 }

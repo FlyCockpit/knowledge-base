@@ -521,6 +521,32 @@ export const ENV_VARS: EnvVar[] = [
       "the fallback in apps/server/src/index.ts.",
     ],
   },
+  {
+    key: "KB_CLI_RELEASE_BASE_URL",
+    advanced: true,
+    group: "runtime",
+    source: "manual",
+    example: "https://github.com/FlyCockpit/knowledge-base/releases/download/v1.0.0",
+    comment: [
+      "[server-only] Optional. Where /install.sh and /install.ps1 download the kb CLI",
+      "(kb-<target>.tar.xz / .zip and sha256.sum, https only) and install the",
+      "checksum-verified binary. Unset: the GitHub Release of the server's version.",
+      "Ignored when KB_CLI_SOURCE_REV is set.",
+    ],
+  },
+  {
+    key: "KB_CLI_SOURCE_REV",
+    advanced: true,
+    group: "runtime",
+    source: "manual",
+    example: "0123456789abcdef0123456789abcdef01234567",
+    comment: [
+      "[server-only] Optional. The full 40-character commit /install.sh and /install.ps1",
+      "build the kb CLI from (cargo install --rev; Rust 1.96+, CMake, a C++ compiler,",
+      "libclang and OpenMP). Set, they always build from source. Released versions",
+      "do not need it.",
+    ],
+  },
 
   {
     key: "KB_DATA_ROOT",

@@ -92,4 +92,21 @@ export const serverVars = {
   // default keeps a cached public render for up to a minute. Edits to a live
   // URL can take up to this long to appear.
   SSR_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(60),
+  // The full 40-character commit /install.sh and /install.ps1 build the kb CLI
+  // from (`cargo install --rev`: cargo fetches only a full hash directly). Set,
+  // they always build from source (apps/server/src/cli-install.ts).
+  KB_CLI_SOURCE_REV: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
+  // Where /install.sh and /install.ps1 download kb-<target> archives and
+  // sha256.sum from (checksum-verified release binaries). Unset: the GitHub
+  // Release of this server's version. https only, and a plain URL: the scripts
+  // embed it in single quotes, so quotes, spaces, queries and shell
+  // metacharacters are refused.
+  KB_CLI_RELEASE_BASE_URL: z
+    .string()
+    .regex(/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%+@-]+)*\/?$/)
+    .transform((url) => url.replace(/\/+$/, ""))
+    .optional(),
 };

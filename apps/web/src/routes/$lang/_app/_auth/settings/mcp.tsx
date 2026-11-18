@@ -1,3 +1,4 @@
+import { env } from "@knowledge-base/env/web";
 import { Button } from "@knowledge-base/ui/components/button";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
@@ -9,6 +10,7 @@ import { useTranslation } from "react-i18next";
 
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
+import { CliInstall } from "@/components/kb/cli-install";
 import {
   CredentialList,
   editTargetFromGrant,
@@ -202,6 +204,9 @@ function McpCredentialSettings() {
           />
         }
       />
+      <div className="mt-8">
+        <CliInstall origin={env.VITE_SERVER_URL} />
+      </div>
       <PatCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
       <GrantEditSheet
         target={editing}

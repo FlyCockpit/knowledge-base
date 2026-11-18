@@ -366,5 +366,14 @@
       "invalid": "Revisa los valores e inténtalo de nuevo.",
       "retry": "No se pudo completar. Inténtalo de nuevo."
     }
+  },
+  "cli": {
+    "title": "Línea de comandos (kb)",
+    "description": "Conecta otra computadora a este servidor: ejecuta en ella el comando de abajo. Instala la versión de kb que corresponde a este servidor, la verifica con las sumas de comprobación de la versión y después muestra un enlace de inicio de sesión. Abre el enlace, inicia sesión y aprueba el dispositivo para conectarlo.",
+    "unix": "Linux y macOS",
+    "windows": "Windows (PowerShell)",
+    "copyUnix": "Copiar el comando de instalación para Linux y macOS",
+    "copyWindows": "Copiar el comando de instalación para Windows",
+    "hint": "kb se instala en ~/.cargo/bin (%USERPROFILE%\\.cargo\\bin en Windows). Un dispositivo aprobado aparece en Tokens de acceso personal, donde puedes revocarlo."
   }
 }

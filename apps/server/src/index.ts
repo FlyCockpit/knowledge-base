@@ -43,6 +43,7 @@ import { apiReferenceAdminGate } from "./api-reference-admin-gate.js";
 import { betterAuthAdminGate } from "./better-auth-admin-gate.js";
 import { bodyPolicyMiddleware } from "./body-policy.js";
 import { readBuildCommit } from "./build-commit.js";
+import { registerCliInstallRoutes } from "./cli-install.js";
 import { resolveClientIp } from "./client-ip.js";
 import { CORS_ALLOW_HEADERS } from "./cors-headers.js";
 import { guardDeviceApproval } from "./device-approval-gate";
@@ -394,6 +395,11 @@ app.get("/ready", async (c) => {
 // — before the static-asset middleware and the SSR catch-all below — so the
 // `/$lang/...` router never swallows them and returns the SPA HTML shell.
 registerSeoRoutes(app);
+
+// The kb CLI installers (`curl -fsSL <origin>/install.sh | sh`, `irm
+// <origin>/install.ps1 | iex`), registered before the SSR catch-all for the
+// same reason as the SEO routes.
+registerCliInstallRoutes(app);
 
 // ADMIN_EMAIL bootstrap marker (see signup-gate.ts). Pass-through by design:
 // it marks the configured identity for admin-bootstrap mode but NEVER rejects,
