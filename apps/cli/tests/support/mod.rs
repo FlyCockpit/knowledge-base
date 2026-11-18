@@ -39,6 +39,8 @@ impl Server {
                     thread::sleep(Duration::from_millis(5));
                     continue;
                 };
+                // BSD/macOS accepted sockets inherit the listener's O_NONBLOCK.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();

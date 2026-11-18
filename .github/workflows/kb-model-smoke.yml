@@ -233,7 +233,8 @@ jobs:
             if [ ! -f "$dest" ]; then
               curl --fail --location --proto '=https' --max-redirs 5 --retry 3 -o "$dest" "${!url_var}"
             fi
-            if command -v sha256sum >/dev/null; then
+            # macOS runners now ship a BSD `sha256sum` without GNU's `--check`.
+            if [ "$RUNNER_OS" != macOS ] && command -v sha256sum >/dev/null; then
               printf '%s  %s\n' "${!hash_var}" "$dest" | sha256sum --check
             else
               printf '%s  %s\n' "${!hash_var}" "$dest" | shasum -a 256 --check
