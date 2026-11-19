@@ -23,6 +23,25 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
         / (a.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt()
             * b.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt())
 }
+/// Minimum cosine between a live real-model vector and the shared fixture
+/// (`embedding-normalization.json`, recorded by the server worker on x64).
+///
+/// x64 builds reproduce that fixture and keep the strict 0.9999 bar. Every
+/// other target (macOS arm64, Linux arm64 gnu/musl) is held to 0.9995: the
+/// weights and llama.cpp source are identical, but float accumulation order in
+/// the CPU kernels differs per build (ISA, enabled CPU features, weight
+/// repack, compiler and libm). Measured against the x64 fixture, d1: macOS
+/// arm64 Gemma 0.99990 / Qwen 0.99973, Linux arm64 gnu Qwen 0.99972, Linux
+/// arm64 musl Gemma 0.99989 / Qwen 0.99980; one build-flag change on the same
+/// CPU moves Qwen by about 2e-4. Real defects (wrong pooling, the wrong model)
+/// land far below 0.999; double normalization keeps the direction and is
+/// caught by the raw-magnitude check instead. The server twin is
+/// `REAL_MODEL_PARITY_MIN_COSINE` in `packages/test-utils/src/kb/raw-embedding.ts`.
+const REAL_MODEL_PARITY_MIN_COSINE: f64 = if cfg!(target_arch = "x86_64") {
+    0.9999
+} else {
+    0.9995
+};
 fn raw_norm(v: &[f32]) -> f64 {
     v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt()
 }
@@ -297,8 +316,8 @@ fn run(id: &str, var: &str, fixture: &str) {
             .collect::<Vec<_>>();
         let parity_cosine = cosine(&unit, &server);
         assert!(
-            parity_cosine >= 0.9999,
-            "server/CLI parity {}: cosine {parity_cosine}",
+            parity_cosine >= REAL_MODEL_PARITY_MIN_COSINE,
+            "server/CLI parity {}: cosine {parity_cosine} < {REAL_MODEL_PARITY_MIN_COSINE}",
             item["id"]
         );
     }

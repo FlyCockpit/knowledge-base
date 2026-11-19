@@ -30,8 +30,16 @@ near 100, Gemma near 1,000). The index format normalizes exactly once,
 quantization and the sqlite-vec arm) and on the query arm. Server and CLI
 produce the same bytes for the same raw vector (shared fixture
 `packages/test-utils/src/kb/embedding-normalization.json`, recorded from the
-real models). Vector reuse and the CLI checkpoint copy already-normalized data
-and never normalize again. RRF fuses ranks, so it does not depend on norms. Revoke destroys ciphertext and
+real models). The live real-model lanes compare each model's fresh output with
+that fixture by cosine: x64 builds, which recorded it, must reach ≥ 0.9999;
+every other build (macOS arm64, Linux arm64 gnu and musl, the server worker on
+arm64) must reach ≥ 0.9995. The weights and llama.cpp source are the same, but
+float accumulation order in the CPU kernels differs per build (ISA, CPU
+features, weight repack, compiler and libm), which moves arm64 results by about
+1e-4 to 3e-4 (measured Qwen d1 0.99972 to 0.99980). Wrong pooling or the
+wrong model land far below 0.999; double normalization keeps the direction and
+is caught by the raw-magnitude checks. Vector reuse and the
+CLI checkpoint copy already-normalized data and never normalize again. RRF fuses ranks, so it does not depend on norms. Revoke destroys ciphertext and
 query capability: retained vectors alone cannot serve hybrid search, so the
 KB's index serves its lexical arm (below).
 

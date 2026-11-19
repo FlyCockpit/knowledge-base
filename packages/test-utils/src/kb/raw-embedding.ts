@@ -12,6 +12,19 @@ export const normalizationFixture = JSON.parse(
 };
 
 /**
+ * Minimum cosine between a live real-model vector and the shared fixture (recorded by the server
+ * worker on x64). x64 reproduces it and keeps the strict 0.9999 bar; every other architecture
+ * (arm64) is held to 0.9995. Same weights and llama.cpp source, but float accumulation order in
+ * the CPU kernels differs per build (ISA, CPU features, weight repack, compiler and libm):
+ * measured d1 against the x64 fixture, macOS arm64 Gemma 0.99990 / Qwen 0.99973, Linux arm64
+ * musl and this server worker Qwen 0.99980, Linux arm64 gnu Qwen 0.99972. Real defects (wrong
+ * pooling, the wrong model) land far below 0.999; double normalization keeps the direction and is
+ * caught by the raw-magnitude checks instead. The CLI twin is
+ * `REAL_MODEL_PARITY_MIN_COSINE` in `apps/cli/crates/kb-local/tests/qwen_model.rs`.
+ */
+export const REAL_MODEL_PARITY_MIN_COSINE = process.arch === "x64" ? 0.9999 : 0.9995;
+
+/**
  * The embedding contract (§1.4, docs/embeddings.md): a built-in runtime returns the RAW pooled
  * vector and the index format normalizes it exactly once. Enforced before normalizing: finite,
  * the model's dimensions, and a magnitude within 20x of the recorded raw outputs of that model

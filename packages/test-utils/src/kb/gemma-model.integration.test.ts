@@ -12,7 +12,11 @@ import { estimateBuiltinPeakBytes } from "@knowledge-base/api/lib/kb/qwen-runtim
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildArtifactPath, requireBuiltArtifact } from "./build-artifacts.mjs";
 import { modelInference } from "./model-inference";
-import { expectRawEmbedding, normalizationFixture } from "./raw-embedding";
+import {
+  expectRawEmbedding,
+  normalizationFixture,
+  REAL_MODEL_PARITY_MIN_COSINE,
+} from "./raw-embedding";
 
 // Dynamic URL avoids crossing this composite project's root.
 const { createQwenSupervisor } = await import(
@@ -233,7 +237,10 @@ it("real-model normalization parity: live raw vectors normalize to the shared fi
       const replay = unitVector(recorded.raw, model.dimensions);
       expect(hex(replay)).toBe(recorded.unitF32Hex);
       // The live model reproduces the recorded direction.
-      expect(cosine(Array.from(unit), Array.from(replay))).toBeGreaterThanOrEqual(0.9999);
+      const parity = cosine(Array.from(unit), Array.from(replay));
+      expect(parity, `${model.modelId} ${item.id}: cosine ${parity}`).toBeGreaterThanOrEqual(
+        REAL_MODEL_PARITY_MIN_COSINE,
+      );
     }
   }
 });
