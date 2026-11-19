@@ -58,14 +58,35 @@ RUN gcc -std=c11 -Wall -Wextra -Werror -O2 -D_GNU_SOURCE -o kb-child-guard child
   && test -x /src/kb-child-guard \
   && gcc -std=c11 -Wall -Wextra -Werror -O2 -D_GNU_SOURCE -o kb-supervisor kb-supervisor.c
 
-# Pinned age archives and SHA-256 verification shared by all recovery commands.
-FROM base AS age-tooling
+# age and age-keygen v1.3.2 for all recovery commands, built from the
+# commit-pinned v1.3.2 tag with the digest-pinned, patched Go builder below
+# (CONTRIBUTING.md § Go builder for age), not upstream's release binaries.
+# CGO-free static binaries, cross-compiled on the build platform with
+# -trimpath and no VCS stamping; modules are verified against go.sum and
+# sum.golang.org, and the toolchain never auto-downloads. Keep this stage
+# identical in both runtime Dockerfiles (`pnpm docker:check-copy`; the version
+# and commit must match scripts/lib/age-pin.mjs).
+FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d AS age-tooling
 ARG TARGETARCH
-COPY scripts/lib/age-pin.mjs /tmp/age-pin.mjs
-RUN node /tmp/age-pin.mjs --install /opt/age --arch "$TARGETARCH" \
-  && /opt/age/age --version | grep -Fx v1.3.2 \
-  && /opt/age/age-keygen --version | grep -Fx v1.3.2 \
-  && rm /tmp/age-pin.mjs
+ARG AGE_VERSION=v1.3.2
+ARG AGE_COMMIT=b74dce4cdbe35b5e5f66c06d9612b72f89028758
+WORKDIR /src/age
+RUN export CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" GOTOOLCHAIN=local GOFLAGS=-mod=readonly \
+    GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+  && git init -q . \
+  && git fetch -q --depth 1 https://github.com/FiloSottile/age.git "$AGE_COMMIT" \
+  && git checkout -q --detach FETCH_HEAD \
+  && test "$(git rev-parse HEAD)" = "$AGE_COMMIT" \
+  && go mod download \
+  && go mod verify \
+  && mkdir -p /opt/age \
+  && go build -trimpath -buildvcs=false -ldflags "-X main.Version=$AGE_VERSION" -o /opt/age/ ./cmd/age ./cmd/age-keygen \
+  && for bin in age age-keygen; do \
+    test "$(go version "/opt/age/$bin")" = "/opt/age/$bin: $(go env GOVERSION)" \
+    && go version -m "/opt/age/$bin" | grep -Eqx '[[:space:]]+build[[:space:]]+CGO_ENABLED=0' \
+    && go version -m "/opt/age/$bin" | grep -Eqx "[[:space:]]+build[[:space:]]+GOARCH=$(go env GOARCH)" \
+    || exit 1; \
+  done
 
 # --- Build-time base ---
 # Adds pnpm. Git and OpenSSH are already in `base` so the Debian glibc
@@ -301,6 +322,7 @@ COPY scripts/db/ ./scripts/db/
 COPY scripts/backup/ ./scripts/backup/
 COPY scripts/lib/asset-storage-migration.mjs scripts/lib/asset-storage-control.mjs scripts/lib/kb-restore.mjs scripts/lib/asset-storage-domain.mjs scripts/lib/kb-backup.mjs scripts/lib/backup-identity.mjs scripts/lib/backup-s3-env.mjs scripts/lib/backup-env.sh scripts/lib/session-timezone.mjs scripts/lib/bounded-child.mjs scripts/lib/owned-child.sh scripts/lib/validate-kb-master-key.mjs ./scripts/lib/
 COPY --from=age-tooling /opt/age/age /opt/age/age-keygen /usr/local/bin/
+RUN age --version | grep -Fx v1.3.2 && age-keygen --version | grep -Fx v1.3.2
 COPY --from=builder /app/restore-crypto.mjs ./restore-crypto.mjs
 COPY --from=builder /app/asset-storage-domain.mjs ./asset-storage-domain.mjs
 COPY --from=builder /app/asset-storage-admission.mjs ./asset-storage-admission.mjs

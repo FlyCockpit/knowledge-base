@@ -56,6 +56,7 @@ import { deepStrictEqual, ok } from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { readNodeBaseImage } from "../packages/test-utils/src/kb/node-image.mjs";
+import { AGE_COMMIT, AGE_VERSION } from "./lib/age-pin.mjs";
 import {
   COREPACK_VERSION,
   canonicalPnpmRun,
@@ -145,6 +146,34 @@ function* logicalLines(text: string): Generator<{ line: string; lineNo: number }
   }
   // A file ending on a dangling continuation still yields what it accumulated.
   if (buffer !== "") yield { line: buffer, lineNo: startLine };
+}
+
+// --- age: built from the commit-pinned tag with the digest-pinned Go builder ---
+// The images compile age/age-keygen from source (patched Go, no upstream
+// release binaries); tests run the same tag's checksum-pinned archives
+// (scripts/lib/age-pin.mjs). Both runtime Dockerfiles carry one identical
+// stage whose version and commit are age-pin.mjs's.
+const AGE_BUILDER_RE =
+  /^FROM --platform=\$BUILDPLATFORM (golang:[\w.-]+@sha256:[a-f0-9]{64}) AS age-tooling$/m;
+/**
+ * The age-tooling stage's instructions, its FROM up to the next FROM. Like
+ * Docker, comment and blank physical lines are dropped before continuations
+ * are folded, so a comment ending in `\` cannot swallow the next instruction.
+ */
+function ageToolingStage(text: string): string[] | undefined {
+  const physical = text
+    .split("\n")
+    .filter((raw) => raw.trim() !== "" && !raw.trim().startsWith("#"));
+  const lines: string[] = [];
+  let inStage = false;
+  for (const { line } of logicalLines(physical.join("\n"))) {
+    if (/^FROM\s/i.test(line)) {
+      if (inStage) break;
+      inStage = AGE_BUILDER_RE.test(line);
+    }
+    if (inStage) lines.push(line);
+  }
+  return lines.length ? lines : undefined;
 }
 
 /** Exclude only the exact, build-only toolchain install from the runtime-deps guard. */
@@ -605,6 +634,23 @@ HEALTHCHECK --start-period=10800s CMD node probe.mjs
       "scripts/db/lib/prisma-owner.mjs",
     ),
   );
+  {
+    const from = `FROM --platform=$BUILDPLATFORM golang:1.2.3-trixie@sha256:${"b".repeat(64)} AS age-tooling`;
+    const stage = `${from}\n# note\nARG AGE_COMMIT=x\nRUN go build \\\n  # inline\n  -trimpath\n\nCOPY a b\nFROM base AS next\nRUN true\n`;
+    deepStrictEqual(ageToolingStage(stage), [
+      from,
+      "ARG AGE_COMMIT=x",
+      "RUN go build -trimpath",
+      "COPY a b",
+    ]);
+    // A comment ending in a backslash must not hide the instruction after it.
+    deepStrictEqual(
+      ageToolingStage(stage.replace("# note\n", "# note \\\nRUN touch /opt/age/age\n"))?.[1],
+      "RUN touch /opt/age/age",
+    );
+    deepStrictEqual(ageToolingStage(stage.replace(" AS age-tooling", " AS other")), undefined);
+    deepStrictEqual(ageToolingStage(stage.replace("--platform=$BUILDPLATFORM ", "")), undefined);
+  }
   console.log("Docker runtime COPY regression checks passed.");
   process.exit(0);
 }
@@ -727,8 +773,6 @@ for (const file of DOCKERFILES) {
     );
   for (const required of [
     "COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /app/",
-    "COPY scripts/lib/age-pin.mjs /tmp/age-pin.mjs",
-    "node /tmp/age-pin.mjs --install /opt/age",
     "COPY --from=age-tooling /opt/age/age /opt/age/age-keygen /usr/local/bin/",
     "COPY --chown=node:node --from=builder /app/schema-runtime/node_modules ./schema-runtime/node_modules",
     "COPY --from=builder /app/packages/db/prisma ./packages/db/prisma",
@@ -740,6 +784,39 @@ for (const file of DOCKERFILES) {
   for (const name of ["prisma", "pg", "dotenv", "@aws-sdk/client-s3"])
     if (!text.includes(`/app/schema-runtime/node_modules/${name} /app/node_modules/${name}`))
       errors.push(`${file}: ${name} must resolve from the deployed tooling closure at the root.`);
+}
+
+// --- age-tooling: one identical source-build stage in both runtime Dockerfiles ---
+{
+  const stages = new Map<string, string[] | undefined>();
+  for (const file of ["Dockerfile", "Dockerfile.worker"]) {
+    const stage = ageToolingStage(readFileSync(resolve(ROOT, file), "utf8"));
+    stages.set(file, stage);
+    if (!stage) {
+      errors.push(
+        `${file}: missing \`FROM --platform=$BUILDPLATFORM golang:<tag>@sha256:<digest> AS age-tooling\`.`,
+      );
+      continue;
+    }
+    for (const arg of [`ARG AGE_VERSION=${AGE_VERSION}`, `ARG AGE_COMMIT=${AGE_COMMIT}`])
+      if (!stage.includes(arg)) errors.push(`${file}: age-tooling stage must declare \`${arg}\`.`);
+    const body = stage.join("\n");
+    for (const required of [
+      'test "$(git rev-parse HEAD)" = "$AGE_COMMIT"',
+      "CGO_ENABLED=0",
+      "GOTOOLCHAIN=local",
+      "GOFLAGS=-mod=readonly",
+      "go mod verify",
+      "go build -trimpath -buildvcs=false",
+    ])
+      if (!body.includes(required))
+        errors.push(`${file}: age-tooling stage is missing \`${required}\`.`);
+    if (/age-pin\.mjs|releases\/download/.test(body))
+      errors.push(`${file}: age-tooling must build from source, not fetch release binaries.`);
+  }
+  const [server, worker] = [stages.get("Dockerfile"), stages.get("Dockerfile.worker")];
+  if (server && worker && server.join("\n") !== worker.join("\n"))
+    errors.push("Dockerfile and Dockerfile.worker age-tooling stages differ; keep them identical.");
 }
 
 // --- Postgres client major: both runtime Dockerfiles must agree ---
@@ -880,9 +957,12 @@ if (!/^FROM node:26-trixie-slim@sha256:[a-f0-9]{64} AS native$/m.test(serverDock
   if (base) {
     for (const file of ["Dockerfile", "Dockerfile.worker", "Dockerfile.dev"]) {
       const text = readFileSync(resolve(ROOT, file), "utf8");
-      const stages = [...text.matchAll(/^FROM\s+(\S+)(?:\s+AS\s+(\S+))?\s*$/gim)];
+      const stages = [...text.matchAll(/^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$/gim)];
       const names = new Set(stages.flatMap((m) => (m[2] ? [m[2].toLowerCase()] : [])));
-      for (const [, image] of stages) {
+      for (const [line, image, stage] of stages) {
+        // The one other registry image: the age source builder (checked above).
+        if (stage === "age-tooling" && file !== "Dockerfile.dev" && AGE_BUILDER_RE.test(line))
+          continue;
         if (image && !names.has(image.toLowerCase()) && image !== base)
           errors.push(`${file}: \`FROM ${image}\` must be the pinned Node base \`${base}\`.`);
       }

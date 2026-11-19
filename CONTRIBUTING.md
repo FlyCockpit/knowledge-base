@@ -105,7 +105,9 @@ As of 2026-11-19, all of these pass on Linux, with every Rust step run on both t
 
 - CLI CI on Windows: credential-protection (DPAPI/ACL) tests fail on the hosted runner.
 
-Tracking: `.trivyignore.yaml` ignores four Go stdlib CVEs in the pinned `age` v1.3.2 binaries only (path-scoped, expires 2027-01-17); drop it once `age` ships binaries built with a patched Go.
+### Go builder for age
+
+The server and worker images build `age` and `age-keygen` v1.3.2 from the tag's pinned commit with a digest-pinned `golang` image (the `age-tooling` stage, identical in `Dockerfile` and `Dockerfile.worker`). The image Trivy scans run with no ignore file, so a new Go standard library advisory turns them red until the builder carries the fix. To bump it, find the first Go release that fixes the advisory (`go.dev/doc/devel/release`), take the multi-arch index digest of the matching `golang:<version>-trixie` tag (`docker buildx imagetools inspect golang:<version>-trixie`), and set that `FROM` line in both Dockerfiles; Dependabot's `docker` updates bump the same reference weekly. `pnpm docker:check-copy` fails if the two stages differ. A new `age` release also changes `AGE_VERSION`, `AGE_COMMIT` (the tag's commit, `git ls-remote https://github.com/FiloSottile/age refs/tags/<tag>`) and the test archive checksums in `scripts/lib/age-pin.mjs`, and the matching `ARG`s in both stages.
 
 ## Pull requests
 

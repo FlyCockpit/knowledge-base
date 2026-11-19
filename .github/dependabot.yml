@@ -31,8 +31,10 @@ updates:
   # every stage of Dockerfile, Dockerfile.worker and
   # Dockerfile.dev (Dependabot bumps them together). Test fixtures read the
   # reference from Dockerfile (packages/test-utils/src/kb/node-image.mjs) and
-  # `pnpm docker:check-copy` fails if any stage drifts. Scans every Dockerfile
-  # under the repo root.
+  # `pnpm docker:check-copy` fails if any stage drifts. The same check holds
+  # the digest-pinned golang builder of the age-tooling stage identical in
+  # Dockerfile and Dockerfile.worker; bump it here too (CONTRIBUTING.md § Go
+  # builder for age). Scans every Dockerfile under the repo root.
   - package-ecosystem: docker
     directory: /
     schedule:

@@ -1,8 +1,10 @@
-// The single source of truth for the approved age release (official
-// FiloSottile/age v1.3.2 linux archives, pinned by their published SHA-256).
-// Used by Dockerfile (age-tooling stage, `--install /opt/age`) and by
-// scripts/test-kb.mjs, which provisions the same binaries for suites that run
-// real age. Node builtins + the system `tar` only; no npm dependency.
+// The single source of truth for the approved age release: v1.3.2, whose tag
+// is commit AGE_COMMIT. The images build age and age-keygen from that commit
+// with a patched Go (Dockerfile / Dockerfile.worker age-tooling stage;
+// `pnpm docker:check-copy` holds their AGE_VERSION/AGE_COMMIT to these). Tests
+// (scripts/test-kb.mjs and the backup suites) run the official linux archives
+// of the same tag, pinned by their published SHA-256. Node builtins + the
+// system `tar` only; no npm dependency.
 //
 //   node scripts/lib/age-pin.mjs                       # ensure the per-user cache, print its dir
 //   node scripts/lib/age-pin.mjs --install /opt/age --arch amd64
@@ -18,6 +20,8 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const AGE_VERSION = "v1.3.2";
+/** Commit of the v1.3.2 tag in FiloSottile/age (a lightweight tag). */
+export const AGE_COMMIT = "b74dce4cdbe35b5e5f66c06d9612b72f89028758";
 export const AGE_SHA256 = Object.freeze({
   amd64: "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10",
   arm64: "6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4",

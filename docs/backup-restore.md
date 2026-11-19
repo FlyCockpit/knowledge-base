@@ -30,7 +30,8 @@ age identity and original application keys separately as described below.
 
 ## Operator key custody
 
-The server image pins official age v1.3.2 with its published SHA-256. Recommend
+The server and worker images build age v1.3.2 from its commit-pinned source
+with a patched, digest-pinned Go. Recommend
 `age-keygen -pq` (hybrid ML-KEM-768 + X25519, `age1pq1…` recipient); classic
 `age1…` recipients also work. Provision keys in a private operator vault:
 
