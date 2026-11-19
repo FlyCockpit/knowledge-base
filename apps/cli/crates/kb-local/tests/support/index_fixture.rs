@@ -35,11 +35,15 @@ pub struct Fixture {
     pub provider: KbId,
     _cleanup: Cleanup,
 }
+/// Parallel tests can read the same clock value (macOS wall time ticks in
+/// microseconds), so the per-process sequence keeps every root distinct.
+static ROOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 impl Fixture {
     pub fn new(dims: usize) -> Self {
         let root = std::env::temp_dir().join(format!(
-            "kb-index-{}-{}",
+            "kb-index-{}-{}-{}",
             std::process::id(),
+            ROOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("valid fixture")

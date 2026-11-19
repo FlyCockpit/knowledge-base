@@ -137,8 +137,14 @@ impl Owned {
                 }
                 return Err(error);
             }
+            // Darwin's waitid also reports a stopped child for WEXITED
+            // (CLD_STOPPED): a SIGSTOPped worker is alive, never an exit.
+            let exited = matches!(
+                info.si_code,
+                libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+            );
             // SAFETY: waitid initialized the siginfo variant selected by si_code.
-            if unsafe { info.si_pid() } != 0 {
+            if exited && unsafe { info.si_pid() } != 0 {
                 // SAFETY: a child-exit siginfo has a valid si_status field.
                 let code = unsafe { info.si_status() };
                 self.status = Some(ExitStatus::from_raw(if info.si_code == libc::CLD_EXITED {

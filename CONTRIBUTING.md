@@ -101,11 +101,10 @@ cd apps/cli && TMPDIR=/tmp bash scripts/native-keystore-smoke.sh
 
 `main` stays green: a change that leaves a failing or newly flaky test does not land. Tests that need the backup tooling find the repo's pinned, checksum-verified `age` through `scripts/lib/age-pin.mjs`; it does not have to be on `PATH`.
 
-As of 2026-11-18, all of these pass on Linux, with every Rust step run on both the stable toolchain and the newest one (1.100): `pnpm check:ci`, the `policy:*` checks, `check-types`, `test`, `test:setup`, `knip`, `env:check`, the `*:test-unit` suites, `build`, every cargo command above, `node --test scripts/test-clean.test.mjs`, `typos` (1.52.0), `cargo deny` and the native keystore smoke. These GitHub reds were already failing and remain open:
+As of 2026-11-19, all of these pass on Linux, with every Rust step run on both the stable toolchain and the newest one (1.100): `pnpm check:ci`, the `policy:*` checks, `check-types`, `test`, `test:setup`, `knip`, `env:check`, the `*:test-unit` suites, `build`, every cargo command above, `node --test scripts/test-clean.test.mjs`, `typos` (1.52.0), `cargo deny` and the native keystore smoke. On macOS (Apple silicon, 1.99 and 1.100), `cargo fmt`, `cargo clippy` and the full cargo test suite pass. CI runs the cargo tests through `node scripts/test-clean.mjs cargo test …`, which gives the run a private, canonical TMPDIR and HOME. Use that form on macOS: the default temp root there sits behind the `/var` → `/private/var` symlink, and `kb` refuses credential and store paths with a symlinked ancestor. These GitHub reds were already failing and remain open:
 
-- CLI CI on macOS: `kb-local` tests `index_reuse` (1), `owner_only` (6) and `qwen_process` (2).
 - CLI CI on Windows: credential-protection (DPAPI/ACL) tests fail on the hosted runner.
-- KB model smoke: the arm64 Gemma normalization parity is 0.99980, below the 0.9999 threshold, against the shared x64 fixture. This needs a decision on the threshold or a fixture per architecture.
+- KB model smoke, arm64 legs (macOS and Linux): the live real-model parity is 0.9997 to 0.9999 against the shared x64 fixture, below the 0.9999 threshold. Within arm64 the result also moves by about 2e-4 with the CPU kernel build flags, so one arm64 fixture cannot hold every arm64 leg at 0.9999. This needs a decision on a threshold or a fixture per build configuration.
 
 Tracking: `.trivyignore.yaml` ignores four Go stdlib CVEs in the pinned `age` v1.3.2 binaries only (path-scoped, expires 2027-01-17); drop it once `age` ships binaries built with a patched Go.
 

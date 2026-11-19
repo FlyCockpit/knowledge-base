@@ -295,9 +295,10 @@ fn run(id: &str, var: &str, fixture: &str) {
                 f32::from_le_bytes(b.to_be_bytes())
             })
             .collect::<Vec<_>>();
+        let parity_cosine = cosine(&unit, &server);
         assert!(
-            cosine(&unit, &server) >= 0.9999,
-            "server/CLI parity {}",
+            parity_cosine >= 0.9999,
+            "server/CLI parity {}: cosine {parity_cosine}",
             item["id"]
         );
     }

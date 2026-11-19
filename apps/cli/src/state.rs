@@ -415,8 +415,14 @@ mod tests {
                 .expect("writer reached the pre-rename boundary");
         }
         fn kill(&mut self) {
+            // `Child::wait` closes stdin first. macOS applies SIGKILL
+            // asynchronously, so that EOF could still wake the writer, which
+            // would then discard the temp the crash must leave: keep the
+            // control pipe open until the killed writer is reaped.
+            let control = self.child.stdin.take();
             self.child.kill().expect("kill writer");
             self.child.wait().expect("drain writer");
+            drop(control);
             self.drain_reader();
         }
         fn finish(&mut self) -> std::process::ExitStatus {

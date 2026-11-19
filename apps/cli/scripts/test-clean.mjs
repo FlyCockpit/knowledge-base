@@ -1,6 +1,14 @@
 /** Own a test run's temp namespace; never inspect or delete another run's stores. */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,7 +57,11 @@ export function testOwner() {
 }
 
 export async function runClean(command, args, { portable = false, owner } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), "kb-cli-tests-"));
+  // The run's TMPDIR and HOME. Canonical on Unix, because kb refuses credential
+  // and store paths with a symlinked ancestor and the macOS temp root sits under
+  // the `/var` -> `/private/var` link; no real HOME does.
+  const created = mkdtempSync(join(tmpdir(), "kb-cli-tests-"));
+  const directory = process.platform === "win32" ? created : realpathSync(created);
   let child;
   let interrupted = false;
   let admitted = false;
