@@ -33,9 +33,14 @@ static int fault(int fd) {
     }
     if (strcmp(mode, "park") == 0) {
         // The parent kills this recorded Git PID while its actual ref lock
-        // exists and the inherited store fence is still held.
-        marker = open(R52_PID, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        if (marker >= 0) { dprintf(marker, "%d\n", getpid()); close(marker); }
+        // exists and the inherited store fence is still held. Published by
+        // rename so the parent, which polls for existence, never reads it empty.
+        marker = open(R52_PID ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (marker >= 0) {
+            dprintf(marker, "%d\n", getpid());
+            close(marker);
+            rename(R52_PID ".tmp", R52_PID);
+        }
         for (int i=0; i<12000; ++i) usleep(10000);
     }
     errno = EIO;
