@@ -37,14 +37,7 @@ use serde_json::{Value, json};
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 fn temp_root(tag: &str) -> TestDir {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "kb-local-changes-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let base = temp_dir::unique_path(&format!("kb-local-changes-{tag}"));
     std::fs::create_dir_all(&base).expect("base");
     TestDir::new(base).child("store")
 }
@@ -1862,6 +1855,13 @@ fn publish(kb: &Kb, head: &Sha, key: &str, path: &str) -> Sha {
         )
         .expect("publish")
         .commit_sha;
+    // Raw `pack-objects` writes the pack before its index. Hold the store
+    // fence like the real installer: a concurrent reader's recovery removes
+    // any pack it finds without an index (a crash leftover under the fence).
+    let fence = kb
+        .store
+        .lock_write(std::slice::from_ref(&kb.kb))
+        .expect("fixture pack fence");
     let prefix = kb.repo.join("objects/pack/pack");
     git_with_input(
         &kb.repo,
@@ -1875,6 +1875,7 @@ fn publish(kb: &Kb, head: &Sha, key: &str, path: &str) -> Sha {
         format!("{head}\n").as_bytes(),
     );
     git(&kb.repo, &["prune-packed", "-q"]);
+    drop(fence);
     head
 }
 

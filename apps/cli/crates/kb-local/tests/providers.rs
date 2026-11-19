@@ -827,6 +827,8 @@ fn real_http_uses_exact_path_key_and_refuses_redirect_and_tls_downgrade() {
                     Err(e) => panic!("fixture server received no request: {e}"),
                 }
             };
+            // BSD/macOS accepted sockets inherit the listener's O_NONBLOCK.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();

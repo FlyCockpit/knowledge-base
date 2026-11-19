@@ -33,14 +33,7 @@ use serde_json::{Value, json};
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 fn temp_root(tag: &str) -> TestDir {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "kb-local-bases-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let base = temp_dir::unique_path(&format!("kb-local-bases-{tag}"));
     std::fs::create_dir_all(&base).expect("base");
     TestDir::new(base).child("store")
 }

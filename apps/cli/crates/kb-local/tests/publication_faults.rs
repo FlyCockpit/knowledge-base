@@ -22,11 +22,18 @@ use serde_json::json;
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        // Parallel tests can read the same clock value (macOS wall time
+        // ticks in microseconds): the sequence keeps every root distinct.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("native fixture operation")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("r52b-{}-{nonce}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "r52b-{}-{}-{nonce}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::create_dir(&path).expect("native fixture operation");
         Self(path)
     }

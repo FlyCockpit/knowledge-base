@@ -17,14 +17,7 @@ use kb_local::{CommitRequest, FileChange, Store};
 use serde_json::json;
 
 fn temp_root(tag: &str) -> TestDir {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "kb-local-owner-only-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let base = temp_dir::unique_path(&format!("kb-local-owner-only-{tag}"));
     std::fs::create_dir_all(&base).expect("base");
     TestDir::new(base).child("store")
 }

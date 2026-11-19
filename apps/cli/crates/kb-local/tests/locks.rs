@@ -66,14 +66,7 @@ const PROBE_ENV: &str = "KB_LOCAL_LOCKS_TEST_PROBE";
 const RELEASE_ENV: &str = "KB_LOCAL_LOCKS_TEST_RELEASE";
 
 fn temp_base(tag: &str) -> TestDir {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("test fixture")
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "kb-local-locks-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let base = temp_dir::unique_path(&format!("kb-local-locks-{tag}"));
     std::fs::create_dir_all(&base).expect("test fixture");
     TestDir::new(base)
 }

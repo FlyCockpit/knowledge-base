@@ -41,14 +41,7 @@ fn golden() -> Value {
 }
 
 fn temp_root(tag: &str) -> TestDir {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "kb-local-dream-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let base = temp_dir::unique_path(&format!("kb-local-dream-{tag}"));
     std::fs::create_dir_all(&base).expect("base");
     TestDir::new(base).child("store")
 }
