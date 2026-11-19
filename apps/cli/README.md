@@ -191,7 +191,8 @@ License: Apache-2.0 (`LICENSE-APACHE`). See the repo-root `LICENSE`.
 
 The local store uses owner-only directories and files on Unix and Windows,
 refuses symlinks and Windows junctions/reparse points below the canonical
-root, and takes the persistent store lock before sorted KB locks. Every Git
+root (resolved once at open, following only root-owned system links such as
+macOS `/var`), and takes the persistent store lock before sorted KB locks. Every Git
 child spawned while its store lock is held inherits that lock separately
 from stdin, including `cat-file --batch` readers. Lock admission waits at most
 five seconds. PR calls share a 30-second deadline across Git children and

@@ -27,7 +27,7 @@ pub fn recipient_key(file: &Path) -> Result<kb_client::sealed::RecipientKey> {
         id: String,
         private_key: Zeroizing<[u8; 32]>,
     }
-    let mut input = crate::state::open_private_file(file)?;
+    let mut input = crate::state::open_user_private_file(file)?;
     let mut bytes = Zeroizing::new(Vec::new());
     Read::by_ref(&mut input)
         .take(4097)
@@ -330,7 +330,7 @@ pub fn import_token(file: Option<&PathBuf>) -> Result<SecretToken> {
 }
 pub fn import_secret(file: Option<&PathBuf>, policy: InputPolicy) -> Result<SecretToken> {
     let mut reader: Box<dyn Read> = if let Some(path) = file {
-        Box::new(crate::state::open_private_file(path)?)
+        Box::new(crate::state::open_user_private_file(path)?)
     } else {
         if std::io::stdin().is_terminal() {
             bail!("pipe the token to stdin; interactive token entry is disabled");
@@ -412,7 +412,7 @@ pub enum Poll {
 /// whitespace trimming. Private no-follow files reuse the existing boundary.
 pub fn import_sealed_literal(file: Option<&PathBuf>) -> Result<kb_local::sealed::Literal> {
     let mut reader: Box<dyn Read> = if let Some(path) = file {
-        Box::new(crate::state::open_private_file(path)?)
+        Box::new(crate::state::open_user_private_file(path)?)
     } else {
         if std::io::stdin().is_terminal() {
             bail!("pipe the sealed literal to stdin");

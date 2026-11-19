@@ -175,6 +175,14 @@ argument once, when it is set. `kb mcp`, `kb model`, `kb sealed` and
 store; a directory that is not empty and has no `state.sqlite` is reported as
 "not a kb store" instead of being adopted.
 
+The store root (`--root` or `root`) and the data, cache and runtime
+directories are resolved once when `kb` starts, and only that resolved path is
+used afterwards. On Unix, the only symlinks followed there are root-owned ones
+in directories only root can change, such as macOS `/var` and `/tmp`, Fedora
+Atomic `/home` and `/var/run`. Any other symlink in these paths is refused:
+configure the path it points to. On Windows, no symlink or junction in them is
+followed.
+
 Built-in models (details in [embeddings](./embeddings.md#local-cli-built-in-shared-cache-and-worker)):
 `kb model list` shows every model and context tier with its memory estimate,
 whether it is downloaded and the recommendation; unknown models or tiers list

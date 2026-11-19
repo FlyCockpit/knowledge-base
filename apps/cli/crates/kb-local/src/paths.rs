@@ -205,6 +205,264 @@ fn check_components(root: &Path, rel: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Most symlinks one [`resolve_entry_path`] call follows.
+#[cfg(unix)]
+const MAX_ENTRY_LINKS: usize = 40;
+
+/// Resolve an entry-point path to its canonical spelling, once: `--root` (and
+/// every store root passed to [`crate::Store::open`] /
+/// [`crate::Store::open_existing`]) and the CLI's environment-derived data,
+/// cache and runtime directories (`HOME`, XDG, `KB_DATA_DIR`). Callers keep
+/// the returned path for every later open, lock, rename and fsync and run
+/// their strict checks on it; nothing below re-resolves it.
+///
+/// Unix: a symlink is followed only if no user but root can have made or
+/// changed it: the link is owned by uid 0, and every directory from `/` down
+/// to the one holding it is owned by uid 0 and not group- or other-writable
+/// (a sticky world-writable directory such as `/tmp` does not qualify). This
+/// admits system links such as macOS `/var` → `private/var` and `/tmp` →
+/// `private/tmp`, Fedora Atomic `/home` → `var/home` and `/var/run` → `../run`,
+/// and refuses every link another user could create or replace. Links inside
+/// a link's target obey the same rule; at most 40 are
+/// followed. A dangling link is refused. The existing part of the path is
+/// resolved; a missing tail is appended as written (it may not contain `..`)
+/// and is created later by callers that refuse links.
+///
+/// Windows: no link is trusted. A symlink, junction or other reparse point in
+/// the existing part of the path is refused; that part is then canonicalized
+/// (the verbatim spelling the store and its Git layer compare). Residual race,
+/// as for the no-follow walk below the store root: a junction swapped in
+/// between the walk and the canonicalization needs write access to a
+/// directory of the user's own path, which already defeats every per-use
+/// check.
+pub fn resolve_entry_path(path: &Path) -> Result<PathBuf, StoreError> {
+    resolve_entry_path_with(path, &EntryTrust::ROOT)
+}
+
+/// Who may own the links and directories [`resolve_entry_path`] follows.
+struct EntryTrust<'a> {
+    /// uid 0, plus this uid (tests: the current user, who cannot create
+    /// root-owned links).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    uid: u32,
+    /// Tests only: directories at or above this path count as root-controlled
+    /// (a test cannot make its temporary root's ancestors so).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    assume_controlled: Option<&'a Path>,
+}
+
+impl EntryTrust<'_> {
+    const ROOT: EntryTrust<'static> = EntryTrust {
+        uid: 0,
+        assume_controlled: None,
+    };
+}
+
+fn resolve_entry_path_with(path: &Path, trust: &EntryTrust<'_>) -> Result<PathBuf, StoreError> {
+    if path.as_os_str().is_empty() {
+        return Err(StoreError::UnsafePath("empty path".into()));
+    }
+    let absolute = std::path::absolute(path).map_err(StoreError::Io)?;
+    resolve_absolute(path, &absolute, trust)
+}
+
+fn entry_refusal(input: &Path, why: String) -> StoreError {
+    StoreError::UnsafePath(format!("`{}`: {why}", input.display()))
+}
+
+#[cfg(unix)]
+fn resolve_absolute(
+    input: &Path,
+    absolute: &Path,
+    trust: &EntryTrust<'_>,
+) -> Result<PathBuf, StoreError> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    enum Part {
+        Parent,
+        Name(OsString),
+        /// A trailing `/` or `/.`: what precedes must be a directory.
+        Directory,
+    }
+    // Reversed, so `pop` yields the next component. `spelled` is the path as
+    // written (`std::path::absolute` drops a trailing `/`).
+    fn parts(path: &Path, spelled: &Path) -> Vec<Part> {
+        let bytes = spelled.as_os_str().as_bytes();
+        let trailing = [b"/".as_slice(), b"/."]
+            .iter()
+            .any(|end| bytes.ends_with(end));
+        let mut parts: Vec<Part> = path
+            .components()
+            .filter_map(|component| match component {
+                Component::ParentDir => Some(Part::Parent),
+                Component::Normal(name) => Some(Part::Name(name.to_owned())),
+                Component::RootDir | Component::CurDir | Component::Prefix(_) => None,
+            })
+            .collect();
+        if trailing {
+            parts.push(Part::Directory);
+        }
+        parts.reverse();
+        parts
+    }
+    let trusted_uid = |uid: u32| uid == 0 || uid == trust.uid;
+    // `resolved` never contains a link: each component was `lstat`ed as a
+    // non-link, or is a link's resolution.
+    let mut resolved = PathBuf::from("/");
+    let mut pending = parts(absolute, input);
+    // `pending[floor..]` came from link targets, `pending[..floor]` from `input`.
+    let mut floor = usize::MAX;
+    let mut links = 0;
+    let mut missing = false;
+    while let Some(part) = pending.pop() {
+        let from_link = pending.len() >= floor;
+        let name = match part {
+            Part::Parent if missing => {
+                return Err(entry_refusal(
+                    input,
+                    "`..` follows a component that does not exist".into(),
+                ));
+            }
+            Part::Directory if missing => continue,
+            Part::Directory => {
+                // As the kernel requires: a searchable directory, not a file.
+                std::fs::symlink_metadata(resolved.join(".")).map_err(StoreError::Io)?;
+                continue;
+            }
+            Part::Parent => {
+                // `resolved` is canonical, so its parent is the real `..`,
+                // once `..` is valid here: a searchable directory (as the
+                // kernel requires; not a file).
+                std::fs::symlink_metadata(resolved.join(".")).map_err(StoreError::Io)?;
+                resolved.pop();
+                continue;
+            }
+            Part::Name(name) => name,
+        };
+        let candidate = resolved.join(&name);
+        if missing {
+            resolved = candidate;
+            continue;
+        }
+        let meta = match std::fs::symlink_metadata(&candidate) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && from_link => {
+                return Err(entry_refusal(
+                    input,
+                    format!(
+                        "a symlink on the path points to `{}`, which does not exist",
+                        candidate.display()
+                    ),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing = true;
+                resolved = candidate;
+                continue;
+            }
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+        if !meta.file_type().is_symlink() {
+            resolved = candidate;
+            continue;
+        }
+        links += 1;
+        if links > MAX_ENTRY_LINKS {
+            return Err(entry_refusal(
+                input,
+                "too many levels of symbolic links".into(),
+            ));
+        }
+        if !trusted_uid(meta.uid()) {
+            return Err(entry_refusal(
+                input,
+                format!(
+                    "`{}` is a symlink not owned by root; use the path it points to",
+                    candidate.display()
+                ),
+            ));
+        }
+        // Nearest first, so a refusal names the directory closest to the link.
+        for dir in resolved.ancestors() {
+            if trust
+                .assume_controlled
+                .is_some_and(|controlled| controlled.starts_with(dir))
+            {
+                break;
+            }
+            let dir_meta = std::fs::symlink_metadata(dir).map_err(StoreError::Io)?;
+            if !dir_meta.is_dir() || !trusted_uid(dir_meta.uid()) || dir_meta.mode() & 0o022 != 0 {
+                return Err(entry_refusal(
+                    input,
+                    format!(
+                        "the symlink `{}` is below `{}`, which is not a root-owned directory only root can write; use the path it points to",
+                        candidate.display(),
+                        dir.display()
+                    ),
+                ));
+            }
+        }
+        let target = std::fs::read_link(&candidate).map_err(StoreError::Io)?;
+        if target.is_absolute() {
+            resolved = PathBuf::from("/");
+        }
+        floor = floor.min(pending.len());
+        pending.extend(parts(&target, &target));
+    }
+    Ok(resolved)
+}
+
+#[cfg(windows)]
+fn resolve_absolute(
+    input: &Path,
+    absolute: &Path,
+    _trust: &EntryTrust<'_>,
+) -> Result<PathBuf, StoreError> {
+    // `std::path::absolute` already removed `.` and `..` lexically (the
+    // Windows path semantics) without following anything.
+    let mut existing = PathBuf::new();
+    let mut tail = Vec::new();
+    for component in absolute.components() {
+        if !tail.is_empty() {
+            match component {
+                Component::Normal(name) => tail.push(name.to_owned()),
+                _ => {
+                    return Err(entry_refusal(
+                        input,
+                        "unexpected component after a missing one".into(),
+                    ));
+                }
+            }
+            continue;
+        }
+        existing.push(component);
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        match std::fs::symlink_metadata(&existing) {
+            Ok(meta) if is_link(&meta) => {
+                return Err(entry_refusal(
+                    input,
+                    format!(
+                        "`{}` is a symlink, junction or reparse point; use the path it points to",
+                        existing.display()
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                existing.pop();
+                tail.push(name.to_owned());
+            }
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    let mut resolved = existing.canonicalize().map_err(StoreError::Io)?;
+    resolved.extend(tail);
+    Ok(resolved)
+}
+
 #[cfg(unix)]
 fn owner_only_mode_ok(meta: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -588,5 +846,285 @@ mod directory_durability_tests {
             offenders.is_empty(),
             "sync directories through paths::sync_dir: {offenders:?}"
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+#[allow(
+    clippy::print_stderr,
+    reason = "a test that cannot run on this system prints why it skipped"
+)]
+mod entry_path_tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    /// A private canonical directory per test (the resolver under test is
+    /// not used to make it).
+    struct Base(PathBuf);
+    impl Base {
+        fn new(tag: &str) -> Self {
+            let parent = std::env::temp_dir().canonicalize().expect("temp root");
+            let path = parent.join(format!(
+                "kb-entry-{tag}-{}",
+                crate::state::new_uuid_v4().expect("uuid")
+            ));
+            std::fs::create_dir(&path).expect("base");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                .expect("private base");
+            Self(path)
+        }
+        fn dir(&self, rel: &str, mode: u32) -> PathBuf {
+            let path = self.0.join(rel);
+            std::fs::create_dir_all(&path).expect("dir");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("mode");
+            path
+        }
+        /// Trust the current user's links and directories below the base,
+        /// and the temporary root above it as given.
+        fn trust(&self) -> EntryTrust<'_> {
+            EntryTrust {
+                uid: own_uid(),
+                assume_controlled: self.0.parent(),
+            }
+        }
+    }
+    impl Drop for Base {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn own_uid() -> u32 {
+        crate::model_download::own_uid().expect("uid")
+    }
+
+    fn refusal(result: Result<PathBuf, StoreError>) -> String {
+        match result {
+            Err(StoreError::UnsafePath(message)) => message,
+            other => panic!("expected an unsafe-path refusal, got {other:?}"),
+        }
+    }
+
+    /// The real root-owned system links of this OS: macOS has `/var` and
+    /// `/tmp`; merged-/usr Linux has `/bin`, `/sbin`, `/lib`; most Linux
+    /// systems have `/var/run`.
+    fn system_links() -> Vec<PathBuf> {
+        use std::os::unix::fs::MetadataExt;
+        [
+            "/var",
+            "/tmp",
+            "/etc",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/var/run",
+            "/var/lock",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| {
+            std::fs::symlink_metadata(path)
+                .is_ok_and(|meta| meta.file_type().is_symlink() && meta.uid() == 0)
+        })
+        .collect()
+    }
+
+    #[test]
+    fn root_owned_system_links_resolve_to_their_canonical_path() {
+        let links = system_links();
+        #[cfg(target_os = "macos")]
+        assert!(
+            links.contains(&PathBuf::from("/var")) && links.contains(&PathBuf::from("/tmp")),
+            "macOS has the root-owned /var and /tmp links: {links:?}"
+        );
+        if links.is_empty() {
+            eprintln!("skipped: this system has no root-owned symlink at a well-known path");
+            return;
+        }
+        for link in links {
+            let canonical = link.canonicalize().expect("canonical");
+            assert_ne!(canonical, link);
+            assert_eq!(resolve_entry_path(&link).expect("system link"), canonical);
+            // A missing tail below the link is kept as written.
+            let name = format!(
+                "kb-entry-missing-{}",
+                crate::state::new_uuid_v4().expect("uuid")
+            );
+            assert!(!canonical.join(&name).exists());
+            assert_eq!(
+                resolve_entry_path(&link.join(&name).join("store")).expect("missing tail"),
+                canonical.join(&name).join("store")
+            );
+        }
+    }
+
+    #[test]
+    fn macos_user_temp_root_under_var_resolves() {
+        // Real users' TMPDIR is `/var/folders/…/T/`, behind the root-owned
+        // `/var` link.
+        let temp = std::env::temp_dir();
+        if !temp.starts_with("/var/folders") {
+            eprintln!(
+                "skipped: TMPDIR `{}` is not under /var/folders",
+                temp.display()
+            );
+            return;
+        }
+        assert_eq!(
+            resolve_entry_path(&temp).expect("temp root"),
+            temp.canonicalize().expect("canonical")
+        );
+    }
+
+    #[test]
+    fn plain_paths_are_normalized_and_relative_paths_are_absolute() {
+        let base = Base::new("plain");
+        let dir = base.dir("a/b", 0o700);
+        let spelled = base.0.join("a/./b/../b");
+        assert_eq!(resolve_entry_path(&spelled).expect("plain"), dir);
+        let relative = resolve_entry_path(Path::new("kb-entry-relative")).expect("relative");
+        assert_eq!(
+            relative,
+            resolve_entry_path(&std::env::current_dir().expect("cwd"))
+                .expect("cwd")
+                .join("kb-entry-relative")
+        );
+        assert!(refusal(resolve_entry_path(Path::new(""))).contains("empty path"));
+        let after_missing = base.0.join("missing/../a");
+        assert!(refusal(resolve_entry_path(&after_missing)).contains("does not exist"));
+        // `..` is only valid after a searchable directory, as for the kernel.
+        std::fs::write(base.0.join("file"), b"x").expect("file");
+        let after_file = resolve_entry_path(&base.0.join("file/../a")).expect_err("ENOTDIR");
+        assert!(
+            matches!(&after_file, StoreError::Io(e) if e.raw_os_error() == Some(libc::ENOTDIR)),
+            "{after_file:?}"
+        );
+        // A trailing `/` or `/.` requires a directory, as for the kernel.
+        for spelled in ["file/", "file/."] {
+            let error = resolve_entry_path(Path::new(&format!("{}/{spelled}", base.0.display())))
+                .expect_err("trailing slash after a file");
+            assert!(
+                matches!(&error, StoreError::Io(e) if e.raw_os_error() == Some(libc::ENOTDIR)),
+                "{spelled}: {error:?}"
+            );
+        }
+        assert_eq!(
+            resolve_entry_path(Path::new(&format!("{}/a/b/", base.0.display()))).expect("dir/"),
+            dir
+        );
+        if own_uid() != 0 {
+            let closed = base.dir("closed", 0o700);
+            std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o600))
+                .expect("unsearchable");
+            let after_closed = resolve_entry_path(&closed.join("../a")).expect_err("EACCES");
+            std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o700))
+                .expect("restore");
+            assert!(
+                matches!(&after_closed, StoreError::Io(e) if e.kind() == io::ErrorKind::PermissionDenied),
+                "{after_closed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn user_owned_link_is_refused() {
+        if own_uid() == 0 {
+            eprintln!("skipped: running as root, so every link is root-owned");
+            return;
+        }
+        let base = Base::new("user-link");
+        let real = base.dir("real", 0o700);
+        let link = base.0.join("link");
+        symlink(&real, &link).expect("link");
+        let message = refusal(resolve_entry_path(&link.join("store")));
+        assert!(message.contains("not owned by root"), "{message}");
+        assert!(message.contains(&link.display().to_string()), "{message}");
+    }
+
+    #[test]
+    fn trusted_link_in_a_controlled_chain_resolves_with_nested_and_relative_targets() {
+        // The test seam trusts the current user, so a link like a system one
+        // can be built under the temporary root.
+        let base = Base::new("trusted");
+        let real = base.dir("real/inner", 0o700);
+        base.dir("links", 0o755);
+        // links/a -> ../real (relative), links/b -> <abs>/links/a/inner (nested)
+        symlink("../real", base.0.join("links/a")).expect("a");
+        symlink(base.0.join("links/a/inner"), base.0.join("links/b")).expect("b");
+        let trust = base.trust();
+        assert_eq!(
+            resolve_entry_path_with(&base.0.join("links/b/new"), &trust).expect("nested"),
+            real.join("new")
+        );
+        assert_eq!(
+            resolve_entry_path_with(&base.0.join("links/a/inner/../inner"), &trust)
+                .expect("dot-dot after a link is the target's parent"),
+            real
+        );
+    }
+
+    #[test]
+    fn link_in_a_sticky_world_writable_directory_is_refused() {
+        let base = Base::new("sticky");
+        let sticky = base.dir("sticky", 0o1777);
+        let real = base.dir("real", 0o700);
+        symlink(&real, sticky.join("link")).expect("link");
+        let message = refusal(resolve_entry_path_with(
+            &sticky.join("link/store"),
+            &base.trust(),
+        ));
+        assert!(
+            message.contains(&format!(
+                "`{}`, which is not a root-owned",
+                sticky.display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn link_in_a_group_writable_parent_or_ancestor_is_refused() {
+        let base = Base::new("group");
+        let real = base.dir("real", 0o700);
+        let group = base.dir("group", 0o770);
+        symlink(&real, group.join("link")).expect("link");
+        let message = refusal(resolve_entry_path_with(&group.join("link"), &base.trust()));
+        assert!(
+            message.contains(&format!("`{}`, which is not a root-owned", group.display())),
+            "{message}"
+        );
+        // Checked recursively: a private parent below a group-writable
+        // ancestor does not make the link trustworthy.
+        let ancestor = base.dir("ancestor", 0o775);
+        let parent = base.dir("ancestor/private", 0o700);
+        symlink(&real, parent.join("link")).expect("nested link");
+        let message = refusal(resolve_entry_path_with(&parent.join("link"), &base.trust()));
+        assert!(
+            message.contains(&format!(
+                "`{}`, which is not a root-owned",
+                ancestor.display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn dangling_and_looping_links_are_refused() {
+        let base = Base::new("dangling");
+        base.dir("links", 0o755);
+        let dangling = base.0.join("links/dangling");
+        symlink(base.0.join("nowhere"), &dangling).expect("dangling");
+        let message = refusal(resolve_entry_path_with(
+            &dangling.join("store"),
+            &base.trust(),
+        ));
+        assert!(message.contains("does not exist"), "{message}");
+        symlink("b", base.0.join("links/a")).expect("a");
+        symlink("a", base.0.join("links/b")).expect("b");
+        let message = refusal(resolve_entry_path_with(
+            &base.0.join("links/a"),
+            &base.trust(),
+        ));
+        assert!(message.contains("too many levels"), "{message}");
     }
 }

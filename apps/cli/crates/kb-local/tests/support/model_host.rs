@@ -39,10 +39,13 @@ fn fnv(path: &std::path::Path) -> u64 {
 pub fn runtime_dir(root: &std::path::Path) -> PathBuf {
     #[cfg(unix)]
     {
+        // Fixture roots sit under the temp root as spelled or canonical
+        // (`support::fixture`); either way the top is the fixture's own root.
         let temp = std::env::temp_dir();
+        let canonical = temp.canonicalize().unwrap_or_else(|_| temp.clone());
         let top = root
             .ancestors()
-            .find(|a| a.parent() == Some(temp.as_path()))
+            .find(|a| a.parent() == Some(temp.as_path()) || a.parent() == Some(canonical.as_path()))
             .unwrap_or(root);
         PathBuf::from(format!(
             "/tmp/kbr-{:016x}-{:04x}",

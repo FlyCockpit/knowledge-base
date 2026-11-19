@@ -303,6 +303,16 @@ pub fn open_private_file(path: &Path) -> Result<File> {
     check_file(&file)?;
     Ok(file)
 }
+/// A private file the user names on the command line (`--token-file`, a
+/// sealed literal or recipient key file): resolved once to its canonical path
+/// (only root-controlled system links such as macOS `/tmp` are followed; see
+/// `kb_local::paths::resolve_entry_path`), which the strict checks and the
+/// open then use.
+pub fn open_user_private_file(path: &Path) -> Result<File> {
+    let canonical = kb_local::paths::resolve_entry_path(path)
+        .with_context(|| format!("resolving `{}`", path.display()))?;
+    open_private_file(&canonical)
+}
 /// The one platform directory barrier (fsync, or the Windows writable-handle
 /// flush).
 fn sync_dir(path: &Path) -> Result<()> {

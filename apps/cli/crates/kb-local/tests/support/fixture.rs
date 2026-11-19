@@ -72,7 +72,12 @@ impl Fixture {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        // Canonical on Unix, as the CLI passes its resolved directories (the
+        // macOS temp root sits behind the `/var` -> `private/var` link).
+        let temp = std::env::temp_dir();
+        #[cfg(unix)]
+        let temp = temp.canonicalize().expect("canonical temp root");
+        let root = temp.join(format!(
             "kb-local-git-{tag}-{}-{n}-{nanos}",
             std::process::id()
         ));

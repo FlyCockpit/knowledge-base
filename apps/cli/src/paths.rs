@@ -11,8 +11,14 @@
 //! Any of these can be overridden with the `KB_CONFIG_DIR` / `KB_DATA_DIR`
 //! environment variables — useful for tests and for users who want everything
 //! in one place.
+//!
+//! The data, cache and runtime directories hold credentials, models and the
+//! worker socket: they are resolved once here, through
+//! [`kb_local::paths::resolve_entry_path`] (only root-controlled system
+//! links such as macOS `/var` are followed), and every caller uses that
+//! canonical path. The editable config directory is not resolved.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -28,13 +34,21 @@ pub fn config_dir() -> Result<PathBuf> {
     Ok(base.join(APP))
 }
 
+/// The canonical spelling of an environment-derived directory.
+fn resolve(dir: &Path, what: &str) -> Result<PathBuf> {
+    kb_local::paths::resolve_entry_path(dir)
+        .with_context(|| format!("resolving the {what} directory `{}`", dir.display()))
+}
+
 /// The directory for application-managed data (databases, caches, state).
 pub fn data_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("KB_DATA_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-    let base = dirs::data_dir().context("could not determine the user data directory")?;
-    Ok(base.join(APP))
+    let dir = match std::env::var_os("KB_DATA_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => dirs::data_dir()
+            .context("could not determine the user data directory")?
+            .join(APP),
+    };
+    resolve(&dir, "data")
 }
 
 /// Full path to the config file (`config.toml` inside [`config_dir`]).
@@ -50,7 +64,7 @@ pub fn credentials_dir() -> Result<PathBuf> {
 /// Per-user cache directory (`kb` under the platform cache dir).
 pub fn cache_dir() -> Result<PathBuf> {
     let base = dirs::cache_dir().context("could not determine the user cache directory")?;
-    Ok(base.join(APP))
+    resolve(&base.join(APP), "cache")
 }
 
 /// The per-user model cache shared by every store. `models_dir` in the
@@ -67,7 +81,7 @@ pub fn models_dir(config: &crate::config::Config) -> Result<PathBuf> {
 /// `<cache>/run`.
 pub fn runtime_dir() -> Result<PathBuf> {
     match dirs::runtime_dir() {
-        Some(dir) if dir.is_absolute() => Ok(dir.join(APP)),
+        Some(dir) if dir.is_absolute() => resolve(&dir.join(APP), "runtime"),
         _ => Ok(cache_dir()?.join("run")),
     }
 }

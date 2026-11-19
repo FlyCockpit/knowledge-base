@@ -582,16 +582,17 @@ fn prepare_root(
         }
         Err(error) => return Err(io_err(error)),
     }
-    // The root itself may sit under a symlinked parent (e.g. macOS /var);
-    // it is resolved once here and everything below is no-follow.
-    let canonical = root.canonicalize().map_err(io_err)?;
-    let meta = std::fs::metadata(&canonical).map_err(io_err)?;
-    if !meta.is_dir() {
+    // `root` was resolved once by `open_observed` (system links such as macOS
+    // `/var` only; `paths::resolve_entry_path`) and is never re-resolved:
+    // every level, existing or created here, must be a real directory, and
+    // everything below the root is no-follow.
+    let meta = std::fs::symlink_metadata(root).map_err(io_err)?;
+    if is_link(&meta) || !meta.is_dir() {
         return Err(StoreError::UnsafePath(
-            "store root is not a directory".into(),
+            "store root is a link or not a directory".into(),
         ));
     }
-    Ok(canonical)
+    Ok(root.to_path_buf())
 }
 
 #[cfg(unix)]
@@ -731,8 +732,11 @@ impl Store {
             }
             Err(error) => return Err(io_err(error)),
         }
-        let canonical = root.canonicalize().map_err(io_err)?;
-        if !std::fs::metadata(&canonical).map_err(io_err)?.is_dir() {
+        let canonical = crate::paths::resolve_entry_path(root)?;
+        if !std::fs::symlink_metadata(&canonical)
+            .map_err(io_err)?
+            .is_dir()
+        {
             return Err(StoreError::Explained(
                 ErrorCode::NotFound,
                 format!("`{}` is not a kb store directory", root.display()),
@@ -766,7 +770,7 @@ impl Store {
         root: &Path,
         observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
     ) -> Result<Store, StoreError> {
-        let root = prepare_root(root, observer)?;
+        let root = prepare_root(&crate::paths::resolve_entry_path(root)?, observer)?;
         let paths = StorePaths::new(root)?;
         if !state_present(&paths)? {
             // Fail closed before creating anything in a foreign directory.
