@@ -21,7 +21,7 @@ path = "src/lib.rs"
 kb-client = { path = "../kb-client", version = "1.0.0" }
 # Durable local registry. `bundled` compiles the pinned SQLite amalgamation
 # (no system libsqlite3 drift across macOS/Linux/Windows release targets).
-rusqlite = { version = "0.41.1", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.43.0", features = ["bundled", "hooks"] }
 # sqlite-vec is statically linked; it is registered only in sqlite_vec.rs.
 sqlite-vec = "=0.1.9"
 # OS RNG for the store UUID, owner principal and KB IDs (already in the tree
