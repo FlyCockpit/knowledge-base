@@ -106,7 +106,8 @@ As of 2026-11-18, all of these pass on Linux, with every Rust step run on both t
 - CLI CI on macOS: `kb-local` tests `index_reuse` (1), `owner_only` (6) and `qwen_process` (2).
 - CLI CI on Windows: credential-protection (DPAPI/ACL) tests fail on the hosted runner.
 - KB model smoke: the arm64 Gemma normalization parity is 0.99980, below the 0.9999 threshold, against the shared x64 fixture. This needs a decision on the threshold or a fixture per architecture.
-- Image Trivy scan: the pinned `age` v1.3.2 binaries are built with Go 1.27.0 and carry stdlib CVEs. This needs a decision: rebuild `age` from pinned source, or add a dated ignore.
+
+Tracking: `.trivyignore.yaml` ignores four Go stdlib CVEs in the pinned `age` v1.3.2 binaries only (path-scoped, expires 2027-01-17); drop it once `age` ships binaries built with a patched Go.
 
 ## Pull requests
 

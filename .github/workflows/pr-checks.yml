@@ -743,6 +743,8 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+          # Path-scoped, dated exceptions only (see the file header).
+          trivyignores: .trivyignore.yaml
           format: table
 
   # ── Required status check for the Docker matrix ───────────────────────
