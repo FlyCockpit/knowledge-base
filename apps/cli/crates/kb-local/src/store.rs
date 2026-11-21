@@ -462,7 +462,7 @@ pub struct Store {
     /// sees whether the built-in's file is actually there.
     model_cache: std::cell::RefCell<Option<crate::model_download::ModelCache>>,
     // Owns shutdown/join; expiry never outlives this handle.
-    _upload_timer: crate::uploads::UploadTimer,
+    upload_timer: crate::uploads::UploadTimer,
 }
 
 // ── Open / initialize ───────────────────────────────────────────────────────
@@ -883,7 +883,7 @@ impl Store {
             runtime_identity: Cell::new(crate::qwen::runtime_identity()),
             runtime_reconcile: std::cell::RefCell::new(RuntimeReconcile::new(launched)),
             model_cache: std::cell::RefCell::new(None),
-            _upload_timer: upload_timer,
+            upload_timer,
         };
         if let Some(_config) = locks::try_named_model_lock(&store.paths, "model-config.lock")? {
             store.recover_model_probe_locked()?;
@@ -973,6 +973,24 @@ impl Store {
     #[doc(hidden)]
     pub fn set_disk_meter_for_tests(&self, meter: crate::limits::DiskMeter) {
         self.disk_meter.set(meter);
+    }
+
+    /// The owned upload expiry timer's cadence ([`crate::uploads`], one minute).
+    #[doc(hidden)]
+    pub fn upload_timer_period_for_tests(&self) -> std::time::Duration {
+        self.upload_timer.period()
+    }
+
+    /// The period the owned upload timer's worker is blocked waiting on, if any.
+    #[doc(hidden)]
+    pub fn upload_timer_waiting_for_tests(&self) -> Option<std::time::Duration> {
+        self.upload_timer.waiting()
+    }
+
+    /// Run the same owned timer thread at a shorter cadence; never a tool input.
+    #[doc(hidden)]
+    pub fn set_upload_timer_period_for_tests(&self, period: std::time::Duration) {
+        self.upload_timer.set_period(period);
     }
 
     /// Test seam for the shared format's other variants; never a tool input.

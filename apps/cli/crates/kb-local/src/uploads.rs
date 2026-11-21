@@ -640,45 +640,88 @@ pub(crate) fn sweep_transfers(
     let uploads = sweep(conn, paths, now);
     Ok(exports? + uploads?)
 }
+/// The owned expiry timer's production cadence.
+pub(crate) const UPLOAD_TIMER_PERIOD: Duration = Duration::from_secs(60);
+#[derive(Debug)]
+struct TimerState {
+    stop: bool,
+    period: Duration,
+    /// The period the worker is blocked waiting on, if it is (tests only read it).
+    waiting: Option<Duration>,
+}
 #[derive(Debug)]
 pub(crate) struct UploadTimer {
-    stop: Arc<(Mutex<bool>, Condvar)>,
+    state: Arc<(Mutex<TimerState>, Condvar)>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl UploadTimer {
     pub(crate) fn start(paths: StorePaths) -> Result<Self, StoreError> {
-        let stop = Arc::new((Mutex::new(false), Condvar::new()));
-        let signal = stop.clone();
+        let state = Arc::new((
+            Mutex::new(TimerState {
+                stop: false,
+                period: UPLOAD_TIMER_PERIOD,
+                waiting: None,
+            }),
+            Condvar::new(),
+        ));
+        let signal = state.clone();
         let worker = std::thread::Builder::new()
             .name("kb-upload-expiry".into())
             .spawn(move || {
                 loop {
                     let (mutex, cv) = &*signal;
-                    let Ok(stopped) = mutex.lock() else { return };
-                    let Ok((stopped, _)) =
-                        cv.wait_timeout_while(stopped, Duration::from_secs(60), |stop| !*stop)
-                    else {
+                    let Ok(mut state) = mutex.lock() else { return };
+                    let period = state.period;
+                    // Set and cleared under the mutex the wait releases, so a
+                    // reader holding it sees Some only while the worker waits.
+                    state.waiting = Some(period);
+                    let Ok((mut state, wait)) = cv.wait_timeout_while(state, period, |state| {
+                        !state.stop && state.period == period
+                    }) else {
                         return;
                     };
-                    if *stopped {
+                    state.waiting = None;
+                    if state.stop {
                         return;
                     }
-                    drop(stopped);
+                    if !wait.timed_out() {
+                        continue; // the period changed: wait out the new one
+                    }
+                    drop(state);
                     let _ = timer_tick(&paths); // failed cleanup remains eligible
                 }
             })
             .map_err(StoreError::Io)?;
         Ok(Self {
-            stop,
+            state,
             worker: Some(worker),
         })
+    }
+    pub(crate) fn period(&self) -> Duration {
+        let (mutex, _) = &*self.state;
+        mutex
+            .lock()
+            .map_or(UPLOAD_TIMER_PERIOD, |state| state.period)
+    }
+    /// The period the worker is currently blocked waiting on, if any.
+    pub(crate) fn waiting(&self) -> Option<Duration> {
+        let (mutex, _) = &*self.state;
+        mutex.lock().ok().and_then(|state| state.waiting)
+    }
+    /// Restarts the worker's current wait with `period`.
+    pub(crate) fn set_period(&self, period: Duration) {
+        let (mutex, cv) = &*self.state;
+        if let Ok(mut state) = mutex.lock() {
+            state.period = period;
+            cv.notify_all();
+        }
     }
 }
 impl Drop for UploadTimer {
     fn drop(&mut self) {
-        let (mutex, cv) = &*self.stop;
-        if let Ok(mut stop) = mutex.lock() {
-            *stop = true;
+        let (mutex, cv) = &*self.state;
+        if let Ok(mut state) = mutex.lock() {
+            state.stop = true;
             cv.notify_all();
         }
         if let Some(worker) = self.worker.take() {

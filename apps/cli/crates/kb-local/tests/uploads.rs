@@ -1121,9 +1121,11 @@ fn admission_with_one_hundred_thousand_retained_receipts_preserves_binding_and_b
 }
 
 #[test]
-fn actual_minute_timer_reclaims_expiry_and_drop_notifies_under_writer_fence() {
+fn owned_timer_runs_every_minute_reclaims_expiry_and_drop_notifies_under_writer_fence() {
     let f = fixture::Fixture::new("upload-real-timer");
     let store = Store::open(&f.root.join("store")).expect("store");
+    let minute = std::time::Duration::from_secs(60);
+    assert_eq!(store.upload_timer_period_for_tests(), minute);
     let id = kb(&store, "real-timer");
     let who = store.owner();
     let expired = store
@@ -1144,18 +1146,32 @@ fn actual_minute_timer_reclaims_expiry_and_drop_notifies_under_writer_fence() {
     .expect("expire");
     drop(guard);
     // No service call or test tick may perform reclamation: this waits for
-    // the actual production condvar timeout and worker-owned SQLite/I/O.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(80);
+    // the owned worker's condvar timeout and its own SQLite/I/O, at a 200 ms
+    // cadence instead of the minute asserted above.
+    store.set_upload_timer_period_for_tests(std::time::Duration::from_millis(200));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while path.exists() {
         assert!(
             std::time::Instant::now() < deadline,
-            "owned minute timer did not reclaim"
+            "owned upload timer did not reclaim"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert_eq!(reserved(&store), 1);
     assert_eq!(std::fs::read(&historic).expect("historic"), b"history");
     write(&store, &who, &id, &live.upload_id, 0, b"x").expect("live stage");
+    // Back to the production minute, and wait until the worker is blocked in
+    // that minute's wait: only the drop's own notification can end it.
+    store.set_upload_timer_period_for_tests(minute);
+    assert_eq!(store.upload_timer_period_for_tests(), minute);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while store.upload_timer_waiting_for_tests() != Some(minute) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "owned upload timer never waited on the minute"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     let guard = store.lock_write(&[]).expect("shutdown fence");
     let start = std::time::Instant::now();
     drop(store);
