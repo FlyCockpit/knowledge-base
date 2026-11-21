@@ -15,68 +15,123 @@ const attempt = "11111111-2222-4333-8444-555555555555";
 const base = {};
 
 // Docker is an inert inspect fixture. No real Docker, database or credential IO.
-const dockerStub = `#!${process.execPath}
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const fixture = JSON.parse(fs.readFileSync(process.env.FIXTURE, 'utf8'));
-const project = ${JSON.stringify(project)};
-const out = (s) => process.stdout.write(s + '\\n');
-fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n');
-if (args[0] === 'ps') {
-  const scoped = args.includes('label=com.docker.compose.project=' + project);
-  const svc = args.find(s => s.startsWith('label=com.docker.compose.service='))?.split('=').at(-1);
-  const role = args.includes('label=io.knowledge-base.role=server');
-  // Without -a, docker ps lists running containers only.
-  const listed = (id) => { if (args.includes('-a') || !(fixture.stopped ?? []).includes(id)) out(id); };
-  if (!scoped) process.stdout.write(fixture.projects ?? project + '\\n');
-  else if (role) listed('server-id');
-  else if (svc === 'postgres') listed('pg-id');
-  else if (svc === 'worker') listed('worker-id');
-  else if (svc === 'backup') listed('backup-id');
-} else if (args[0] === 'inspect') {
-  const template = args[2];
-  if (template.includes('.Mounts')) out(template.includes('/var/lib/kb') ? '/srv/kb-data' : fixture.noBackups ? '' : '/srv/kb-backups');
-  else if (template.includes('.Config.Env')) out([
-    'DATABASE_URL=' + 'postgresql://writer:fixture@postgres:5432/kb',
-    'KB_DATA_ROOT=/var/lib/kb', ...(fixture.noBackupDir ? [] : ['BACKUP_DIR=/app/backups']), 'KB_MASTER_KEY=fixture-key',
-    'KB_INSTANCE_ID=fixture-instance', 'KB_ASSET_S3_SECRET_ACCESS_KEY=fixture-asset-secret',
-    'UNRELATED_SECRET=fixture-unrelated',
-  ].join('\\n'));
-  else if (template.includes('.NetworkSettings.Networks')) out('kb_private');
-  else if (template.includes('.Image')) out('image-id');
-  else if (template.includes('project.working_dir')) out(fixture.workingDir ?? '<no value>');
-  else if (template.includes('compose.service')) out(fixture.service ?? '<no value>');
-  else if (template.includes('config_files')) out(fixture.configFiles ?? '<no value>');
-  else process.exit(2);
-} else if (args[0] === 'image' && args[1] === 'inspect') {
-  if (fixture.imageGone) process.exit(1);
-} else if (args[0] === 'run') {
-  const names = process.env.FIXTURE_NAMES.split('\\n').filter(Boolean).sort();
-  fs.writeFileSync(process.env.RESULT, JSON.stringify({ args, names }));
-  if (process.env.MARK_RUN) {
-    fs.writeFileSync(process.env.MARK_RUN, '');
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-  }
-  if (args.includes('restore') && args.includes('/run/kb-restore.identity'))
-    process.exitCode = Number(fixture.restoreExit ?? 0);
-} else if (args[0] === 'stop') {
-  // Once: the first stop (after the prompt) is interrupted by a signal.
-  const signalled = process.env.CALLS + '.signalled';
-  if (fixture.stopSignal && !fs.existsSync(signalled)) {
-    fs.writeFileSync(signalled, '');
-    process.kill(process.ppid, fixture.stopSignal);
-  }
-  if (process.env.MARK) {
-    fs.writeFileSync(process.env.MARK, '');
-    // Give the reader time to leave before the shell's next write.
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-  }
-  process.exitCode = Number(fixture.stopExit ?? 0);
-} else if (args[0] === 'info') {
-  if (fixture.dockerDown) process.exit(1);
-} else if (args[0] === 'start') {
-} else process.exit(3);
+// A bash script, not Node: host.sh calls docker a dozen times per run, and a
+// Node start per call was most of this file's time. The fixture arrives as
+// HOST_FIXTURE_* variables (fixtureEnv). Each call appends
+// "<argc>\0<arg>\0…" to $CALLS; `run` writes "<argc>\0<arg>\0…<env-file names>"
+// to $RESULT.
+const dockerStub = `#!/usr/bin/env bash
+project=${project}
+has() { local want=$1 arg; shift; for arg in "$@"; do [ "$arg" = "$want" ] && return 0; done; return 1; }
+{ printf '%s\\0' "$#" "$@"; } >>"$CALLS"
+case "$1" in
+  ps)
+    svc=
+    for arg in "$@"; do
+      case "$arg" in label=com.docker.compose.service=*) svc=\${arg##*=}; break ;; esac
+    done
+    # Without -a, docker ps lists running containers only.
+    listed() { if has -a "$@" || ! has "$id" $HOST_FIXTURE_STOPPED; then echo "$id"; fi; }
+    if ! has "label=com.docker.compose.project=$project" "$@"; then
+      if [ -n "\${HOST_FIXTURE_PROJECTS+set}" ]; then printf '%s' "$HOST_FIXTURE_PROJECTS"
+      else printf '%s\\n' "$project"; fi
+    elif has label=io.knowledge-base.role=server "$@"; then id=server-id listed "$@"
+    elif [ "$svc" = postgres ]; then id=pg-id listed "$@"
+    elif [ "$svc" = worker ]; then id=worker-id listed "$@"
+    elif [ "$svc" = backup ]; then id=backup-id listed "$@"
+    fi ;;
+  inspect)
+    template=$3
+    if [[ $template == *.Mounts* ]]; then
+      if [[ $template == */var/lib/kb* ]]; then echo /srv/kb-data
+      elif [ -n "\${HOST_FIXTURE_NO_BACKUPS:-}" ]; then echo
+      else echo /srv/kb-backups; fi
+    elif [[ $template == *.Config.Env* ]]; then
+      # Format and value apart, so the line reads as no literal database URL.
+      printf 'DATABASE_URL=%s\\n' postgresql://writer:fixture@postgres:5432/kb
+      echo KB_DATA_ROOT=/var/lib/kb
+      if [ -z "\${HOST_FIXTURE_NO_BACKUP_DIR:-}" ]; then echo BACKUP_DIR=/app/backups; fi
+      printf '%s\\n' KB_MASTER_KEY=fixture-key KB_INSTANCE_ID=fixture-instance \\
+        KB_ASSET_S3_SECRET_ACCESS_KEY=fixture-asset-secret UNRELATED_SECRET=fixture-unrelated
+    elif [[ $template == *.NetworkSettings.Networks* ]]; then echo kb_private
+    elif [[ $template == *.Image* ]]; then echo image-id
+    elif [[ $template == *project.working_dir* ]]; then echo "\${HOST_FIXTURE_WORKING_DIR-<no value>}"
+    elif [[ $template == *compose.service* ]]; then echo "\${HOST_FIXTURE_SERVICE-<no value>}"
+    elif [[ $template == *config_files* ]]; then echo "\${HOST_FIXTURE_CONFIG_FILES-<no value>}"
+    else exit 2
+    fi ;;
+  image)
+    if [ "$2" != inspect ]; then exit 3; fi
+    if [ -n "\${HOST_FIXTURE_IMAGE_GONE:-}" ]; then exit 1; fi ;;
+  run)
+    names=
+    for ((index=1; index<=$#; index++)); do
+      if [ "\${!index}" = --env-file ]; then
+        next=$((index + 1)); names=$(cut -d= -f1 "\${!next}"); break
+      fi
+    done
+    { printf '%s\\0' "$#" "$@"; printf '%s' "$names"; } >"$RESULT"
+    if [ -n "\${MARK_RUN:-}" ]; then : >"$MARK_RUN"; sleep 0.3; fi
+    if has restore "$@" && has /run/kb-restore.identity "$@"; then exit "\${HOST_FIXTURE_RESTORE_EXIT:-0}"; fi ;;
+  stop)
+    # Once: the first stop (after the prompt) is interrupted by a signal.
+    if [ -n "\${HOST_FIXTURE_STOP_SIGNAL:-}" ] && [ ! -e "$CALLS.signalled" ]; then
+      : >"$CALLS.signalled"
+      kill -s "$HOST_FIXTURE_STOP_SIGNAL" "$PPID"
+    fi
+    if [ -n "\${MARK:-}" ]; then
+      : >"$MARK"
+      # Give the reader time to leave before the shell's next write.
+      sleep 0.3
+    fi
+    exit "\${HOST_FIXTURE_STOP_EXIT:-0}" ;;
+  info)
+    if [ -n "\${HOST_FIXTURE_DOCKER_DOWN:-}" ]; then exit 1; fi ;;
+  start) ;;
+  *) exit 3 ;;
+esac
+exit 0
 `;
+
+const FIXTURE_ENV = {
+  dockerDown: "HOST_FIXTURE_DOCKER_DOWN",
+  projects: "HOST_FIXTURE_PROJECTS",
+  stopped: "HOST_FIXTURE_STOPPED",
+  noBackups: "HOST_FIXTURE_NO_BACKUPS",
+  noBackupDir: "HOST_FIXTURE_NO_BACKUP_DIR",
+  imageGone: "HOST_FIXTURE_IMAGE_GONE",
+  workingDir: "HOST_FIXTURE_WORKING_DIR",
+  service: "HOST_FIXTURE_SERVICE",
+  configFiles: "HOST_FIXTURE_CONFIG_FILES",
+  restoreExit: "HOST_FIXTURE_RESTORE_EXIT",
+  stopSignal: "HOST_FIXTURE_STOP_SIGNAL",
+  stopExit: "HOST_FIXTURE_STOP_EXIT",
+};
+
+/** The fixture as the stub's environment; an unknown key is a test bug. */
+function fixtureEnv(fixture) {
+  const env = {};
+  for (const [key, value] of Object.entries(fixture)) {
+    const name = FIXTURE_ENV[key];
+    if (name === undefined) throw new Error(`unknown host fixture key ${key}`);
+    if (value === undefined || value === false) continue;
+    env[name] = Array.isArray(value) ? value.join(" ") : value === true ? "1" : String(value);
+  }
+  return env;
+}
+
+/** NUL-separated "<argc>\0<arg>\0…" records, and what follows the last one. */
+function parseCalls(text) {
+  const fields = text.split("\0");
+  const calls = [];
+  let at = 0;
+  while (at < fields.length - 1) {
+    const count = Number(fields[at++]);
+    calls.push(fields.slice(at, at + count));
+    at += count;
+  }
+  return { calls, rest: fields.slice(at).join("\0") };
+}
 
 /**
  * Real host.sh functions (sourced, then `body`), inert Docker boundary on an
@@ -96,29 +151,10 @@ function run(
 ) {
   const dir = mkdtempSync(join(tmpdir(), "kb-host-test-"));
   try {
-    writeFileSync(join(dir, "docker.cjs"), dockerStub);
-    writeFileSync(
-      join(dir, "docker"),
-      `#!/usr/bin/env bash
-FIXTURE_NAMES=""
-if [ "$1" = run ]; then
-  previous=""
-  for arg in "$@"; do
-    if [ "$previous" = --env-file ]; then
-      FIXTURE_NAMES="$(cut -d= -f1 "$arg" | sort)"
-      break
-    fi
-    previous="$arg"
-  done
-fi
-export FIXTURE_NAMES
-exec ${process.execPath} "$FIXTURE_SCRIPT" "$@"
-`,
-    );
+    writeFileSync(join(dir, "docker"), dockerStub);
     chmodSync(join(dir, "docker"), 0o755);
     const identity = join(dir, "identity");
     writeFileSync(identity, "fixture identity\n");
-    writeFileSync(join(dir, "fixture.json"), JSON.stringify(fixture));
     // Node starts children with SIGPIPE ignored; a terminal shell has it at the
     // default (fatal), so restore that before bash starts (GNU env, Linux-only).
     const result = spawnSync(
@@ -132,10 +168,9 @@ exec ${process.execPath} "$FIXTURE_SCRIPT" "$@"
         env: {
           PATH: `${dir}:${process.env.PATH}`,
           IDENTITY: identity,
-          FIXTURE: join(dir, "fixture.json"),
-          RESULT: join(dir, "result.json"),
-          CALLS: join(dir, "calls.jsonl"),
-          FIXTURE_SCRIPT: join(dir, "docker.cjs"),
+          ...fixtureEnv(fixture),
+          RESULT: join(dir, "result"),
+          CALLS: join(dir, "calls"),
           ...(markOnStop ? { MARK: join(dir, "stopped") } : {}),
           ...(markOnRun ? { MARK_RUN: join(dir, "restoring") } : {}),
           ...(gone ? { HOST_TEST_GONE: join(dir, "reader-gone") } : {}),
@@ -144,14 +179,15 @@ exec ${process.execPath} "$FIXTURE_SCRIPT" "$@"
     );
     let invocation = null;
     try {
-      invocation = JSON.parse(readFileSync(join(dir, "result.json"), "utf8"));
+      const {
+        calls: [args],
+        rest,
+      } = parseCalls(readFileSync(join(dir, "result"), "utf8"));
+      invocation = { args, names: rest.split("\n").filter(Boolean).sort() };
     } catch {}
     let calls = [];
     try {
-      calls = readFileSync(join(dir, "calls.jsonl"), "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
+      calls = parseCalls(readFileSync(join(dir, "calls"), "utf8")).calls;
     } catch {}
     return { ...result, invocation, calls };
   } finally {
@@ -169,6 +205,15 @@ const restoreCall = `main restore ${restoreArgs}`;
 // The terminal check and the typed answer are seams; everything else is real.
 const confirmed = `stdin_is_terminal() { return 0; }\nread_answer() { answer=${project}; }`;
 const restoreBody = `${confirmed}\n${restoreCall}`;
+
+test("the Docker stub refuses commands it does not model", () => {
+  // host.sh calling an unmodelled Docker command must fail loudly, not pass.
+  for (const command of ["frobnicate", "image rm image-id", "volume ls"]) {
+    const result = run(base, { body: `docker ${command}` });
+    assert.equal(result.status, 3, command);
+  }
+  assert.equal(run(base, { body: "docker image inspect image-id" }).status, 0);
+});
 
 test("host can be sourced without discovering or changing anything", () => {
   const result = run(base, { body: ":" });
