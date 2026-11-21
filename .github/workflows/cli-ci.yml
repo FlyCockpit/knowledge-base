@@ -101,9 +101,10 @@ jobs:
       # Offline cargo metadata inspects every target, including non-host crates.
       - run: cargo fetch --locked
       - run: node --test scripts/test-clean.test.mjs
+      # Includes kb-local's `index` and `index_recovery` binaries (real SQLite
+      # FTS5 and sqlite-vec generations); the `targets` job runs those two on
+      # the remaining release architectures.
       - run: node scripts/test-clean.mjs cargo test --workspace --all-targets --locked
-      - name: Real SQLite FTS5 and sqlite-vec generations
-        run: node scripts/test-clean.mjs cargo test -p kb-local --test index --test index_recovery --locked
       # Every native platform selects the real adapter; no mock or skipped lane.
       # The hosted Ubuntu image ships neither a session bus launcher nor a
       # Secret Service; the smoke starts its own disposable instance of both.

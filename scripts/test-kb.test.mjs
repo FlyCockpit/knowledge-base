@@ -1671,6 +1671,7 @@ it("flk13 all and deployment consume the prebuilt project tag and clean only the
   const log = join(dir, "commands.jsonl");
   const suiteLog = join(dir, "suites.jsonl");
   const inspectFailure = join(dir, "inspect-failure");
+  const deployed = join(dir, "deployed");
   const foreign = ["kb-mirror-ssh-fixture:kb-test-mirror-222-bbbbbb", "other-project:latest"];
   const fixtureProgram = `import {createSshFixture} from ${JSON.stringify(join(ROOT, "packages/test-utils/src/kb/ssh.ts"))};const fixture=await createSshFixture();await fixture.close();`;
   const dockerProgram = `#!${process.execPath}
@@ -1705,24 +1706,29 @@ if(args[0]==='port') process.stdout.write('127.0.0.1:22222\\n');
     writeFileSync(join(dir, "docker"), dockerProgram, { mode: 0o755 });
     writeFileSync(join(dir, "sync"), `#!${process.execPath}\n`, { mode: 0o755 });
     writeFileSync(join(dir, "make"), `#!${process.execPath}\n`, { mode: 0o755 });
+    // The suite after deployment in all may prebuild the CLI; never compile here.
+    writeFileSync(join(dir, "cargo"), `#!${process.execPath}\n`, { mode: 0o755 });
     for (const mode of ["deployment", "all"]) {
       writeFileSync(state, JSON.stringify({ images: foreign, history: [] }));
       writeFileSync(log, "");
       writeFileSync(suiteLog, "");
       rmSync(inspectFailure, { force: true });
+      rmSync(deployed, { force: true });
       writeFileSync(
         join(dir, "pnpm"),
         `#!${process.execPath}
-import {appendFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';
+import {appendFileSync,existsSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';
 appendFileSync(${JSON.stringify(suiteLog)},JSON.stringify(process.env.KB_TEST_SUITE)+'\\n');
-// Earlier suites in all have their own fixtures; only deployment consumes SSH here.
-if(process.env.KB_TEST_SUITE!=='deployment') process.exit(0);
+// Other suites have their own fixtures; only deployment consumes SSH here.
+// all stops at the first suite after deployment, so it must advance past a
+// completed suite but never admits a lane beyond that one.
+if(process.env.KB_TEST_SUITE!=='deployment') process.exit(existsSync(${JSON.stringify(deployed)}) ? 77 : 0);
 writeFileSync(${JSON.stringify(inspectFailure)},'kill metadata probes after prebuild');
 const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',${JSON.stringify(fixtureProgram)}],{stdio:'inherit'});
 if(result.status!==0) process.exit(result.status ?? 1);
 console.log('flk13 deployment fixture consumed');
-// Stop all after deployment so this probe never admits later lanes.
-process.exit(${mode === "all" ? 77 : 0});
+writeFileSync(${JSON.stringify(deployed)},'');
+process.exit(0);
 `,
         { mode: 0o755 },
       );
@@ -1739,10 +1745,9 @@ process.exit(${mode === "all" ? 77 : 0});
         .split("\n")
         .map((line) => JSON.parse(line));
       const registered = Object.keys(SUITES);
-      assert.deepEqual(
-        suites,
-        mode === "all" ? registered.slice(0, registered.indexOf("deployment") + 1) : ["deployment"],
-      );
+      const after = registered.indexOf("deployment") + 1;
+      assert.ok(after < registered.length, "a suite follows deployment in all");
+      assert.deepEqual(suites, mode === "all" ? registered.slice(0, after + 1) : ["deployment"]);
       const commands = readFileSync(log, "utf8")
         .trim()
         .split("\n")

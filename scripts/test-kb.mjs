@@ -43,32 +43,37 @@ const ARTIFACT_DIR = join(tmpdir(), "kb-test-artifacts");
 
 /** @typedef {{ include: string[]; isolatedFirst?: string[]; services: Array<"postgres"|"redis">; nodeTests?: string[]; requireDocker?: boolean; supervised?: boolean; playwright?: string; qwenModel?: boolean; age?: boolean; imageGit?: { reached: string[] } }} Suite */
 
-/** @type {Record<string, Suite>} */
+/**
+ * Longest CI job first: main-checks.yml starts one matrix job per suite in this
+ * order with max-parallel 3, so a long suite listed last stretches the whole run.
+ * Ordered by job wall time on main (three runs, Nov 2026: deployment and
+ * browser ~9-10 min each, down to egress ~35 s); put a new suite where its
+ * job time falls. `pnpm test:kb all` runs them in this order too.
+ * @type {Record<string, Suite>}
+ */
 export const SUITES = {
-  "asset-migration": {
-    include: ["packages/test-utils/src/kb/asset-storage-migration.integration.test.ts"],
-    nodeTests: [
-      "scripts/lib/asset-storage-control.test.mjs",
-      "scripts/generate-dokploy-config.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  "asset-storage": {
-    include: ["packages/test-utils/src/kb/asset-storage.integration.test.ts"],
-    services: ["postgres"],
-  },
   deployment: {
     include: ["packages/test-utils/src/kb/deployment.integration.test.ts"],
     services: ["postgres", "redis"],
   },
-  restore: {
+  // Real Chromium against the seeded fixture origin (apps/web/tests/kb-*.spec.ts).
+  browser: {
+    include: [],
+    services: ["postgres", "redis"],
+    playwright: "apps/web/playwright.kb.config.ts",
+  },
+  "client-interop": {
     include: [
-      "packages/test-utils/src/kb/restore.integration.test.ts",
-      "packages/test-utils/src/kb/asset-storage-offline.integration.test.ts",
+      "packages/test-utils/src/kb/client-interop.integration.test.ts",
+      "packages/test-utils/src/kb/remote-stdio.integration.test.ts",
     ],
-    nodeTests: ["scripts/lib/kb-restore.test.mjs", "scripts/restore-archive.test.mjs"],
-    services: ["postgres"],
-    age: true,
+    services: [],
+  },
+  // The Rust kb-client (apps/cli/crates/kb-client/tests/sdk_interop.rs)
+  // against the official TS MCP SDK server; needs cargo, no services.
+  parity: {
+    include: ["packages/test-utils/src/kb/parity.integration.test.ts"],
+    services: ["postgres", "redis"],
   },
   backup: {
     include: [
@@ -84,27 +89,25 @@ export const SUITES = {
     // Real age/age-keygen: the pinned release, provisioned by resolveAgeDir().
     age: true,
   },
-  "git-push": {
+  exports: {
+    // The RSS-bound test runs first, alone, in its own Vitest process,
+    // so no earlier test's heap can skew its 160 MiB bound.
+    isolatedFirst: [
+      "packages/test-utils/src/kb/exports-rss.integration.test.ts",
+      "packages/test-utils/src/kb/exports-s3-rss.integration.test.ts",
+    ],
     include: [
-      "packages/test-utils/src/kb/git-push.integration.test.ts",
-      "apps/server/src/git-pre-receive.test.ts",
-      "apps/server/src/push-context.test.ts",
-      "packages/api/src/lib/kb/push-validation.test.ts",
+      "packages/test-utils/src/kb/exports-rss.integration.test.ts",
+      "packages/test-utils/src/kb/exports-s3-rss.integration.test.ts",
+      "packages/test-utils/src/kb/exports.integration.test.ts",
+      "packages/test-utils/src/kb/exports-cli.integration.test.ts",
+      "packages/api/src/lib/kb/transfers.integration.test.ts",
+      "packages/api/src/lib/kb/exports.test.ts",
+      "packages/api/src/lib/kb/transfers.test.ts",
+      "packages/api/src/routers/kb-exports.test.ts",
+      "apps/server/src/kb-export-routes.test.ts",
     ],
     services: ["postgres"],
-    imageGit: { reached: ["path http-backend", "core git receive-pack", "core git merge-base"] },
-    supervised: true,
-  },
-  "git-http": {
-    include: [
-      "packages/test-utils/src/kb/git-http.integration.test.ts",
-      "apps/server/src/git-http.test.ts",
-      "apps/server/src/git-cgi.test.ts",
-      "packages/api/src/lib/kb/push-spool.test.ts",
-    ],
-    services: ["postgres"],
-    imageGit: { reached: ["path http-backend", "core git upload-pack"] },
-    supervised: true,
   },
   mcp: {
     include: [
@@ -127,6 +130,87 @@ export const SUITES = {
     ],
     services: ["postgres"],
   },
+  pr: {
+    include: [
+      "packages/test-utils/src/kb/pr.integration.test.ts",
+      "packages/api/src/lib/kb/pr-merge.test.ts",
+      "packages/api/src/lib/kb/merge-scratch.test.ts",
+      "packages/api/src/lib/kb/diff.test.ts",
+      "packages/api/src/lib/kb/pull-requests.test.ts",
+      "packages/api/src/routers/pull-requests.test.ts",
+    ],
+    services: ["postgres"],
+    imageGit: { reached: ["path merge-tree"] },
+  },
+  // Built-in embedder runtime config change: memory gate, new
+  // fingerprint, sequential re-embedding under the DB lease, rebuild notices.
+  "qwen-reembed": {
+    include: [
+      "packages/test-utils/src/kb/qwen-reembed.integration.test.ts",
+      "packages/test-utils/src/kb/model-runtime-io.integration.test.ts",
+      "packages/test-utils/src/kb/builtin-memory.integration.test.ts",
+      "packages/api/src/lib/kb/qwen-runtime-config.test.ts",
+      "packages/api/src/routers/kb-model.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  // Both pinned artifacts (KB_QWEN_MODEL_PATH / KB_GEMMA_MODEL_PATH, cached by SHA),
+  // host real-child tests, then the built Node 26 trixie-slim worker image on the native
+  // arch (scripts/test-qwen-image.mjs). Never part of `pnpm gate`; never skips.
+  "qwen-model": {
+    include: [
+      "packages/test-utils/src/kb/qwen-model.integration.test.ts",
+      "packages/test-utils/src/kb/gemma-model.integration.test.ts",
+    ],
+    services: ["postgres"],
+    qwenModel: true,
+  },
+  "git-http": {
+    include: [
+      "packages/test-utils/src/kb/git-http.integration.test.ts",
+      "apps/server/src/git-http.test.ts",
+      "apps/server/src/git-cgi.test.ts",
+      "packages/api/src/lib/kb/push-spool.test.ts",
+    ],
+    services: ["postgres"],
+    imageGit: { reached: ["path http-backend", "core git upload-pack"] },
+    supervised: true,
+  },
+  mirror: {
+    include: [
+      "packages/test-utils/src/kb/mirror.integration.test.ts",
+      "apps/worker/src/handlers/push-mirror.test.ts",
+      "apps/worker/src/lib/mirror-ssh.test.ts",
+      "packages/api/src/lib/kb/ssh-url.test.ts",
+      "packages/api/src/lib/kb/deploy-key.test.ts",
+      "packages/api/src/lib/kb/mirror.test.ts",
+      "packages/api/src/routers/kb-mirror.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  // R3-W3: the built server/worker entrypoints never print a credential on an
+  // import-time failure (malformed or unreachable credential-bearing URLs).
+  "entry-canary": {
+    include: ["packages/test-utils/src/kb/entry-canary.integration.test.ts"],
+    services: ["postgres", "redis"],
+    imageGit: { reached: ["path --version"] },
+  },
+  "git-push": {
+    include: [
+      "packages/test-utils/src/kb/git-push.integration.test.ts",
+      "apps/server/src/git-pre-receive.test.ts",
+      "apps/server/src/push-context.test.ts",
+      "packages/api/src/lib/kb/push-validation.test.ts",
+    ],
+    services: ["postgres"],
+    imageGit: { reached: ["path http-backend", "core git receive-pack", "core git merge-base"] },
+    supervised: true,
+  },
+  harness: {
+    include: ["packages/test-utils/src/kb/harness.integration.test.ts"],
+    services: ["postgres", "redis"],
+    nodeTests: ["scripts/test-kb.test.mjs", "scripts/build-embedding-runtime.test.mjs"],
+  },
   admission: {
     include: [
       "packages/test-utils/src/kb/admission.integration.test.ts",
@@ -142,282 +226,11 @@ export const SUITES = {
     ],
     services: ["postgres"],
   },
-  oauth: {
-    include: [
-      "packages/test-utils/src/kb/cimd.integration.test.ts",
-      "packages/test-utils/src/kb/oauth.integration.test.ts",
-      "packages/auth/src/mcp-plugins.test.ts",
-      "apps/server/src/mcp-authorize-scope-guard.test.ts",
-      "apps/server/src/mcp-discovery.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  consent: {
-    include: [
-      "packages/test-utils/src/kb/consent.integration.test.ts",
-      "packages/auth/src/mcp-consent.test.ts",
-      "packages/auth/src/mcp-refresh.test.ts",
-      "packages/auth/src/mcp-grant.test.ts",
-      "packages/api/src/routers/mcp-consent.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  grants: {
-    include: [
-      "packages/test-utils/src/kb/grants.integration.test.ts",
-      "packages/api/src/lib/mcp-token-access.test.ts",
-      "packages/api/src/lib/kb/permissions.test.ts",
-      "packages/api/src/routers/mcp-tokens.test.ts",
-      "packages/api/src/routers/mcp-grants.test.ts",
-      "packages/auth/src/mcp-config.test.ts",
-      "packages/auth/src/mcp-grant.test.ts",
-      "packages/auth/src/ban.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  sealed: {
-    include: [
-      "packages/test-utils/src/kb/sealed.integration.test.ts",
-      "packages/api/src/lib/kb/sealed-reference.test.ts",
-      "packages/api/src/lib/kb/sealed-records.test.ts",
-      "packages/api/src/lib/kb/sealed-resolve.test.ts",
-      "packages/api/src/lib/kb/sealed-envelope.test.ts",
-      "packages/api/src/routers/kb-sealed.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  mirror: {
-    include: [
-      "packages/test-utils/src/kb/mirror.integration.test.ts",
-      "apps/worker/src/handlers/push-mirror.test.ts",
-      "apps/worker/src/lib/mirror-ssh.test.ts",
-      "packages/api/src/lib/kb/ssh-url.test.ts",
-      "packages/api/src/lib/kb/deploy-key.test.ts",
-      "packages/api/src/lib/kb/mirror.test.ts",
-      "packages/api/src/routers/kb-mirror.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  "model-download": {
-    include: [
-      "packages/test-utils/src/kb/model-download.integration.test.ts",
-      "packages/test-utils/src/kb/model-transport.integration.test.ts",
-      "packages/api/src/lib/kb/builtin-registry.test.ts",
-      "packages/api/src/lib/kb/model-artifact.test.ts",
-      "packages/api/src/lib/kb/local-model.test.ts",
-      "packages/api/src/routers/kb-model.test.ts",
-      "apps/worker/src/handlers/download-model.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  // The Rust kb-client (apps/cli/crates/kb-client/tests/sdk_interop.rs)
-  // against the official TS MCP SDK server; needs cargo, no services.
-  parity: {
-    include: ["packages/test-utils/src/kb/parity.integration.test.ts"],
-    services: ["postgres", "redis"],
-  },
-  "client-interop": {
-    include: [
-      "packages/test-utils/src/kb/client-interop.integration.test.ts",
-      "packages/test-utils/src/kb/remote-stdio.integration.test.ts",
-    ],
-    services: [],
-  },
-  "qwen-process": {
-    include: [
-      "packages/test-utils/src/kb/qwen-process.integration.test.ts",
-      "apps/worker/src/lib/qwen-lifecycle.test.ts",
-      "apps/worker/src/lib/qwen-child.test.ts",
-    ],
-    services: [],
-  },
-  // Both pinned artifacts (KB_QWEN_MODEL_PATH / KB_GEMMA_MODEL_PATH, cached by SHA),
-  // host real-child tests, then the built Node 26 trixie-slim worker image on the native
-  // arch (scripts/test-qwen-image.mjs). Never part of `pnpm gate`; never skips.
-  "qwen-model": {
-    include: [
-      "packages/test-utils/src/kb/qwen-model.integration.test.ts",
-      "packages/test-utils/src/kb/gemma-model.integration.test.ts",
-    ],
-    services: ["postgres"],
-    qwenModel: true,
-  },
-  // Built-in embedder runtime config change: memory gate, new
-  // fingerprint, sequential re-embedding under the DB lease, rebuild notices.
-  "qwen-reembed": {
-    include: [
-      "packages/test-utils/src/kb/qwen-reembed.integration.test.ts",
-      "packages/test-utils/src/kb/model-runtime-io.integration.test.ts",
-      "packages/test-utils/src/kb/builtin-memory.integration.test.ts",
-      "packages/api/src/lib/kb/qwen-runtime-config.test.ts",
-      "packages/api/src/routers/kb-model.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  search: {
-    include: [
-      "packages/test-utils/src/kb/search.integration.test.ts",
-      "packages/api/src/lib/kb/search.test.ts",
-      "packages/api/src/lib/kb/rrf.test.ts",
-      "packages/api/src/lib/kb/citation.test.ts",
-      "packages/api/src/routers/search.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  "structured-search": {
-    include: [
-      "packages/test-utils/src/kb/structured-search.integration.test.ts",
-      "packages/api/src/lib/kb/structured-search.test.ts",
-      "packages/api/src/lib/kb/structured.test.ts",
-      "packages/api/src/lib/kb/search.test.ts",
-      "packages/api/src/lib/kb/cursor.test.ts",
-      "packages/api/src/routers/search.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  // Bounded retention, credential artifact windows and audit coverage.
-  retention: {
-    include: [
-      "packages/test-utils/src/kb/retention-boundaries.integration.test.ts",
-      "packages/test-utils/src/kb/retention.integration.test.ts",
-      "packages/api/src/lib/kb/retention.test.ts",
-      "packages/api/src/lib/kb/audit-map.test.ts",
-      "apps/worker/src/handlers/kb-retention.test.ts",
-      "apps/worker/src/handlers/reap-expired-auth-tokens.test.ts",
-      "apps/server/src/kb-staging-cleanup.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  "query-embedding": {
-    include: [
-      "packages/test-utils/src/kb/query-embedding.integration.test.ts",
-      "packages/api/src/lib/kb/query-embedding.test.ts",
-      "packages/api/src/lib/kb/embedder.test.ts",
-      "apps/worker/src/handlers/query-embedding.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  "index-settings": {
-    include: [
-      "packages/test-utils/src/kb/index-settings.integration.test.ts",
-      "packages/api/src/lib/kb/index-settings.test.ts",
-      "packages/api/src/routers/kb-index.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  generations: {
-    include: [
-      "packages/test-utils/src/kb/generations.integration.test.ts",
-      "packages/api/src/lib/kb/generations.test.ts",
-      "packages/api/src/lib/kb/index-status.test.ts",
-      "packages/api/src/routers/kb-index.test.ts",
-      "apps/worker/src/handlers/index-kb.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  providers: {
-    include: [
-      "packages/test-utils/src/kb/providers.integration.test.ts",
-      "packages/api/src/lib/kb/providers.test.ts",
-      "packages/api/src/lib/kb/embed-client.test.ts",
-      "packages/api/src/lib/kb/embedder.test.ts",
-      "packages/api/src/lib/kb/fingerprint.test.ts",
-      "packages/api/src/routers/embedding-providers.test.ts",
-      "apps/worker/src/handlers/provider-probe.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  jobs: {
-    include: [
-      "packages/test-utils/src/kb/jobs.integration.test.ts",
-      "packages/api/src/lib/kb/jobs.test.ts",
-      "packages/api/src/lib/kb/job-attempt.test.ts",
-      "apps/worker/src/durable-dispatcher.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  harness: {
-    include: ["packages/test-utils/src/kb/harness.integration.test.ts"],
-    services: ["postgres", "redis"],
-    nodeTests: ["scripts/test-kb.test.mjs", "scripts/build-embedding-runtime.test.mjs"],
-  },
-  // flk8: real-daemon build-supervisor proof. Its duration follows the Docker
-  // daemon, so it runs under build-only bounds in its own suite (`test:kb all`,
-  // and merges touching build-* sources), not in every harness run.
-  build: {
-    include: [],
-    services: [],
-    requireDocker: true,
-    nodeTests: ["scripts/test-kb-build-docker.test.mjs"],
-  },
-  // R3-W3: the built server/worker entrypoints never print a credential on an
-  // import-time failure (malformed or unreachable credential-bearing URLs).
-  "entry-canary": {
-    include: ["packages/test-utils/src/kb/entry-canary.integration.test.ts"],
-    services: ["postgres", "redis"],
-    imageGit: { reached: ["path --version"] },
-  },
-  bootstrap: {
-    include: ["packages/auth/src/bootstrap.integration.test.ts"],
-    services: ["postgres"],
-  },
-  schema: {
-    include: ["packages/test-utils/src/kb/schema.integration.test.ts"],
-    services: ["postgres"],
-  },
-  topology: {
-    include: ["packages/test-utils/src/kb/topology.integration.test.ts"],
-    services: ["redis"],
-    nodeTests: ["scripts/init-kb-volumes.test.mjs"],
-  },
-  fence: {
-    include: ["packages/test-utils/src/kb/fence.integration.test.ts"],
-    services: [],
-    requireDocker: true,
-  },
-  locks: {
-    include: [
-      "packages/test-utils/src/kb/locks.integration.test.ts",
-      "apps/server/src/kb-write-coordinator.integration.test.ts",
-      "apps/server/src/kb-write-shutdown.integration.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  authority: {
-    include: ["packages/test-utils/src/kb/authority.integration.test.ts"],
-    services: ["postgres"],
-  },
-  journal: {
-    include: [
-      "apps/server/src/kb-journal.integration.test.ts",
-      "packages/api/src/lib/kb/operation-intent.test.ts",
-      "packages/api/src/lib/kb/git-read.test.ts",
-      "packages/api/src/lib/kb/git-write.test.ts",
-      "packages/api/src/lib/kb/recovery.test.ts",
-    ],
-    services: ["postgres", "redis"],
-  },
-  bases: {
-    include: [
-      "packages/test-utils/src/kb/bases.integration.test.ts",
-      "packages/api/src/lib/kb/attachment.test.ts",
-      "packages/api/src/lib/kb/cursor.test.ts",
-      "packages/api/src/lib/kb/documents-read.test.ts",
-      "packages/api/src/lib/kb/bases.test.ts",
-      "packages/api/src/routers/kbs.test.ts",
-      "packages/api/src/routers/documents.test.ts",
-    ],
-    services: ["postgres"],
-  },
-  members: {
-    include: [
-      "packages/mailer/src/index.integration.test.ts",
-      "packages/test-utils/src/kb/members.integration.test.ts",
-      "packages/api/src/lib/kb/shares.test.ts",
-      "packages/api/src/lib/kb/transfer.test.ts",
-      "packages/api/src/lib/kb/account-removal.test.ts",
-      "packages/api/src/routers/kb-members.test.ts",
-      "packages/auth/src/account-deletion-policy.test.ts",
+  "asset-migration": {
+    include: ["packages/test-utils/src/kb/asset-storage-migration.integration.test.ts"],
+    nodeTests: [
+      "scripts/lib/asset-storage-control.test.mjs",
+      "scripts/generate-dokploy-config.test.ts",
     ],
     services: ["postgres"],
   },
@@ -435,57 +248,47 @@ export const SUITES = {
     services: ["postgres"],
     imageGit: { reached: ["path merge-base"] },
   },
-  pr: {
+  generations: {
     include: [
-      "packages/test-utils/src/kb/pr.integration.test.ts",
-      "packages/api/src/lib/kb/pr-merge.test.ts",
-      "packages/api/src/lib/kb/merge-scratch.test.ts",
-      "packages/api/src/lib/kb/diff.test.ts",
-      "packages/api/src/lib/kb/pull-requests.test.ts",
-      "packages/api/src/routers/pull-requests.test.ts",
+      "packages/test-utils/src/kb/generations.integration.test.ts",
+      "packages/api/src/lib/kb/generations.test.ts",
+      "packages/api/src/lib/kb/index-status.test.ts",
+      "packages/api/src/routers/kb-index.test.ts",
+      "apps/worker/src/handlers/index-kb.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  "structured-search": {
+    include: [
+      "packages/test-utils/src/kb/structured-search.integration.test.ts",
+      "packages/api/src/lib/kb/structured-search.test.ts",
+      "packages/api/src/lib/kb/structured.test.ts",
+      "packages/api/src/lib/kb/search.test.ts",
+      "packages/api/src/lib/kb/cursor.test.ts",
+      "packages/api/src/routers/search.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  sealed: {
+    include: [
+      "packages/test-utils/src/kb/sealed.integration.test.ts",
+      "packages/api/src/lib/kb/sealed-reference.test.ts",
+      "packages/api/src/lib/kb/sealed-records.test.ts",
+      "packages/api/src/lib/kb/sealed-resolve.test.ts",
+      "packages/api/src/lib/kb/sealed-envelope.test.ts",
+      "packages/api/src/routers/kb-sealed.test.ts",
     ],
     services: ["postgres"],
-    imageGit: { reached: ["path merge-tree"] },
   },
-  dream: {
+  oauth: {
     include: [
-      "packages/test-utils/src/kb/dream.integration.test.ts",
-      "packages/api/src/lib/kb/dream.test.ts",
-      "packages/api/src/lib/kb/sensitive-text.test.ts",
-      "packages/api/src/lib/kb/parse-markdown.test.ts",
+      "packages/test-utils/src/kb/cimd.integration.test.ts",
+      "packages/test-utils/src/kb/oauth.integration.test.ts",
+      "packages/auth/src/mcp-plugins.test.ts",
+      "apps/server/src/mcp-authorize-scope-guard.test.ts",
+      "apps/server/src/mcp-discovery.test.ts",
     ],
     services: ["postgres"],
-  },
-  tree: {
-    include: [
-      "packages/test-utils/src/kb/tree.integration.test.ts",
-      "packages/api/src/lib/kb/paths.test.ts",
-      "packages/api/src/lib/kb/manifest.test.ts",
-      "packages/api/src/lib/kb/parse-markdown.test.ts",
-      "packages/api/src/lib/kb/validate-tree.test.ts",
-    ],
-    services: [],
-  },
-  cas: {
-    include: [
-      "packages/test-utils/src/kb/cas.integration.test.ts",
-      "packages/api/src/lib/kb/cas.test.ts",
-      "packages/api/src/lib/kb/cas-temp-race.test.ts",
-      "packages/api/src/lib/kb/blob-store-disk.test.ts",
-      "packages/api/src/lib/sniff-mime.test.ts",
-    ],
-    services: ["postgres"],
-    requireDocker: true,
-  },
-  uploads: {
-    include: [
-      "packages/test-utils/src/kb/uploads.integration.test.ts",
-      "packages/api/src/lib/kb/uploads.test.ts",
-      "packages/api/src/routers/kb-uploads.test.ts",
-      "apps/server/src/body-policy.test.ts",
-    ],
-    services: ["postgres"],
-    requireDocker: true,
   },
   "asset-manifest": {
     include: [
@@ -494,6 +297,130 @@ export const SUITES = {
       "packages/api/src/lib/kb/asset-authz.test.ts",
       "packages/api/src/routers/kb-assets.test.ts",
       "packages/api/src/lib/kb/manifest.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  journal: {
+    include: [
+      "apps/server/src/kb-journal.integration.test.ts",
+      "packages/api/src/lib/kb/operation-intent.test.ts",
+      "packages/api/src/lib/kb/git-read.test.ts",
+      "packages/api/src/lib/kb/git-write.test.ts",
+      "packages/api/src/lib/kb/recovery.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  restore: {
+    include: [
+      "packages/test-utils/src/kb/restore.integration.test.ts",
+      "packages/test-utils/src/kb/asset-storage-offline.integration.test.ts",
+    ],
+    nodeTests: ["scripts/lib/kb-restore.test.mjs", "scripts/restore-archive.test.mjs"],
+    services: ["postgres"],
+    age: true,
+  },
+  locks: {
+    include: [
+      "packages/test-utils/src/kb/locks.integration.test.ts",
+      "apps/server/src/kb-write-coordinator.integration.test.ts",
+      "apps/server/src/kb-write-shutdown.integration.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  grants: {
+    include: [
+      "packages/test-utils/src/kb/grants.integration.test.ts",
+      "packages/api/src/lib/mcp-token-access.test.ts",
+      "packages/api/src/lib/kb/permissions.test.ts",
+      "packages/api/src/routers/mcp-tokens.test.ts",
+      "packages/api/src/routers/mcp-grants.test.ts",
+      "packages/auth/src/mcp-config.test.ts",
+      "packages/auth/src/mcp-grant.test.ts",
+      "packages/auth/src/ban.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  "query-embedding": {
+    include: [
+      "packages/test-utils/src/kb/query-embedding.integration.test.ts",
+      "packages/api/src/lib/kb/query-embedding.test.ts",
+      "packages/api/src/lib/kb/embedder.test.ts",
+      "apps/worker/src/handlers/query-embedding.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  search: {
+    include: [
+      "packages/test-utils/src/kb/search.integration.test.ts",
+      "packages/api/src/lib/kb/search.test.ts",
+      "packages/api/src/lib/kb/rrf.test.ts",
+      "packages/api/src/lib/kb/citation.test.ts",
+      "packages/api/src/routers/search.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  "asset-storage": {
+    include: ["packages/test-utils/src/kb/asset-storage.integration.test.ts"],
+    services: ["postgres"],
+  },
+  authority: {
+    include: ["packages/test-utils/src/kb/authority.integration.test.ts"],
+    services: ["postgres"],
+  },
+  jobs: {
+    include: [
+      "packages/test-utils/src/kb/jobs.integration.test.ts",
+      "packages/api/src/lib/kb/jobs.test.ts",
+      "packages/api/src/lib/kb/job-attempt.test.ts",
+      "apps/worker/src/durable-dispatcher.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  members: {
+    include: [
+      "packages/mailer/src/index.integration.test.ts",
+      "packages/test-utils/src/kb/members.integration.test.ts",
+      "packages/api/src/lib/kb/shares.test.ts",
+      "packages/api/src/lib/kb/transfer.test.ts",
+      "packages/api/src/lib/kb/account-removal.test.ts",
+      "packages/api/src/routers/kb-members.test.ts",
+      "packages/auth/src/account-deletion-policy.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  bases: {
+    include: [
+      "packages/test-utils/src/kb/bases.integration.test.ts",
+      "packages/api/src/lib/kb/attachment.test.ts",
+      "packages/api/src/lib/kb/cursor.test.ts",
+      "packages/api/src/lib/kb/documents-read.test.ts",
+      "packages/api/src/lib/kb/bases.test.ts",
+      "packages/api/src/routers/kbs.test.ts",
+      "packages/api/src/routers/documents.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  providers: {
+    include: [
+      "packages/test-utils/src/kb/providers.integration.test.ts",
+      "packages/api/src/lib/kb/providers.test.ts",
+      "packages/api/src/lib/kb/embed-client.test.ts",
+      "packages/api/src/lib/kb/embedder.test.ts",
+      "packages/api/src/lib/kb/fingerprint.test.ts",
+      "packages/api/src/routers/embedding-providers.test.ts",
+      "apps/worker/src/handlers/provider-probe.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  "model-download": {
+    include: [
+      "packages/test-utils/src/kb/model-download.integration.test.ts",
+      "packages/test-utils/src/kb/model-transport.integration.test.ts",
+      "packages/api/src/lib/kb/builtin-registry.test.ts",
+      "packages/api/src/lib/kb/model-artifact.test.ts",
+      "packages/api/src/lib/kb/local-model.test.ts",
+      "packages/api/src/routers/kb-model.test.ts",
+      "apps/worker/src/handlers/download-model.test.ts",
     ],
     services: ["postgres"],
   },
@@ -507,31 +434,111 @@ export const SUITES = {
     ],
     services: ["postgres"],
   },
-  exports: {
-    // The RSS-bound test runs first, alone, in its own Vitest process,
-    // so no earlier test's heap can skew its 160 MiB bound.
-    isolatedFirst: [
-      "packages/test-utils/src/kb/exports-rss.integration.test.ts",
-      "packages/test-utils/src/kb/exports-s3-rss.integration.test.ts",
-    ],
+  // Bounded retention, credential artifact windows and audit coverage.
+  retention: {
     include: [
-      "packages/test-utils/src/kb/exports-rss.integration.test.ts",
-      "packages/test-utils/src/kb/exports-s3-rss.integration.test.ts",
-      "packages/test-utils/src/kb/exports.integration.test.ts",
-      "packages/test-utils/src/kb/exports-cli.integration.test.ts",
-      "packages/api/src/lib/kb/transfers.integration.test.ts",
-      "packages/api/src/lib/kb/exports.test.ts",
-      "packages/api/src/lib/kb/transfers.test.ts",
-      "packages/api/src/routers/kb-exports.test.ts",
-      "apps/server/src/kb-export-routes.test.ts",
+      "packages/test-utils/src/kb/retention-boundaries.integration.test.ts",
+      "packages/test-utils/src/kb/retention.integration.test.ts",
+      "packages/api/src/lib/kb/retention.test.ts",
+      "packages/api/src/lib/kb/audit-map.test.ts",
+      "apps/worker/src/handlers/kb-retention.test.ts",
+      "apps/worker/src/handlers/reap-expired-auth-tokens.test.ts",
+      "apps/server/src/kb-staging-cleanup.test.ts",
+    ],
+    services: ["postgres", "redis"],
+  },
+  tree: {
+    include: [
+      "packages/test-utils/src/kb/tree.integration.test.ts",
+      "packages/api/src/lib/kb/paths.test.ts",
+      "packages/api/src/lib/kb/manifest.test.ts",
+      "packages/api/src/lib/kb/parse-markdown.test.ts",
+      "packages/api/src/lib/kb/validate-tree.test.ts",
+    ],
+    services: [],
+  },
+  dream: {
+    include: [
+      "packages/test-utils/src/kb/dream.integration.test.ts",
+      "packages/api/src/lib/kb/dream.test.ts",
+      "packages/api/src/lib/kb/sensitive-text.test.ts",
+      "packages/api/src/lib/kb/parse-markdown.test.ts",
     ],
     services: ["postgres"],
   },
-  // Real Chromium against the seeded fixture origin (apps/web/tests/kb-*.spec.ts).
-  browser: {
+  uploads: {
+    include: [
+      "packages/test-utils/src/kb/uploads.integration.test.ts",
+      "packages/api/src/lib/kb/uploads.test.ts",
+      "packages/api/src/routers/kb-uploads.test.ts",
+      "apps/server/src/body-policy.test.ts",
+    ],
+    services: ["postgres"],
+    requireDocker: true,
+  },
+  cas: {
+    include: [
+      "packages/test-utils/src/kb/cas.integration.test.ts",
+      "packages/api/src/lib/kb/cas.test.ts",
+      "packages/api/src/lib/kb/cas-temp-race.test.ts",
+      "packages/api/src/lib/kb/blob-store-disk.test.ts",
+      "packages/api/src/lib/sniff-mime.test.ts",
+    ],
+    services: ["postgres"],
+    requireDocker: true,
+  },
+  fence: {
+    include: ["packages/test-utils/src/kb/fence.integration.test.ts"],
+    services: [],
+    requireDocker: true,
+  },
+  bootstrap: {
+    include: ["packages/auth/src/bootstrap.integration.test.ts"],
+    services: ["postgres"],
+  },
+  consent: {
+    include: [
+      "packages/test-utils/src/kb/consent.integration.test.ts",
+      "packages/auth/src/mcp-consent.test.ts",
+      "packages/auth/src/mcp-refresh.test.ts",
+      "packages/auth/src/mcp-grant.test.ts",
+      "packages/api/src/routers/mcp-consent.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  topology: {
+    include: ["packages/test-utils/src/kb/topology.integration.test.ts"],
+    services: ["redis"],
+    nodeTests: ["scripts/init-kb-volumes.test.mjs"],
+  },
+  schema: {
+    include: ["packages/test-utils/src/kb/schema.integration.test.ts"],
+    services: ["postgres"],
+  },
+  "index-settings": {
+    include: [
+      "packages/test-utils/src/kb/index-settings.integration.test.ts",
+      "packages/api/src/lib/kb/index-settings.test.ts",
+      "packages/api/src/routers/kb-index.test.ts",
+    ],
+    services: ["postgres"],
+  },
+  // flk8: real-daemon build-supervisor proof. Its duration follows the Docker
+  // daemon, so it runs under build-only bounds in its own suite (`test:kb all`,
+  // and merges touching build-* sources), not in every harness run.
+  build: {
     include: [],
-    services: ["postgres", "redis"],
-    playwright: "apps/web/playwright.kb.config.ts",
+    services: [],
+    requireDocker: true,
+    nodeTests: ["scripts/test-kb-build-docker.test.mjs"],
+  },
+  "qwen-process": {
+    include: [
+      "packages/test-utils/src/kb/qwen-process.integration.test.ts",
+      "apps/worker/src/lib/qwen-lifecycle.test.ts",
+      "apps/worker/src/lib/qwen-child.test.ts",
+    ],
+    services: [],
   },
   egress: {
     include: [
