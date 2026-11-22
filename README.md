@@ -165,6 +165,7 @@ packages/ui     shadcn/ui
 - [CLI local/remote operation](./docs/cli.md) and the [CLI README](./apps/cli/README.md)
 - [Cockpit adapter contract](./docs/cockpit-adapter.md)
 - [Product model](./docs/product.md), [access matrix](./docs/access-matrix.md) and [hosting](./docs/hosting.md)
+- [UI edge lines](./docs/ui.md)
 - [Changelog](./CHANGELOG.md)
 
 ## Contributing

@@ -32,7 +32,7 @@ function SettingsLayout() {
       <h1 className="text-2xl font-semibold mb-6">{t("title")}</h1>
       <div className="flex flex-col gap-6 md:flex-row md:gap-8">
         <nav className="w-full min-w-0 md:w-48 flex-shrink-0">
-          <div className="-mx-4 flex flex-row gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain px-4 no-scrollbar md:mx-0 md:flex-col md:overflow-x-visible md:overflow-y-visible md:overscroll-auto md:px-0">
+          <div className="-mx-4 flex flex-row gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain px-4 no-scrollbar md:mr-0 md:-ml-3 md:flex-col md:overflow-x-visible md:overflow-y-visible md:overscroll-auto md:px-0">
             {navItems.map((item) => (
               <Link
                 key={item.to}

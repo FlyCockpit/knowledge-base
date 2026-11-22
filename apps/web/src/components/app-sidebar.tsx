@@ -63,6 +63,9 @@ export function AppSidebar() {
               key={group.id}
               className={cn(
                 "flex flex-col gap-1",
+                // Collapsed links are fixed 44px squares: centre them on the rail,
+                // the same line the centred collapse toggle sits on.
+                collapsed && "items-center",
                 group.id === "footer" && "mt-auto border-t border-sidebar-border pt-2",
               )}
             >

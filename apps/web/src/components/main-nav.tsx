@@ -29,7 +29,9 @@ export function MainNav() {
   }
 
   // Signed-in users navigate with the sidebar (desktop) and the BottomNav.
-  if (authSession.state.status === "authenticated") return <div className="min-w-0 flex-1" />;
+  // Hidden below md so it adds no flex gap to the phone header; the controls use ml-auto.
+  if (authSession.state.status === "authenticated")
+    return <div className="hidden min-w-0 flex-1 md:block" />;
   const items = getNavItems({ placement: "desktop", isAuthenticated: false });
 
   return (
