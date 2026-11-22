@@ -8,10 +8,14 @@
 
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
+
+#[path = "support/scratch_git.rs"]
+mod scratch_git;
+use scratch_git::scratch_git;
 use temp_dir::TestDir;
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use kb_client::ErrorCode;
 use kb_client::schema::{Direction, validate};
@@ -39,12 +43,11 @@ fn temp_root(tag: &str) -> TestDir {
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "External")
         .env("GIT_AUTHOR_EMAIL", "external@example.invalid")
         .env("GIT_COMMITTER_NAME", "External")
@@ -64,12 +67,11 @@ fn git(repo: &Path, args: &[&str]) -> String {
 }
 
 fn git_bytes(repo: &Path, args: &[&str]) -> Vec<u8> {
-    let out = Command::new("git")
+    let out = scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(Stdio::null())
         .output()
         .expect("git");

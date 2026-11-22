@@ -57,6 +57,7 @@ import {
 } from "../../../../scripts/init-kb-volumes.mjs";
 import { coordinateBackup, encryptBundle, readBundle } from "../../../../scripts/lib/kb-backup.mjs";
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
+import { fixtureGitEnv } from "./git";
 import { type KbPostgresCluster, openKbPostgresClusterFromEnv } from "./postgres";
 import { createAssetS3Fixture } from "./s3-fixture";
 
@@ -260,7 +261,7 @@ async function seedFixture() {
   });
   const repo = join(repos, `kb_${kbId}.git`);
   const gitEnv = {
-    PATH: process.env.PATH,
+    ...fixtureGitEnv(),
     GIT_INDEX_FILE: join(dir, "fixture.index"),
     GIT_AUTHOR_NAME: "Fixture",
     GIT_AUTHOR_EMAIL: "fixture@example.invalid",
@@ -865,7 +866,7 @@ it("backup65 round trip preserves history/assets/roles/bootstrap, resets every a
       execFileSync(
         "git",
         ["--git-dir", join(f.target.repos, `kb_${f.kbId}.git`), "show", `${f.head}:index.md`],
-        { encoding: "utf8" },
+        { env: fixtureGitEnv(), encoding: "utf8" },
       ),
     ).toContain("Restored Markdown history");
     expect(

@@ -17,6 +17,16 @@ import { describe, expect, it, vi } from "vitest";
 import { requireBuiltArtifact } from "../../../packages/test-utils/src/kb/build-artifacts.mjs";
 import { cgiResponse, gitCgiEnvironment, parseCgiHead } from "./git-cgi";
 
+// A fresh environment for fixture git (and the fixture children that run it):
+// no inherited GIT_* variable, and no system or global config (a system
+// core.hooksPath or commit.gpgsign must not judge the fixture repositories).
+const fixtureGitEnv = {
+  PATH: process.env.PATH,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+};
+
 const kbId = "a123456789012345678901234";
 const input = {
   kbId,
@@ -65,7 +75,7 @@ describe("bounded Git CGI", () => {
         const git = (args: string[]) =>
           execFileSync("git", args, {
             cwd: dir,
-            env: { PATH: process.env.PATH, TMPDIR: dir },
+            env: { ...fixtureGitEnv, TMPDIR: dir },
             timeout: remaining(),
             encoding: "utf8",
             stdio: "pipe",
@@ -94,7 +104,7 @@ describe("bounded Git CGI", () => {
         git(["-C", clone, "push", repo, "main"]);
         const next = commit("forbidden.txt");
         const pack = execFileSync("git", ["-C", clone, "pack-objects", "--stdout", "--revs"], {
-          env: { PATH: process.env.PATH, TMPDIR: dir },
+          env: { ...fixtureGitEnv, TMPDIR: dir },
           timeout: remaining(),
           input: next + "\n^" + old + "\n",
         });
@@ -139,7 +149,7 @@ assert.equal(response.status,200);assert((await response.text()).includes(old));
             fixture,
           ],
           {
-            env: { PATH: process.env.PATH, KB_DATA_ROOT: dataRoot, TMPDIR: dir },
+            env: { ...fixtureGitEnv, KB_DATA_ROOT: dataRoot, TMPDIR: dir },
             timeout: 30_000,
             encoding: "utf8",
             stdio: "pipe",
@@ -389,7 +399,7 @@ process.exit(0);
           fixture,
         ],
         {
-          env: { PATH: process.env.PATH, KB_DATA_ROOT: dataRoot, TMPDIR: join(dir, "cgi") },
+          env: { ...fixtureGitEnv, KB_DATA_ROOT: dataRoot, TMPDIR: join(dir, "cgi") },
           stdio: ["ignore", "pipe", "pipe"],
         },
       );

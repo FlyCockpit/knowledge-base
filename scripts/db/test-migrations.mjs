@@ -64,6 +64,22 @@ import { writeTestBackupHook } from "./lib/test-backup-hook.mjs";
 import { contractScenarios } from "./test-contracts.mjs";
 import { kbLockScenarios } from "./test-kb-locks.mjs";
 
+// A git hook (or any caller) may export GIT_DIR, GIT_INDEX_FILE and the like;
+// inherited by the scratch repositories' git calls (here and in the scripts they run),
+// they would point at the caller's repository. Drop every GIT_* variable, stop
+// discovery at the temp dir, read no system or global config (a global
+// core.excludesFile or commit.gpgsign must not change these repos), and turn
+// hooks off for every git call in this process and its children (a
+// core.hooksPath must not judge them; `git init` and `git add` run hooks too).
+for (const name of Object.keys(process.env)) if (name.startsWith("GIT_")) delete process.env[name];
+process.env.GIT_CEILING_DIRECTORIES = tmpdir();
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+process.env.GIT_CONFIG_SYSTEM = "/dev/null";
+process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+process.env.GIT_CONFIG_COUNT = "1";
+process.env.GIT_CONFIG_KEY_0 = "core.hooksPath";
+process.env.GIT_CONFIG_VALUE_0 = "/dev/null";
+
 const pg = loadPg();
 const results = [];
 async function step(name, fn) {

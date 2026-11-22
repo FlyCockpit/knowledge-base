@@ -12,6 +12,14 @@ import {
   worktreeName,
 } from "./local-db-name.mjs";
 
+// A git hook (or any caller) may export GIT_DIR, GIT_WORK_TREE and the like;
+// inherited by local-db-name.mjs's git calls, they would resolve the
+// not-a-repository temp dir below to the caller's repository. Drop every GIT_*
+// variable and stop discovery at the temp dir, which may sit inside a checkout
+// (localDatabaseNames' env option never reaches git).
+for (const name of Object.keys(process.env)) if (name.startsWith("GIT_")) delete process.env[name];
+process.env.GIT_CEILING_DIRECTORIES = tmpdir();
+
 test("main and linked worktree names use the exact git directory without git writes", () => {
   const gitRead = (cwd, args) => (args.includes("--git-common-dir") ? "/main/.git" : `${cwd}/.git`);
   const main = localDatabaseNames({ cwd: "/main", env: {}, gitRead });
@@ -34,10 +42,7 @@ test("main and linked worktree names use the exact git directory without git wri
 test("outside git behaves as the main checkout", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "dbname-nogit-"));
   try {
-    assert.equal(
-      localDatabaseNames({ cwd: dir, env: { GIT_CEILING_DIRECTORIES: tmpdir() } }).main,
-      "knowledge_base",
-    );
+    assert.equal(localDatabaseNames({ cwd: dir, env: {} }).main, "knowledge_base");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

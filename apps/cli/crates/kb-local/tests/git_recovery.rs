@@ -61,12 +61,11 @@ fn commit_req(kb: &KbId, base: &Sha, key: &str, body: &str) -> CommitRequest {
 /// Plain (unhardened) Git against a store repository, for assertions and
 /// for simulating external edits.
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = fixture::scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_NAME", "External")
         .env("GIT_AUTHOR_EMAIL", "external@example.invalid")
         .env("GIT_COMMITTER_NAME", "External")

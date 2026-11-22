@@ -16,7 +16,12 @@ import { createDiskBlobStore } from "@knowledge-base/api/lib/kb/blob-store-disk"
 import { type ApplyResult, createChangesPublication } from "@knowledge-base/api/lib/kb/changes";
 import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
 import { readDocumentAtRevision } from "@knowledge-base/api/lib/kb/documents-read";
-import { kbBareRepoPath, readHeadSha, readRefSha } from "@knowledge-base/api/lib/kb/git-read";
+import {
+  hardenedGitEnv,
+  kbBareRepoPath,
+  readHeadSha,
+  readRefSha,
+} from "@knowledge-base/api/lib/kb/git-read";
 import {
   type GitMutatingExecutor,
   writeInitialMainCommit,
@@ -692,7 +697,10 @@ describe("sealed real authority, PostgreSQL and Git", () => {
     const mergeSha = merged.pr.mergeCommitSha!;
     expect(readHeadSha(f.repo)).toBe(mergeSha);
     const git = (...args: string[]) =>
-      execFileSync("git", ["--git-dir", f.repo, ...args], { encoding: "utf8" }).trim();
+      execFileSync("git", ["--git-dir", f.repo, ...args], {
+        env: hardenedGitEnv(),
+        encoding: "utf8",
+      }).trim();
     expect(git("rev-list", "--parents", "-n", "1", mergeSha).split(" ").slice(1)).toEqual([
       f.base,
       p.commitSha,

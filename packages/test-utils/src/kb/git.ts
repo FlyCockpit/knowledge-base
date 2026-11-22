@@ -10,9 +10,15 @@ export type KbGitRepo = {
   close(): void;
 };
 
-export function createTempGitRepo(options?: { bare?: boolean }): KbGitRepo {
-  const root = mkdtempSync(join(tmpdir(), "kb-test-git-"));
-  const env: NodeJS.ProcessEnv = {
+/**
+ * The environment for a fixture's own git calls: built fresh, so no inherited
+ * GIT_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and the like (a hook or caller
+ * may export them) points a fixture's reads or writes at another repository,
+ * and no system or global config (a global core.hooksPath must not judge these
+ * repositories).
+ */
+export function fixtureGitEnv(): NodeJS.ProcessEnv {
+  return {
     PATH: process.env.PATH,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
@@ -22,6 +28,11 @@ export function createTempGitRepo(options?: { bare?: boolean }): KbGitRepo {
     GIT_COMMITTER_NAME: "kb-test",
     GIT_COMMITTER_EMAIL: "kb-test@example.invalid",
   };
+}
+
+export function createTempGitRepo(options?: { bare?: boolean }): KbGitRepo {
+  const root = mkdtempSync(join(tmpdir(), "kb-test-git-"));
+  const env = fixtureGitEnv();
   const git = (...args: string[]) =>
     execFileSync("git", args, {
       cwd: root,

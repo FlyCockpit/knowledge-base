@@ -2096,11 +2096,10 @@ fn bulk_blobs(k: &Kb, contents: &[Vec<u8>]) -> Vec<String> {
         list.push('\n');
     }
     let mut child = ChildGuard::new(
-        Command::new("git")
+        fixture::scratch_git()
             .arg("--git-dir")
             .arg(&k.git.repo)
             .args(["hash-object", "-w", "--no-filters", "--stdin-paths"])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -2620,12 +2619,11 @@ fn deep_commit(k: &Kb, docs: &[(String, Vec<u8>)], parents: &[&str]) -> Sha {
     }
     let run = |args: &[&str], input: Option<&str>| -> String {
         let mut child = ChildGuard::new(
-            Command::new("git")
+            fixture::scratch_git()
                 .arg("--git-dir")
                 .arg(&k.git.repo)
                 .args(args)
                 .env("GIT_INDEX_FILE", &index)
-                .env("GIT_CONFIG_NOSYSTEM", "1")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()

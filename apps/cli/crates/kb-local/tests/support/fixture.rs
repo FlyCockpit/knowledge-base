@@ -10,12 +10,16 @@ use std::io::Write;
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
 use kb_client::types::KbId;
 use kb_client::types::Sha;
+
+#[path = "scratch_git.rs"]
+mod scratch_git;
+pub use scratch_git::scratch_git;
 
 // Probe the OS locks directly: try_lock_write can also return None while an
 // unrelated store's spawn holds the process-wide admission registry.
@@ -95,12 +99,10 @@ impl Fixture {
     }
 
     fn run_in(&self, cwd: &std::path::Path, args: &[&str], stdin: Option<&[u8]>) -> String {
-        let mut command = Command::new("git");
+        let mut command = scratch_git();
         command
             .args(args)
             .current_dir(cwd)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE)
             .env("GIT_AUTHOR_NAME", "Fixture Author")
             .env("GIT_AUTHOR_EMAIL", "author@example.invalid")
             .env("GIT_COMMITTER_NAME", "Fixture Committer")
@@ -138,14 +140,12 @@ impl Fixture {
     }
 
     pub fn git_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> String {
-        let mut command = Command::new("git");
+        let mut command = scratch_git();
         command
             .arg("--git-dir")
             .arg(&self.repo)
             .args(args)
             .current_dir(&self.root)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_DEVICE)
             .stdin(Stdio::null());
         for (k, v) in env {
             command.env(k, v);

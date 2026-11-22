@@ -5,6 +5,9 @@
 #[path = "support/child_guard.rs"]
 mod child_guard;
 use child_guard::ChildGuard;
+#[path = "support/scratch_git.rs"]
+mod scratch_git;
+use scratch_git::{scratch_git, scrub_git_env};
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -84,12 +87,10 @@ impl Drop for Fixture {
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = scratch_git()
         .arg("--git-dir")
         .arg(repo)
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@local.invalid")
         .env("GIT_COMMITTER_NAME", "Fixture")
@@ -635,8 +636,9 @@ fn hostile_private_system_and_global_config_are_neutralized() {
             "GIT_CONFIG_GLOBAL"
         };
         // Calibration: real Git demonstrably fails when it consults the
-        // controlled fixture. No host/user config file is read or modified.
-        let output = Command::new(real_git())
+        // controlled fixture. No host/user config file is read or modified,
+        // and no inherited GIT_* (a GIT_CONFIG would replace the fixture).
+        let output = scrub_git_env(&mut Command::new(real_git()))
             .args(["config", "--list"])
             .env("GIT_CONFIG_NOSYSTEM", "0")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")

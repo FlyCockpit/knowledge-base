@@ -17,6 +17,7 @@ import {
   verifyEncryptedBundle,
 } from "../../../../scripts/lib/kb-backup.mjs";
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
+import { fixtureGitEnv } from "./git";
 import { type KbPostgresCluster, openKbPostgresClusterFromEnv } from "./postgres";
 import { createAssetS3Fixture } from "./s3-fixture";
 import { kbTestName } from "./test-names.mjs";
@@ -444,7 +445,7 @@ it("rejects head and historic CAS divergence, then backs up a supported 1 GiB CA
     for (const name of ["server", "worker"])
       await writeFile(join(repos, `.private/${name}.fence`), "");
     const repo = join(repos, `kb_${id}.git`);
-    execFileSync("git", ["init", "--bare", repo], { stdio: "pipe" });
+    execFileSync("git", ["init", "--bare", repo], { env: fixtureGitEnv(), stdio: "pipe" });
     const head = await writeInitialMainCommit(
       {
         reposDir: repos,
@@ -566,7 +567,7 @@ describe("quiesced backup cutoff", () => {
         await writeFile(join(repos, `.private/${name}.fence`), "");
       const id = "a".repeat(24),
         repo = join(repos, `kb_${id}.git`);
-      execFileSync("git", ["init", "--bare", repo], { stdio: "pipe" });
+      execFileSync("git", ["init", "--bare", repo], { env: fixtureGitEnv(), stdio: "pipe" });
       const git = (args: string[], input?: string) =>
         execFileSync("git", ["--git-dir", repo, ...args], {
           encoding: "utf8",
@@ -828,7 +829,7 @@ try{await startMaintenanceParticipant(process.env.DATABASE_URL,()=>{},()=>runSta
           execFileSync(
             "git",
             ["--git-dir", inspectRepo, "show", `${historic}:.assets/manifest.json`],
-            { encoding: "utf8" },
+            { env: fixtureGitEnv(), encoding: "utf8" },
           ),
         ).toContain(hex);
         expect(git(["show", "refs/heads/main:.assets/manifest.json"])).toContain('"entries":[]');

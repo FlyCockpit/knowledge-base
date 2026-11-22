@@ -30,6 +30,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { diagnosticCorpus } from "./diagnostic-corpus";
 import { db, prisma, registerExportHooks, runtime, user } from "./export-fixture";
+import { fixtureGitEnv } from "./git";
 import { deliverIndexBuild } from "./index-delivery";
 import { callResult, localPeer, normalize } from "./parity";
 
@@ -570,13 +571,17 @@ describe("complete rich corpus", () => {
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
       idempotencyKey: key(),
     });
-    execFileSync("git", [
-      "--git-dir",
-      join(runtime.reposDir, `kb_${refs[0]!.kbId}.git`),
-      "update-ref",
-      "refs/heads/users/topic",
-      heads[0]!,
-    ]);
+    execFileSync(
+      "git",
+      [
+        "--git-dir",
+        join(runtime.reposDir, `kb_${refs[0]!.kbId}.git`),
+        "update-ref",
+        "refs/heads/users/topic",
+        heads[0]!,
+      ],
+      { env: fixtureGitEnv() },
+    );
     await prisma.branchOwner.create({
       data: {
         kbId: String(refs[0]!.kbId),
@@ -946,7 +951,7 @@ describe("complete rich corpus", () => {
         "rev-parse",
         "refs/heads/users/topic",
       ],
-      { encoding: "utf8" },
+      { env: fixtureGitEnv(), encoding: "utf8" },
     ).trim();
     source[0] = remoteSource;
     const opened = await call(

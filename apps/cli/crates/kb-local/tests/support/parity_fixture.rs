@@ -1,5 +1,7 @@
 //! Disposable native-key substitute only in this test binary. Domain, Git,
 //! SQLite, crypto, egress and stdio are the production implementations.
+#[path = "scratch_git.rs"]
+mod scratch_git;
 use kb_client::{
     decode_input,
     sealed::RecipientKey,
@@ -15,6 +17,7 @@ use kb_local::{
     qwen::ModelRuntime,
     sealed::{Enroll, Grant, Literal},
 };
+use scratch_git::scratch_git;
 use serde_json::json;
 use std::{
     collections::BTreeMap,
@@ -152,7 +155,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let db = rusqlite::Connection::open(s.paths().state_db())?;
     // Out-of-band fixture setup of an owned USER branch, exactly as PR tests.
-    let git = std::process::Command::new("git")
+    let git = scratch_git()
         .arg("--git-dir")
         .arg(s.paths().repo_dir(&made.kb.id))
         .args([

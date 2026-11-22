@@ -63,6 +63,7 @@ import {
 } from "@knowledge-base/db/authority-lock";
 import { afterAll, describe, expect, it } from "vitest";
 import { createKbWriteCoordinator } from "../../../../apps/server/src/kb-write-coordinator.js";
+import { fixtureGitEnv } from "./git";
 import { openKbPostgresClusterFromEnv } from "./index.js";
 
 const ROOT = resolve(import.meta.dirname, "../../../..");
@@ -349,6 +350,7 @@ describe("kb members integration", () => {
       const kb = await prisma.knowledgeBase.findUniqueOrThrow({ where: { id: kbId } });
       expect(
         execFileSync("git", ["--git-dir", join(reposDir, `kb_${kbId}.git`), "rev-parse", "main"], {
+          env: fixtureGitEnv(),
           encoding: "utf8",
         }).trim(),
       ).toBe(kb.headSha);

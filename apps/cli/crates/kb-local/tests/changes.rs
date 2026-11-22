@@ -21,7 +21,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[path = "support/child_guard.rs"]
 mod child_guard;
+#[path = "support/scratch_git.rs"]
+mod scratch_git;
 use child_guard::ChildGuard;
+use scratch_git::scratch_git;
 use std::time::{Duration, Instant};
 
 use kb_client::ErrorCode;
@@ -43,12 +46,11 @@ fn temp_root(tag: &str) -> TestDir {
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(Stdio::null())
         .output()
         .expect("git");
@@ -1755,12 +1757,11 @@ fn all_objects(repo: &Path) -> std::collections::BTreeSet<String> {
 
 fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> String {
     let mut child = ChildGuard::new(
-        Command::new("git")
+        scratch_git()
             .current_dir(repo)
             .arg("--git-dir")
             .arg(".")
             .args(args)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -1800,7 +1801,7 @@ fn loose_blob_batch(repo: &Path, count: usize) -> Vec<String> {
     std::fs::write(&input_list, list).expect("fixture list");
     // File-fed stdin lets output() drain all the hashes while Git reads the
     // paths; writing a large list synchronously to a pipe can deadlock.
-    let out = Command::new("git")
+    let out = scratch_git()
         .arg("--git-dir")
         .arg(repo)
         .args([
@@ -1810,7 +1811,6 @@ fn loose_blob_batch(repo: &Path, count: usize) -> Vec<String> {
             "-w",
             "--stdin-paths",
         ])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(std::fs::File::open(input_list).expect("fixture list"))
         .output()
         .expect("git hash-object");
@@ -1941,7 +1941,7 @@ fn pack_count_stays_bounded_and_reads_stay_correct_across_rollups() {
     let big_inode = std::fs::metadata(kb.repo.join("objects/pack").join(&big_pack)).unwrap();
     // A long-lived raw reader that maps every pack as it appears.
     let mut reader = ChildGuard::new(
-        Command::new("git")
+        scratch_git()
             .current_dir(&kb.repo)
             .args(["--git-dir", ".", "cat-file", "--batch-check"])
             .stdin(Stdio::piped())

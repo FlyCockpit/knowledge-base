@@ -28,13 +28,19 @@ const { scripts } = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"))
   scripts: Record<string, string>;
 };
 const selected = (changed: readonly string[] | undefined) => [...selectSlow(changed).keys()].sort();
+// A git hook (or any caller) may export GIT_DIR, GIT_INDEX_FILE and the like;
+// inherited, git would read or write another repository than the one at cwd.
+const gitEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+);
 
 function tracked(): string[] {
   // Untracked (non-ignored) files too: a new file is checked before its commit.
+  // The user's config stays: a global core.excludesFile also hides files here.
   const result = spawnSync(
     "git",
     ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, encoding: "utf8", env: gitEnv },
   );
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.split("\0").filter(Boolean);
@@ -255,20 +261,24 @@ describe("changedFiles", () => {
   test("commits, edits, untracked files, and both sides of a rename since the merge base", (t) => {
     const dir = mkdtempSync(join(tmpdir(), "scripts-affected-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    // A git hook (or any caller) may export GIT_DIR, GIT_INDEX_FILE and the
-    // like; inherited, they would point this scratch repo's writes at the
-    // caller's repository. Drop every GIT_* variable.
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
-    );
     const git = (...args: string[]) => {
-      // No hooks either: a global core.hooksPath must not judge this repo.
-      const config = ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"];
+      // No hooks either: a global core.hooksPath must not judge this repo. And
+      // quotePath pinned on: a global core.quotePath=false would hide the
+      // quoting the non-ASCII cases below guard against.
+      const config = [
+        ...["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"],
+        ...["-c", "core.quotePath=true"],
+      ];
       const result = spawnSync("git", [...config, ...args], {
         cwd: dir,
         encoding: "utf8",
         env: {
-          ...env,
+          ...gitEnv,
+          // No system or global config either (a global core.excludesFile
+          // would hide the untracked files below).
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_SYSTEM: "/dev/null",
+          GIT_CONFIG_GLOBAL: "/dev/null",
           GIT_CEILING_DIRECTORIES: tmpdir(),
           GIT_AUTHOR_NAME: "t",
           GIT_AUTHOR_EMAIL: "t@example.com",
@@ -289,6 +299,9 @@ describe("changedFiles", () => {
     git("checkout", "-q", "-b", "feature");
     writeFileSync(join(dir, "apps/web/a.ts"), "2");
     git("mv", "scripts/backup/host.sh", "apps/web/host.sh");
+    // A committed non-ASCII name exercises the diff side; the untracked one below, ls-files.
+    writeFileSync(join(dir, "apps/web/naïve.ts"), "1");
+    git("add", "apps/web/naïve.ts");
     git("commit", "-q", "-am", "edit");
     writeFileSync(join(dir, "README.md"), "2");
     writeFileSync(join(dir, "new.ts"), "1");
@@ -300,6 +313,7 @@ describe("changedFiles", () => {
       "README.md",
       "apps/web/a.ts",
       "apps/web/host.sh",
+      "apps/web/naïve.ts",
       "docs/café.md",
       "new.ts",
       "scripts/backup/host.sh",

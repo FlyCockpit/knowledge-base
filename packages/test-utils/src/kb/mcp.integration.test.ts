@@ -77,6 +77,7 @@ import { Client } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { z } from "zod";
 import { requireBuiltArtifact } from "./build-artifacts.mjs";
+import { fixtureGitEnv } from "./git";
 import { deliverIndexBuild } from "./index-delivery";
 import { remotePeer } from "./parity";
 import { openKbPostgresClusterFromEnv } from "./postgres";
@@ -480,7 +481,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
     const message = execFileSync(
       "git",
       ["-C", join(reposDir, `kb_${kb.id}.git`), "cat-file", "commit", kb.headSha as string],
-      { encoding: "utf8" },
+      { env: fixtureGitEnv(), encoding: "utf8" },
     );
     expect(message.split("\n\n").slice(1).join("\n\n")).toBe(
       "Initial commit\n\nActed-by: MCP fixture via creator\n",
@@ -2966,6 +2967,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       if (!head) throw new Error("Fixture main must exist");
       const ownedRef = "refs/heads/users/topic";
       execFileSync("git", ["-C", join(reposDir, `kb_${kb.id}.git`), "update-ref", ownedRef, head], {
+        env: fixtureGitEnv(),
         stdio: "ignore",
       });
       const grantId = (
@@ -3247,6 +3249,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
         const repo = join(reposDir, `kb_${kb.id}.git`);
         const blob = execFileSync("git", ["rev-parse", `${edit.commitSha}:sealed.md`], {
           cwd: repo,
+          env: fixtureGitEnv(),
         })
           .toString()
           .trim();

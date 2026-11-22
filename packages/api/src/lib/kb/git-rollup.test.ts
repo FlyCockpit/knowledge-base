@@ -106,7 +106,10 @@ beforeEach(() => {
   });
   root = mkdtempSync(join(tmpdir(), "kb-rollup-test-"));
   repo = join(root, "repo.git");
-  execFileSync("git", ["init", "--bare", "--template=", repo], { stdio: "ignore" });
+  execFileSync("git", ["init", "--bare", "--template=", repo], {
+    env: hardenedGitEnv(),
+    stdio: "ignore",
+  });
 });
 afterEach(async () => {
   vi.restoreAllMocks();

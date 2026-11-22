@@ -11,12 +11,15 @@
 //! Every rejection must publish nothing: no ref, journal row, proposal row,
 //! number, index epoch or Git object carrying the rejected content.
 
+#[path = "support/scratch_git.rs"]
+mod scratch_git;
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
+use scratch_git::scratch_git;
 use temp_dir::TestDir;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use kb_client::ErrorCode;
 use kb_client::schema::{Direction, validate};
@@ -47,12 +50,11 @@ fn temp_root(tag: &str) -> TestDir {
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(Stdio::null())
         .output()
         .expect("git");
@@ -306,12 +308,11 @@ fn human_doc(id: &str) -> String {
 
 /// Every object of the repository, decompressed, as one lossy string.
 fn all_object_bytes(repo: &Path) -> String {
-    let out = Command::new("git")
+    let out = scratch_git()
         .current_dir(repo)
         .arg("--git-dir")
         .arg(".")
         .args(["cat-file", "--batch-all-objects", "--batch", "--unordered"])
-        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdin(Stdio::null())
         .output()
         .expect("git");

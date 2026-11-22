@@ -828,7 +828,7 @@ mod settle_tests {
         for i in 0..git_write::CONSOLIDATE_PACKS {
             let git = |args: &[&str], input: String| {
                 use std::io::Write;
-                let mut child = std::process::Command::new("git")
+                let mut child = crate::git_read::read_fixture::scratch_git()
                     // Fixture creation is not a durability test; the rollup
                     // below still uses the hardened, fsynced installer.
                     .args(["-c", "core.fsync=none"])
@@ -856,7 +856,7 @@ mod settle_tests {
                 format!("{sha}\n"),
             );
         }
-        let output = std::process::Command::new("git")
+        let output = crate::git_read::read_fixture::scratch_git()
             .arg("--git-dir")
             .arg(&repo)
             .args(["prune-packed", "-q"])
@@ -1148,7 +1148,7 @@ mod settle_tests {
         let mut loose = Vec::new();
         for body in bodies {
             use std::io::Write;
-            let mut child = std::process::Command::new("git")
+            let mut child = crate::git_read::read_fixture::scratch_git()
                 .arg("--git-dir")
                 .arg(&repo)
                 .args(["hash-object", "-w", "--stdin"])
@@ -1186,7 +1186,7 @@ mod settle_tests {
                             std::fs::Permissions::from_mode(0o500),
                         )
                         .unwrap();
-                        let out = std::process::Command::new("git")
+                        let out = crate::git_read::read_fixture::scratch_git()
                             .arg("--git-dir")
                             .arg(blocked_dir.parent().unwrap().parent().unwrap())
                             .args(["prune-packed", "-q"])
@@ -1363,7 +1363,7 @@ mod settle_tests {
 
     fn fixture_git(repo: &std::path::Path, args: &[&str], input: &[u8]) -> String {
         use std::io::Write;
-        let mut child = std::process::Command::new("git")
+        let mut child = crate::git_read::read_fixture::scratch_git()
             // Fixture construction needs no durability barriers. Maintenance
             // below still runs the real synced production installer.
             .args(["-c", "core.fsync=none"])

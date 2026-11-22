@@ -228,9 +228,7 @@ describe("kb lifecycle integration", () => {
       const commit = execFileSync(
         "git",
         ["--git-dir", repo, "cat-file", "commit", first.kb.headSha as string],
-        {
-          encoding: "utf8",
-        },
+        { env: hardenedGitEnv(), encoding: "utf8" },
       );
       expect(commit.split("\n\n").slice(1).join("\n\n")).toBe(
         "Initial commit\n\nActed-by: owner via web\n",
@@ -646,7 +644,7 @@ describe("kb lifecycle integration", () => {
         execFileSync(
           "git",
           ["--git-dir", repo, "update-ref", "refs/heads/main", next, intent.newRef],
-          { stdio: "ignore" },
+          { env: hardenedGitEnv(), stdio: "ignore" },
         );
       } else if (stage === "corrupt-object") {
         writeFileSync(
@@ -981,14 +979,11 @@ describe("kb lifecycle integration", () => {
             { reposDir, kbId },
             { parentSha: intent.newRef, message: "unexplained" },
           );
-          execFileSync("git", [
-            "--git-dir",
-            repo,
-            "update-ref",
-            "refs/heads/main",
-            next,
-            intent.newRef,
-          ]);
+          execFileSync(
+            "git",
+            ["--git-dir", repo, "update-ref", "refs/heads/main", next, intent.newRef],
+            { env: hardenedGitEnv() },
+          );
           await runJournalRecoverySweep(
             prisma,
             reposDir,
