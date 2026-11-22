@@ -71,6 +71,9 @@ overrides:
   # Reached via prisma>@prisma/studio-core>@visx/*, which still declare
   # lodash ^4.17.21.
   lodash@<4.18.0: ">=4.18.0" # GHSA-r5fr-rjxr-66jc (code injection via _.template)
+  # Reached via prisma>@prisma/config, which pins effect 3.20.0 exactly. Capped
+  # below v4 (the current latest major) so prisma stays on the 3.x API.
+  effect@<3.22.1: ">=3.22.1 <4" # GHSA-7589-6fvf-x4pw (ReDoS in Schema.TemplateLiteral)
   # @vite-pwa/assets-generator declares sharp ^0.35.4 (GHSA-f88m-g3jw-g9cj, fixed
   # in 0.35.0, is covered), but the libheif fix below needs 0.35.5. Scoped to the
   # icon-generator consumers — the app's own sharp comes from the catalog.
