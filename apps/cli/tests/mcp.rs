@@ -864,7 +864,7 @@ fn owner_chosen_tools_and_kbs_shape_discovery_and_refuse_calls() {
 }
 
 #[test]
-fn tool_and_kb_flags_are_validated_and_local_only() {
+fn tool_and_kb_flags_are_validated_and_kb_is_local_only() {
     let temp = tempfile::tempdir().expect("fixture");
     for args in [vec!["--tools", "admin"], vec!["--kb", "Not-An-Id"]] {
         let r = Command::new(assert_cmd::cargo::cargo_bin!("kb"))
@@ -880,23 +880,27 @@ fn tool_and_kb_flags_are_validated_and_local_only() {
         !temp.path().join("store").exists(),
         "usage errors open nothing"
     );
-    let r = Command::new(assert_cmd::cargo::cargo_bin!("kb"))
-        .args([
-            "mcp",
-            "--server",
-            "https://kb.example.test",
-            "--tools",
-            "read",
-        ])
-        .env("KB_CONFIG_DIR", temp.path())
-        .output()
-        .expect("CLI");
-    assert!(!r.status.success());
+    let remote = |args: &[&str]| {
+        let r = Command::new(assert_cmd::cargo::cargo_bin!("kb"))
+            .args(["mcp", "--server", "https://kb.example.test"])
+            .args(args)
+            .env("KB_CONFIG_DIR", temp.path())
+            .env("KB_DATA_DIR", temp.path().join("data"))
+            .output()
+            .expect("CLI");
+        assert!(!r.status.success());
+        String::from_utf8_lossy(&r.stderr).into_owned()
+    };
+    // A remote KB list is its grant's, set in the web app.
+    let stderr = remote(&["--kb", "abcdefghijklmnopqrstuvwx"]);
     assert!(
-        String::from_utf8_lossy(&r.stderr).contains("require a local managed store"),
-        "{}",
-        String::from_utf8_lossy(&r.stderr)
+        stderr.contains("`--kb` requires a local managed store"),
+        "{stderr}"
     );
+    // `--tools` narrows a remote list too: accepted, so this run gets as far
+    // as the missing credential.
+    let stderr = remote(&["--tools", "read"]);
+    assert!(stderr.contains("no credential for this server"), "{stderr}");
 }
 
 #[test]

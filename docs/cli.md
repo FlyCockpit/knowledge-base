@@ -141,8 +141,70 @@ it: a non-empty subset of the pinned catalog, in catalog order, with pinned
 schemas except an optional `kbId` enum (or the never-matching `not: {}` when no
 KB qualifies). The agent sees exactly that list and the
 server's instructions; other tools are refused locally. `--read-only` lists
-only read tools (write tools are neither advertised nor callable). Calls make one attempt; lost mutation replies
+only read tools (write tools are neither advertised nor callable). `--tools <group|preset,...>` narrows the
+server's list the same way, on top of the server grant, and checks each call's
+own group (asset changes inside `knowledge_changes_apply`, an upload's kind). An
+upload's write and finish are accepted under a `--tools` without `edit` or
+`assets` only for an upload begun in the same connection with a kind the groups
+allow (a remote upload's kind is not known otherwise). Calls make one attempt; lost mutation replies
 have unknown outcomes, so retain arguments/idempotency key for recovery.
+
+### Several servers on one connection
+
+Name each server once, then serve them together:
+
+```sh
+kb config add-server work https://kb.work.example
+kb config add-server personal https://kb.example.net --read-only
+kb login --server work && kb login --server personal
+kb mcp --server work --server personal          # or: kb config set-mcp-servers work personal; kb mcp
+kb mcp --server work=https://kb.work.example --server lab=https://kb.lab.example   # unconfigured names
+```
+
+`--server` takes a URL, `name=<url>` or a configured name (names are 1-32 of
+`a-z`, `0-9`, `-`; `kb config remove-server <name>` drops one). `kb mcp` with no
+`--server` serves `mcp_servers`, else `server`. One selected server is served
+exactly as before. With several, each tool is listed once (the pinned
+description and input schema, about 8k tokens for the whole catalog, instead of
+once per server) and takes a required `server` argument whose `enum` is the
+servers that listed it. The argument is removed before forwarding; a call goes
+only to the server it names, with only that server's own credential (no token,
+header, redirect or proxy decision crosses servers; the global `proxy` applies
+to each upstream separately). Every result of a call that named a valid server
+carries `_meta: {"kb/server": <name>}` (forwarded, refused locally or cancelled),
+and every ID in it belongs to that server. One connection serves at most 16
+servers.
+
+- **Addressing.** The pair `(server, kbId)` identifies a knowledge base. A kbId
+  that one server has shown (its `kbId` enum, or a KB list/get/create/update
+  result) and the named server has not is refused locally (`FORBIDDEN`), so one
+  server's KB, path or sealed ciphertext request never reaches another.
+  Otherwise each server's live grant decides, as with one server (its `kbId`
+  enum is a startup snapshot, so a KB created since is still usable).
+  A missing `server` is `INVALID_ARGUMENT` (`MISSING_ARGUMENT` at `/server`); a
+  server of the connection that does not list the tool is `-32602 Unknown tool`.
+- **Instructions.** One text: the server list and these rules, notices for
+  servers left out, then each server's own instructions quoted line by line
+  (`> `; every CR, CRLF and Unicode line separator becomes a quoted line break),
+  at most 4 KiB per server and 16 KiB in all.
+- **Startup.** All servers are verified at once (10 s in all, including
+  reading each stored credential). A server with no
+  stored credential, unreachable, or with an incompatible catalog is reported on
+  stderr and in the instructions and left out for the session; the shape stays
+  multi-server. If none verifies, `kb mcp` fails with the first one's error.
+- **Failures.** A server that drops fails only its own calls
+  (`STORAGE_UNAVAILABLE`); a lost mutation reply is an unknown outcome on that
+  server only (retry there with the same idempotency key). Each server has at
+  most 3 calls in flight, so a hung server cannot block the others. After
+  `kb logout --server <name>` that server's calls fail with `FORBIDDEN` and a
+  stderr hint; the other servers keep their own credentials.
+- **Read-only.** `--read-only` applies to every server; a configured server with
+  `read_only = true` (`kb config add-server --read-only`) is always read-only.
+  Write tools of a read-only server are not in its `enum` and are refused.
+  `--tools` narrows every server. `--principal` and `--kb` stay local-store only.
+- **Sealed values.** `knowledge_sealed_resolve` is forwarded ciphertext-only to
+  the named server; host decryption (`kb-client` `resolve_sealed`) stays bound
+  to the attachment's own resource.
 
 Default logout self-revokes the presented PAT before deleting matching local
 state. Network failure retains it for retry and reports uncertain revocation.
@@ -296,7 +358,8 @@ sessions' next call.
 
 `--tools <group|preset,...>` and `--kb <id,...>` scope a local connection the way
 a server grant's tool groups and KB list scope a remote one (remote connections
-are scoped in the web app instead, so both flags require a local store). Groups
+are scoped in the web app; `--tools` also narrows a remote list, `--kb` requires
+a local store). Groups
 are `read`, `edit`, `assets`, `export`, `pull_requests`, `index_admin`,
 `kb_admin` and `sealed`; presets are `read`, `propose` (read, edit,
 pull_requests) and `direct` (read, edit, assets, pull_requests), read from the generated

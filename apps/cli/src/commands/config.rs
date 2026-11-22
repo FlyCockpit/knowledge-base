@@ -48,6 +48,26 @@ enum Sub {
         #[arg(long)]
         allow_loopback_http: bool,
     },
+    /// Add or replace a named server: `--server <name>` on `kb mcp`, `kb
+    /// login`, `kb logout` and `kb export` (credentials stay in private state).
+    AddServer {
+        /// 1-32 of a-z, 0-9 and -; also the `server` argument value a
+        /// multi-server `kb mcp` advertises.
+        name: String,
+        url: String,
+        /// Permit plain HTTP for this loopback development server.
+        #[arg(long)]
+        allow_loopback_http: bool,
+        /// `kb mcp` serves only this server's read tools.
+        #[arg(long)]
+        read_only: bool,
+    },
+    /// Remove a named server (and its place in `mcp_servers`). Its stored
+    /// credential is kept; `kb logout --server <name>` first revokes it.
+    RemoveServer { name: String },
+    /// Set the named servers one `kb mcp` serves when no `--server` is given
+    /// (each tool advertised once); no names clears the list.
+    SetMcpServers { names: Vec<String> },
 }
 
 fn absolute(path: &Path) -> Result<std::path::PathBuf> {
@@ -114,6 +134,78 @@ pub fn run(args: &Args) -> Result<()> {
                 output::json(&config.safe_for_output())?;
             } else {
                 output::line(format!("server set to {}", resource.origin()))?;
+            }
+        }
+        Sub::AddServer {
+            name,
+            url,
+            allow_loopback_http,
+            read_only,
+        } => {
+            if !crate::config::is_server_name(name) {
+                anyhow::bail!("a server name is 1-32 of a-z, 0-9 and -, not starting with -");
+            }
+            if !url.contains("://") {
+                anyhow::bail!(
+                    "server url must start with https:// (or http:// for a loopback server)"
+                );
+            }
+            let selected = crate::auth::select(url, *allow_loopback_http, &Config::default())?;
+            let entry = crate::config::NamedServer {
+                url: selected.resource.origin().to_owned(),
+                allow_loopback_http: *allow_loopback_http
+                    && selected.resource.origin().starts_with("http://"),
+                read_only: *read_only,
+            };
+            let config = Config::update(|config| {
+                config.servers.insert(name.clone(), entry.clone());
+            })?;
+            if args.json {
+                output::json(&config.safe_for_output())?;
+            } else {
+                output::line(format!("server `{name}` set to {}", entry.url))?;
+            }
+        }
+        Sub::RemoveServer { name } => {
+            // A malformed entry is removable, but its key may hold a pasted
+            // credential or control characters: echo only valid names.
+            let shown = if crate::config::is_server_name(name) {
+                format!("`{name}`")
+            } else {
+                "with that (invalid) name".to_owned()
+            };
+            let before = Config::load_unchecked()?;
+            if !before.servers.contains_key(name) {
+                anyhow::bail!("no server {shown} is configured");
+            }
+            if before.server.as_deref() == Some(name.as_str()) {
+                anyhow::bail!(
+                    "`server` names the server {shown}; change it first with `kb config set-server <url>`"
+                );
+            }
+            let config = Config::update(|config| {
+                config.servers.remove(name);
+                config.mcp_servers.retain(|listed| listed != name);
+            })?;
+            if args.json {
+                output::json(&config.safe_for_output())?;
+            } else {
+                output::line(format!("server {shown} removed"))?;
+            }
+        }
+        Sub::SetMcpServers { names } => {
+            // Checked before anything is saved or echoed, even when the list
+            // is unchanged (a malformed key may hold a pasted credential).
+            if !names.iter().all(|name| crate::config::is_server_name(name)) {
+                anyhow::bail!("server names are 1-32 of a-z, 0-9 and -, not starting with -");
+            }
+            let config = Config::update(|config| config.mcp_servers = names.clone())?;
+            if args.json {
+                output::json(&config.safe_for_output())?;
+            } else if names.is_empty() {
+                output::line("mcp_servers cleared")?;
+            } else {
+                output::line(format!("mcp_servers set to {}", names.join(", ")))?;
             }
         }
         Sub::Path => {

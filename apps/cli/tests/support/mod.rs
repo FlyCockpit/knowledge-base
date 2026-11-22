@@ -21,10 +21,28 @@ pub struct Server {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
+type Answer = (u16, String, String);
+
+/// Who answers requests: one closure on the accept thread, or a shared one
+/// called from a thread per connection.
+enum Replier {
+    Serial(Box<SerialReply>),
+    Shared(Arc<SharedReply>),
+}
+type SerialReply = dyn Fn(usize, &str, &str) -> Answer + Send;
+type SharedReply = dyn Fn(usize, &str, &str) -> Answer + Send + Sync;
+
 impl Server {
-    pub fn new(
-        reply: impl Fn(usize, &str, &str) -> (u16, String, String) + Send + 'static,
-    ) -> Self {
+    pub fn new(reply: impl Fn(usize, &str, &str) -> Answer + Send + 'static) -> Self {
+        Self::start(Replier::Serial(Box::new(reply)))
+    }
+    /// Every connection on its own thread, so requests overlap (a held reply
+    /// does not stall the next request).
+    #[allow(dead_code)] // Only the multi-server fixtures overlap requests.
+    pub fn concurrent(reply: impl Fn(usize, &str, &str) -> Answer + Send + Sync + 'static) -> Self {
+        Self::start(Replier::Shared(Arc::new(reply)))
+    }
+    fn start(replier: Replier) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -34,56 +52,25 @@ impl Server {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let thread = thread::spawn(move || {
+            let mut handlers = Vec::new();
             while !stopped.load(Ordering::SeqCst) {
-                let Ok((mut stream, _)) = listener.accept() else {
+                let Ok((stream, _)) = listener.accept() else {
                     thread::sleep(Duration::from_millis(5));
                     continue;
                 };
-                // BSD/macOS accepted sockets inherit the listener's O_NONBLOCK.
-                stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut bytes = Vec::new();
-                let mut buf = [0; 4096];
-                loop {
-                    let n = stream.read(&mut buf).unwrap();
-                    if n == 0 {
-                        break;
-                    }
-                    bytes.extend_from_slice(&buf[..n]);
-                    assert!(bytes.len() < 32768);
-                    let text = String::from_utf8_lossy(&bytes);
-                    if let Some(end) = text.find("\r\n\r\n") {
-                        let size = text[..end]
-                            .lines()
-                            .find_map(|l| {
-                                l.to_ascii_lowercase()
-                                    .strip_prefix("content-length: ")?
-                                    .parse::<usize>()
-                                    .ok()
-                            })
-                            .unwrap_or(0);
-                        if bytes.len() >= end + 4 + size {
-                            break;
-                        }
+                match &replier {
+                    Replier::Serial(reply) => handle(stream, reply.as_ref(), &base, &requests),
+                    Replier::Shared(reply) => {
+                        let (reply, base, requests) =
+                            (reply.clone(), base.clone(), requests.clone());
+                        handlers.push(thread::spawn(move || {
+                            handle(stream, reply.as_ref(), &base, &requests);
+                        }));
                     }
                 }
-                let wire = String::from_utf8(bytes).unwrap();
-                let at = Instant::now();
-                let mut seen = requests.lock().unwrap();
-                let index = seen.len();
-                seen.push(Request {
-                    wire: wire.clone(),
-                    at,
-                });
-                drop(seen);
-                let (status, headers, body) = reply(index, &wire, &base);
-                let response = format!(
-                    "HTTP/1.1 {status} Fixture\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{headers}\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes());
+            }
+            for handler in handlers {
+                handler.join().unwrap();
             }
         });
         Self {
@@ -94,6 +81,66 @@ impl Server {
         }
     }
 }
+
+/// One connection: read the whole request, record it, answer.
+fn handle(
+    mut stream: std::net::TcpStream,
+    reply: &dyn Fn(usize, &str, &str) -> Answer,
+    base: &str,
+    requests: &Mutex<Vec<Request>>,
+) {
+    // BSD/macOS accepted sockets inherit the listener's O_NONBLOCK.
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    let mut buf = [0; 4096];
+    loop {
+        let n = stream.read(&mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buf[..n]);
+        assert!(bytes.len() < 32768);
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(end) = text.find("\r\n\r\n") {
+            let size = text[..end]
+                .lines()
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")?
+                        .parse::<usize>()
+                        .ok()
+                })
+                .unwrap_or(0);
+            if bytes.len() >= end + 4 + size {
+                break;
+            }
+        }
+    }
+    let wire = String::from_utf8(bytes).unwrap();
+    let at = Instant::now();
+    let mut seen = requests.lock().unwrap();
+    let index = seen.len();
+    seen.push(Request {
+        wire: wire.clone(),
+        at,
+    });
+    drop(seen);
+    let (status, headers, body) = reply(index, &wire, base);
+    // Status 0: the request was taken, the reply is lost.
+    if status == 0 {
+        drop(stream);
+        return;
+    }
+    let response = format!(
+        "HTTP/1.1 {status} Fixture\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{headers}\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes());
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);

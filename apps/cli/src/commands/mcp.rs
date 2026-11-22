@@ -27,17 +27,26 @@ pub struct Args {
     /// Default: `root` from the config file (`kb config set-root <path>`).
     #[arg(long, conflicts_with = "server", value_name = "PATH")]
     pub root: Option<PathBuf>,
-    #[command(flatten)]
-    pub server: crate::auth::ServerArgs,
-    /// Use an existing owner-configured capability principal.
+    /// Serve this server: its origin or /mcp resource, `name=<url>`, or the
+    /// name of a configured server (`kb config add-server`). Repeat it to
+    /// serve several servers on one connection: each tool is advertised once
+    /// and takes a `server` argument naming one of them. Default:
+    /// `mcp_servers`, else `server`, from the config file.
+    #[arg(long = "server", id = "server", value_name = "URL|NAME")]
+    pub servers: Vec<String>,
+    /// Permit plain HTTP only for loopback development servers.
+    #[arg(long)]
+    pub allow_loopback_http: bool,
+    /// Local store only: use an existing owner-configured capability principal.
     #[arg(long)]
     pub principal: Option<String>,
-    /// Restrict this connection to the read MCP scope.
+    /// Restrict this connection to the read MCP scope (every server; a named
+    /// server with `read_only = true` is always read-only).
     #[arg(long)]
     pub read_only: bool,
-    /// Local store only: the tool groups (`read`, `edit`, `assets`, `export`,
-    /// `pull_requests`, `index_admin`, `kb_admin`, `sealed`) or presets
-    /// (`read`, `propose`, `direct`) this connection may use. Default: all.
+    /// The tool groups (`read`, `edit`, `assets`, `export`, `pull_requests`,
+    /// `index_admin`, `kb_admin`, `sealed`) or presets (`read`, `propose`,
+    /// `direct`) this connection may use, on every server. Default: all.
     #[arg(
         long,
         value_name = "GROUP|PRESET",
@@ -53,12 +62,13 @@ pub struct Args {
 pub fn run(args: &Args) -> anyhow::Result<()> {
     let config = crate::config::Config::load()?;
     // Explicit flags select the backend even when the other default is set.
-    let root = if args.server.server.is_some() {
+    let configured_server = config.server.is_some() || !config.mcp_servers.is_empty();
+    let root = if !args.servers.is_empty() {
         None
     } else if let Some(root) = &args.root {
         Some(root)
     } else {
-        if config.root.is_some() && config.server.is_some() {
+        if config.root.is_some() && configured_server {
             anyhow::bail!("ambiguous MCP config; select `--root` or `--server`");
         }
         config.root.as_ref()
@@ -66,7 +76,15 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     if let Some(root) = root {
         run_local(args, root, &config)
     } else {
-        if args.server.server.is_none() && config.server.is_none() {
+        // `mcp_servers` is the `kb mcp` default; `server` is every command's.
+        let inputs: Vec<&str> = if !args.servers.is_empty() {
+            args.servers.iter().map(String::as_str).collect()
+        } else if !config.mcp_servers.is_empty() {
+            config.mcp_servers.iter().map(String::as_str).collect()
+        } else {
+            config.server.as_deref().into_iter().collect()
+        };
+        if inputs.is_empty() {
             anyhow::bail!(
                 "nothing to serve: pass `--root <path>` for a local store (or run `kb config set-root <path>`), or `--server <url>` for a remote server (or run `kb config set-server <url>`)"
             );
@@ -74,11 +92,16 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         if args.principal.is_some() {
             anyhow::bail!("`--principal` requires a local managed store");
         }
-        // A remote connection's tools and KBs are its grant's, set in the web app.
-        if !args.tools.is_empty() || !args.kbs.is_empty() {
-            anyhow::bail!("`--tools` and `--kb` require a local managed store");
+        // A remote connection's KBs are its grant's, set in the web app.
+        if !args.kbs.is_empty() {
+            anyhow::bail!("`--kb` requires a local managed store");
         }
-        crate::remote::run(&args.server, &config, args.read_only)
+        let selected = inputs
+            .iter()
+            .map(|input| crate::auth::select(input, args.allow_loopback_http, &config))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let groups: Vec<&'static str> = args.tools.iter().flatten().copied().collect();
+        crate::remote::run(selected, &config, args.read_only, &groups)
     }
 }
 fn run_local(

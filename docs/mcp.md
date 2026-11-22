@@ -9,6 +9,21 @@ private client configuration; never put it in a URL, argv or a shared log.
 Browser cookies do not authenticate MCP. OAuth also supports sender-bound DPoP;
 Git passwords and self-revocation accept PATs only.
 
+## Several servers in one client entry
+
+`kb mcp` can forward several servers through one MCP entry, so the agent sees
+each tool once (about 8k tokens for the catalog) instead of once per server.
+Each tool then takes a required `server` argument; IDs belong to the server that
+returned them. Details and the failure rules are in [the CLI guide](./cli.md).
+
+```json
+{
+  "mcpServers": {
+    "kb": { "command": "kb", "args": ["mcp", "--server", "work", "--server", "personal"] }
+  }
+}
+```
+
 ## Permission selection
 
 Select each KB and its bits explicitly. Empty ACL means no existing KB access.

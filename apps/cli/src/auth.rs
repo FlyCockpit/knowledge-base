@@ -47,8 +47,9 @@ pub fn recipient_key(file: &Path) -> Result<kb_client::sealed::RecipientKey> {
 
 #[derive(Debug, clap::Args)]
 pub struct ServerArgs {
-    /// Server origin or its /mcp resource (overrides config).
-    #[arg(long)]
+    /// Server origin or its /mcp resource, or the name of a configured server
+    /// (`kb config add-server`); overrides config.
+    #[arg(long, value_name = "URL|NAME")]
     pub server: Option<String>,
     /// Permit plain HTTP only for loopback development servers.
     #[arg(long)]
@@ -61,7 +62,7 @@ impl ServerArgs {
     /// The resource and the transport policy it was admitted under. Plain
     /// HTTP needs `--allow-loopback-http` on this command, or the opt-in
     /// `kb config set-server --allow-loopback-http` remembered for exactly
-    /// this origin.
+    /// this origin (or `allow_loopback_http` on the named server's entry).
     pub fn resolve_with_policy(
         &self,
         config: &crate::config::Config,
@@ -75,20 +76,64 @@ impl ServerArgs {
                     "server is not configured; use `--server` or `kb config set-server`"
                 )
             })?;
-        let candidate =
-            McpResource::parse(input, TransportPolicy::AllowLoopbackHttp).map_err(origin_hint)?;
-        let policy = if self.allow_loopback_http
-            || config.loopback_http_opt_in.as_deref() == Some(candidate.origin())
-        {
-            TransportPolicy::AllowLoopbackHttp
-        } else {
-            TransportPolicy::HttpsOnly
-        };
-        Ok((
-            McpResource::parse(input, policy).map_err(origin_hint)?,
-            policy,
-        ))
+        let selected = select(input, self.allow_loopback_http, config)?;
+        Ok((selected.resource, selected.policy))
     }
+}
+
+/// One server a command addresses, resolved from `--server`/config.
+#[derive(Debug, Clone)]
+pub struct Selected {
+    /// The configured name, or the `name` of `name=<url>`; `None` for a bare URL.
+    pub name: Option<String>,
+    pub resource: McpResource,
+    pub policy: TransportPolicy,
+    /// The named entry's `read_only`.
+    pub read_only: bool,
+}
+
+/// Resolve one `--server` value: anything containing `://` is a URL
+/// (optionally `name=<url>`), anything else names a `[servers.<name>]` entry.
+/// The plain-HTTP opt-in of a named entry binds to that entry's own origin.
+pub fn select(
+    input: &str,
+    allow_loopback_http: bool,
+    config: &crate::config::Config,
+) -> Result<Selected> {
+    let (name, url, entry) = if input.contains("://") {
+        match input.split_once('=') {
+            Some((name, url)) if crate::config::is_server_name(name) && url.contains("://") => {
+                (Some(name.to_owned()), url, None)
+            }
+            _ => (None, input, None),
+        }
+    } else {
+        if !crate::config::is_server_name(input) {
+            bail!("`--server` takes a server URL or a server name (1-32 of a-z, 0-9 and -)");
+        }
+        let entry = config.servers.get(input).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no server named `{input}` is configured; add it with `kb config add-server {input} <url>`"
+            )
+        })?;
+        (Some(input.to_owned()), entry.url.as_str(), Some(entry))
+    };
+    let candidate =
+        McpResource::parse(url, TransportPolicy::AllowLoopbackHttp).map_err(origin_hint)?;
+    let policy = if allow_loopback_http
+        || entry.is_some_and(|entry| entry.allow_loopback_http)
+        || config.loopback_http_opt_in.as_deref() == Some(candidate.origin())
+    {
+        TransportPolicy::AllowLoopbackHttp
+    } else {
+        TransportPolicy::HttpsOnly
+    };
+    Ok(Selected {
+        name,
+        resource: McpResource::parse(url, policy).map_err(origin_hint)?,
+        policy,
+        read_only: entry.is_some_and(|entry| entry.read_only),
+    })
 }
 
 /// Name the flag when plain HTTP is refused.

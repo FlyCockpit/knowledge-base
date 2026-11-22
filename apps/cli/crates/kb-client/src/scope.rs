@@ -226,6 +226,13 @@ impl ToolScope {
         grouped && (!self.read_only || name.read_only())
     }
 
+    /// A forwarder's local narrowing (`kb mcp --server --tools`): whether a
+    /// tool the server listed stays listed and callable under these groups
+    /// and write mode. The server's grant still decides every call.
+    pub fn permits(&self, name: ToolName) -> bool {
+        self.grants(name)
+    }
+
     /// A tool that belongs to at least one group (not a supporting tool).
     fn grouped(name: ToolName) -> bool {
         schema::tool_groups(name.as_str()).is_ok_and(|groups| !groups.is_empty())

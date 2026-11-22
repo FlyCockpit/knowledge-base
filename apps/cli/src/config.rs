@@ -41,6 +41,39 @@ pub struct Config {
     /// only; every other server still needs https or the per-command flag.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub loopback_http_opt_in: Option<String>,
+    /// The servers one `kb mcp` serves when no `--server` is given, by name
+    /// (`kb config set-mcp-servers`). Takes precedence over `server` for
+    /// `kb mcp` only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<String>,
+    /// Named servers (`kb config add-server <name> <url>`): `--server <name>`
+    /// on every command. Never a credential.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub servers: std::collections::BTreeMap<String, NamedServer>,
+}
+
+/// One `[servers.<name>]` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedServer {
+    /// Server origin or its /mcp resource.
+    pub url: String,
+    /// Permit plain HTTP for this entry's loopback origin only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_loopback_http: bool,
+    /// `kb mcp` serves only this server's read tools.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+}
+
+/// A server name (and the `server` argument value a multi-server `kb mcp`
+/// advertises): 1-32 of `a-z`, `0-9` and `-`, not starting with `-`.
+pub fn is_server_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// A config file is a few lines of TOML.
@@ -133,7 +166,15 @@ impl Config {
     /// keep failing the commands that read them, with their own message.
     fn save_changed(&self, before: &Self) -> Result<()> {
         for key in Self::KEYS {
-            if self.field(key) != before.field(key) {
+            if key == "servers" {
+                // Each named server is its own setting: repairing one entry
+                // is never blocked by another that is still invalid.
+                for (name, entry) in &self.servers {
+                    if before.servers.get(name) != Some(entry) {
+                        check_server(name, entry)?;
+                    }
+                }
+            } else if self.field(key) != before.field(key) {
                 self.check(key)?;
             }
         }
@@ -183,12 +224,14 @@ impl Config {
         Ok((path, file))
     }
 
-    const KEYS: [&'static str; 5] = [
+    const KEYS: [&'static str; 7] = [
         "root",
         "models_dir",
         "server",
         "loopback_http_opt_in",
         "proxy",
+        "servers",
+        "mcp_servers",
     ];
 
     /// One setting's value, for change detection in [`Config::save_changed`].
@@ -199,6 +242,10 @@ impl Config {
             "server" => self.server.clone(),
             "loopback_http_opt_in" => self.loopback_http_opt_in.clone(),
             "proxy" => self.proxy.clone(),
+            "servers" => (!self.servers.is_empty())
+                .then(|| serde_json::to_string(&self.servers).unwrap_or_default()),
+            "mcp_servers" => (!self.mcp_servers.is_empty())
+                .then(|| serde_json::to_string(&self.mcp_servers).unwrap_or_default()),
             _ => unreachable!("unknown config key `{key}`"),
         }
     }
@@ -211,7 +258,13 @@ impl Config {
     /// Omit invalid URLs, which can contain credentials, without changing disk.
     pub(crate) fn safe_for_output(&self) -> Self {
         let mut safe = self.clone();
-        if self.check("server").is_err() {
+        // Entries first: a reference to a dropped (or invalid) name must not
+        // survive in `server` or `mcp_servers` either.
+        safe.servers
+            .retain(|name, entry| check_server(name, entry).is_ok());
+        let servers = safe.servers.clone();
+        safe.mcp_servers.retain(|name| servers.contains_key(name));
+        if safe.check("server").is_err() {
             safe.server = None;
         }
         if self.check("proxy").is_err() {
@@ -219,6 +272,9 @@ impl Config {
         }
         if self.check("loopback_http_opt_in").is_err() {
             safe.loopback_http_opt_in = None;
+        }
+        if safe.check("mcp_servers").is_err() {
+            safe.mcp_servers.clear();
         }
         safe
     }
@@ -249,10 +305,30 @@ impl Config {
             }
             "server" => {
                 if let Some(server) = &self.server {
-                    kb_client::origin::McpResource::parse(
-                        server,
-                        kb_client::origin::TransportPolicy::AllowLoopbackHttp,
-                    )?;
+                    if server.contains("://") {
+                        kb_client::origin::McpResource::parse(
+                            server,
+                            kb_client::origin::TransportPolicy::AllowLoopbackHttp,
+                        )?;
+                    } else if !self.servers.contains_key(server) {
+                        anyhow::bail!(
+                            "`server` in the config file names no configured server (fix it with `kb config set-server <url>` or `kb config add-server`)"
+                        );
+                    }
+                }
+            }
+            "servers" => {
+                for (name, entry) in &self.servers {
+                    check_server(name, entry)?;
+                }
+            }
+            "mcp_servers" => {
+                for (at, name) in self.mcp_servers.iter().enumerate() {
+                    if !self.servers.contains_key(name) || self.mcp_servers[..at].contains(name) {
+                        anyhow::bail!(
+                            "`mcp_servers` in the config file must name distinct configured servers (fix it with `kb config set-mcp-servers <name>...`)"
+                        );
+                    }
                 }
             }
             "loopback_http_opt_in" => {
@@ -275,6 +351,27 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// One `[servers.<name>]` entry. Never echoes a rejected name or URL: either
+/// may hold a credential.
+fn check_server(name: &str, entry: &NamedServer) -> Result<()> {
+    if !is_server_name(name) {
+        anyhow::bail!(
+            "invalid server name in the config file (names are 1-32 of a-z, 0-9 and -; fix it with `kb config remove-server` and `kb config add-server`)"
+        );
+    }
+    if kb_client::origin::McpResource::parse(
+        &entry.url,
+        kb_client::origin::TransportPolicy::AllowLoopbackHttp,
+    )
+    .is_err()
+    {
+        anyhow::bail!(
+            "invalid url for server `{name}` in the config file (fix it with `kb config add-server {name} <url>`)"
+        );
+    }
+    Ok(())
 }
 
 /// Stable OS lock shared by every config writer; never unlink this inode.
@@ -334,6 +431,16 @@ pub const TEMPLATE: &str = r#"# kb configuration. Every setting is optional; unc
 #
 # Explicit HTTP(S) proxy origin; ambient proxy variables are ignored.
 # proxy = "http://proxy.example.com:3128"
+#
+# The servers one `kb mcp` serves when no `--server` is given, each tool
+# advertised once (`kb config set-mcp-servers work personal`).
+# mcp_servers = ["work", "personal"]
+#
+# Named servers: `--server work` on `kb mcp`, `kb login`, `kb logout` and
+# `kb export` (`kb config add-server <name> <url>`). `server` may name one.
+# [servers.work]
+# url = "https://kb.example.com"
+# read_only = false
 "#;
 
 /// Flush the directory entry created by the rename, so the config file itself
@@ -440,6 +547,60 @@ mod tests {
         let mut worse = before.clone();
         worse.root = Some("still/relative".into());
         assert!(worse.check("root").is_err());
+    }
+
+    #[test]
+    fn named_servers_and_the_mcp_default_list_are_checked_without_echoing_values() {
+        let ok: Config = toml::from_str(
+            "server = \"work\"\nmcp_servers = [\"work\", \"home-2\"]\n[servers.work]\nurl = \"https://kb.work.example\"\nread_only = true\n[servers.home-2]\nurl = \"http://127.0.0.1:3000\"\nallow_loopback_http = true\n",
+        )
+        .expect("parse");
+        assert!(ok.validate().is_ok());
+        assert!(ok.servers["work"].read_only);
+        // Round trip through the writer keeps every value.
+        let back: Config =
+            toml::from_str(&toml::to_string_pretty(&ok).expect("write")).expect("read");
+        assert_eq!(back, ok);
+        for (text, key) in [
+            (
+                "[servers.Bad]\nurl = \"https://disposable-config-canary.example\"\n",
+                "servers",
+            ),
+            (
+                "[servers.ok]\nurl = \"https://u:disposable-config-canary@kb.example\"\n",
+                "servers",
+            ),
+            ("mcp_servers = [\"missing\"]\n", "mcp_servers"),
+            (
+                "mcp_servers = [\"a\", \"a\"]\n[servers.a]\nurl = \"https://kb.example\"\n",
+                "mcp_servers",
+            ),
+            ("server = \"disposable-config-canary\"\n", "server"),
+        ] {
+            let cfg: Config = toml::from_str(text).expect("parse");
+            let error = cfg.check(key).expect_err(text).to_string();
+            assert!(!error.contains("disposable-config-canary"), "{error}");
+            assert!(error.contains("kb config"), "{error}");
+        }
+        // A setter's reply never echoes a bad entry, nor a reference to it.
+        let leaky: Config = toml::from_str(
+            "server = \"leak-disposable-config-canary\"\nmcp_servers = [\"leak-disposable-config-canary\", \"ok\"]\n[servers.leak-disposable-config-canary]\nurl = \"https://u:p@kb.example\"\n[servers.ok]\nurl = \"https://kb.example\"\n",
+        )
+        .expect("parse");
+        let safe = serde_json::to_string(&leaky.safe_for_output()).expect("json");
+        assert!(!safe.contains("disposable-config-canary"), "{safe}");
+        assert!(safe.contains("\"ok\""), "{safe}");
+        for (name, valid) in [
+            ("a", true),
+            ("work-2", true),
+            ("-a", false),
+            ("A", false),
+            ("", false),
+            ("a.b", false),
+        ] {
+            assert_eq!(is_server_name(name), valid, "{name}");
+        }
+        assert!(!is_server_name(&"a".repeat(33)));
     }
 
     #[test]
