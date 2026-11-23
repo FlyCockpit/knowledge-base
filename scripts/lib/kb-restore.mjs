@@ -1107,10 +1107,13 @@ async function restoreTarget(
           ?.held
       )
         fail("RESTORE_MAINTENANCE_BUSY");
+    // An autovacuum worker reports the database it vacuums but is not a
+    // session: it never writes application rows. Every other backend
+    // (clients, replication or extension workers) still refuses the target.
     if (
       (
         await client.query(
-          "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() LIMIT 1",
+          "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type IS DISTINCT FROM 'autovacuum worker' LIMIT 1",
         )
       ).rows.length
     )

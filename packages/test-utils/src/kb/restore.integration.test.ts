@@ -1328,6 +1328,69 @@ it("exclusive DB maintenance and empty-target checks leave previous bytes intact
   }
 }, 180000);
 
+it("a client session on the target refuses restore; an autovacuum worker there does not", async () => {
+  const f = await fixture();
+  const observer = new Client({ connectionString: f.target.url.replace(/\/[^/]+$/, "/postgres") });
+  const database = f.target.url.slice(f.target.url.lastIndexOf("/") + 1);
+  const session = new Client({ connectionString: f.target.url });
+  try {
+    await observer.connect();
+    await session.connect();
+    expect((await restore(f)).error).toContain("RESTORE_ACTIVE_CONNECTIONS");
+    expect(isSkeletonOnly(f.target.data)).toBe(true);
+    // A throttled autovacuum keeps one real worker on the target for longer
+    // than this test may run (about four minutes), so it is there throughout.
+    // knowledge_base_control is the one extra schema an empty target may hold,
+    // so the scratch table does not make the target non-empty.
+    await session.query(`CREATE SCHEMA knowledge_base_control;
+      CREATE TABLE knowledge_base_control.autovacuum_probe(id int, pad text) WITH (
+        autovacuum_vacuum_threshold=0, autovacuum_vacuum_scale_factor=0,
+        autovacuum_vacuum_cost_delay=100, autovacuum_vacuum_cost_limit=1);
+      INSERT INTO knowledge_base_control.autovacuum_probe
+        SELECT g, repeat('x', 200) FROM generate_series(1, 40000) g;
+      DELETE FROM knowledge_base_control.autovacuum_probe WHERE id > 0;`);
+    await session.end();
+    await observer.query("ALTER SYSTEM SET autovacuum_naptime = '1s'");
+    await observer.query("SELECT pg_reload_conf()");
+    const worker = async () =>
+      (
+        await observer.query<{ pid: number }>(
+          `SELECT pid FROM pg_stat_activity WHERE datname=$1 AND backend_type='autovacuum worker'
+            AND query LIKE '%autovacuum_probe%'`,
+          [database],
+        )
+      ).rows[0]?.pid;
+    let pid: number | undefined;
+    for (let n = 0; n < 600 && pid === undefined; n++) {
+      pid = await worker();
+      if (pid === undefined) await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(pid, "autovacuum never started on the target").toBeDefined();
+    const restored = await restore(f);
+    expect(restored.code, restored.error).toBe(0);
+    // The same worker ran through the whole restore, so the check saw it.
+    expect(await worker()).toBe(pid);
+  } finally {
+    await session.end().catch(() => {});
+    await observer.query("ALTER SYSTEM RESET autovacuum_naptime").catch(() => {});
+    await observer.query("SELECT pg_reload_conf()").catch(() => {});
+    // Stop the throttled vacuum for good: disabling autovacuum on the table
+    // cancels the running worker, and the launcher cannot start another.
+    await sql(
+      f.target.url,
+      "ALTER TABLE knowledge_base_control.autovacuum_probe SET (autovacuum_enabled = false)",
+    ).catch(() => {});
+    await observer
+      .query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND backend_type='autovacuum worker'",
+        [database],
+      )
+      .catch(() => {});
+    await observer.end().catch(() => {});
+    await cleanup(f);
+  }
+}, 180000);
+
 it("unfinished journal and missing historic lineage cannot be adopted at restart", async () => {
   const f = await fixture();
   try {
