@@ -10,6 +10,8 @@ extend-exclude = [
     "vendor/",
     "*.svg",
     "*.png",
+    # Recorded byte-exact MCP transcripts (cut at a line limit, e.g. `readOnl…`); never edited by hand.
+    "tests/fixtures/*.golden",
 ]
 
 [default]

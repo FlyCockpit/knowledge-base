@@ -69,10 +69,12 @@ cargo test --workspace --all-targets --locked
 cargo test --workspace --doc --locked
 cargo xtask sync-docs --check
 cargo deny check
+typos
 ```
 
-(`typos` also runs in CI; install local tools with
-`cargo install cargo-deny typos-cli` to check locally.)
+(Install the local tools with
+`cargo install cargo-deny typos-cli@1.52.0 --locked`; CI pins the same `typos`
+version and runs it from `apps/cli`, scoped by `typos.toml`.)
 
 ---
 

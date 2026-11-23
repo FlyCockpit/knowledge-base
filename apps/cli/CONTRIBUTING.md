@@ -23,7 +23,7 @@ Optionally (also enforced in CI):
 
 ```sh
 cargo deny check        # cargo install cargo-deny
-typos                   # cargo install typos-cli
+typos                   # cargo install typos-cli@1.52.0 --locked
 bash scripts/policy-checks.sh
 ```
 
