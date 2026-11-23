@@ -19,7 +19,7 @@ export default function Header() {
       <div className="flex min-w-0 flex-row items-center gap-2 px-4 py-2 sm:gap-4">
         <AppBrand lang={lang} />
         <MainNav />
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
           <LanguageSwitcher />
           <ModeToggle />
           <UserMenu />

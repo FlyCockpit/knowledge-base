@@ -36,7 +36,7 @@ export function SegmentedControl<T extends string>({
             key={item.value}
             value={item.value}
             size="sm"
-            className="min-h-[44px] shrink-0 rounded-sm aria-pressed:bg-secondary aria-pressed:text-secondary-foreground"
+            className="min-h-[44px] min-w-[44px] shrink-0 rounded-sm aria-pressed:bg-secondary aria-pressed:text-secondary-foreground"
           >
             {item.label}
           </ToggleGroupItem>

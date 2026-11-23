@@ -60,9 +60,15 @@ function DialogContent({
           <DialogPrimitive.Close
             data-slot="dialog-close"
             render={
+              // The hit area is a 44px square centred on the 28px button
+              // (`icon-sm` is 28px at every width here). An inset expansion
+              // would be measured from the padding box, inside the 1px border
+              // (`-inset-2` gave 26 + 16 = 42px). At `right-2` the square ends
+              // on the popup's edge. The focus ring is drawn inside the box, so
+              // a clipping edge (`overflow-x-hidden`) cannot cut it off.
               <Button
                 variant="ghost"
-                className="after:absolute after:-inset-2 after:content-[''] absolute top-3 right-2"
+                className="absolute top-3 right-2 after:absolute after:top-1/2 after:left-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] focus-visible:ring-inset focus-visible:ring-offset-0"
                 size="icon-sm"
               />
             }

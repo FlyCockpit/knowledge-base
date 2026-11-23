@@ -44,14 +44,29 @@ export default function UserMenuContent() {
 
   return (
     <DropdownMenu defaultOpen>
-      <DropdownMenuTrigger render={<Button variant="outline" size="touch" />}>
-        <span className="max-w-28 truncate sm:max-w-48">{session.user.name}</span>
+      {/* Shrinks to 44px and truncates the name before the header controls
+          run past the trailing line (same as UserMenu's eager trigger). */}
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="touch"
+            className="min-w-11 max-w-48 shrink"
+            title={session.user.name}
+          />
+        }
+      >
+        <span className="truncate">{session.user.name}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="bg-card">
+      {/* At least 224px so the email fits; `end` keeps the menu's trailing
+          edge on the trigger's, the header's trailing line. */}
+      <DropdownMenuContent align="end" className="min-w-56 bg-card">
         <DropdownMenuGroup>
           <DropdownMenuLabel>{t("userMenu.myAccount")}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>{session.user.email}</DropdownMenuItem>
+          <DropdownMenuItem title={session.user.email}>
+            <span className="truncate">{session.user.email}</span>
+          </DropdownMenuItem>
           {userMenuItems.map((item) => (
             <DropdownMenuItem
               key={item.id}

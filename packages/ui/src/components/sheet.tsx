@@ -62,11 +62,13 @@ function SheetContent({
         {showCloseButton && (
           <SheetPrimitive.Close
             data-slot="sheet-close"
+            // 44px box flush with the edge: the focus ring is drawn inside it,
+            // so the viewport cannot clip it.
             render={
               <Button
                 variant="ghost"
-                className="after:absolute after:-inset-2 after:content-[''] absolute top-3 right-2"
-                size="icon-sm"
+                className="absolute top-1 right-0 focus-visible:ring-inset focus-visible:ring-offset-0"
+                size="icon-touch"
               />
             }
           >

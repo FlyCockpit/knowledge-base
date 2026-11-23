@@ -72,14 +72,42 @@ describe("modal accessibility", () => {
         child.props["data-slot"]?.endsWith("close"),
     );
     if (
-      !isValidElement<{ children: ReactNode; render: ReactElement<{ className: string }> }>(close)
+      !isValidElement<{
+        children: ReactNode;
+        render: ReactElement<{ className: string; size?: string }>;
+      }>(close)
     )
       throw new Error("Missing close button");
     const out = renderToStaticMarkup(close.props.children);
     expect(out).toContain(esCommon.actions.close);
     expect(out).not.toContain(">Close<");
-    // 28px icon + 8px expansion on each side = 44px target.
-    expect(close.props.render.props.className).toContain("after:-inset-2");
+    const { className, size } = close.props.render.props;
+    // Flush with a clipping edge, so the focus ring is drawn inside the box.
+    expect(className).toContain("focus-visible:ring-inset");
+    expect(className).toContain("focus-visible:ring-offset-0");
+    if (_name === "dialog") {
+      // A 44px square centred on the 28px button. An inset expansion starts at
+      // the padding box, inside the 1px border (`-inset-2` gave 42px).
+      expect(size).toBe("icon-sm");
+      for (const part of [
+        "absolute",
+        "top-3",
+        "right-2",
+        "after:absolute",
+        "after:top-1/2",
+        "after:left-1/2",
+        "after:size-11",
+        "after:-translate-x-1/2",
+        "after:-translate-y-1/2",
+      ])
+        expect(className.split(" ")).toContain(part);
+      expect(className).not.toMatch(/after:-?inset-/);
+    } else {
+      // A 44px button flush with the edge, centred on the header title.
+      expect(size).toBe("icon-touch");
+      for (const part of ["absolute", "top-1", "right-0"])
+        expect(className.split(" ")).toContain(part);
+    }
   });
   it.each([
     ["dialog", DialogContent],

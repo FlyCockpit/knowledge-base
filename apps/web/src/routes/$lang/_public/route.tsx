@@ -13,7 +13,7 @@ export const Route = createFileRoute("/$lang/_public")({
 function PublicLayout() {
   return (
     <div
-      className="grid h-svh min-w-0 grid-rows-[auto_1fr]"
+      className="grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr]"
       style={{
         paddingTop: "var(--safe-area-top)",
         paddingBottom: "var(--safe-area-bottom)",

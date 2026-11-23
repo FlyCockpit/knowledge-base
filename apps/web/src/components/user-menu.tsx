@@ -76,6 +76,10 @@ export default function UserMenu() {
     <Button
       variant="outline"
       size="touch"
+      // Same as UserMenuContent's trigger: it shrinks (to 44px) before the
+      // header controls run past the trailing line, and truncates the name.
+      className="min-w-11 max-w-48 shrink"
+      title={session.user.name}
       aria-haspopup="menu"
       inert={inert}
       onPointerEnter={prefetchMenu}
@@ -85,7 +89,7 @@ export default function UserMenu() {
         setMounted(true);
       }}
     >
-      <span className="max-w-28 truncate sm:max-w-48">{session.user.name}</span>
+      <span className="truncate">{session.user.name}</span>
     </Button>
   );
 

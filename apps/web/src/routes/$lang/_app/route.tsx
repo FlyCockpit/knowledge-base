@@ -39,7 +39,7 @@ function AppShellLayout() {
       </a>
       <div
         className={cn(
-          "grid h-svh min-w-0 grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-0",
+          "grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-0",
           !mobileKeyboardOpen && "pb-[calc(3.5rem_+_var(--safe-area-bottom))]",
         )}
         style={{
