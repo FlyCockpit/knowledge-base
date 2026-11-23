@@ -728,6 +728,9 @@ await client.end(); await permit.release(); process.exit(0);
         if (crashed) {
           process.kill(writerPid, "SIGKILL");
           expect(await done).not.toBe(0);
+          // The killed writer's participant row is no live process: it does not
+          // wedge maintenance. Its unfinished journal intent still refuses the
+          // snapshot, and the clean drain reopens admission for recovery.
           await expect(
             coordinateBackup({
               connectionString: db.urls.applier,
@@ -736,7 +739,15 @@ await client.end(); await permit.release(); process.exit(0);
               recipient,
               supervisor: join(root, "apps/server/native/kb-supervisor"),
             }),
-          ).rejects.toThrow(/Incomplete maintenance drain/);
+          ).rejects.toMatchObject({ code: "JOURNAL_RECOVERY_REQUIRED" });
+          expect(
+            (
+              await db.query(
+                "applier",
+                "SELECT key FROM app_setting WHERE key='kb.maintenance.request' OR key LIKE 'kb.maintenance.participant.%' LIMIT 1",
+              )
+            ).rows,
+          ).toEqual([]);
           const recovery = join(dir, "recovery.mjs");
           await writeFile(
             recovery,
@@ -746,7 +757,7 @@ import {runStartupJournalRecovery} from '${root}/packages/api/src/lib/kb/recover
 import {startMaintenanceParticipant} from '${root}/packages/api/src/lib/kb/maintenance.ts';
 import {assertProcessFence} from '${root}/apps/server/src/kb-process.ts';
 const db=new PrismaClient({adapter:createPrismaPgAdapter({connectionString:process.env.DATABASE_URL})});
-try{await startMaintenanceParticipant(process.env.DATABASE_URL,()=>{},()=>runStartupJournalRecovery(db,process.env.KB_DATA_ROOT+'/repos',process.env.KB_DATA_ROOT+'/assets',process.env.DATABASE_URL,assertProcessFence));throw Error('unexpected admission');}catch(error){if(!error.message.includes('offline recovery'))throw error;}finally{await db.$disconnect();}`,
+try{const permit=await startMaintenanceParticipant(process.env.DATABASE_URL,()=>{});await runStartupJournalRecovery(db,process.env.KB_DATA_ROOT+'/repos',process.env.KB_DATA_ROOT+'/assets',process.env.DATABASE_URL,assertProcessFence);await permit.release();}finally{await db.$disconnect();}`,
           );
           const recovered = spawn(
             join(root, "apps/server/native/kb-supervisor"),
@@ -790,11 +801,13 @@ try{await startMaintenanceParticipant(process.env.DATABASE_URL,()=>{},()=>runSta
         ).toBe(true);
         const audits = await db.query(
           "applier",
-          `SELECT revision,metadata FROM audit_event WHERE action='BACKUP_CUTOFF' LIMIT 2`,
+          `SELECT revision,metadata FROM audit_event WHERE action='BACKUP_CUTOFF' LIMIT 3`,
         );
-        expect(audits.rows).toHaveLength(1);
-        expect(audits.rows[0]?.revision).toBe(bundle.metadata.cutoff);
-        const auditMetadata = audits.rows[0]?.metadata;
+        // A crashed writer's refused snapshot recorded its own cutoff first.
+        expect(audits.rows).toHaveLength(crashed ? 2 : 1);
+        const cutoffAudit = audits.rows.find((row) => row.revision === bundle.metadata.cutoff);
+        expect(cutoffAudit).toBeDefined();
+        const auditMetadata = cutoffAudit?.metadata;
         if (!auditMetadata || typeof auditMetadata !== "object")
           throw new Error("Missing audit metadata");
         expect(Object.keys(auditMetadata).sort()).toEqual(["reasonCode", "requestId"]);
@@ -1147,6 +1160,353 @@ try { await snapshotOffline({connectionString:process.env.DATABASE_URL,dataDir:p
     await rm(dir, { recursive: true, force: true });
   }
 }, 900_000);
+
+describe("maintenance participant liveness", () => {
+  const PARTICIPANT_CLASS = 0x4b424d50;
+
+  async function liveFixture() {
+    const db = await cluster.createDatabase();
+    db.applyPrismaSchema();
+    const dir = await mkdtemp(join(tmpdir(), "kb-participants-"));
+    await mkdir(join(dir, "repos", ".private"), { recursive: true });
+    await mkdir(join(dir, "assets", "objects"), { recursive: true });
+    for (const name of ["server", "worker"])
+      await writeFile(join(dir, "repos", `.private/${name}.fence`), "");
+    const identity = join(dir, "identity");
+    execFileSync("age-keygen", ["-pq", "-o", identity], { stdio: "pipe" });
+    const recipient = execFileSync("age-keygen", ["-y", identity], { encoding: "utf8" }).trim();
+    const logged: string[] = [];
+    const input = {
+      connectionString: db.urls.applier,
+      dataDir: dir,
+      backupDir: dir,
+      recipient,
+      supervisor: join(root, "apps/server/native/kb-supervisor"),
+      log: (line: string) => {
+        logged.push(line);
+      },
+    };
+    const script = join(dir, "participant.mjs");
+    // A real worker-like process: it registers, and on the maintenance request
+    // either drains (release) or keeps running without acknowledging (hold).
+    await writeFile(
+      script,
+      `import {startMaintenanceParticipant} from '${root}/packages/api/src/lib/kb/maintenance.ts';
+let permit;
+permit=await startMaintenanceParticipant(process.env.DATABASE_URL,()=>{console.log('CLOSED');if(process.env.MODE==='release')void permit.release().then(()=>process.exit(0));});
+console.log('READY '+process.pid);
+setInterval(()=>{},1000);`,
+    );
+    const children: ReturnType<typeof spawn>[] = [];
+    const pids = new Map<ReturnType<typeof spawn>, number>();
+    const spawnParticipant = async (mode: "release" | "hold", supervised?: "server" | "worker") => {
+      const command = [process.execPath, "--import", "tsx", script];
+      const child = supervised
+        ? spawn(
+            input.supervisor,
+            [...(supervised === "worker" ? ["--worker"] : []), "--", ...command],
+            {
+              cwd: root,
+              env: { ...process.env, DATABASE_URL: db.urls.runtime, KB_DATA_ROOT: dir, MODE: mode },
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          )
+        : spawn(command[0]!, command.slice(1), {
+            cwd: root,
+            env: { ...process.env, DATABASE_URL: db.urls.runtime, MODE: mode },
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+      children.push(child);
+      let stderr = "";
+      child.stderr?.on("data", (bytes) => {
+        stderr += bytes;
+      });
+      const lines = createInterface({ input: child.stdout! });
+      const seen = new Map<string, PromiseWithResolvers<void>>([
+        ["CLOSED", Promise.withResolvers<void>()],
+      ]);
+      const ready = Promise.withResolvers<number>();
+      lines.on("line", (line) => {
+        const match = line.match(/^READY ([1-9]\d*)$/);
+        if (match) ready.resolve(Number(match[1]));
+        else seen.get(line)?.resolve();
+      });
+      child.once("close", (code) => {
+        const failure = new Error(
+          `participant exited (${code}): ${stderr.replaceAll(db.urls.runtime, "[fixture]")}`,
+        );
+        ready.reject(failure);
+        seen.get("CLOSED")?.reject(failure);
+      });
+      void seen.get("CLOSED")!.promise.catch(() => {});
+      const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      const pid = await within(ready.promise, "participant readiness"); // close() reaps it
+      pids.set(child, pid);
+      return { child, pid, closed: seen.get("CLOSED")!.promise, exited };
+    };
+    const liveTokens = async () =>
+      Number(
+        (
+          await db.query(
+            "applier",
+            "SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND granted AND classid=$1 AND objsubid=2 AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+            [PARTICIPANT_CLASS],
+          )
+        ).rows[0]?.n,
+      );
+    const participantRows = async () =>
+      (
+        await db.query(
+          "applier",
+          "SELECT key,value FROM app_setting WHERE key LIKE 'kb.maintenance.participant.%' ORDER BY key LIMIT 10",
+        )
+      ).rows as Array<{ key: string; value: string }>;
+    const request = async () =>
+      (
+        await db.query(
+          "applier",
+          "SELECT value FROM app_setting WHERE key='kb.maintenance.request'",
+        )
+      ).rows;
+    const close = async () => {
+      for (const child of children) {
+        if (child.exitCode !== null || child.signalCode !== null) continue;
+        const pid = pids.get(child);
+        // The node process first (a supervised one would otherwise outlive it).
+        if (pid)
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {} // exited meanwhile
+        child.kill("SIGKILL");
+      }
+      await db.close();
+      await rm(dir, { recursive: true, force: true });
+    };
+    return {
+      db,
+      identity,
+      input,
+      logged,
+      spawnParticipant,
+      liveTokens,
+      participantRows,
+      request,
+      close,
+    };
+  }
+
+  // Every wait is bounded: a lost signal fails the test instead of hanging it.
+  const within = <T>(promise: Promise<T>, label: string) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 60_000).unref(),
+      ),
+    ]);
+  const until = async (check: () => Promise<boolean>, label: string) => {
+    const deadline = Date.now() + 60_000;
+    while (!(await check())) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  it("a worker killed mid-run stops counting once its session ends; the next manual bundle succeeds beside two live processes", {
+    timeout: 300_000,
+  }, async () => {
+    const f = await liveFixture();
+    try {
+      let server!: Awaited<ReturnType<typeof startMaintenanceParticipant>>;
+      let serverClosed = false;
+      server = await startMaintenanceParticipant(f.db.urls.runtime, () => {
+        serverClosed = true;
+        void server.release();
+      });
+      const worker = await f.spawnParticipant("release");
+      const crashed = await f.spawnParticipant("hold");
+      expect(await f.participantRows()).toHaveLength(3);
+      await until(async () => (await f.liveTokens()) === 3, "three live tokens");
+      crashed.child.kill("SIGKILL");
+      await within(crashed.exited, "the killed worker");
+      // The lease ends with the session: no manual row edit, no wall-clock TTL.
+      await until(async () => (await f.liveTokens()) === 2, "the killed session's token release");
+      expect(await f.participantRows()).toHaveLength(3);
+      expect((await f.participantRows()).every((row) => row.value === "LIVE")).toBe(true);
+      const file = await coordinateBackup(f.input);
+      expect((await readBundle(file, f.identity)).files.length).toBeGreaterThan(0);
+      expect(serverClosed).toBe(true);
+      await within(worker.exited, "the draining worker");
+      expect(worker.child.exitCode).toBe(0);
+      expect(f.logged.join("\n")).toMatch(
+        new RegExp(`reclaimed 1 participant row\\(s\\).* pid ${crashed.pid}\\.`),
+      );
+      expect(f.logged.join("\n")).not.toMatch(new RegExp(`pid ${worker.pid}\\b`));
+      expect(await f.request()).toEqual([]);
+      expect(await f.participantRows()).toEqual([]);
+      const successor = await startMaintenanceParticipant(f.db.urls.runtime, () => {});
+      expect(await f.participantRows()).toHaveLength(1);
+      await successor.release();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("a participant killed during the quiesce keeps maintenance closed with a named error; the retry recovers", {
+    timeout: 300_000,
+  }, async () => {
+    const f = await liveFixture();
+    try {
+      let server!: Awaited<ReturnType<typeof startMaintenanceParticipant>>;
+      server = await startMaintenanceParticipant(f.db.urls.runtime, () => {
+        void server.release();
+      });
+      const victim = await f.spawnParticipant("hold");
+      const failure = await coordinateBackup({
+        ...f.input,
+        barrier: async (phase: string) => {
+          if (phase !== "drain") return;
+          await within(victim.closed, "the victim closing admission");
+          victim.child.kill("SIGKILL");
+        },
+      }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toMatchObject({ code: "MAINTENANCE_DRAIN_INCOMPLETE" });
+      expect(String((failure as Error).message)).toContain(
+        `pid ${victim.pid} exited during the drain`,
+      );
+      expect(await f.request()).toHaveLength(1);
+      await expect(startMaintenanceParticipant(f.db.urls.runtime, () => {})).rejects.toThrow(
+        /re-run the backup/,
+      );
+      // The documented recovery: the retry inherits the request and snapshots.
+      const file = await coordinateBackup(f.input);
+      expect((await readBundle(file, f.identity)).files.length).toBeGreaterThan(0);
+      expect(await f.request()).toEqual([]);
+      expect(await f.participantRows()).toEqual([]);
+      const successor = await startMaintenanceParticipant(f.db.urls.runtime, () => {});
+      await successor.release();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each(["server", "worker"] as const)(
+    "a %s that lost only its maintenance session is reclaimed, but its live volume fence still refuses the snapshot",
+    async (role) => {
+      const f = await liveFixture();
+      try {
+        // Supervised like the real role: the native fence outlives the DB session.
+        const severed = await f.spawnParticipant("hold", role);
+        await until(async () => (await f.liveTokens()) === 1, "the supervised participant's token");
+        // As the participant's own role: terminating another role's backend is refused.
+        await f.db.query(
+          "runtime",
+          "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype='advisory' AND granted AND classid=$1 AND objsubid=2 AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+          [PARTICIPANT_CLASS],
+        );
+        await within(severed.closed, "admission closing on session loss"); // the process keeps running
+        await until(async () => (await f.liveTokens()) === 0, "the terminated session");
+        expect(severed.child.exitCode).toBeNull();
+        // The snapshot waits for the fence until the quiesce deadline: keep it short.
+        await expect(coordinateBackup({ ...f.input, timeout: 15_000 })).rejects.toMatchObject({
+          code: "MAINTENANCE_FENCE_HELD",
+        });
+        expect(f.logged.join("\n")).toMatch(new RegExp(`pid ${severed.pid}\\.`));
+        expect((await readdir(f.input.backupDir)).some((name) => name.endsWith(".complete"))).toBe(
+          false,
+        );
+        process.kill(severed.pid, "SIGKILL"); // the node process; its supervisor then exits
+        await within(severed.exited, "the severed process");
+        const file = await coordinateBackup(f.input);
+        expect((await readBundle(file, f.identity)).files.length).toBeGreaterThan(0);
+        expect(await f.request()).toEqual([]);
+      } finally {
+        await f.close();
+      }
+    },
+    300_000,
+  );
+
+  it("a pending CAS publication alone refuses the snapshot that restore would refuse", {
+    timeout: 300_000,
+  }, async () => {
+    const f = await liveFixture();
+    try {
+      const userId = "c".repeat(24),
+        kbId = "d".repeat(24);
+      await f.db.query(
+        "applier",
+        `INSERT INTO "user"(id,name,email,role,"emailVerified","operationalAlerts","createdAt","updatedAt") VALUES ($1,'cas','cas@example.invalid','user',true,false,now(),now())`,
+        [userId],
+      );
+      // Tombstoned without a head: no repository to inventory, only the publication.
+      await f.db.query(
+        "applier",
+        `INSERT INTO knowledge_base(id,"ownerId",name,slug,description,state,"defaultBranch","headSha","metadataVersion","desiredEpoch","nextPrNumber","createdAt","updatedAt") VALUES ($1,$2,'cas','cas','cas fixture','TOMBSTONED','main',NULL,1,0,1,now(),now())`,
+        [kbId, userId],
+      );
+      await f.db.query(
+        "applier",
+        `INSERT INTO cas_publication(id,"kbId","reservationIds") VALUES ($1,$2,ARRAY[]::text[])`,
+        [randomUUID(), kbId],
+      );
+      await expect(coordinateBackup(f.input)).rejects.toMatchObject({
+        code: "JOURNAL_RECOVERY_REQUIRED",
+      });
+      expect((await readdir(f.input.backupDir)).some((name) => name.endsWith(".complete"))).toBe(
+        false,
+      );
+      expect(await f.request()).toEqual([]); // a clean drain reopens for recovery
+      // Stands in for the restarted server's journal sweep settling it.
+      await f.db.query(
+        "applier",
+        `UPDATE cas_publication SET state='ABORTED',"finishedAt"=now() WHERE "kbId"=$1`,
+        [kbId],
+      );
+      const file = await coordinateBackup(f.input);
+      expect((await readBundle(file, f.identity)).files.length).toBeGreaterThan(0);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("a quiesce past its deadline names the live participant it waited on", {
+    timeout: 300_000,
+  }, async () => {
+    const f = await liveFixture();
+    try {
+      const stuck = await f.spawnParticipant("hold");
+      let clock = 0;
+      const failure = await coordinateBackup({
+        ...f.input,
+        now: () => clock,
+        barrier: async (phase: string) => {
+          if (phase !== "drain") return;
+          await within(stuck.closed, "the stuck participant closing admission");
+          clock = 300_000;
+        },
+      }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toMatchObject({ code: "MAINTENANCE_DRAIN_TIMEOUT" });
+      expect(String((failure as Error).message)).toMatch(
+        new RegExp(`five minutes.*Still draining: .* pid ${stuck.pid}\\.`),
+      );
+      expect(await f.request()).toHaveLength(1);
+      stuck.child.kill("SIGKILL");
+      await within(stuck.exited, "the stuck participant");
+      await until(async () => (await f.liveTokens()) === 0, "the stuck session's end");
+      const file = await coordinateBackup(f.input);
+      expect((await readBundle(file, f.identity)).files.length).toBeGreaterThan(0);
+      expect(await f.request()).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+});
 
 it("S3 backup checks remote authority with an empty cache and refuses a disappeared object after encryption", async () => {
   const db = await cluster.createDatabase();

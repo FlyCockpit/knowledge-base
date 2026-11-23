@@ -34,7 +34,11 @@ export function coordinateBackup(options: {
   now?: () => number;
   runId?: string;
   barrier?: (stage: string) => Promise<void>;
+  /** Operator lines (reclaimed participants); default stderr. */
+  log?: (line: string) => void;
 }): Promise<string>;
+/** `<host> pid <pid>` for a maintenance participant row key. */
+export function describeParticipant(key: string): string;
 
 export function encryptBundle(options: {
   file: string;

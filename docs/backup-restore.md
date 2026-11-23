@@ -75,8 +75,32 @@ captures metadata with Git/CAS, instance/authority epoch, heads, schema inputs
 and every file hash/size. No valid bundle is published before all checks complete.
 The encrypted `.age` and its `.complete` hash marker travel together.
 
-Incomplete drain retains maintenance: inspect ownership, restart the fenced
-server once for journal/CAS recovery without HTTP admission, then retry offline.
+Each server and worker registers as a maintenance participant and holds a
+liveness token, a session-scoped PostgreSQL advisory lock (class `0x4b424d50`),
+for as long as its database session lives. A process that dies without draining
+(crash, OOM kill, a PostgreSQL restart) loses the token with its session, so
+before writing the request the coordinator deletes the rows of participants
+that are already gone and logs them (`reclaimed N participant row(s) … <host>
+pid <pid>`); only processes alive at the request take part in the drain. No
+manual database edit and no wall-clock lease is involved, and a healthy process
+is never expired. Unfinished journal work such a process left still refuses the
+snapshot (`JOURNAL_RECOVERY_REQUIRED`, the same unfinished intents or pending
+CAS publications restore refuses) until the restarted server recovers it, and a
+process that lost only its database session still owns its volume fence, so the
+snapshot waits for it until the quiesce deadline and then fails
+(`MAINTENANCE_FENCE_HELD`). A row without
+a token (written by an older build) cannot be proven dead and still counts as
+an incomplete drain; the recovery below clears it.
+
+A failed quiesce has a stable code and names the processes: `MAINTENANCE_DRAIN_TIMEOUT`
+(five minutes passed; "Still draining: <host> pid <pid>"), `MAINTENANCE_DRAIN_INCOMPLETE`
+(a participant alive at the request exited without acknowledging it) or
+`MAINTENANCE_BUSY` (another backup owns maintenance). The backup's `FATAL`
+line carries the code and the next line the detail; a scheduled run logs it
+from its bundle child just before its own `code=BUNDLE_FAILED` line. Incomplete drain
+retains maintenance: inspect ownership, restart the fenced server once for
+journal/CAS recovery without HTTP admission, then retry offline (re-run the
+backup: it inherits the request and takes the recovery snapshot).
 Never delete fence/evidence files while a former process may still exist. Success
 resumes the restart-managed app only after offline descendants drain and locks
 release. Audit records the cutoff/outcome; remote upload needs a completed marker.

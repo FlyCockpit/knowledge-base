@@ -33,6 +33,104 @@ import { boundedChild } from "./bounded-child.mjs";
 
 const LOCK = 0x4b424d41,
   REQUEST_LOCK = 0x4b424d52;
+// = MAINTENANCE_PARTICIPANT_LOCK_CLASS/_PREFIX in packages/api/src/lib/kb/maintenance.ts.
+const PARTICIPANT_LOCK_CLASS = 0x4b424d50,
+  PARTICIPANT_PREFIX = "kb.maintenance.participant.",
+  PARTICIPANT_KEY =
+    /^kb\.maintenance\.participant\.([1-9]\d{0,9})\.([A-Za-z0-9-]{1,63})\.([1-9]\d{0,9})\.[0-9a-f-]{36}$/;
+const NAMED_PARTICIPANTS = 10;
+
+const maintenanceError = (code, message) => Object.assign(new Error(message), { code });
+// The snapshot child's exit status for a refused journal, and kb-supervisor's
+// FATAL_FENCE_HELD / FATAL_WORKER_FENCE: a supervised server or worker still
+// owns its volume fence (86 also covers an unusable worker fence file).
+const JOURNAL_EXIT = 3,
+  FENCE_HELD_EXIT = 85,
+  WORKER_FENCE_EXIT = 86;
+
+/** "host pid N" for a participant row key; an unrecognised key as itself. */
+export function describeParticipant(key) {
+  const match = PARTICIPANT_KEY.exec(key);
+  return match ? `${match[2]} pid ${match[3]}` : key.slice(PARTICIPANT_PREFIX.length);
+}
+
+function participantList(keys, more) {
+  const names = keys.slice(0, NAMED_PARTICIPANTS).map(describeParticipant).join(", ");
+  return more || keys.length > NAMED_PARTICIPANTS ? `${names} and more` : names;
+}
+
+/**
+ * Whether a participant row's process still owns its Postgres session: true
+ * while its token lock is held, false once Postgres released it (the process
+ * or its session ended without `release()`), null for a key without a token.
+ */
+async function participantAlive(client, key) {
+  const match = PARTICIPANT_KEY.exec(key);
+  const token = match ? Number(match[1]) : 0;
+  if (!match || token >= 2 ** 31) return null;
+  const free = await client.query("SELECT pg_try_advisory_lock($1::int,$2::int) AS free", [
+    PARTICIPANT_LOCK_CLASS,
+    token,
+  ]);
+  if (!free.rows[0]?.free) return true;
+  await client.query("SELECT pg_advisory_unlock($1::int,$2::int)", [PARTICIPANT_LOCK_CLASS, token]);
+  return false;
+}
+
+/** Keyset pages of participant rows, oldest key first. */
+async function* participantPages(client) {
+  let last = "";
+  for (;;) {
+    const page = await client.query(
+      "SELECT key,value FROM app_setting WHERE key LIKE 'kb.maintenance.participant.%' AND key > $1 ORDER BY key LIMIT 1000",
+      [last],
+    );
+    if (!page.rows.length) return;
+    yield page.rows;
+    last = page.rows.at(-1).key;
+  }
+}
+
+/**
+ * Before a drain: delete the rows of participants that are already gone (a
+ * crash, OOM kill or Postgres restart skips `release()`). They hold no
+ * shared permit and cannot acknowledge, so they are not part of this drain;
+ * journal intents they left are refused by the snapshot until recovered.
+ */
+export async function reclaimExitedParticipants(client, log = console.error) {
+  const reclaimed = [];
+  for await (const rows of participantPages(client))
+    for (const { key } of rows)
+      if ((await participantAlive(client, key)) === false) {
+        await client.query("DELETE FROM app_setting WHERE key=$1", [key]);
+        reclaimed.push(key);
+      }
+  if (reclaimed.length)
+    log(
+      `kb-backup maintenance: reclaimed ${reclaimed.length} participant row(s) of processes that had already exited: ${participantList(reclaimed)}.`,
+    );
+  return reclaimed;
+}
+
+/** Participants the drain is still waiting on: live token owners or untokened rows. */
+async function undrainedParticipants(client, drained) {
+  const waiting = [];
+  for await (const rows of participantPages(client)) {
+    for (const { key, value } of rows)
+      if (value !== drained && (await participantAlive(client, key)) !== false) waiting.push(key);
+    if (waiting.length > NAMED_PARTICIPANTS) return { keys: waiting, more: true };
+  }
+  return { keys: waiting, more: false };
+}
+
+function drainTimeout(waiting) {
+  return maintenanceError(
+    "MAINTENANCE_DRAIN_TIMEOUT",
+    `Maintenance drain exceeded five minutes; backup aborted.${
+      waiting.keys.length ? ` Still draining: ${participantList(waiting.keys, waiting.more)}.` : ""
+    } Maintenance stays closed; re-run the backup once they have stopped.`,
+  );
+}
 const REQUEST = "kb.maintenance.request";
 const ROOT = resolve(import.meta.dirname, "../..");
 
@@ -615,9 +713,16 @@ export async function snapshotOffline({
       "SELECT pg_export_snapshot() AS snapshot, clock_timestamp() AS cutoff",
     );
     const unfinished = await client.query(
-      "SELECT \"opId\" FROM operation_intent WHERE phase IN ('PREPARED','COMMITTING') LIMIT 1",
+      // Exactly what restore refuses (RESTORE_JOURNAL_RECOVERY_REQUIRED): such a
+      // bundle could never be adopted. A process that died recently may have
+      // left either; the restarted server's journal sweep settles both.
+      "SELECT 1 FROM operation_intent WHERE phase IN ('PREPARED','COMMITTING') UNION ALL SELECT 1 FROM cas_publication WHERE state='PENDING' LIMIT 1",
     );
-    if (unfinished.rows.length) throw new Error("Journal recovery required before backup.");
+    if (unfinished.rows.length)
+      throw maintenanceError(
+        "JOURNAL_RECOVERY_REQUIRED",
+        "Journal recovery required before backup.",
+      );
     await refuseLargeObjects(client);
     const heads = [];
     let last = "";
@@ -790,6 +895,7 @@ export async function coordinateBackup({
   barrier = async () => {},
   connectClient = connect,
   runChild = boundedChild,
+  log = console.error,
 }) {
   backupPaths(dataDir);
   if (typeof backupDir !== "string" || !isAbsolute(backupDir))
@@ -819,33 +925,43 @@ export async function coordinateBackup({
     const lock = await client.query("SELECT pg_try_advisory_lock($1::bigint) AS held", [
       REQUEST_LOCK,
     ]);
-    if (!lock.rows[0]?.held) throw new Error("Another backup owns maintenance.");
+    if (!lock.rows[0]?.held)
+      throw maintenanceError("MAINTENANCE_BUSY", "Another backup owns maintenance.");
     await assertNoStorageMigration(client);
     owned = true;
     const previous = await client.query("SELECT value FROM app_setting WHERE key=$1", [REQUEST]);
     request = JSON.stringify({ runId, recovery: previous.rows.length > 0 });
     const deadline = now() + timeout;
+    // Only processes alive now take part in this drain: a row whose session is
+    // already gone is no live process, and must not wedge every later backup.
+    await reclaimExitedParticipants(client, log);
     await setting(client, REQUEST, request); // durable intent before process teardown
     await barrier("drain");
     for (;;) {
       signal?.throwIfAborted();
       const result = await client.query("SELECT pg_try_advisory_lock($1::bigint) AS held", [LOCK]);
       if (now() >= deadline)
-        throw new Error("Maintenance drain exceeded five minutes; backup aborted.");
+        throw drainTimeout(await undrainedParticipants(client, `${request}:DRAINED`));
       if (result.rows[0]?.held) break;
       await new Promise((r) => setTimeout(r, 100));
     }
     if (!previous.rows.length) {
+      // Every shared permit is gone now; an unacknowledged row is a process
+      // that was alive at the request and exited mid-drain.
       const unclean = await client.query(
-        "SELECT key FROM app_setting WHERE key LIKE 'kb.maintenance.participant.%' AND value <> $1 LIMIT 1",
-        [`${request}:DRAINED`],
+        "SELECT key FROM app_setting WHERE key LIKE 'kb.maintenance.participant.%' AND value <> $1 ORDER BY key LIMIT $2",
+        [`${request}:DRAINED`, NAMED_PARTICIPANTS + 1],
       );
       if (unclean.rows.length)
-        throw new Error("Incomplete maintenance drain; offline recovery required.");
+        throw maintenanceError(
+          "MAINTENANCE_DRAIN_INCOMPLETE",
+          `Incomplete maintenance drain; offline recovery required: ${participantList(
+            unclean.rows.map((row) => row.key),
+          )} exited during the drain without acknowledging it. Maintenance stays closed: start the server once for journal recovery, then re-run the backup to take the recovery snapshot.`,
+        );
       cleanDrain = true;
     }
-    if (now() >= deadline)
-      throw new Error("Maintenance drain exceeded five minutes; backup aborted.");
+    if (now() >= deadline) throw drainTimeout({ keys: [], more: false });
     await client.query("SELECT pg_advisory_unlock($1::bigint)", [LOCK]);
     // Durable request denies restarts across handoff. Never take a second flock
     // while live owners hold theirs: native role fails closed, never snapshots.
@@ -870,7 +986,25 @@ export async function coordinateBackup({
         stdio: "inherit",
       },
     );
-    await child.done;
+    await child.done.catch((error) => {
+      if (error?.code !== "CHILD_EXIT") throw error;
+      if (error.exitCode === JOURNAL_EXIT)
+        throw maintenanceError(
+          "JOURNAL_RECOVERY_REQUIRED",
+          "Journal recovery required before backup: unfinished write intents or CAS publications remain; the restarted server recovers them, then re-run the backup.",
+        );
+      if (error.exitCode === FENCE_HELD_EXIT)
+        throw maintenanceError(
+          "MAINTENANCE_FENCE_HELD",
+          "A server process still owns its volume fence; backup aborted. Re-run the backup once it has stopped.",
+        );
+      if (error.exitCode === WORKER_FENCE_EXIT)
+        throw maintenanceError(
+          "MAINTENANCE_FENCE_HELD",
+          "A worker process still owns its volume fence (or the worker fence file is unusable); backup aborted. Re-run the backup once it has stopped.",
+        );
+      throw error;
+    });
     const file = join(backupDir, `backup-${runId}.age`);
     await verifyEncryptedBundle(file);
     await audit(client, runId, "BACKUP_RESULT", "SUCCESS", "ENCRYPTED");
@@ -1139,7 +1273,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       console.error(
         `FATAL: quiesced backup failed (code=${backupFailureCode(error)}); no partial bundle is valid. Retry offline recovery before restarting if maintenance remains closed.`,
       );
-      process.exitCode = 1;
+      // Maintenance messages are ours (participant host/pid, next step), never provider text.
+      if (/^(MAINTENANCE|JOURNAL)_/.test(error?.code ?? "")) console.error(error.message);
+      // Only the snapshot child reports a refused journal by status (to its coordinator).
+      if (process.argv[2] === "snapshot" && error?.code === "JOURNAL_RECOVERY_REQUIRED")
+        process.exitCode = JOURNAL_EXIT;
+      else process.exitCode = 1;
       exitAfterAbandonedUpload(error);
     }
   })();

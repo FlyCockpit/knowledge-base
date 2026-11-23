@@ -131,4 +131,72 @@ describe("maintenance participant", () => {
       expect(state.end).toHaveBeenCalledOnce();
     },
   );
+  it("registers only under a session-held liveness token, retrying a token another session owns", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    let tokenTries = 0;
+    state.query.mockImplementation(async (sql: string, values: unknown[] = []) => {
+      calls.push({ sql, values });
+      if (sql.includes("$1::int,$2::int")) return { rows: [{ held: ++tokenTries > 1 }] };
+      return { rows: sql.includes("pg_try") ? [{ held: true }] : [] };
+    });
+    const { startMaintenanceParticipant, MAINTENANCE_PARTICIPANT_LOCK_CLASS } = await import(
+      "./maintenance"
+    );
+    const permit = await startMaintenanceParticipant("inert", vi.fn());
+    const tokens = calls.filter((c) => c.sql.includes("$1::int,$2::int"));
+    expect(tokens).toHaveLength(2);
+    expect(tokens.every((c) => c.values[0] === MAINTENANCE_PARTICIPANT_LOCK_CLASS)).toBe(true);
+    const insert = calls.findIndex((c) => c.sql.startsWith("INSERT INTO app_setting"));
+    expect(insert).toBeGreaterThan(calls.indexOf(tokens[1]!));
+    const key = String(calls[insert]?.values[0]);
+    expect(key).toMatch(
+      new RegExp(
+        `^kb\\.maintenance\\.participant\\.${tokens[1]?.values[1]}\\.[A-Za-z0-9-]+\\.${process.pid}\\.`,
+      ),
+    );
+    await permit.release();
+  });
+  it("refuses startup when no liveness token can be taken", async () => {
+    state.query.mockImplementation(async (sql: string) => ({
+      rows: sql.includes("$1::int,$2::int")
+        ? [{ held: false }]
+        : sql.includes("pg_try")
+          ? [{ held: true }]
+          : [],
+    }));
+    const { startMaintenanceParticipant } = await import("./maintenance");
+    await expect(startMaintenanceParticipant("inert", vi.fn())).rejects.toThrow(/token/);
+    expect(state.end).toHaveBeenCalledOnce();
+  });
+  it("writes keys the backup coordinator parses (token, host, pid)", async () => {
+    const { maintenanceParticipantKey, MAINTENANCE_PARTICIPANT_LOCK_CLASS } = await import(
+      "./maintenance"
+    );
+    const { describeParticipant } = await import("../../../../../scripts/lib/kb-backup.mjs");
+    expect(MAINTENANCE_PARTICIPANT_LOCK_CLASS).toBe(0x4b424d50);
+    expect(describeParticipant(maintenanceParticipantKey(2 ** 31 - 1, "web.host_1", 4242))).toBe(
+      "web-host-1 pid 4242",
+    );
+  });
+  it("never reuses a token a crashed participant's row still carries", async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    let staleChecks = 0;
+    state.query.mockImplementation(async (sql: string, values: unknown[] = []) => {
+      calls.push({ sql, values });
+      if (sql.includes("key LIKE $1"))
+        return { rows: ++staleChecks === 1 ? [{ "?column?": 1 }] : [] };
+      return { rows: sql.includes("pg_try") ? [{ held: true }] : [] };
+    });
+    const { startMaintenanceParticipant } = await import("./maintenance");
+    const permit = await startMaintenanceParticipant("inert", vi.fn());
+    const tokens = calls.filter((c) => c.sql.includes("pg_try_advisory_lock($1::int,$2::int)"));
+    expect(tokens).toHaveLength(2);
+    const unlock = calls.find((c) => c.sql.includes("pg_advisory_unlock($1::int,$2::int)"));
+    expect(unlock?.values[1]).toBe(tokens[0]?.values[1]);
+    const insert = calls.find((c) => c.sql.startsWith("INSERT INTO app_setting"));
+    expect(String(insert?.values[0])).toMatch(
+      new RegExp(`^kb\\.maintenance\\.participant\\.${tokens[1]?.values[1]}\\.`),
+    );
+    await permit.release();
+  });
 });

@@ -553,3 +553,197 @@ test("a cancel gives the upload time to clean up; only an upload that ignores it
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/** A coordinator session over participant rows. `alive` holds the tokens whose
+ * owner session still exists; `drainAs` makes a live owner acknowledge (or not)
+ * once the request is durable, then exit (its token and shared permit go). */
+function participantDb({ rows, alive, drainAs = () => true }) {
+  const state = { rows: new Map(rows), alive: new Set(alive), request: undefined };
+  const token = (key) => Number(/^kb\.maintenance\.participant\.(\d+)\./.exec(key)?.[1]);
+  const client = {
+    end: async () => {},
+    query: async (sql, params = []) => {
+      if (/pg_try_advisory_lock\(\$1::int,\$2::int\)/.test(sql))
+        return { rows: [{ free: !state.alive.has(params[1]) }] };
+      if (/pg_try_advisory_lock\(\$1::bigint\)/.test(sql)) {
+        // The exclusive maintenance permit is free only after every live owner left.
+        if (params[0] !== 0x4b424d41 || !state.request) return { rows: [{ held: true }] };
+        for (const [key] of state.rows) {
+          if (!state.alive.has(token(key))) continue;
+          if (drainAs(key)) state.rows.set(key, `${state.request}:DRAINED`);
+          state.alive.delete(token(key));
+        }
+        return { rows: [{ held: state.alive.size === 0 }] };
+      }
+      if (/SELECT key,value FROM app_setting/.test(sql))
+        return {
+          rows: [...state.rows]
+            .filter(([key]) => key > params[0])
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(0, 1000)
+            .map(([key, value]) => ({ key, value })),
+        };
+      if (/^SELECT key FROM app_setting WHERE key LIKE/.test(sql))
+        return {
+          rows: [...state.rows]
+            .filter(([, value]) => value !== params[0])
+            .map(([key]) => ({ key }))
+            .sort((a, b) => a.key.localeCompare(b.key))
+            .slice(0, params[1]),
+        };
+      if (/SELECT value FROM app_setting WHERE key=\$1/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app_setting/.test(sql) && params[0] === "kb.maintenance.request")
+        state.request = params[1];
+      if (/DELETE FROM app_setting WHERE key=\$1$/.test(sql)) state.rows.delete(params[0]);
+      if (/DELETE FROM app_setting WHERE key=\$1 AND value=\$2/.test(sql))
+        state.request = undefined;
+      if (/DELETE FROM app_setting WHERE key IN/.test(sql)) {
+        const removed = [...state.rows].filter(([, value]) => value === params[0]);
+        for (const [key] of removed) state.rows.delete(key);
+        return { rows: removed.map(([key]) => ({ key })) };
+      }
+      return { rows: [] };
+    },
+  };
+  return { state, client };
+}
+const participant = (token, host, pid) =>
+  `kb.maintenance.participant.${token}.${host}.${pid}.00000000-0000-4000-8000-${String(token).padStart(12, "0")}`;
+
+async function coordinate(t, client, extra = {}, snapshotFailure = undefined) {
+  const dir = await mkdtemp(join(tmpdir(), "kb-maintenance-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const children = [];
+  const logged = [];
+  const run = coordinateBackup({
+    assetEnvironment: {},
+    dataDir: join(dir, "data"),
+    backupDir: dir,
+    recipient: "age1synthetic",
+    connectionString: "unused",
+    connectClient: async () => client,
+    log: (line) => logged.push(line),
+    runChild: (file) => {
+      children.push(file);
+      return {
+        child: { stdin: { end() {} } },
+        // age preflight passes; the snapshot child fails after the drain, which
+        // is enough to observe drain admission and request cleanup.
+        done:
+          file === "age"
+            ? Promise.resolve()
+            : Promise.reject(snapshotFailure ?? Error("snapshot stub")),
+      };
+    },
+    ...extra,
+  });
+  return { run, children, logged };
+}
+
+test("a crashed participant's row no longer counts: the drain proceeds and names what it reclaimed", async (t) => {
+  const crashed = participant(11, "worker-a1b2", 7);
+  const server = participant(12, "server-c3d4", 1);
+  const { state, client } = participantDb({
+    rows: [
+      [crashed, "LIVE"],
+      [server, "LIVE"],
+    ],
+    alive: [12],
+  });
+  const { run, children, logged } = await coordinate(t, client);
+  await assert.rejects(run, /snapshot stub/);
+  assert.equal(children.length, 2, "the snapshot child ran after a clean drain");
+  assert.equal(state.rows.has(crashed), false);
+  assert.equal(state.request, undefined, "a clean drain reopens maintenance");
+  assert.equal(state.rows.size, 0, "the live participant's acknowledgement was cleaned up");
+  assert.match(logged.join("\n"), /reclaimed 1 participant row\(s\).*worker-a1b2 pid 7/);
+  assert.doesNotMatch(logged.join("\n"), /server-c3d4/);
+});
+
+test("a participant that exits mid-drain keeps maintenance closed with a named, coded error", async (t) => {
+  const dies = participant(21, "worker-e5f6", 9);
+  const { state, client } = participantDb({
+    rows: [
+      [dies, "LIVE"],
+      [participant(22, "server-a", 1), "LIVE"],
+    ],
+    alive: [21, 22],
+    drainAs: (key) => key !== dies,
+  });
+  const { run, children } = await coordinate(t, client);
+  await assert.rejects(run, (error) => {
+    assert.equal(error.code, "MAINTENANCE_DRAIN_INCOMPLETE");
+    assert.match(error.message, /worker-e5f6 pid 9 exited during the drain/);
+    assert.match(error.message, /re-run the backup/);
+    return true;
+  });
+  assert.equal(children.length, 1, "no snapshot after an unclean drain");
+  assert.ok(state.request, "the durable request stays");
+});
+
+test("an expired drain names the participants it waited on", async (t) => {
+  let clock = 0;
+  const { state, client } = participantDb({
+    rows: [[participant(31, "server-stuck", 1), "LIVE"]],
+    alive: [31],
+  });
+  // The stuck owner never leaves: its token and shared permit stay held.
+  const query = client.query;
+  client.query = async (sql, params) => {
+    if (/pg_try_advisory_lock\(\$1::bigint\)/.test(sql) && params[0] === 0x4b424d41) {
+      clock = 300_000;
+      return { rows: [{ held: false }] };
+    }
+    return query(sql, params);
+  };
+  const { run } = await coordinate(t, client, { now: () => clock });
+  await assert.rejects(run, (error) => {
+    assert.equal(error.code, "MAINTENANCE_DRAIN_TIMEOUT");
+    assert.match(error.message, /five minutes.*Still draining: server-stuck pid 1\./);
+    return true;
+  });
+  assert.ok(state.request);
+});
+
+test("healthy participants drain exactly as before; untokened rows still count as unclean", async (t) => {
+  const healthy = participantDb({
+    rows: [
+      [participant(41, "server", 1), "LIVE"],
+      [participant(42, "worker", 1), "LIVE"],
+    ],
+    alive: [41, 42],
+  });
+  const first = await coordinate(t, healthy.client);
+  await assert.rejects(first.run, /snapshot stub/);
+  assert.equal(first.children.length, 2);
+  assert.deepEqual(first.logged, []);
+  const legacy = participantDb({
+    rows: [["kb.maintenance.participant.crashed.1", "LIVE"]],
+    alive: [],
+  });
+  const second = await coordinate(t, legacy.client);
+  await assert.rejects(second.run, (error) => error.code === "MAINTENANCE_DRAIN_INCOMPLETE");
+});
+
+test("maintenance failures carry stable codes and keys name their process", async () => {
+  const { backupFailureCode, describeParticipant } = await import("./kb-backup.mjs");
+  assert.equal(describeParticipant(participant(7, "web-host-1", 4242)), "web-host-1 pid 4242");
+  assert.equal(describeParticipant("kb.maintenance.participant.crashed.1"), "crashed.1");
+  assert.equal(
+    backupFailureCode(Object.assign(new Error("x"), { code: "MAINTENANCE_DRAIN_INCOMPLETE" })),
+    "MAINTENANCE_DRAIN_INCOMPLETE",
+  );
+});
+
+for (const [exitCode, code] of [
+  [3, "JOURNAL_RECOVERY_REQUIRED"],
+  [85, "MAINTENANCE_FENCE_HELD"],
+  [86, "MAINTENANCE_FENCE_HELD"],
+  [1, "CHILD_EXIT"],
+])
+  test(`a snapshot child exit ${exitCode} surfaces as ${code}`, async (t) => {
+    const { client } = participantDb({ rows: [], alive: [] });
+    const failure = Object.assign(new Error("Client exited."), { code: "CHILD_EXIT", exitCode });
+    const { run } = await coordinate(t, client, {}, failure);
+    await assert.rejects(run, (error) => error.code === code);
+  });

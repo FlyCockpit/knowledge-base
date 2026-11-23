@@ -1,6 +1,7 @@
 /// <reference path="./pg.d.ts" />
 
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { initializeConnection } from "@knowledge-base/env/connection-config";
 import { Client } from "pg";
 import { assertNoAssetMigration } from "./asset-storage-mode";
@@ -9,6 +10,19 @@ import type { LockQuery } from "./lock";
 export const MAINTENANCE_LOCK = 0x4b424d41; // KBMA; separate from authority/schema locks
 export const MAINTENANCE_REQUEST = "kb.maintenance.request";
 export const MAINTENANCE_DRAIN_MS = 300_000;
+/** Two-key advisory class (KBMP) of each participant's liveness token. The
+ * token lock lives exactly as long as the participant's Postgres session, so a
+ * backup coordinator that can take it proves the row's owner is gone (a crash
+ * never runs `release()`). Mirrored in scripts/lib/kb-backup.mjs. */
+export const MAINTENANCE_PARTICIPANT_LOCK_CLASS = 0x4b424d50;
+export const MAINTENANCE_PARTICIPANT_PREFIX = "kb.maintenance.participant.";
+
+/** `<prefix><token>.<host>.<pid>.<uuid>`: the token proves liveness; host and
+ * pid only name the process in operator messages. */
+export function maintenanceParticipantKey(token: number, host: string, pid: number) {
+  const label = host.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 63) || "unknown";
+  return `${MAINTENANCE_PARTICIPANT_PREFIX}${token}.${label}.${pid}.${randomUUID()}`;
+}
 
 /** A process owns its shared permit until all handlers and descendants drain.
  * Durable request survives coordinator death. Startup refuses even when its
@@ -31,7 +45,7 @@ export async function startMaintenanceParticipant(
         statement_timeout: 5000,
       }),
   );
-  const participantKey = `kb.maintenance.participant.${randomUUID()}`;
+  let participantKey = "";
   let requested = false;
   let released = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -93,7 +107,31 @@ export async function startMaintenanceParticipant(
     await assertNoAssetMigration((sql, values) => client.query(sql, values));
     await admitStorage?.((sql, values) => client.query(sql, values));
     await check(recover);
-    if (requested) throw new Error("Maintenance request requires offline recovery before startup.");
+    if (requested)
+      throw new Error(
+        "Maintenance request requires offline recovery before startup: a backup left maintenance closed; re-run the backup to take the recovery snapshot.",
+      );
+    // Session-scoped: released by Postgres when this process or its session dies.
+    for (let attempt = 0; !participantKey; attempt++) {
+      if (attempt === 8) throw new Error("No free maintenance participant token.");
+      const token = randomInt(1, 2 ** 31);
+      const held = await client.query("SELECT pg_try_advisory_lock($1::int,$2::int) AS held", [
+        MAINTENANCE_PARTICIPANT_LOCK_CLASS,
+        token,
+      ]);
+      if (!held.rows[0]?.held) continue;
+      // A crashed owner's row may still carry this token: reusing it would make
+      // that stale row look alive to the coordinator.
+      const stale = await client.query("SELECT 1 FROM app_setting WHERE key LIKE $1 LIMIT 1", [
+        `${MAINTENANCE_PARTICIPANT_PREFIX}${token}.%`,
+      ]);
+      if (stale.rows.length)
+        await client.query("SELECT pg_advisory_unlock($1::int,$2::int)", [
+          MAINTENANCE_PARTICIPANT_LOCK_CLASS,
+          token,
+        ]);
+      else participantKey = maintenanceParticipantKey(token, hostname(), process.pid);
+    }
     await client.query(
       `INSERT INTO app_setting (key,value,"createdAt","updatedAt") VALUES ($1,'LIVE',now(),now())`,
       [participantKey],
