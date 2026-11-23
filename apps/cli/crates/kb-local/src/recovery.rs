@@ -832,7 +832,7 @@ mod settle_tests {
                     // below still uses the hardened, fsynced installer.
                     .args(["-c", "core.fsync=none"])
                     .arg("--git-dir")
-                    .arg(&repo)
+                    .arg(crate::git_read::git_spelling(&repo))
                     .args(args)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
@@ -851,13 +851,17 @@ mod settle_tests {
             let sha = git(&["hash-object", "-w", "--stdin"], format!("blob {i}\n"));
             let prefix = repo.join("objects/pack/pack");
             git(
-                &["pack-objects", "-q", prefix.to_str().unwrap()],
+                &[
+                    "pack-objects",
+                    "-q",
+                    crate::git_read::git_spelling(&prefix).to_str().unwrap(),
+                ],
                 format!("{sha}\n"),
             );
         }
         let output = crate::git_read::read_fixture::scratch_git()
             .arg("--git-dir")
-            .arg(&repo)
+            .arg(crate::git_read::git_spelling(&repo))
             .args(["prune-packed", "-q"])
             .output()
             .unwrap();
@@ -914,7 +918,8 @@ mod settle_tests {
             packs(&store, &kb) < due || store.pack_consolidation(&kb).unwrap().is_some(),
             "an ample caller attempts maintenance (which may exhaust its own budget)"
         );
-        let _ = std::fs::remove_dir_all(base);
+        drop(store);
+        crate::git_read::read_fixture::remove_tree(&base);
     }
 
     /// The feeder is parked after spawn: index-pack is live and has created
@@ -1149,7 +1154,7 @@ mod settle_tests {
             use std::io::Write;
             let mut child = crate::git_read::read_fixture::scratch_git()
                 .arg("--git-dir")
-                .arg(&repo)
+                .arg(crate::git_read::git_spelling(&repo))
                 .args(["hash-object", "-w", "--stdin"])
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -1367,7 +1372,7 @@ mod settle_tests {
             // below still runs the real synced production installer.
             .args(["-c", "core.fsync=none"])
             .arg("--git-dir")
-            .arg(repo)
+            .arg(crate::git_read::git_spelling(repo))
             .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

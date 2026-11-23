@@ -66,12 +66,14 @@ impl Credentials for Keys {
         Ok(())
     }
 }
+// Fields drop in order: the store closes its database before the fixture
+// removes the tree (Windows cannot delete an open database).
 struct Test {
-    _f: fixture::Fixture,
     s: Store,
     kb: KbAttachment,
     keys: Keys,
     recipient: RecipientKey,
+    _f: fixture::Fixture,
 }
 impl Test {
     fn new() -> Self {
@@ -989,7 +991,11 @@ fn fix_resolver_preserves_repair_and_source_storage_errors() {
         .map(|e| e.unwrap().path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
         .find_map(|index| {
-            let listing = t._f.git(&["verify-pack", "-v", index.to_str().unwrap()]);
+            let listing = t._f.git(&[
+                "verify-pack",
+                "-v",
+                fixture::git_spelling(&index).to_str().unwrap(),
+            ]);
             let offset = listing
                 .lines()
                 .find(|line| line.starts_with(&format!("{hash} ")))?

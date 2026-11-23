@@ -157,7 +157,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Out-of-band fixture setup of an owned USER branch, exactly as PR tests.
     let git = scratch_git()
         .arg("--git-dir")
-        .arg(s.paths().repo_dir(&made.kb.id))
+        .arg(scratch_git::git_spelling(&s.paths().repo_dir(&made.kb.id)))
         .args([
             "update-ref",
             "refs/heads/users/topic",

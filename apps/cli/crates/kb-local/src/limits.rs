@@ -218,26 +218,20 @@ pub(crate) fn check_response_size(
     Ok(())
 }
 
-// Shared OS utility parser; both callers supply the same supervised runner.
+// Shared free-space meter; both callers supply the same supervised runner,
+// which the Unix `df` child uses.
 pub(crate) fn measure_disk(
     path: &std::path::Path,
     run: impl FnOnce(std::process::Command, usize) -> Result<(bool, Vec<u8>), crate::git_read::GitError>,
 ) -> Result<u64, StoreError> {
     let unavailable = || StoreError::StorageUnavailable("disk measurement unavailable".into());
-    use std::process::{Command, Stdio};
-    #[cfg(unix)]
-    let mut command = {
-        let mut cmd = Command::new("/bin/df");
-        cmd.args(["-P", "-k"])
-            .arg(path)
-            .env_clear()
-            .env("LC_ALL", "C");
-        cmd
-    };
+    // Windows asks the volume directly (GetDiskFreeSpaceExW, quota-aware free
+    // bytes for this user): no child process, so no PATH or shell lookup.
     #[cfg(windows)]
-    let mut command = {
-        // Managed paths are canonical/verbatim; DriveInfo needs the ordinary
-        // drive root. Reparse/mounted-directory paths were already refused.
+    {
+        let _ = run;
+        // Managed paths are canonical/verbatim; measure their drive root.
+        // Reparse/mounted-directory paths were already refused.
         let drive = match path.components().next() {
             Some(std::path::Component::Prefix(prefix)) => match prefix.kind() {
                 std::path::Prefix::Disk(letter) | std::path::Prefix::VerbatimDisk(letter) => {
@@ -247,27 +241,25 @@ pub(crate) fn measure_disk(
             },
             _ => return Err(unavailable()),
         };
-        let mut cmd = Command::new("powershell.exe");
-        // Path data travels in a child-only variable, never PowerShell source.
-        cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; [System.IO.DriveInfo]::new($env:KB_EXPORT_DISK_PATH).AvailableFreeSpace.ToString([System.Globalization.CultureInfo]::InvariantCulture)"])
-            .env_clear().env("KB_EXPORT_DISK_PATH",drive);
-        for name in ["SystemRoot", "WINDIR"] {
-            if let Some(value) = std::env::var_os(name) {
-                cmd.env(name, value);
-            }
-        }
-        cmd
-    };
-    command.stdout(Stdio::piped()).stderr(Stdio::null());
-    let (ok, bytes) = run(command, 4096).map_err(|_| unavailable())?;
-    if !ok {
-        return Err(unavailable());
+        crate::win::available_disk_bytes(std::path::Path::new(&drive)).map_err(|_| unavailable())
     }
-    let text = std::str::from_utf8(&bytes).map_err(|_| unavailable())?;
-    #[cfg(windows)]
-    return text.trim().parse().map_err(|_| unavailable());
     #[cfg(unix)]
     {
+        use std::process::{Command, Stdio};
+        let mut command = {
+            let mut cmd = Command::new("/bin/df");
+            cmd.args(["-P", "-k"])
+                .arg(path)
+                .env_clear()
+                .env("LC_ALL", "C");
+            cmd
+        };
+        command.stdout(Stdio::piped()).stderr(Stdio::null());
+        let (ok, bytes) = run(command, 4096).map_err(|_| unavailable())?;
+        if !ok {
+            return Err(unavailable());
+        }
+        let text = std::str::from_utf8(&bytes).map_err(|_| unavailable())?;
         let lines: Vec<_> = text.lines().collect();
         if lines.len() != 2 {
             return Err(unavailable());

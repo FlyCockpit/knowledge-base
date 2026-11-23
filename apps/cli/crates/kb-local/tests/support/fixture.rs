@@ -19,7 +19,7 @@ use kb_client::types::Sha;
 
 #[path = "scratch_git.rs"]
 mod scratch_git;
-pub use scratch_git::scratch_git;
+pub use scratch_git::{git_spelling, scratch_git};
 
 // Probe the OS locks directly: try_lock_write can also return None while an
 // unrelated store's spawn holds the process-wide admission registry.
@@ -134,7 +134,8 @@ impl Fixture {
     }
 
     pub fn git(&self, args: &[&str]) -> String {
-        let mut full = vec!["--git-dir", self.repo.to_str().expect("utf8 path")];
+        let repo = git_spelling(&self.repo);
+        let mut full = vec!["--git-dir", repo.to_str().expect("utf8 path")];
         full.extend_from_slice(args);
         self.run_in(&self.root, &full, None)
     }
@@ -143,7 +144,7 @@ impl Fixture {
         let mut command = scratch_git();
         command
             .arg("--git-dir")
-            .arg(&self.repo)
+            .arg(git_spelling(&self.repo))
             .args(args)
             .current_dir(&self.root)
             .stdin(Stdio::null());
@@ -163,7 +164,10 @@ impl Fixture {
     }
 
     pub fn blob(&self, bytes: &[u8]) -> String {
-        let repo = self.repo.to_str().expect("utf8 path").to_owned();
+        let repo = git_spelling(&self.repo)
+            .to_str()
+            .expect("utf8 path")
+            .to_owned();
         self.run_in(
             &self.root,
             &["--git-dir", &repo, "hash-object", "-w", "--stdin"],
@@ -182,7 +186,10 @@ impl Fixture {
             body.push(0);
             body.extend_from_slice(&hex_to_bytes(sha));
         }
-        let repo = self.repo.to_str().expect("utf8 path").to_owned();
+        let repo = git_spelling(&self.repo)
+            .to_str()
+            .expect("utf8 path")
+            .to_owned();
         self.run_in(
             &self.root,
             &[
@@ -253,7 +260,9 @@ impl Fixture {
             &self.root,
             &[
                 "--git-dir",
-                self.repo.to_str().expect("UTF-8 fixture path"),
+                git_spelling(&self.repo)
+                    .to_str()
+                    .expect("UTF-8 fixture path"),
                 "hash-object",
                 "-t",
                 "commit",
@@ -286,9 +295,27 @@ impl Fixture {
     }
 }
 
+/// Remove a fixture tree. Windows cannot delete a file a process still holds
+/// open, and a just-killed Git child or an idling shared model worker may
+/// hold one for a moment after the test is done with it (Unix unlinks open
+/// files): retry there for a bounded time instead of leaking the tree.
+pub fn remove_tree(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) if cfg!(windows) && std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        remove_tree(&self.root);
         #[cfg(unix)]
         remove_short_runtime_dirs(&self.root);
     }
@@ -349,4 +376,28 @@ pub fn with_required<'a>(extra: &[(&'a str, &'a [u8])]) -> Vec<(&'a str, &'a [u8
         files.push((path, content));
     }
     files
+}
+
+/// A reparse point at `link` leading to `target`'s location: a real file
+/// symlink where the account may create one (SeCreateSymbolicLinkPrivilege:
+/// elevated sessions such as hosted CI, or Developer Mode); on a default
+/// Windows account, which may not, a directory junction to `target`'s parent
+/// (no privilege needed), still a reparse point at the same path. Only the
+/// real symlink can catch a regression that follows file symlinks.
+#[cfg(windows)]
+pub fn windows_file_reparse(target: &std::path::Path, link: &std::path::Path) {
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+    match std::os::windows::fs::symlink_file(target, link) {
+        Ok(()) => {}
+        Err(error) if error.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
+            let output = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(git_spelling(link))
+                .arg(git_spelling(target.parent().expect("target parent")))
+                .output()
+                .expect("junction fixture");
+            assert!(output.status.success(), "junction fixture: {output:?}");
+        }
+        Err(error) => panic!("file symlink fixture: {error}"),
+    }
 }

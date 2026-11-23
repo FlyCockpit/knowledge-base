@@ -66,7 +66,23 @@ impl Drop for TestDir {
         if let Some(check) = self.before_remove.take() {
             check();
         }
-        if let Err(error) = std::fs::remove_dir_all(&self.root)
+        // Windows cannot delete a file a process still holds open, and a
+        // just-killed Git child may hold one for a moment (Unix unlinks open
+        // files): retry there for a bounded time before failing the test.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let result = loop {
+            match std::fs::remove_dir_all(&self.root) {
+                Err(error)
+                    if cfg!(windows)
+                        && error.kind() != std::io::ErrorKind::NotFound
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                result => break result,
+            }
+        };
+        if let Err(error) = result
             && error.kind() != std::io::ErrorKind::NotFound
             && !std::thread::panicking()
         {

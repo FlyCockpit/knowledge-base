@@ -215,8 +215,7 @@ fn destination_link_or_reparse_point_cannot_escape_or_overwrite() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, &blob.path).expect("fixture operation");
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(&outside, &blob.path)
-        .expect("Windows lane requires developer-mode symlink capability");
+    fixture::windows_file_reparse(&outside, &blob.path);
     assert!(
         publish_cas(
             store.paths(),

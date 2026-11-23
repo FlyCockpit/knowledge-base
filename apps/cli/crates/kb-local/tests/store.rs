@@ -927,8 +927,32 @@ fn link_file(target: &Path, link: &Path) {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, link).expect("file symlink");
     #[cfg(windows)]
-    std::os::windows::fs::symlink_file(target, link)
-        .expect("file symlink (Windows CI has symlink privilege)");
+    windows_file_reparse(target, link);
+}
+
+/// A reparse point planted at `link` that leads to `target`'s location: a real
+/// file symlink where the account may create one (SeCreateSymbolicLinkPrivilege:
+/// elevated sessions such as hosted CI, or Developer Mode). A default Windows
+/// account may not, so there it is a directory junction to `target`'s parent,
+/// which needs no privilege: a reparse point at the same path that must be
+/// refused. Only the real symlink (where creatable) can catch a regression that
+/// follows file symlinks; a default account cannot plant one at all.
+#[cfg(windows)]
+fn windows_file_reparse(target: &Path, link: &Path) {
+    const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
+    match std::os::windows::fs::symlink_file(target, link) {
+        Ok(()) => {}
+        Err(error) if error.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) => {
+            let output = Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(windows_plain_path(link))
+                .arg(windows_plain_path(target.parent().expect("target parent")))
+                .output()
+                .expect("junction fixture");
+            assert!(output.status.success(), "junction fixture: {output:?}");
+        }
+        Err(error) => panic!("file symlink fixture: {error}"),
+    }
 }
 
 #[cfg(unix)]
@@ -1185,7 +1209,6 @@ fn widened_windows_acls_on_existing_roots_dirs_and_state_are_rejected() {
 #[cfg(windows)]
 #[test]
 fn windows_managed_directory_junctions_and_state_symlink_never_change_outside() {
-    use std::os::windows::fs::symlink_file;
     for rel in ["locks", "repos", "assets", "uploads", "indexes"] {
         let base = temp_root("windows-junction");
         let root = store_dir(&base);
@@ -1218,8 +1241,7 @@ fn windows_managed_directory_junctions_and_state_symlink_never_change_outside() 
     let outside = base.join("outside-file");
     std::fs::write(&outside, b"unchanged").unwrap();
     remove_state(&root);
-    symlink_file(&outside, root.join("state.sqlite"))
-        .expect("Windows CI must allow the real reparse fixture");
+    windows_file_reparse(&outside, &root.join("state.sqlite"));
     assert!(matches!(Store::open(&root), Err(StoreError::UnsafePath(_))));
     assert_eq!(std::fs::read(&outside).unwrap(), b"unchanged");
 }

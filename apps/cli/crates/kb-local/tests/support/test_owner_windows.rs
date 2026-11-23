@@ -146,9 +146,16 @@ pub fn run(args: &[OsString]) -> io::Result<i32> {
             code = Some(status as i32);
         }
         if root.join("kill-leader").exists() && code.is_none() {
-            // SAFETY: owned handle pins the process identity.
+            // SAFETY: owned handle pins the process identity. Windows refuses
+            // to terminate a leader that is already exiting (access denied,
+            // possibly before its handle is signaled); the poll records it.
             unsafe {
-                check(TerminateProcess(process.as_raw_handle(), 1))?;
+                if TerminateProcess(process.as_raw_handle(), 1) == 0 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(ERROR_ACCESS_DENIED as i32) {
+                        return Err(error);
+                    }
+                }
             }
         }
         let stop = root.join("stop").exists();

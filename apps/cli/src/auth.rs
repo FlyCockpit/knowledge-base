@@ -575,6 +575,9 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
                 .expect("private mode");
         }
+        // The Windows equivalent of mode 0600: the store's own owner-only DACL.
+        #[cfg(windows)]
+        crate::state::set_private(&path, false).expect("private ACL");
         let key = super::recipient_key(&path).expect("valid private key");
         let expected = kb_client::sealed::RecipientKey::from_bytes(
             kb_client::types::Uuid::parse(id).expect("fixture id"),
@@ -595,6 +598,17 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
                 .expect("public mode");
             assert!(super::recipient_key(&path).is_err());
+        }
+        // A valid key file left with the inherited (non-private) ACL.
+        #[cfg(windows)]
+        {
+            let public = directory.path().join("public.json");
+            std::fs::write(
+                &public,
+                serde_json::json!({"id": id, "private_key": vec![7; 32]}).to_string(),
+            )
+            .expect("public fixture key");
+            assert!(super::recipient_key(&public).is_err());
         }
     }
     #[test]

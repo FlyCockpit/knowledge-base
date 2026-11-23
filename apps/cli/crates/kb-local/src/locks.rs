@@ -1176,6 +1176,10 @@ mod tests {
     fn native_version(paths: &StorePaths) -> std::io::Result<TestChild> {
         let mut command = Command::new("git");
         command.arg("--version");
+        // As every hardened Git command does: the child resolves Git on PATH.
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
         #[cfg(unix)]
         return spawn_git(command, Some(paths)).map(TestChild);
         #[cfg(windows)]

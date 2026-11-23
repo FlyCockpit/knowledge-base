@@ -974,14 +974,8 @@ pub(crate) fn recover_ref_lock(
 }
 
 fn sync_file(path: &Path) -> Result<(), StoreError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    // FlushFileBuffers requires a writable handle on Windows.
-    #[cfg(windows)]
-    options.write(true);
-    crate::paths::open_no_follow(path, &mut options)?
-        .sync_all()
-        .map_err(StoreError::Io)
+    let file = crate::paths::open_no_follow(path, std::fs::OpenOptions::new().read(true))?;
+    crate::paths::sync_file(&file, path)
 }
 
 // ── Objects ────────────────────────────────────────────────────────────────

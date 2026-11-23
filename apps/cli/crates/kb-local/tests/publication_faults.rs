@@ -92,7 +92,7 @@ impl Drop for Fixture {
 fn git(repo: &Path, args: &[&str]) -> String {
     let output = scratch_git()
         .arg("--git-dir")
-        .arg(repo)
+        .arg(scratch_git::git_spelling(repo))
         .args(args)
         .env("GIT_AUTHOR_NAME", "Fixture")
         .env("GIT_AUTHOR_EMAIL", "fixture@local.invalid")

@@ -679,7 +679,7 @@ fn sync_ancestors(
 ) -> Result<(), StoreError> {
     let mut directory = root;
     while let Some(parent) = directory.parent() {
-        crate::paths::sync_dir_observed(parent, observer)?;
+        crate::paths::sync_ancestor_dir_observed(parent, observer)?;
         directory = parent;
     }
     Ok(())

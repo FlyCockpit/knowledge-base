@@ -150,8 +150,8 @@ resource's credential. Unix directories/files are 0700/0600; files publish
 with atomic rename and file/directory fsync, including parent directory links
 on first save. Credential I/O shares a directory lock; the next load, save, or
 logout reclaims private temp files left by an interrupted writer. Windows uses DPAPI CurrentUser
-and explicit owner-only ACLs through Windows PowerShell; unavailable
-protection fails closed. All platforms reject symlinks/reparse points.
+and explicit owner-only ACLs (protected DACL, current user only), set and
+checked natively; unavailable protection fails closed. All platforms reject symlinks/reparse points.
 No token, device code, or remote error body is printed or saved to config.
 
 Default logout calls the bearer-only, bodyless PAT self-revoke endpoint,
@@ -221,7 +221,10 @@ protection, as on Unix.
 
 The native CI matrix runs the drain, hung-Git, ACL and junction tests on
 `windows-latest`; cross-compilation alone does not certify their runtime
-behavior.
+behavior. Five near-limit deadline tests in `kb-local`'s `changes` and
+`pull_requests` suites are ignored on Windows as a known timing issue
+(Defender scans every loose object Git writes); they return once tree batches
+and packs write fewer loose objects.
 
 Optional local CPU embedding models are controlled by the local owner:
 

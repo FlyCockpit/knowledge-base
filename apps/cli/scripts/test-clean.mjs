@@ -71,6 +71,15 @@ export async function runClean(command, args, { portable = false, owner } = {}) 
     const runtime = join(directory, "runtime");
     mkdirSync(home, { mode: 0o700 });
     mkdirSync(runtime, { mode: 0o700 });
+    // Windows resolves the user's known folders under USERPROFILE and refuses
+    // missing ones: give the private home the layout a real profile has, and
+    // point APPDATA/LOCALAPPDATA there too so no test reaches the real profile.
+    const roaming = join(home, "AppData", "Roaming");
+    const local = join(home, "AppData", "Local");
+    if (process.platform === "win32") {
+      mkdirSync(roaming, { recursive: true });
+      mkdirSync(local, { recursive: true });
+    }
     const supervisor = owner ?? (await testOwner());
     if (interrupted) return 1;
     child = spawn(supervisor, [directory, ...(portable ? ["--portable"] : []), command, ...args], {
@@ -85,6 +94,7 @@ export async function runClean(command, args, { portable = false, owner } = {}) 
           process.env.RUSTUP_HOME ?? join(process.env.HOME ?? process.env.USERPROFILE, ".rustup"),
         HOME: home,
         USERPROFILE: home,
+        ...(process.platform === "win32" ? { APPDATA: roaming, LOCALAPPDATA: local } : {}),
         XDG_CONFIG_HOME: join(home, "config"),
         XDG_DATA_HOME: join(home, "data"),
         XDG_CACHE_HOME: join(home, "cache"),

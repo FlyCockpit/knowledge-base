@@ -78,23 +78,247 @@ fn flush_directory_handle(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
-/// Windows 10+ directory-entry barrier, requiring write/append access.
+/// Windows 10+ directory-entry barrier. The flush needs a handle with
+/// FILE_WRITE_DATA or FILE_APPEND_DATA (add-file / add-subdirectory on a
+/// directory), so exactly one of those is requested: GENERIC_WRITE would
+/// also demand attribute/EA rights that `C:\` grants a standard user only
+/// for creating folders. A directory that grants neither is refused here.
 /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntflushbuffersfileex
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
-    use std::os::windows::fs::OpenOptionsExt;
-    let pinned = crate::paths::open_directory(path).map_err(io::Error::other)?;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-    if crate::paths::is_link(&file.metadata()?) || file_identity(&pinned)? != file_identity(&file)?
-    {
-        return Err(io::Error::other(
-            "directory identity changed at durability barrier",
-        ));
+    match open_flushable_directory(path)? {
+        Some(file) => flush_directory_handle(&file),
+        None => Err(io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32)),
     }
-    flush_directory_handle(&file)
+}
+
+/// [`sync_directory`] for an existing ancestor outside every kb-managed
+/// tree (for example `C:\Users`). Creating or renaming an entry into a
+/// directory requires add-file or add-subdirectory access to it, so when this
+/// user holds neither, no link this user's processes made can be pending
+/// there and the barrier has nothing of ours to persist: that is `Ok`. "Holds
+/// neither" is an access check against the directory's own security
+/// descriptor, not a failed open: a refusal the DACL does not explain (a
+/// filter driver, a sharing conflict) propagates. Only ACL-capable volumes
+/// can refuse this way, and those (NTFS, ReFS) journal directory entries:
+/// the flush of the writable descendant that follows (the store or
+/// credential directory itself) also makes every earlier entry durable. Any
+/// directory this user can add entries to is still flushed, and a failed
+/// flush still propagates.
+pub(crate) fn sync_ancestor_directory(path: &Path) -> io::Result<()> {
+    match open_flushable_directory(path)? {
+        Some(file) => flush_directory_handle(&file),
+        None => Ok(()),
+    }
+}
+
+/// A directory handle allowed to flush, pinned to the identity `path` had
+/// when first opened without following a link; `None` when this user may
+/// neither add files nor subdirectories to it.
+fn open_flushable_directory(path: &Path) -> io::Result<Option<File>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // Keep the OS error itself (callers treat a missing directory, NotFound,
+    // as an absence barrier); only other refusals become `Other`.
+    let pinned = crate::paths::open_directory(path).map_err(|error| match error {
+        crate::StoreError::Io(error) => error,
+        other => io::Error::other(other),
+    })?;
+    for add_entry in [FILE_APPEND_DATA, FILE_WRITE_DATA] {
+        #[cfg(test)]
+        if DENY_FLUSHABLE_OPENS.get() {
+            continue;
+        }
+        let opened = std::fs::OpenOptions::new()
+            .access_mode(add_entry | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path);
+        let file = match opened {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => continue,
+            Err(error) => return Err(error),
+        };
+        if crate::paths::is_link(&file.metadata()?)
+            || file_identity(&pinned)? != file_identity(&file)?
+        {
+            return Err(io::Error::other(
+                "directory identity changed at durability barrier",
+            ));
+        }
+        return Ok(Some(file));
+    }
+    if may_add_entries(&pinned)? {
+        return Err(io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32));
+    }
+    Ok(None)
+}
+
+// Test hook: every write-capable open of a flushable directory is treated
+// as refused, as a filter driver or a mandatory label would refuse it.
+#[cfg(test)]
+std::thread_local! {
+    static DENY_FLUSHABLE_OPENS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this process's token holds a discretionary right to add a file or
+/// a subdirectory to the open directory `dir` (owner, group and DACL, via
+/// `AccessCheck` with an impersonation copy of the token): only the DACL
+/// decides, never a filter, a sharing mode or a mandatory integrity label.
+/// A label or filter that refuses what the DACL grants therefore fails the
+/// barrier closed rather than skipping it.
+fn may_add_entries(dir: &File) -> io::Result<bool> {
+    let mut owner = null_mut();
+    let mut group = null_mut();
+    let mut dacl = null_mut();
+    let mut descriptor = null_mut();
+    // SAFETY: the directory handle is live (opened with GENERIC_READ, so
+    // READ_CONTROL); the API-owned descriptor is freed by its guard.
+    let descriptor = unsafe {
+        let status = GetSecurityInfo(
+            dir.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            &mut group,
+            &mut dacl,
+            null_mut(),
+            &mut descriptor,
+        );
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        LocalAllocation(descriptor)
+    };
+    let mut primary = null_mut();
+    let mut impersonation = null_mut();
+    // SAFETY: current-process pseudo handle; both returned token handles are
+    // owned exactly once.
+    let impersonation = unsafe {
+        bool_result(OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_QUERY | TOKEN_DUPLICATE,
+            &mut primary,
+        ))?;
+        let primary = owned(primary)?;
+        bool_result(DuplicateToken(
+            primary.as_raw_handle(),
+            SecurityImpersonation,
+            &mut impersonation,
+        ))?;
+        owned(impersonation)?
+    };
+    let mapping = GENERIC_MAPPING {
+        GenericRead: FILE_GENERIC_READ,
+        GenericWrite: FILE_GENERIC_WRITE,
+        GenericExecute: FILE_GENERIC_EXECUTE,
+        GenericAll: FILE_ALL_ACCESS,
+    };
+    for add_entry in [FILE_APPEND_DATA, FILE_WRITE_DATA] {
+        // Room for the privilege set AccessCheck may report (none expected).
+        let mut privileges = [0usize; 16];
+        let mut length = size_of_val(&privileges) as u32;
+        let mut granted = 0u32;
+        let mut allowed = 0;
+        // SAFETY: live descriptor and impersonation token; every output
+        // buffer is sized and lives through the synchronous call.
+        unsafe {
+            bool_result(AccessCheck(
+                descriptor.0,
+                impersonation.as_raw_handle(),
+                add_entry,
+                &mapping,
+                privileges.as_mut_ptr().cast(),
+                &mut length,
+                &mut granted,
+                &mut allowed,
+            ))?;
+        }
+        if allowed != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// File barrier for a regular file already opened no-follow as `pinned`.
+/// FlushFileBuffers needs a write-capable handle, and Git marks the packs,
+/// indexes and loose objects it writes FILE_ATTRIBUTE_READONLY, which refuses
+/// every write-capable open even to the owner. Only then is that attribute
+/// cleared for the flush and restored afterwards (also on failure). Every
+/// handle must name `pinned`'s file; nothing is written.
+pub(crate) fn sync_file(pinned: &File, path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let same_file = |file: &File| -> io::Result<()> {
+        if crate::paths::is_link(&file.metadata()?)
+            || file_identity(file)? != file_identity(pinned)?
+        {
+            return Err(io::Error::other(
+                "file identity changed at durability barrier",
+            ));
+        }
+        Ok(())
+    };
+    let open = |access: u32| {
+        std::fs::OpenOptions::new()
+            .access_mode(access | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    };
+    let refused = match open(FILE_WRITE_DATA) {
+        Ok(file) => {
+            same_file(&file)?;
+            return file.sync_all();
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => error,
+        Err(error) => return Err(error),
+    };
+    let attributes = open(FILE_WRITE_ATTRIBUTES)?;
+    same_file(&attributes)?;
+    let original = basic_info(&attributes)?;
+    if original.FileAttributes & FILE_ATTRIBUTE_READONLY == 0 {
+        return Err(refused);
+    }
+    let mut writable = original;
+    writable.FileAttributes &= !FILE_ATTRIBUTE_READONLY;
+    if writable.FileAttributes == 0 {
+        writable.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+    }
+    set_attributes(&attributes, writable.FileAttributes)?;
+    let flushed = open(FILE_WRITE_DATA).and_then(|file| {
+        same_file(&file)?;
+        file.sync_all()
+    });
+    let restored = set_attributes(&attributes, original.FileAttributes);
+    flushed.and(restored)
+}
+
+fn basic_info(file: &File) -> io::Result<FILE_BASIC_INFO> {
+    // SAFETY: the handle is borrowed live; the output is a fully sized,
+    // zero-initialized Win32 structure the call only writes into.
+    unsafe {
+        let mut info: FILE_BASIC_INFO = std::mem::zeroed();
+        bool_result(GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        ))?;
+        Ok(info)
+    }
+}
+
+/// Set only the attribute word; zero timestamps leave every time unchanged.
+fn set_attributes(file: &File, attributes: u32) -> io::Result<()> {
+    // SAFETY: the handle (opened with FILE_WRITE_ATTRIBUTES) is borrowed live
+    // and the input is a fully initialized FILE_BASIC_INFO.
+    unsafe {
+        let mut info: FILE_BASIC_INFO = std::mem::zeroed();
+        info.FileAttributes = attributes;
+        bool_result(SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&info as *const FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        ))
+    }
 }
 
 /// Same-volume atomic no-replace move, with native write-through metadata.
@@ -243,6 +467,138 @@ pub(crate) fn make_private(path: &Path) -> io::Result<()> {
     }
 }
 
+/// The owner-only shape for the CLI's credential files and directories:
+/// this user as owner and a protected DACL with one full-control entry for
+/// this user (inheritable on a directory, so children start owner-only).
+pub(crate) fn make_owner_only(path: &Path, directory: bool) -> io::Result<()> {
+    let path = wide(path.as_os_str())?;
+    let descriptor = private_descriptor(directory)?;
+    // SAFETY: NUL-terminated path and a live descriptor holding the current
+    // user's owner SID and protected DACL, for this synchronous call.
+    unsafe {
+        bool_result(SetFileSecurityW(
+            path.as_ptr(),
+            OWNER_SECURITY_INFORMATION
+                | DACL_SECURITY_INFORMATION
+                | PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor.0,
+        ))
+    }
+}
+
+/// Exactly [`make_owner_only`]'s shape, read without following a reparse
+/// point: this user owns it, the DACL is protected (nothing inherited) and
+/// holds exactly one entry, an allow of full control for this user.
+pub(crate) fn is_owner_only(path: &Path) -> io::Result<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    if crate::paths::is_link(&file.metadata()?) {
+        return Ok(false);
+    }
+    let (_token, user) = user_token()?;
+    let mut owner = null_mut();
+    let mut acl = null_mut();
+    let mut descriptor = null_mut();
+    // SAFETY: valid open handle, live aligned user buffer, and API-owned
+    // descriptor covering the owner SID, DACL and ACE until LocalFree.
+    unsafe {
+        let status = GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            &mut acl,
+            null_mut(),
+            &mut descriptor,
+        );
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let descriptor = LocalAllocation(descriptor);
+        let user = &*user.as_ptr().cast::<TOKEN_USER>();
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        bool_result(GetSecurityDescriptorControl(
+            descriptor.0,
+            &mut control,
+            &mut revision,
+        ))?;
+        if owner.is_null()
+            || EqualSid(owner, user.User.Sid) == 0
+            || control & SE_DACL_PROTECTED == 0
+            || acl.is_null()
+            || (*acl).AceCount != 1
+        {
+            return Ok(false);
+        }
+        let mut ace = null_mut();
+        bool_result(GetAce(acl, 0, &mut ace))?;
+        if (*ace.cast::<ACE_HEADER>()).AceType != ACCESS_ALLOWED_ACE_TYPE {
+            return Ok(false);
+        }
+        let ace = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+        let sid = std::ptr::addr_of!(ace.SidStart).cast_mut().cast();
+        Ok(ace.Mask == FILE_ALL_ACCESS && EqualSid(sid, user.User.Sid) != 0)
+    }
+}
+
+/// DPAPI for this user (CurrentUser scope, no entropy, never any UI): the
+/// same protection as .NET `ProtectedData` with `CurrentUser`, so blobs
+/// written either way open either way.
+pub(crate) fn dpapi(data: &[u8], encrypt: bool) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
+    use windows_sys::Win32::Security::Cryptography::{
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
+    };
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: u32::try_from(data.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "credential too large"))?,
+        pbData: data.as_ptr().cast_mut(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: null_mut(),
+    };
+    // SAFETY: the input blob borrows `data` (never written) for this
+    // synchronous call; optional pointers are null; the API allocates the
+    // output with LocalAlloc, which the allocation guard frees after the
+    // bytes are copied and the buffer is wiped.
+    unsafe {
+        bool_result(if encrypt {
+            CryptProtectData(
+                &input,
+                null(),
+                null(),
+                null(),
+                null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        } else {
+            CryptUnprotectData(
+                &input,
+                null_mut(),
+                null(),
+                null(),
+                null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        })?;
+        if output.pbData.is_null() {
+            return Ok(zeroize::Zeroizing::new(Vec::new()));
+        }
+        let _allocation = LocalAllocation(output.pbData.cast());
+        let bytes = std::slice::from_raw_parts_mut(output.pbData, output.cbData as usize);
+        let copy = zeroize::Zeroizing::new(bytes.to_vec());
+        zeroize::Zeroize::zeroize(bytes);
+        Ok(copy)
+    }
+}
+
 pub(crate) fn check_private(path: &Path) -> io::Result<bool> {
     let path = wide(path.as_os_str())?;
     // SAFETY: no-follow open, no data access, owned handle. Reparse handles
@@ -266,8 +622,10 @@ pub(crate) fn check_private_file(file: &File) -> io::Result<bool> {
 }
 
 /// Ancestors need integrity, not confidentiality: public read access on the
-/// volume root and Users directory is normal. Only this user, SYSTEM and local
-/// administrators may replace entries or change ownership/security/reparse data.
+/// volume root and Users directory is normal. Only this user, SYSTEM, local
+/// administrators and the TrustedInstaller servicing account (the default
+/// owner of the system volume root on Windows 10/11) may own an ancestor,
+/// replace entries or change ownership/security/reparse data.
 pub(crate) fn check_directory_integrity(path: &Path) -> io::Result<bool> {
     use std::os::windows::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()
@@ -278,6 +636,24 @@ pub(crate) fn check_directory_integrity(path: &Path) -> io::Result<bool> {
         return Ok(false);
     }
     check_security_handle(file.as_raw_handle(), SE_FILE_OBJECT, true)
+}
+
+/// Bytes available to this user on the volume holding `root` (a drive root),
+/// honouring per-user disk quotas.
+pub(crate) fn available_disk_bytes(root: &Path) -> io::Result<u64> {
+    let root = wide(root.as_os_str())?;
+    let mut available = 0u64;
+    // SAFETY: NUL-terminated path; the output is a live u64 and the two
+    // optional outputs are null.
+    unsafe {
+        bool_result(GetDiskFreeSpaceExW(
+            root.as_ptr(),
+            &mut available,
+            null_mut(),
+            null_mut(),
+        ))?;
+    }
+    Ok(available)
 }
 
 /// Volume serial plus file index: the identity of an open file or directory.
@@ -311,6 +687,23 @@ pub(crate) fn file_change_time(file: &File) -> io::Result<i64> {
     }
 }
 
+/// `NT SERVICE\TrustedInstaller`: a service SID (SHA-1 of the service name),
+/// identical on every Windows installation. It owns `C:\` by default and is
+/// more privileged than SYSTEM, so trusting it adds no unprivileged principal.
+const TRUSTED_INSTALLER_SID: &str =
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+fn trusted_installer_sid() -> io::Result<LocalAllocation> {
+    let text = wide(OsStr::new(TRUSTED_INSTALLER_SID))?;
+    let mut sid = null_mut();
+    // SAFETY: NUL-terminated input; the API allocates the SID, which the
+    // returned allocation frees.
+    unsafe {
+        bool_result(ConvertStringSidToSidW(text.as_ptr(), &mut sid))?;
+    }
+    Ok(LocalAllocation(sid))
+}
+
 fn check_private_handle(handle: HANDLE, object_type: SE_OBJECT_TYPE) -> io::Result<bool> {
     check_security_handle(handle, object_type, false)
 }
@@ -342,11 +735,19 @@ fn check_security_handle(
         }
         let _descriptor = LocalAllocation(descriptor);
         let user = &*user.as_ptr().cast::<TOKEN_USER>();
+        let installer = if directory_integrity {
+            Some(trusted_installer_sid()?)
+        } else {
+            None
+        };
         let trusted = |sid| {
             EqualSid(sid, user.User.Sid) != 0
                 || (directory_integrity
                     && (IsWellKnownSid(sid, WinLocalSystemSid) != 0
-                        || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0))
+                        || IsWellKnownSid(sid, WinBuiltinAdministratorsSid) != 0
+                        || installer
+                            .as_ref()
+                            .is_some_and(|installer| EqualSid(sid, installer.0) != 0)))
         };
         if owner.is_null() || !trusted(owner) || acl.is_null() || (*acl).AceCount == 0 {
             return Ok(false);
@@ -517,6 +918,9 @@ pub enum Input {
 /// supplies thread-safe handle ownership without manually implementing Send.
 pub struct ProcessChild {
     process: OwnedHandle,
+    // This child and every descendant: `kill` must reach a launcher's real
+    // process (Git for Windows' `cmd\git.exe` runs `mingw64\bin\git.exe`).
+    tree: OwnedHandle,
     id: u32,
     pub stdin: Option<File>,
     pub stdout: Option<File>,
@@ -533,8 +937,8 @@ impl ProcessChild {
         self.id
     }
     pub fn kill(&mut self) -> io::Result<()> {
-        // SAFETY: process handle remains owned for this call.
-        unsafe { bool_result(TerminateProcess(self.process.as_raw_handle(), 1)) }
+        // SAFETY: the child's own job handle remains owned for this call.
+        unsafe { bool_result(TerminateJobObject(self.tree.as_raw_handle(), 1)) }
     }
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         // SAFETY: process handle remains owned until the exit status is read.
@@ -792,6 +1196,23 @@ pub(crate) fn spawn_credential(
     spawn_inner(command, Input::Pipe, owner, false)
 }
 
+/// A private job for one child and its descendants, nested in the drain job
+/// the child inherits from its broker (whose kill-on-close and drain still
+/// cover the whole tree). No kill-on-close here: only an explicit kill ends it.
+fn tree_job() -> io::Result<OwnedHandle> {
+    let descriptor = private_descriptor(false)?;
+    let attrs = attributes(&descriptor);
+    // SAFETY: private non-inheritable anonymous job, valid security attributes.
+    let job = unsafe { owned(CreateJobObjectW(&attrs, null()))? };
+    if !check_private_handle(job.as_raw_handle(), SE_KERNEL_OBJECT)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "job access control is not private",
+        ));
+    }
+    Ok(job)
+}
+
 fn spawn_inner(
     command: &Command,
     input: Input,
@@ -850,6 +1271,7 @@ fn spawn_inner(
     } else {
         None
     };
+    let tree = tree_job()?;
     let broker = job.broker()?;
     let input_dup = RemoteHandle::new(child_in.as_raw_handle(), &broker)?;
     let output_dup = RemoteHandle::new(child_out.as_raw_handle(), &broker)?;
@@ -881,6 +1303,8 @@ fn spawn_inner(
     // PARENT_PROCESS inherits the broker's job before the first instruction.
     // The job handle itself is never inherited. Owner handles never become
     // inheritable, including during a concurrent unrelated std Command spawn.
+    // The child starts suspended and runs only once it is in its own tree job,
+    // so every descendant it creates is in that job too.
     unsafe {
         bool_result(CreateProcessW(
             application.as_ptr(),
@@ -888,15 +1312,28 @@ fn spawn_inner(
             null(),
             null(),
             1,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+            EXTENDED_STARTUPINFO_PRESENT
+                | CREATE_UNICODE_ENVIRONMENT
+                | CREATE_NO_WINDOW
+                | CREATE_SUSPENDED,
             env.as_ptr().cast(),
             cwd.as_ref().map_or(null(), |c| c.as_ptr()),
             &startup.StartupInfo,
             &mut process,
         ))?;
-        drop(owned(process.hThread)?);
+        let thread = owned(process.hThread)?;
+        let child = owned(process.hProcess)?;
+        if AssignProcessToJobObject(tree.as_raw_handle(), child.as_raw_handle()) == 0
+            || ResumeThread(thread.as_raw_handle()) == u32::MAX
+        {
+            let error = io::Error::last_os_error();
+            TerminateProcess(child.as_raw_handle(), 1);
+            return Err(error);
+        }
+        drop(thread);
         Ok(ProcessChild {
-            process: owned(process.hProcess)?,
+            process: child,
+            tree,
             id: process.dwProcessId,
             stdin,
             stdout: Some(stdout),
@@ -909,6 +1346,144 @@ fn spawn_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An ancestor this user may not add entries to (`C:\Users` for a
+    /// standard account) is skipped by the ancestor barrier only because its
+    /// DACL says so; a managed sync of it still refuses. A private directory
+    /// grants add rights and is flushed.
+    #[test]
+    fn ancestor_barrier_skips_only_what_the_acl_denies() {
+        let base = std::env::temp_dir().join(format!(
+            "kb-win-ancestor-{}",
+            crate::state::new_uuid_v4().expect("uuid")
+        ));
+        create_private_dir(&base).expect("private directory");
+        let own = crate::paths::open_directory(&base).expect("open");
+        assert!(may_add_entries(&own).expect("access check"));
+        sync_ancestor_directory(&base).expect("flushed");
+        drop(own);
+        std::fs::remove_dir(&base).expect("fixture cleanup");
+        let drive = std::env::var("SystemDrive").expect("system drive");
+        let users = PathBuf::from(format!("{drive}\\Users"));
+        let handle = crate::paths::open_directory(&users).expect("open Users");
+        let may_add = may_add_entries(&handle).expect("access check");
+        sync_ancestor_directory(&users).expect("ancestor barrier");
+        // Elevated sessions may add to it (and then flush); others may not.
+        assert_eq!(sync_directory(&users).is_ok(), may_add);
+        // Opens refused although the DACL grants add rights (a filter, a
+        // label): the ancestor barrier fails closed instead of skipping.
+        let granted = std::env::temp_dir().join(format!(
+            "kb-win-ancestor-denied-{}",
+            crate::state::new_uuid_v4().expect("uuid")
+        ));
+        create_private_dir(&granted).expect("private directory");
+        DENY_FLUSHABLE_OPENS.set(true);
+        let refused = sync_ancestor_directory(&granted);
+        let skipped = (!may_add).then(|| sync_ancestor_directory(&users));
+        DENY_FLUSHABLE_OPENS.set(false);
+        assert_eq!(
+            refused
+                .expect_err("a refusal the DACL does not explain")
+                .raw_os_error(),
+            Some(ERROR_ACCESS_DENIED as i32)
+        );
+        // Where the DACL itself denies add rights, the skip still applies.
+        if let Some(skipped) = skipped {
+            skipped.expect("no add rights: nothing of ours to flush");
+        }
+        std::fs::remove_dir(&granted).expect("fixture cleanup");
+    }
+
+    /// The CLI credential shape: set and checked natively, refused when the
+    /// DACL is broadened or only inherited; DPAPI round-trips, refuses a
+    /// tampered blob and opens one written by .NET `ProtectedData`
+    /// (credentials saved before the helpers became native).
+    #[test]
+    fn owner_only_shape_and_dpapi_match_the_credential_contract() {
+        let base = std::env::temp_dir().join(format!(
+            "kb-win-owner-only-{}",
+            crate::state::new_uuid_v4().expect("uuid")
+        ));
+        std::fs::create_dir(&base).expect("fixture");
+        assert!(!is_owner_only(&base).expect("inherited ACL read"));
+        make_owner_only(&base, true).expect("owner-only directory");
+        assert!(is_owner_only(&base).expect("owner-only directory read"));
+        let file = base.join("credential.json");
+        std::fs::write(&file, b"{}").expect("fixture file");
+        assert!(
+            !is_owner_only(&file).expect("inherited entry read"),
+            "an inherited entry is not the protected shape"
+        );
+        make_owner_only(&file, false).expect("owner-only file");
+        assert!(is_owner_only(&file).expect("owner-only file read"));
+        let output = Command::new("icacls")
+            .arg(&file)
+            .args(["/grant", "*S-1-1-0:R"])
+            .output()
+            .expect("fixture ACL");
+        assert!(output.status.success(), "{output:?}");
+        assert!(!is_owner_only(&file).expect("broadened read"));
+
+        let secret = b"disposable-dpapi-canary";
+        let blob = dpapi(secret, true).expect("protect");
+        assert!(!blob.windows(secret.len()).any(|w| w == secret));
+        assert_eq!(dpapi(&blob, false).expect("unprotect").as_slice(), secret);
+        let mut tampered = blob.to_vec();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+        assert!(dpapi(&tampered, false).is_err());
+        let output = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes('disposable-dpapi-canary'),$null,[Security.Cryptography.DataProtectionScope]::CurrentUser))",
+            ])
+            .output()
+            .expect(".NET DPAPI fixture");
+        assert!(output.status.success(), "{output:?}");
+        use base64::Engine as _;
+        let legacy = base64::engine::general_purpose::STANDARD
+            .decode(String::from_utf8_lossy(&output.stdout).trim())
+            .expect("base64 blob");
+        assert_eq!(
+            dpapi(&legacy, false).expect("legacy blob").as_slice(),
+            secret
+        );
+        std::fs::remove_dir_all(base).expect("fixture cleanup");
+    }
+
+    /// A kill reaches the child's descendants, as Git for Windows needs
+    /// (`cmd\git.exe` runs `mingw64\bin\git.exe`): here Git runs a shell
+    /// alias that runs `ping`, which writes to the inherited stdout pipe. Once
+    /// killed, no surviving writer may keep that pipe open.
+    #[test]
+    fn kill_reaches_a_launchers_descendants() {
+        use std::io::Read;
+        let mut command = Command::new("git");
+        command.args(["-c", "alias.kb-slow=!ping -n 120 127.0.0.1", "kb-slow"]);
+        for key in ["PATH", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let mut child = spawn(&command, Input::Null, None).expect("spawn");
+        let mut stdout = child.stdout.take().expect("stdout");
+        // The grandchild is running once its first output arrives.
+        let mut first = [0u8; 16];
+        assert!(stdout.read(&mut first).expect("ping output") > 0);
+        child.kill().expect("kill");
+        let (done, drained) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut rest = Vec::new();
+            let _ = done.send(stdout.read_to_end(&mut rest).map(|_| ()));
+        });
+        drained
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("every writer of the pipe was killed")
+            .expect("pipe read to end");
+        assert!(!child.wait().expect("reaped").success());
+    }
 
     #[test]
     fn directory_integrity_allows_public_reads_but_rejects_public_mutation() {

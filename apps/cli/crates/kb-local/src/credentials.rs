@@ -2,6 +2,12 @@
 use crate::StoreError;
 use std::fmt;
 use zeroize::Zeroizing;
+/// Windows DPAPI for the current user (CurrentUser scope, no entropy, no
+/// UI): `encrypt` protects, otherwise unprotects. Plaintext stays zeroizing.
+#[cfg(windows)]
+pub fn windows_dpapi(data: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>, StoreError> {
+    crate::win::dpapi(data, encrypt).map_err(StoreError::Io)
+}
 pub fn unavailable() -> StoreError {
     StoreError::StorageUnavailable("OS credential store unavailable; no plaintext fallback".into())
 }

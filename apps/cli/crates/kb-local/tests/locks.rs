@@ -717,6 +717,18 @@ fn recycled_root_rejects_both_foreign_guard_and_old_store_handle() {
     let root = base.join("store");
     let a = Store::open(&root).unwrap();
     let a_guard = a.lock_write(&[]).unwrap();
+    if cfg!(windows) {
+        // Windows never renames a directory with open files in it: a live
+        // store root cannot be recycled under its own handles at all.
+        let error = std::fs::rename(&root, base.join("retired"))
+            .expect_err("Windows refuses to recycle a live store root");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{error:?}"
+        );
+        return;
+    }
     std::fs::rename(&root, base.join("retired")).unwrap();
     let b = Store::open(&root).unwrap();
     assert_ne!(a.store_uuid(), b.store_uuid());

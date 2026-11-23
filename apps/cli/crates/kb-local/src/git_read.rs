@@ -399,7 +399,7 @@ impl Drop for Supervised {
 /// form for integrity checks, but Git's Win32 open() rejects the `?` in
 /// Rust's verbatim prefix, including for config and objects, so Windows
 /// gets ordinary drive/UNC spelling.
-fn git_spelling(path: &Path) -> PathBuf {
+pub(crate) fn git_spelling(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
         use std::path::{Component, Prefix};
@@ -528,8 +528,21 @@ impl GitRepo {
     /// Open an existing bare repository directory (never a symlink).
     pub fn open(git_dir: &Path) -> Result<GitRepo, GitError> {
         let meta = std::fs::symlink_metadata(git_dir).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
+            // A path through a regular file is a failed traversal (storage),
+            // not absence. Unix says so (ENOTDIR); Windows reports it as not
+            // found, so look at the nearest existing ancestor.
+            let through_file = || {
+                cfg!(windows)
+                    && git_dir
+                        .ancestors()
+                        .skip(1)
+                        .find_map(|ancestor| std::fs::symlink_metadata(ancestor).ok())
+                        .is_some_and(|meta| !meta.is_dir())
+            };
+            if error.kind() == std::io::ErrorKind::NotFound && !through_file() {
                 GitError::NotFound
+            } else if error.kind() == std::io::ErrorKind::NotFound {
+                GitError::Io(std::io::Error::from(std::io::ErrorKind::NotADirectory))
             } else {
                 GitError::Io(error)
             }
@@ -999,9 +1012,9 @@ impl GitRepo {
             let from = source.join(&name);
             let to = destination.join(&name);
             canonical.check_managed_path(&to)?;
-            std::fs::File::open(&from)
-                .and_then(|file| file.sync_all())
-                .map_err(StoreError::Io)?;
+            let file = crate::paths::open_regular_read(&from)?;
+            crate::paths::sync_file(&file, &from)?;
+            drop(file);
             match std::fs::hard_link(&from, &to) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}

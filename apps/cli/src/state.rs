@@ -276,9 +276,11 @@ fn ensure_private_dir(path: &Path) -> Result<()> {
     // Publish every directory link parent-first before acknowledging state.
     // Sync existing ancestors too: a racing/failed creator may have made them
     // visible without making their links durable. Re-entry must retry fsync.
+    // Windows skips only an ancestor this user can add no entry to; see
+    // `kb_local::paths::sync_ancestor_dir`.
     let parents: Vec<_> = path.ancestors().skip(1).collect();
     for parent in parents.into_iter().rev() {
-        sync_dir(if parent.as_os_str().is_empty() {
+        sync_ancestor_dir(if parent.as_os_str().is_empty() {
             Path::new(".")
         } else {
             parent
@@ -294,7 +296,7 @@ pub fn check_private_path(path: &Path, directory: bool) -> Result<()> {
     }
     check_mode(&meta, directory)?;
     #[cfg(windows)]
-    acl(path, directory, false)?;
+    acl(path)?;
     Ok(())
 }
 #[cfg(unix)]
@@ -353,83 +355,31 @@ pub fn open_user_private_file(path: &Path) -> Result<File> {
 fn sync_dir(path: &Path) -> Result<()> {
     kb_local::paths::sync_dir(path).context("syncing private credential directory")
 }
+/// [`sync_dir`] for an existing ancestor of a credential directory.
+fn sync_ancestor_dir(path: &Path) -> Result<()> {
+    kb_local::paths::sync_ancestor_dir(path).context("syncing private credential directory")
+}
 
 // Windows uses the OS DPAPI CurrentUser API and a protected DACL containing
-// exactly the current SID. Fixed PowerShell scripts take input through stdin,
-// never argv. Errors and helper stderr are discarded, with no fallback.
-#[cfg(windows)]
-fn powershell(script: &str, input: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
-    use std::process::{Command, Stdio};
-    let helper = PathBuf::from(
-        std::env::var_os("SystemRoot").context("Windows system directory unavailable")?,
-    )
-    .join("System32/WindowsPowerShell/v1.0/powershell.exe");
-    if !helper.is_absolute() {
-        bail!("Windows system directory must be absolute");
-    }
-    let script = format!(
-        "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); {script}"
-    );
-    let mut child = Command::new(helper)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| anyhow::anyhow!("Windows credential protection unavailable"))?;
-    let write = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Windows credential input unavailable"))?
-        .write_all(input);
-    if write.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
-        bail!("Windows credential protection failed");
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|_| anyhow::anyhow!("Windows credential protection failed"))?;
-    if !output.status.success() {
-        bail!("Windows credential protection failed");
-    }
-    Ok(Zeroizing::new(output.stdout))
-}
+// exactly the current SID, natively (kb-local's audited Windows boundary): no
+// helper process. Errors are reported without detail and with no fallback.
 #[cfg(windows)]
 fn protect(bytes: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
-    use base64::Engine;
-    let operation = if encrypt { "Protect" } else { "Unprotect" };
-    let script = format!(
-        r"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $b=[Convert]::FromBase64String([Console]::In.ReadToEnd()); $o=[Security.Cryptography.ProtectedData]::{operation}($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Write([Convert]::ToBase64String($o))"
-    );
-    let encoded = Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(bytes));
-    let output = powershell(&script, encoded.as_bytes())?;
-    base64::engine::general_purpose::STANDARD
-        .decode(&output)
-        .map(Zeroizing::new)
+    kb_local::credentials::windows_dpapi(bytes, encrypt)
         .map_err(|_| anyhow::anyhow!("Windows credential protection failed"))
 }
 #[cfg(windows)]
-fn set_private(path: &Path, directory: bool) -> Result<()> {
-    acl(path, directory, true)
+pub(crate) fn set_private(path: &Path, directory: bool) -> Result<()> {
+    kb_local::paths::make_owner_only(path, directory)
+        .map_err(|_| anyhow::anyhow!("Windows credential protection failed"))
 }
 #[cfg(windows)]
-fn acl(path: &Path, directory: bool, set: bool) -> Result<()> {
-    let kind = if directory { "Directory" } else { "File" };
-    let script = if set {
-        format!(
-            r"$ErrorActionPreference='Stop'; $p=[Console]::In.ReadToEnd(); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object Security.AccessControl.{kind}Security; $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $r=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); $a.AddAccessRule($r); Set-Acl -LiteralPath $p -AclObject $a"
-        )
-    } else {
-        r"$ErrorActionPreference='Stop'; $p=[Console]::In.ReadToEnd(); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=Get-Acl -LiteralPath $p; if($a.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid -or -not $a.AreAccessRulesProtected){throw 'private ACL required'}; $rules=$a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]); if($rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or $rules[0].AccessControlType -ne 'Allow' -or $rules[0].FileSystemRights -ne 'FullControl'){throw 'private ACL required'}".into()
-    };
-    powershell(
-        &script,
-        path.to_str()
-            .context("credential path must be Unicode on Windows")?
-            .as_bytes(),
-    )?;
-    Ok(())
+fn acl(path: &Path) -> Result<()> {
+    match kb_local::paths::is_owner_only(path) {
+        Ok(true) => Ok(()),
+        Ok(false) => bail!("private ACL required"),
+        Err(_) => bail!("Windows credential protection failed"),
+    }
 }
 /// Credential paths refuse symlinked ancestors, and macOS's temporary root sits
 /// under the `/var` → `/private/var` link: fixtures use its canonical path.
@@ -626,19 +576,22 @@ mod tests {
         )
         .expect("resource");
         let token = SecretToken::new("disposable-mode".into());
-        // No mode: the file carries no `authoring_mode` key.
+        // No mode: the file carries no `authoring_mode` key (readable only
+        // on Unix; Windows stores DPAPI ciphertext).
         store.save(&resource, &token).expect("save");
-        let file = fs::read_dir(&root)
-            .expect("dir")
-            .map(|entry| entry.expect("entry").path())
-            .find(|path| path.extension().is_some_and(|e| e == "json"))
-            .expect("credential file");
         #[cfg(unix)]
-        assert!(
-            !fs::read_to_string(&file)
-                .expect("read")
-                .contains("authoring_mode")
-        );
+        {
+            let file = fs::read_dir(&root)
+                .expect("dir")
+                .map(|entry| entry.expect("entry").path())
+                .find(|path| path.extension().is_some_and(|e| e == "json"))
+                .expect("credential file");
+            assert!(
+                !fs::read_to_string(&file)
+                    .expect("read")
+                    .contains("authoring_mode")
+            );
+        }
         assert_eq!(store.load_entry(&resource).expect("load").unwrap().1, None);
         for mode in AuthoringMode::ALL {
             store

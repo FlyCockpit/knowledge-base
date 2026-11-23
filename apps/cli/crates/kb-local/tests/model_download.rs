@@ -25,8 +25,22 @@ fn private_root(f: &Fixture) {
         std::fs::set_permissions(&f.root, std::fs::Permissions::from_mode(0o700))
             .expect("private fixture root");
     }
-    #[cfg(not(unix))]
-    let _ = f;
+    // Windows: the owner-only protected DACL kb gives its own directories
+    // (current user as owner, one inheritable full-control entry).
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object Security.AccessControl.DirectorySecurity; $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')); Set-Acl -LiteralPath $env:KB_FIXTURE_PRIVATE_DIR -AclObject $a",
+            ])
+            .env("KB_FIXTURE_PRIVATE_DIR", &f.root)
+            .output()
+            .expect("fixture ACL");
+        assert!(output.status.success(), "private fixture root: {output:?}");
+    }
 }
 fn partials(dir: &std::path::Path) -> usize {
     std::fs::read_dir(dir)
@@ -168,11 +182,14 @@ fn foreign_model_directory_files_are_copied_once_never_loaded_in_place() {
         .enable_all()
         .build()
         .expect("executor");
-    // A verified file is never downloaded again.
+    // A verified file is never downloaded again (the same file, whatever
+    // the spelling: Windows canonical paths are verbatim).
     assert_eq!(
-        executor
-            .block_on(cache.download(&m, &mut |_, _| panic!("no transfer")))
-            .expect("reused"),
+        canonical_file(
+            &executor
+                .block_on(cache.download(&m, &mut |_, _| panic!("no transfer")))
+                .expect("reused")
+        ),
         copy
     );
     // Old per-store weights are adopted only when their checksum matches.

@@ -991,6 +991,15 @@ impl ModelCache {
     /// ours, which also move ctime) as ours.
     fn record_created(&self, m: &ModelDescriptor, dest: &Path) -> Result<(), StoreError> {
         let copies = self.ensure_copies_dir()?;
+        // The mark binds the spelling `resolve` checks it under: the
+        // canonical parent plus the file name (on Windows the verbatim
+        // `\\?\` form, which a configured or default directory never has).
+        let parent = dest
+            .parent()
+            .ok_or_else(unavailable)?
+            .canonicalize()
+            .map_err(StoreError::Io)?;
+        let dest = &parent.join(dest.file_name().ok_or_else(unavailable)?);
         let mark = Self::creation_mark(dest, &open_no_follow_read(dest)?)?;
         let temp = copies.join(format!(
             ".{}.{}.mark-partial",

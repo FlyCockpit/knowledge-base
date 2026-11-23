@@ -680,6 +680,53 @@ pub fn sync_dir(path: &Path) -> Result<(), StoreError> {
     }
 }
 
+/// Windows: give `path` the CLI credential store's owner-only shape (this
+/// user as owner, a protected DACL with one full-control entry for this user).
+#[cfg(windows)]
+pub fn make_owner_only(path: &Path, directory: bool) -> Result<(), StoreError> {
+    crate::win::make_owner_only(path, directory).map_err(StoreError::Io)
+}
+
+/// Windows: whether `path` (never followed) has exactly that shape.
+#[cfg(windows)]
+pub fn is_owner_only(path: &Path) -> Result<bool, StoreError> {
+    crate::win::is_owner_only(path).map_err(StoreError::Io)
+}
+
+/// Flush a regular file `file` opened no-follow from `path` (fsync; on
+/// Windows a write-capable handle to the same file, see `win::sync_file`,
+/// because Git's objects are read-only there).
+pub(crate) fn sync_file(file: &File, path: &Path) -> Result<(), StoreError> {
+    #[cfg(unix)]
+    {
+        let _ = path;
+        file.sync_all().map_err(StoreError::Io)
+    }
+    #[cfg(windows)]
+    {
+        crate::win::sync_file(file, path).map_err(StoreError::Io)
+    }
+}
+
+/// [`sync_dir`] for an existing ancestor outside the managed tree (the
+/// parents of a store root or credential directory, through the volume
+/// root). Unix fsyncs it like any directory. Windows flushes it when this
+/// user may add entries to it and otherwise has nothing of ours to persist
+/// there (see `win::sync_ancestor_directory`); a standard user cannot open
+/// `C:\Users` for flushing.
+pub fn sync_ancestor_dir(path: &Path) -> Result<(), StoreError> {
+    #[cfg(unix)]
+    {
+        sync_dir(path)
+    }
+    #[cfg(windows)]
+    {
+        #[cfg(test)]
+        DIRECTORY_SYNCS.with(|syncs| syncs.borrow_mut().push(path.to_path_buf()));
+        crate::win::sync_ancestor_directory(path).map_err(StoreError::Io)
+    }
+}
+
 // Thread-local observation covers real recovery barriers without counting
 // unrelated parallel fixtures or changing production IO.
 #[cfg(test)]
@@ -742,6 +789,15 @@ pub(crate) fn sync_dir_observed(
 ) -> Result<(), StoreError> {
     observer(crate::store::OpenStage::SyncDirectory(path.to_path_buf()))?;
     sync_dir(path)
+}
+
+/// [`sync_ancestor_dir`] with the open-stage observer.
+pub(crate) fn sync_ancestor_dir_observed(
+    path: &Path,
+    observer: &mut dyn FnMut(crate::store::OpenStage) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    observer(crate::store::OpenStage::SyncDirectory(path.to_path_buf()))?;
+    sync_ancestor_dir(path)
 }
 
 #[cfg(all(test, unix))]

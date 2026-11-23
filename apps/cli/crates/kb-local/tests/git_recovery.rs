@@ -1376,9 +1376,16 @@ fn nested_store_git_inherits_only_its_exact_store_lock() {
         let inner_available = fixture::os_locks_available(inner.paths().root(), &[]);
         #[cfg(windows)]
         let inner_available = if order == "outer-only" {
-            // The registry may be briefly occupied by an unrelated spawn.
-            drop(inner.lock_write(&[]).unwrap());
-            true
+            // The registry may be briefly occupied by an unrelated spawn, so
+            // a try could miss a free lock: wait out the admission deadline.
+            match inner.lock_write(&[]) {
+                Ok(guard) => {
+                    drop(guard);
+                    true
+                }
+                Err(StoreError::DeadlineExceeded) => false,
+                Err(error) => panic!("inner admission: {error:?}"),
+            }
         } else {
             inner.try_lock_write(&[]).unwrap().is_some()
         };
@@ -1659,6 +1666,21 @@ fn replacement_store_children_use_current_root_and_lock_identity() {
         let (a, a_kb, _) = store_with_kb(&root);
         let old_repo = GitRepo::for_kb(a.paths(), &a_kb).unwrap();
         let retired = a.lock_write(&[]).unwrap();
+        if replace_root && cfg!(windows) {
+            // Windows never renames a directory with open files in it: a live
+            // store root cannot be recycled under its own handles at all.
+            let error = std::fs::rename(&root, base.join("retired"))
+                .expect_err("Windows refuses to recycle a live store root");
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "{error:?}"
+            );
+            drop(retired);
+            drop(a);
+            std::fs::remove_dir_all(base).unwrap();
+            continue;
+        }
         let (b, kb, head) = if replace_root {
             std::fs::rename(&root, base.join("retired")).unwrap();
             store_with_kb(&root)

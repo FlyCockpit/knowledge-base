@@ -2517,11 +2517,15 @@ fn session_metadata_reads_live_authority_without_side_effects() {
     assert!(owned.owner && owned.create.is_some());
     assert_eq!(owned.kbs.expect("narrowed").len(), 1);
     assert_eq!(meta.authority(&owner, None).expect("owner").kbs, None);
-    // Opening reads only: a missing registry is not recreated.
+    // Opening reads only: a missing registry is not recreated. The store's
+    // own connection closes first: Windows never renames an open database.
     let detached = root.with_file_name("detached-state.sqlite");
+    let (paths, uuid) = (store.paths().clone(), store.store_uuid().clone());
     drop(meta);
+    drop(db);
+    drop(store);
     std::fs::rename(root.join("state.sqlite"), &detached).expect("detach");
-    assert!(StoreMetadata::open(store.paths(), store.store_uuid()).is_err());
+    assert!(StoreMetadata::open(&paths, &uuid).is_err());
     assert!(!root.join("state.sqlite").exists());
     std::fs::rename(&detached, root.join("state.sqlite")).expect("restore");
 }
