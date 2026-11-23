@@ -56,6 +56,7 @@ import {
   signinSentMail,
 } from "./email-recipient-limit.js";
 import { createGitHttp } from "./git-http.js";
+import { httpServerOptions } from "./http-server-options.js";
 import { createKbAssetRoutes } from "./kb-asset-routes.js";
 import { createKbExportRoutes } from "./kb-export-routes.js";
 import { createKbTokenRoutes } from "./kb-token-routes.js";
@@ -786,15 +787,8 @@ await lifecycle.start((onListening) =>
     {
       fetch: app.fetch,
       port: env.SERVER_PORT ?? env.PORT ?? 3000,
-      // Node's default keepAliveTimeout (5s) is shorter than the idle-reuse window of
-      // fronting proxies (nginx keepalive_timeout defaults to 60-75s; Traefik similar),
-      // so the app would drop sockets the proxy still considers open → sporadic 502s/
-      // ECONNRESETs. The app timeout must exceed the proxy's (65s here), and Node
-      // requires headersTimeout > keepAliveTimeout (66s).
-      serverOptions: {
-        keepAliveTimeout: 65_000,
-        headersTimeout: 66_000,
-      },
+      // Idle keep-alive must outlast cloudflared/Traefik upstream reuse (see module).
+      serverOptions: httpServerOptions,
     },
     (info) => {
       logEvent("server.listening", { port: info.port });

@@ -8,17 +8,24 @@ const config = vi.hoisted(() => ({
   SMTP_HOST: "127.0.0.1",
   SMTP_PORT: 0,
   SMTP_FROM: "App <one@example.invalid>",
-  SMTP_USER: undefined,
-  SMTP_PASS: undefined,
+  SMTP_USER: undefined as string | undefined,
+  SMTP_PASS: undefined as { reveal(): string } | undefined,
 }));
 vi.mock("@knowledge-base/env/shared", () => ({ env: config }));
 
-import { type AuthorizeEmailSend, sendEmail } from "./index";
+import { type AuthorizeEmailSend, sendEmail, verifyTransport } from "./index";
 
 const sockets = new Set<Socket>();
 let messages: string[];
 let commands: string[];
 let stall: boolean;
+/** After RCPT, trickle continuation lines that never complete the reply. */
+let drip: boolean;
+/** Advertise and accept AUTH PLAIN; otherwise AUTH is not offered and is refused. */
+let offerAuth: boolean;
+/** Trickle the EHLO reply so setup never completes. */
+let dripEhlo: boolean;
+const drips = new Set<ReturnType<typeof setInterval>>();
 const server = createServer((socket) => {
   sockets.add(socket);
   socket.on("error", () => {});
@@ -41,12 +48,29 @@ const server = createServer((socket) => {
         } else data.push(line);
       } else {
         commands.push(line);
-        if (line.startsWith("EHLO") || line.startsWith("HELO")) socket.write("250 localhost\r\n");
+        if (dripEhlo && line.startsWith("EHLO")) {
+          const timer = setInterval(() => socket.write("250-still greeting\r\n"), 1_000);
+          drips.add(timer);
+          socket.on("close", () => {
+            clearInterval(timer);
+            drips.delete(timer);
+          });
+        } else if (line.startsWith("EHLO") || line.startsWith("HELO"))
+          socket.write(offerAuth ? "250-localhost\r\n250 AUTH PLAIN\r\n" : "250 localhost\r\n");
+        else if (line.startsWith("AUTH"))
+          socket.write(offerAuth ? "235 accepted\r\n" : "502 not supported\r\n");
         else if (line === "DATA") {
           data = [];
           socket.write("354 send data\r\n");
         } else if (line === "QUIT") {
           socket.end("221 bye\r\n");
+        } else if (drip && line.startsWith("RCPT")) {
+          const timer = setInterval(() => socket.write("250-still checking\r\n"), 1_000);
+          drips.add(timer);
+          socket.on("close", () => {
+            clearInterval(timer);
+            drips.delete(timer);
+          });
         } else if (!stall || !line.startsWith("RCPT")) socket.write("250 OK\r\n");
       }
     }
@@ -56,6 +80,11 @@ beforeEach(async () => {
   messages = [];
   commands = [];
   stall = false;
+  drip = false;
+  offerAuth = false;
+  dripEhlo = false;
+  config.SMTP_USER = undefined;
+  config.SMTP_PASS = undefined;
   config.SMTP_FROM = "App <one@example.invalid>";
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -64,6 +93,8 @@ beforeEach(async () => {
   config.SMTP_PORT = address.port;
 });
 afterEach(async () => {
+  for (const timer of drips) clearInterval(timer);
+  drips.clear();
   for (const socket of sockets) socket.destroy();
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
@@ -145,6 +176,46 @@ describe("production SMTP serialization and authorized transport", () => {
     expect(messages).toEqual([]);
     await expect.poll(() => sockets.size).toBe(0);
   });
+  it("authenticates only when the relay offers AUTH, as nodemailer's transport did", async () => {
+    config.SMTP_USER = "relay-user";
+    config.SMTP_PASS = { reveal: () => "relay-pass" };
+    await sendEmail(message);
+    expect(messages).toHaveLength(1);
+    expect(commands.some((line) => line.startsWith("AUTH"))).toBe(false);
+    expect(await verifyTransport()).toBe(true);
+    offerAuth = true;
+    commands = [];
+    await sendEmail(message);
+    expect(messages).toHaveLength(2);
+    expect(commands.filter((line) => line.startsWith("AUTH PLAIN"))).toHaveLength(1);
+  });
+  it("the in-request verifyTransport preflight is bounded by the setup deadline", async () => {
+    expect(await verifyTransport()).toBe(true);
+    expect(commands.some((line) => line.startsWith("MAIL"))).toBe(false);
+    dripEhlo = true;
+    const started = Date.now();
+    expect(await verifyTransport()).toBe(false);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(9_000);
+    expect(elapsed).toBeLessThan(20_000);
+    await expect.poll(() => sockets.size).toBe(0);
+  }, 40_000);
+  it("an in-request send to a relay that trickles bytes fails within an absolute bound", async () => {
+    // The relay never goes silent for the 5 s inactivity timeout, so only the
+    // absolute send deadline ends each attempt; the request stays inside the 100 s proxy budget.
+    drip = true;
+    const started = Date.now();
+    await expect(sendEmail(message)).rejects.toThrow("SMTP send cancelled");
+    const elapsed = Date.now() - started;
+    expect(commands.filter((line) => line.startsWith("RCPT"))).toHaveLength(3);
+    expect(elapsed).toBeGreaterThanOrEqual(30_000);
+    expect(elapsed).toBeLessThan(60_000);
+    expect(messages).toEqual([]);
+    await expect.poll(() => sockets.size).toBe(0);
+    drip = false;
+    await sendEmail(message);
+    expect(messages).toHaveLength(1);
+  }, 90_000);
   it("abort of stalled SMTP drains sockets before guarded send returns; subsequent delivery succeeds", async () => {
     stall = true;
     await expect(

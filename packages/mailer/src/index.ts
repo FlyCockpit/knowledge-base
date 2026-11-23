@@ -1,7 +1,6 @@
 import { Socket } from "node:net";
 import { mailboxSchema, smtpFromSchema } from "@knowledge-base/env/mailbox";
 import { env } from "@knowledge-base/env/shared";
-import type { Transporter } from "nodemailer";
 import nodemailer from "nodemailer";
 import SMTPConnection from "nodemailer/lib/smtp-connection";
 
@@ -16,34 +15,36 @@ interface SendEmailOptions {
   authorizeSend?: AuthorizeEmailSend;
 }
 
-let transporter: Transporter | null = null;
+/** Per-connection SMTP inactivity deadlines. */
+const SMTP_TIMEOUTS = {
+  connectionTimeout: 5_000,
+  greetingTimeout: 5_000,
+  socketTimeout: 5_000,
+} as const;
 
-function getTransporter(): Transporter {
-  if (transporter) return transporter;
+/**
+ * Absolute deadline for MAIL/RCPT/DATA of a send made inside an HTTP request
+ * (sign-up, reset, 2FA, invitations). Inactivity timeouts alone let a relay
+ * that keeps trickling bytes hold the request indefinitely. With the 10 s setup
+ * deadline, one attempt is at most ~20 s and all three stay well inside a
+ * proxy's 100 s response budget (docs/deploy.md, Cloudflare Tunnel).
+ */
+const SMTP_SEND_DEADLINE_MS = 10_000;
+const boundedSend: AuthorizeEmailSend = (send) => send(AbortSignal.timeout(SMTP_SEND_DEADLINE_MS));
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = env;
-
-  if (!SMTP_HOST) {
-    throw new Error(
-      "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM in your .env file. " +
-        "For local dev, run: docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit",
-    );
-  }
-
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT ?? 587,
-    ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS.reveal() } } : {}),
-  });
-
-  return transporter;
+function smtpNotConfigured(): Error {
+  return new Error(
+    "SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM in your .env file. " +
+      "For local dev, run: docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit",
+  );
 }
 
 /**
- * Send an email using the SMTP transport configured via env vars.
+ * Send an email over the SMTP relay configured via env vars.
  *
- * The nodemailer transport is created lazily on the first call so the
- * application boots cleanly even when SMTP is not configured.
+ * Every send uses one bounded, cancellable SMTP connection per attempt. Without
+ * `authorizeSend` the MAIL/RCPT/DATA effect gets the absolute
+ * `SMTP_SEND_DEADLINE_MS`; the worker's guarded sends pass their own.
  */
 export async function sendEmail({
   to,
@@ -51,7 +52,7 @@ export async function sendEmail({
   html,
   authorizeSend,
 }: SendEmailOptions): Promise<void> {
-  const transport = getTransporter();
+  if (!env.SMTP_HOST) throw smtpNotConfigured();
   const from = env.SMTP_FROM;
   if (!from) {
     throw new Error(
@@ -66,8 +67,7 @@ export async function sendEmail({
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (authorizeSend) await sendAuthorized({ from: sender, to, subject, html }, authorizeSend);
-      else await transport.sendMail({ from: sender, to, subject, html });
+      await sendAuthorized({ from: sender, to, subject, html }, authorizeSend ?? boundedSend);
       return;
     } catch (err) {
       lastError = err;
@@ -80,16 +80,18 @@ export async function sendEmail({
 }
 
 /** SMTP setup never holds authority. Only the bounded MAIL/RCPT/DATA effect
- * runs in the caller's reservation, with a real socket close on cancellation. */
+ * runs in the caller's reservation, with a real socket close on cancellation.
+ * Setup (connect, greeting, EHLO/STARTTLS, AUTH when the relay offers it) has
+ * an absolute 10 s deadline. With no message, it stops after setup (a probe). */
 async function sendAuthorized(
-  message: { from: string; to: string; subject: string; html: string },
+  message: { from: string; to: string; subject: string; html: string } | null,
   authorizeSend: AuthorizeEmailSend,
 ): Promise<void> {
   const host = env.SMTP_HOST;
   if (!host) throw new Error("SMTP is not configured");
-  const compiled = await nodemailer
-    .createTransport({ streamTransport: true, buffer: true })
-    .sendMail(message);
+  const compiled = message
+    ? await nodemailer.createTransport({ streamTransport: true, buffer: true }).sendMail(message)
+    : null;
   const socket = new Socket();
   const drained = new Promise<void>((resolve) => socket.once("close", () => resolve()));
   const connection = new SMTPConnection({
@@ -97,9 +99,7 @@ async function sendAuthorized(
     host,
     port: env.SMTP_PORT ?? 587,
     secure: (env.SMTP_PORT ?? 587) === 465,
-    connectionTimeout: 5_000,
-    greetingTimeout: 5_000,
-    socketTimeout: 5_000,
+    ...SMTP_TIMEOUTS,
   });
   let rejectPending: ((error: Error) => void) | undefined;
   const failed = (error: Error) => rejectPending?.(error);
@@ -127,9 +127,11 @@ async function sendAuthorized(
     await callbackOperation((done) => connection.connect(done));
     const user = env.SMTP_USER;
     const pass = env.SMTP_PASS;
-    if (user && pass)
+    // Like nodemailer's transport: authenticate only when the relay offers AUTH.
+    if (user && pass && connection.allowsAuth)
       await callbackOperation((done) => connection.login({ user, pass: pass.reveal() }, done));
     clearTimeout(prepareTimer);
+    if (!compiled) return;
     await authorizeSend(async (signal) => {
       const abort = () => {
         close();
@@ -165,8 +167,8 @@ export function isEmailConfigured(): boolean {
 }
 
 /**
- * Best-effort SMTP reachability check (connect + auth handshake via nodemailer's
- * `verify()`). Returns a boolean and NEVER throws: `false` when SMTP is
+ * Best-effort SMTP reachability check (connect, greeting, EHLO/STARTTLS and
+ * AUTH when the relay offers it; the setup of a send). Returns a boolean and NEVER throws: `false` when SMTP is
  * unconfigured or the handshake fails, `true` otherwise.
  *
  * Used as a delivery-aware preflight: Better-Auth's email-OTP `send-otp`
@@ -179,7 +181,10 @@ export function isEmailConfigured(): boolean {
 export async function verifyTransport(): Promise<boolean> {
   if (!isEmailConfigured()) return false;
   try {
-    return await getTransporter().verify();
+    // Setup only, under its absolute 10 s deadline: this runs inside the HTTP
+    // request, before the code email is sent.
+    await sendAuthorized(null, async () => {});
+    return true;
   } catch {
     return false;
   }

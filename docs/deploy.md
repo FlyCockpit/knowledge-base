@@ -119,6 +119,8 @@ client is the address the outermost of them appended:
 | --- | --- |
 | Generated Dokploy Compose (client → Traefik → server) | `1` (set by the generator) |
 | Cloudflare → Traefik → server, with Traefik trusting Cloudflare (below) | `2` |
+| Cloudflare Tunnel: `cloudflared` → server ([home server](#home-server-behind-a-cloudflare-tunnel)) | `1` |
+| Cloudflare Tunnel: `cloudflared` → Traefik → server, Traefik trusting `cloudflared` | `2` |
 | No proxy: the server port is reached directly (LAN, bare host, local dev) | `0` (default) |
 
 With `0` the server keys on the TCP socket peer and ignores `X-Forwarded-For`.
@@ -241,6 +243,142 @@ continues to apply when asset authority is remote.
 ## Sharing a Dokploy host
 
 `--project` defaults to `knowledge-base-<environment>` and prefixes Compose resources, private networks, volumes and Traefik router/service/middleware IDs. Use a distinct project for every instance. `--proxy-network` defaults to the shared external `dokploy-network`; select the existing proxy network, not a new proxy. Only the server joins it; database, cache and worker stay private. Database and cache URLs use project-prefixed hostnames with aliases on the project-private network, avoiding bare postgres/redis names that other stacks may publish on the shared proxy network. No container_name or default host ports are required. Keep ports 80/443 with Dokploy; do not bind another app to 3000 on the host. Always supply the intended HTTPS `--url`.
+
+## Home server behind a Cloudflare Tunnel
+
+A home machine with no public IP can serve the instance through a named
+Cloudflare Tunnel (Free or Pro plan). Nothing needs an inbound port: the
+server, worker, database and cache all stay private, and `cloudflared` makes
+the only outbound connection. TLS ends at Cloudflare's edge.
+
+Two topologies are supported:
+
+- **Direct:** browser / Git / MCP client → Cloudflare edge (TLS) → tunnel →
+  `cloudflared` → server `:3000`. No Traefik or Dokploy proxy.
+- **Through Traefik:** client → Cloudflare edge → tunnel → `cloudflared` →
+  Dokploy's Traefik → server `:3000`, for a Dokploy host that already runs
+  Traefik for other apps.
+
+Generate the Compose as usual with the tunnel hostname as `--url`
+(`--url https://kb.example.com`). For the direct topology, create a private
+Docker network, pass it as `--proxy-network`, and run `cloudflared` on it; the
+server joins that network under the alias `<project>-server`. No host port is
+published, so the tunnel is the only way in. If you run `cloudflared` on the
+host instead of in a container, publish the server only on loopback
+(`127.0.0.1:3000:3000`), never on `0.0.0.0`.
+
+Sample `/etc/cloudflared/config.yml` (direct; the project name is
+`knowledge-base-production`):
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<tunnel-uuid>.json
+ingress:
+  - hostname: kb.example.com
+    service: http://knowledge-base-production-server:3000
+  - service: http_status:404
+```
+
+Through Traefik, point the ingress at Traefik's TLS entrypoint instead; the
+generated router listens only on `websecure`. Use the address `cloudflared`
+can reach: `https://localhost:443` when `cloudflared` runs on the host, or
+Traefik's container name when `cloudflared` is a container on
+`dokploy-network` (Dokploy names it `dokploy-traefik`). With no inbound ports
+the generated HTTP-01 `letsencrypt` resolver cannot issue, so Traefik serves
+its default self-signed certificate. Prefer a valid certificate (a DNS-01
+resolver, or one Traefik already holds) and keep verification on; only for the
+self-signed fallback on that local hop add `noTLSVerify`:
+
+```yaml
+  - hostname: kb.example.com
+    service: https://dokploy-traefik:443
+    originRequest:
+      originServerName: kb.example.com
+      noTLSVerify: true # only while Traefik serves its self-signed default
+```
+
+**Environment.** These match the generated Compose apart from the hop count:
+
+| Setting | Direct | Through Traefik |
+| --- | --- | --- |
+| `BETTER_AUTH_URL` | `https://kb.example.com` (from `--url`) | same |
+| `CORS_ORIGIN` | unset (same origin) | unset |
+| `PUBLIC_APP_URL` | unset, or the tunnel origin (translation metadata only) | same |
+| `TRUST_PROXY_HOPS` | `1` (the generated value) | `2`, only after Traefik trusts `cloudflared` (below); otherwise `1` |
+| `SMTP_HOST` / `SMTP_PORT` | a submission relay on `587` (generated default) or `465` | same |
+
+`BETTER_AUTH_URL` and `CORS_ORIGIN` are the server's only origin allow-list:
+the same-site JSON checks, export downloads and MCP OAuth metadata all use the
+configured origin, never the request's `Host`. Home ISPs usually block outbound
+port 25, so use an authenticated relay on 587 or 465.
+
+**Client IP.** Cloudflare appends the visitor's address to `X-Forwarded-For`,
+and `cloudflared` forwards it unchanged; the socket peer is `cloudflared` (or
+Traefik). Direct, `1` selects the visitor. Through Traefik, `2` is right only
+when Traefik keeps that header: set
+`entryPoints.websecure.forwardedHeaders.trustedIPs` to `cloudflared`'s address
+(for example its container network's subnet). The server does **not** read
+`CF-Connecting-IP`: the hop count already yields the same address, and that
+header is forgeable by anything that can reach the server without the tunnel.
+Leaving `0` puts every visitor in one rate-limit bucket; the server then logs
+`client-ip.proxy-hops` once, because `cloudflared` connects from a private
+address.
+
+**Request limits.** Cloudflare rejects request bodies over 100 MB on Free and
+Pro. It answers `524` when the origin sends no response within its proxy read
+timeout (documented as 125 s; plan for 100 s) or does not accept the request
+within its 30 s write timeout. This app reads every body as it arrives and caps
+it below 100 MB. The surfaces that can run long have these deadlines before
+their first response byte (ordinary database and session lookups have none of
+their own and are normally milliseconds):
+
+| Surface | Body cap | Server-side time caps |
+| --- | --- | --- |
+| Git push (`git-receive-pack`) | 50 MiB | upload 120 s (10 s idle), then 60 s to validate and publish |
+| Git fetch / clone (`git-upload-pack`) | 50 MiB request | upload 120 s (10 s idle), then 60 s for the response |
+| MCP (`POST /mcp`) | 1 MiB | 30 s per tool call |
+| Asset and Markdown uploads | chunked: 192 KiB raw chunks (512 KiB encoded request) from the browser, `knowledge_upload_write` calls within the MCP cap from `kb` and agents | 30 s per request |
+| Other `/rpc` and form requests | 10 MiB | body 30 s; searches 60 s, KB mutations 30 s |
+| Sign-up, password reset, email 2FA (and its relay preflight), invitations | 10 MiB | per SMTP attempt: 10 s setup, 10 s to send; 3 attempts (about 60 s worst case); preflight 10 s |
+| Export preparation (`kbExports.prepare`) | 10 MiB | 120 s to build the ZIP (at most 256 MiB of content) |
+| Admin web-push broadcast (`push.send`) | 10 MiB | 10 s per device, 8 devices at a time; no overall cap |
+| Asset reads, export downloads | responses stream (no request body) | asset reads 120 s |
+
+Responses are not capped by the 100 MB limit. The read timeout runs once the
+request has been sent, so for Git only the 60 s phase counts against it; the
+upload phase keeps bytes moving (a 10 s stall is refused, well inside the 30 s
+write timeout). An asset read from a cold S3 cache waits for the object before
+its first byte, up to the 120 s asset deadline, which is longer than the
+100 s budget. A cancelled read discards the partial cache fill, so a retry
+starts cold again; keep S3 latency low (or use disk assets) behind a tunnel.
+Export preparation runs inside the browser's request: a large export on slow
+storage can take longer than the read timeout; the browser then gets `524`,
+and the build is cancelled once the tunnel drops the connection. Local-disk
+exports normally finish in seconds; the finished ZIP then downloads as an
+ordinary streamed response. An admin push broadcast to many slow push services
+can outlast the timeout too; the broadcast still completes, only its summary
+reply is lost. Model downloads, mirrors and backups are outbound or run on the
+host, and offline restore is a one-shot command; none of them go through the
+tunnel.
+
+**Connections.** The app opens no WebSockets or event streams: the web app
+uses ordinary requests and MCP is POST-only JSON. When Cloudflare restarts an
+edge or `cloudflared` reconnects, only in-flight requests fail. Nothing retries
+a failed write automatically: the web app and `kb` show the error, and you
+repeat the action. After an interrupted `git push`, check the remote ref
+(`git ls-remote`) before pushing again. The server keeps idle upstream
+connections open for 95 s, longer than `cloudflared`'s 90 s `keepAliveTimeout`
+and Traefik's 90 s idle reuse, which avoids the idle-timeout race with those
+proxies' defaults (a proxy configured to reuse connections longer than 95 s
+reintroduces it).
+
+**Does not apply:** the `letsencrypt` certresolver and `websecure` router
+labels in the direct topology (harmless, unused; through Traefik see above),
+opening ports 80/443 on the home router, and the Cloudflare → Traefik
+`trustedIPs` ranges above (`cloudflared` connects from your own network, not
+from Cloudflare's published ranges). Do not expose the server port with a
+router port-forward alongside the tunnel; with a hop count above `0` that
+would let callers forge their rate-limit key.
 
 ## Confirming a deploy is live
 

@@ -21,4 +21,5 @@ First public release.
 
 - Backups are off by default (`BACKUP_ENABLED=false`). With `BACKUP_ENABLED=true`, every migrating start needs a destination (a volume mounted at `BACKUP_DIR` or `BACKUP_S3_BUCKET`) and an age recipient, or it is refused. See [backup and restore](docs/backup-restore.md).
 - Anonymous rate limits key on the client IP through an explicit `TRUST_PROXY_HOPS` (default `0`; the generated Dokploy Compose sets `1`). See [deploy](docs/deploy.md).
+- A home server with no public IP can run behind a Cloudflare Tunnel; the server keeps idle upstream connections open for 95 s, beyond `cloudflared`'s and Traefik's 90 s reuse, and every in-request SMTP send has an absolute deadline. See [deploy](docs/deploy.md#home-server-behind-a-cloudflare-tunnel).
 - Both images' entrypoint runs validation and migrations as PID 1, then drops the startup-only backup/asset operator keys before starting the service. See [deploy](docs/deploy.md).
