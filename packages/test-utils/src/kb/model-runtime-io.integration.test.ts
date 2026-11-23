@@ -1,4 +1,4 @@
-/** R46: actual owned PostgreSQL I/O, with native inference deliberately unreachable or stubbed. */
+/** Actual owned PostgreSQL I/O, with native inference deliberately unreachable or stubbed. */
 
 import { connect, createServer, type Socket } from "node:net";
 import { GEMMA_MODEL } from "@knowledge-base/api/lib/kb/builtin-model";
@@ -124,7 +124,7 @@ async function until(check: () => Promise<boolean>, label: string) {
   }
 }
 
-describe("R46 model runtime I/O", () => {
+describe("model runtime I/O", () => {
   it("empty state stays disabled; a successful budget report preserves the default configuration", async () => {
     expect(await readReadyModelRuntime(runtime)).toBeNull();
     expect(await readModelRuntimeConfig(runtime)).toMatchObject({

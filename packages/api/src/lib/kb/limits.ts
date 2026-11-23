@@ -52,9 +52,9 @@ export const KB_LIMITS = {
   workerDownloads: 1,
   workerMirrors: 2,
   workerExports: 2,
-  /** Reader threads in the server's SQLite index pool (§1.6); at most n-1 run large tasks. */
+  /** Reader threads in the server's SQLite index pool; at most n-1 run large tasks. */
   serverIndexReaders: 2,
-  /** Chunk limit applied when a KB stores none and when an admin ceiling is absent (§1.9). */
+  /** Chunk limit applied when a KB stores none and when an admin ceiling is absent. */
   indexChunksDefault: 400_000,
   /**
    * Dirents the index reconciler reads from one `index/<kbId>/` directory per visit. A directory
@@ -62,7 +62,7 @@ export const KB_LIMITS = {
    * an anomaly: it is skipped with a warning instead of being read without bound.
    */
   indexDirEntryCap: 10_000,
-  /** Hard per-quantization chunk bounds; no ceiling or KB limit can exceed them (decision 22). */
+  /** Hard per-quantization chunk bounds; no ceiling or KB limit can exceed them. */
   indexChunkBound: {
     int8: 200_000,
     binary_int8_rescore: 400_000,

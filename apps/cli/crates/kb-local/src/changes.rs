@@ -1101,7 +1101,7 @@ impl Store {
             Target::Main => None,
             Target::Proposal(row) => Some(ProposalDelta {
                 number: row.number,
-                // R3-W5: the PR keeps the title it was opened with.
+                // The PR keeps the title it was opened with.
                 title: row.title.clone(),
                 author: actor.clone(),
                 source_ref: row.source_ref.clone(),
@@ -1240,7 +1240,7 @@ impl Store {
     /// Step 2 of the module docs. A request against current main reaches
     /// the caller's open proposal: it moves the PR onto main when main
     /// moved past it, resolves recorded conflicts, or (a PR already on main
-    /// with none recorded, R3-W6) applies on its head.
+    /// with none recorded) applies on its head.
     fn route(
         &self,
         repo: &GitRepo,
@@ -1353,7 +1353,7 @@ impl Store {
             operation_id: op_id.clone(),
             kind: ApplyKind::Noop,
             // The revision the edit was evaluated on: the selected PR's head
-            // (a request against main may reach it, R3-W6), else main.
+            // (a request against main may reach it), else main.
             commit_sha: match target {
                 Target::Proposal(row) => row.head_sha.clone(),
                 Target::Main | Target::NewProposal(_) => set.base.clone(),
@@ -1564,7 +1564,7 @@ fn parse_apply_result(response: Option<&str>) -> Result<ApplyResult, StoreError>
         .map_err(|_| StoreError::RecoveryRequired("journal response".into()))
 }
 
-/// L-22: documents of the resulting tree that still link to an asset this
+/// Documents of the resulting tree that still link to an asset this
 /// change set removes (their images or links now dangle). Reads the tree
 /// only when an asset is removed; bounded like every tree walk.
 fn dangling_asset_links(

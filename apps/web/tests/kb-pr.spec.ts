@@ -33,7 +33,7 @@ async function mainRev(page: Page, kbId: string): Promise<string> {
 async function confirm(page: Page, token: "MERGE" | "DELETE") {
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toBeVisible();
-  // Closing is a plain confirmation (R2-27); merging still types MERGE.
+  // Closing is a plain confirmation; merging still types MERGE.
   if (token === "MERGE") await dialog.getByPlaceholder(token).fill(token);
   await dialog
     .getByRole("button", { name: token === "MERGE" ? "Merge pull request" : "Close pull request" })

@@ -1,7 +1,7 @@
 /**
  * Read-only access to published SQLite index files (format v1). The server reaches index files
- * only through `openIndexReadOnly` (its single Database construction, decision 5 + 21) and runs
- * every statement inside `runTask` (per-task temp state, CL2-TEMP). Every statement is bounded
+ * only through `openIndexReadOnly` (its single Database construction) and runs
+ * every statement inside `runTask` (per-task temp state). Every statement is bounded
  * by a slice; the task control is checked between slices, documents and every 1,024 rows.
  * Statements are only ever run to completion with `.all()` / `.get()` / `.run()`.
  */
@@ -210,7 +210,7 @@ export function openIndexReadOnly(indexDir: string, expected: ExpectedIndexMeta)
     throw unavailable();
   }
   try {
-    // Runtime enforcement of decision 5/21: whatever constructed it, a writable handle is refused
+    // Runtime enforcement of read-only opens: whatever constructed it, a writable handle is refused
     // before any statement runs.
     if (db.readonly !== true) throw unavailable();
     loadVec(db);

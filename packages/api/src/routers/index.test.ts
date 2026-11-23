@@ -102,8 +102,8 @@ const publicContext: Context = { session: null };
 
 describe("health", () => {
   it("exposes only the cheap check — no RPC readiness probe on the datastore", () => {
-    // A DB-touching `ready` procedure was removed as an anonymous
-    // datastore-drain vector bounded only by the generic /rpc limiter;
+    // A DB-touching `ready` procedure would be an anonymous datastore-drain
+    // vector bounded only by the generic /rpc limiter;
     // readiness is the HTTP /ready route with its own readyLimiter bucket.
     expect(Object.keys(appRouter.health)).toEqual(["check"]);
   });

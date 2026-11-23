@@ -101,7 +101,7 @@ function adminClient(role: "admin" | "user") {
   });
 }
 
-describe("index settings leaves (§1.9)", () => {
+describe("index settings leaves", () => {
   it("requires authentication on every per-KB settings leaf", async () => {
     await expect(client(false).settings({ kbId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(client(false).setQuantization(quantizationInput)).rejects.toMatchObject({

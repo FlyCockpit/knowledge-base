@@ -56,7 +56,7 @@ const LOCK_TIMEOUT = "5s";
 const MIN_STATEMENT_TIMEOUT_MS = 1_000;
 const SHORT_TIMEOUT_PREFIX = /^short-timeout (\S+) ([12])\/3: /;
 
-// --- runner-owned tables (§1.10) ---------------------------------------------
+// --- runner-owned tables -----------------------------------------------------
 //
 // `%1$I` is the schema. The same text works with PostgreSQL's
 // `format(<ddl>, schema)` (kb-restore.mjs) and with `ddlFor(<ddl>, schema)`.
@@ -125,7 +125,7 @@ function tables(schema) {
 }
 
 /**
- * The hold upsert every hold source uses (R4-8): an existing longer hold is
+ * The hold upsert every hold source uses: an existing longer hold is
  * never shortened. `$1` reason, `$2` duration in milliseconds.
  */
 export function holdUpsertSql(schema) {
@@ -165,7 +165,7 @@ export async function ensureRuntimeTables(client, schema) {
   for (const ddl of RUNTIME_DDL) await client.query(ddlFor(ddl, schema));
 }
 
-// --- recording applied migrations (F7) ---------------------------------------
+// --- recording applied migrations --------------------------------------------
 
 const displayKey = (key) =>
   String(key)
@@ -237,7 +237,7 @@ export async function recordApplied(client, { schema, migrations }) {
   return inserted;
 }
 
-// --- admission and registration (§1.11) ------------------------------------
+// --- admission and registration --------------------------------------------
 
 /** Lock and statement timeout of a registration that admits nothing (no `ahead`). */
 export const REGISTER_TIMEOUT_MS = 5_000;
@@ -328,7 +328,7 @@ export async function pruneInstances(client, schema) {
   return result.rowCount ?? 0;
 }
 
-// --- database identity and holds (§1.12 source 2) --------------------------
+// --- database identity and holds -------------------------------------------
 
 /** SQLSTATEs that mean "this provider does not let the app role read the identity". */
 const IDENTITY_UNAVAILABLE = new Set(["42501", "42883", "0A000", "55000"]);
@@ -386,7 +386,7 @@ export async function checkClusterIdentity(client, { schema, fresh, log = () => 
   }
   await client.query("BEGIN");
   try {
-    // R6-1: the parameter is typed, or preparing the statement fails.
+    // The parameter is typed, or preparing the statement fails.
     const registry = await client.query(
       `SELECT to_regclass(format('%I."_knowledge_base_cluster"', $1::text))::oid::text AS oid`,
       [schema],
@@ -457,7 +457,7 @@ export async function checkClusterIdentity(client, { schema, fresh, log = () => 
   }
 }
 
-// --- live catalog (§1.3, §1.6) ---------------------------------------------
+// --- live catalog ----------------------------------------------------------
 
 /**
  * The live schema in the same shape as `catalogFromSql`. Keys use the
@@ -604,7 +604,7 @@ function hasObject(catalog, kind, target) {
   return false;
 }
 
-// --- validation (§1.14 7c) -------------------------------------------------
+// --- validation ------------------------------------------------------------
 
 /**
  * Validate one due contract (pure). The runner applies the longest valid
@@ -675,7 +675,7 @@ export function validateContract({ migration, row, live, image, schema = "public
   return { ok: true, analysis };
 }
 
-// --- the due rule (§1.14.1) --------------------------------------------------
+// --- the due rule ------------------------------------------------------------
 
 /**
  * Does this instance's image contain contract folder `name`? Read from the
@@ -772,7 +772,7 @@ export async function readPlanInputs(client, schema, names) {
 }
 
 /**
- * The schedule log (§1.14 step 8): one line per pending contract.
+ * The schedule log: one line per pending contract.
  * @param {ReturnType<typeof planContracts>} plan
  */
 export function scheduleLines(plan) {
@@ -809,7 +809,7 @@ export function scheduleLines(plan) {
   });
 }
 
-// --- applying one contract (§1.14 7e) --------------------------------------
+// --- applying one contract -------------------------------------------------
 
 /** Statement timeout for one contract statement. */
 export function statementTimeoutMs({ template, remainingMs }) {
@@ -820,7 +820,7 @@ export function statementTimeoutMs({ template, remainingMs }) {
   );
 }
 
-/** The R5-5 repeat counter: n of the next shortened timeout at `level`. */
+/** The repeat counter: n of the next shortened timeout at `level`. */
 function shortTimeout(level, lastError, message) {
   const prefix = SHORT_TIMEOUT_PREFIX.exec(lastError ?? "");
   const n = prefix && prefix[1] === level ? Number(prefix[2]) + 1 : 1;
@@ -828,7 +828,7 @@ function shortTimeout(level, lastError, message) {
 }
 
 /**
- * Classify a failed contract statement (§1.14 7e, R5-5, R6-2).
+ * Classify a failed contract statement.
  *   transient      55P03, 40P01, 08*, a connection loss, or a 57014 that came
  *                  before its statement's timeout (an external cancel): the
  *                  attempt is undone; an existing short-timeout prefix is kept.
@@ -865,7 +865,7 @@ function contractStatements(sql, analysis) {
 }
 
 /**
- * Apply one validated contract, tracked (§1.14 7e).
+ * Apply one validated contract, tracked.
  * @param {import("pg").Client} client a session of its own (notices are captured)
  * @param {{ schema: string, migration: { name: string, contract: { sql: string } },
  *   analysis: ReturnType<typeof analyzeContract>, level: string, deadline: number,
@@ -960,7 +960,7 @@ export async function applyContract(client, options) {
         return { status: "not-started" };
       }
       // Past the deadline, stop instead of running more 1 s statements. Like a
-      // shortened timeout, this is transient twice at one level (R5-5).
+      // shortened timeout, this is transient twice at one level.
       if (!statement.template && remainingMs < MIN_STATEMENT_TIMEOUT_MS) {
         throw Object.assign(
           new Error(
@@ -1022,7 +1022,7 @@ export async function applyContract(client, options) {
 
 /**
  * Apply every contract.sql, untracked, each in its own transaction with
- * Prisma's schema on the search_path and no timeouts (§1.16). Only for
+ * Prisma's schema on the search_path and no timeouts. Only for
  * databases nothing has ever served from: `pnpm db:reset:local` and CI
  * scratch databases. Never the production path.
  * @param {import("pg").Client} client
@@ -1048,7 +1048,7 @@ export async function applyAllContracts(client, migrations, { schema }) {
   return done;
 }
 
-// --- pre-deploy checks (§1.7, §1.8) ----------------------------------------
+// --- pre-deploy checks -----------------------------------------------------
 
 /**
  * Name-reuse matches (from `findNameReuse`) that block this deploy: on a
@@ -1076,8 +1076,8 @@ export function nameReuseLive(matches, { toApply, fresh, live, schema = "public"
 }
 
 /**
- * Pending recover blocks whose source column a contract already deleted
- * (§1.8): the runner logs them loudly and proceeds.
+ * Pending recover blocks whose source column a contract already deleted:
+ * the runner logs them loudly and proceeds.
  * @param {Array<{ name: string, templates: Array<{ kind: string, header: any }> }>} pendingAnalyses
  * @param {{ live: ReturnType<typeof emptyCatalog>, applied: Array<{ name: string,
  *   contract_applied_at: Date | null, contract_backup: string | null, droppedColumns: Set<string> }>, schema?: string }} options
@@ -1101,7 +1101,7 @@ export function lateRecoveries(pendingAnalyses, { live, applied, schema = "publi
 }
 
 /**
- * W2 offline-restore interface (ALL helpers use the caller's existing session).
+ * Offline-restore interface (ALL helpers use the caller's existing session).
  * captureMigrationHistory(client, {schema, migrations}) -> snapshot metadata.
  * validateMigrationHistory(history, migrations) -> throws on invalid history.
  * finalizeRestoreState(client, {schema, holdMs = SOAK_MS}) -> hold-until Date.

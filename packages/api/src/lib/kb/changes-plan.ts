@@ -208,7 +208,7 @@ export async function walkGitTreeAtCommit(input: {
   };
 }
 
-/** L-22: documents of the resulting tree that still link to a removed asset. */
+/** Documents of the resulting tree that still link to a removed asset. */
 export function danglingAssetLinks(
   files: ReadonlyMap<string, Buffer>,
   removed: string[],

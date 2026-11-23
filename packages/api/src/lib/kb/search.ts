@@ -119,7 +119,7 @@ export const READER_ACK_SLACK_MS = 5000;
 const GENERATION_COLUMNS = `g.dimensions,g."commitSha",k.name,g.fingerprint,g."chunkCount",g."documentCount",g.state,
   (k."activeGenerationId" IS NOT DISTINCT FROM g.id) AS active`;
 
-/** Opens the read transaction every index file read runs in (§1.5 CL-INTERLOCK). */
+/** Opens the read transaction every index file read runs in. */
 export async function beginIndexRead(q: LockQuery, deadlineAt: number): Promise<void> {
   await q("BEGIN ISOLATION LEVEL REPEATABLE READ");
   const remaining = Math.max(1, deadlineAt - Date.now());
@@ -128,7 +128,7 @@ export async function beginIndexRead(q: LockQuery, deadlineAt: number): Promise<
 }
 
 /**
- * §1.7: a missing file is classified only after the reading transaction committed. A COMMIT
+ * A missing file is classified only after the reading transaction committed. A COMMIT
  * failure (lost session) is INDEX_UNAVAILABLE without any integrity log or retry; a missing file
  * of a COMPLETE generation is an integrity failure (logged, retried once by the outermost
  * operation); a cursor-pinned retained generation is INVALID_CURSOR.
@@ -190,7 +190,7 @@ export function citationSource(
 /**
  * Both arms and the projection read one immutable file of the leased generation, never the
  * active pointer. The generation row is held `FOR KEY SHARE` from before the reader thread opens
- * the file until the read settled, so retention cannot purge it underneath (§1.5).
+ * the file until the read settled, so retention cannot purge it underneath.
  */
 async function readHybrid(
   client: Client,
@@ -368,7 +368,7 @@ export async function hybridArms(
 }
 
 /**
- * §1.7 retry-once: a missing index file is re-admitted exactly once from the outermost
+ * Retry-once: a missing index file is re-admitted exactly once from the outermost
  * operation (re-authorization, a fresh index status and a new lease). A second miss is
  * INDEX_UNAVAILABLE. The retry charges the query rate again (damage-only path).
  */

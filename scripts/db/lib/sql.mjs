@@ -534,7 +534,7 @@ const display = (key) => {
  *   knownTables: columns of tables as they exist BEFORE this migration (for
  *   the similar-table check). folder: this migration's folder name (needed to
  *   verify generated templates, whose object names hash it). typeOf: the
- *   column's type before this migration (§1.6 fold, `typeOfFromCatalog`); an
+ *   column's type before this migration (catalog fold, `typeOfFromCatalog`); an
  *   allowlisted widening or an alter of a column created earlier in the same
  *   run (`newInRun`) is then not `incompatible`.
  */
@@ -550,7 +550,7 @@ export function analyzeMigration(sql, options = {}) {
     renames: [],
     /**
      * `reviewed` is the `-- knowledge-base:reviewed <reason>` attestation directly
-     * above the statement, or null when absent or ignored (§1.9 regex,
+     * above the statement, or null when absent or ignored (annotation regex,
      * template entries, lex errors); `reviewIgnored` marks an annotation that
      * was present but ignored.
      * @type {Array<{ line: number, reason: string, reviewed: string | null, reviewIgnored?: boolean, template?: boolean }>}
@@ -981,7 +981,7 @@ export function wrapTransactional(body) {
 
 /** Optional per-folder file the runner applies after the soak. Prisma never reads it. */
 export const CONTRACT_FILE = "contract.sql";
-/** `-- knowledge-base:reviewed <reason>` directly above one migration.sql statement (§1.9). */
+/** `-- knowledge-base:reviewed <reason>` directly above one migration.sql statement. */
 export const REVIEWED_MARKER = "-- knowledge-base:reviewed";
 /**
  * A reviewed annotation is ignored when the statement text (dollar bodies
@@ -1170,7 +1170,7 @@ function checkEnumHeader(header) {
 }
 
 /**
- * v1 expand block (§1.5.1). The sync body is jsonb-only: no expression in it
+ * v1 expand block. The sync body is jsonb-only: no expression in it
  * is typed by the enum, so a cached plan survives the contract's rebuild.
  * @param {EnumRemoveHeader} header
  */
@@ -1229,7 +1229,7 @@ function enumRemoveExpandV1(header) {
   return lines.join("\n");
 }
 
-// Fixed body of the v1 contract `DO` (§1.5.2). NEVER edit it: a released
+// Fixed body of the v1 contract `DO`. NEVER edit it: a released
 // template is immutable (migrations that use it are). Add a v2 instead and
 // keep this one. The test in sql.test.mjs pins it byte for byte.
 //
@@ -1365,7 +1365,7 @@ BEGIN
 END $knowledge_base_enum$;`;
 
 /**
- * v1 contract `DO` (§1.5.2), header line first. Always the first statement
+ * v1 contract `DO`, header line first. Always the first statement
  * of contract.sql. Only the DECLARE parameters vary.
  * @param {EnumRemoveHeader} header
  */
@@ -1392,7 +1392,7 @@ function enumRemoveContractV1(header) {
 }
 
 /**
- * v1 recover block (§1.8): copy a retired column into its replacement while
+ * v1 recover block: copy a retired column into its replacement while
  * the retired column still exists.
  * @param {RecoverHeader} header
  */
@@ -1414,7 +1414,7 @@ function recoverBlockV1({ table, from, to }) {
 }
 
 /**
- * v1 relax statement (§1.4.1) for a retired NOT NULL column: a sentinel
+ * v1 relax statement for a retired NOT NULL column: a sentinel
  * default (NOT NULL kept) or, with `sentinel` null, DROP NOT NULL.
  * @param {RelaxSpec} spec
  */
@@ -1541,7 +1541,7 @@ function recognizeTemplates(sql, parsed, { folder, file }) {
   return { covered, relaxed, problems, templates };
 }
 
-/** `-- knowledge-base:reviewed <reason>` above this statement, honoured unless §1.9 ignores it. */
+/** `-- knowledge-base:reviewed <reason>` above this statement, honoured unless the annotation regex ignores it. */
 function reviewedAnnotation(statement) {
   const comment = statement.comments.findLast(
     (line) => line === REVIEWED_MARKER || line.startsWith(`${REVIEWED_MARKER} `),
@@ -1654,7 +1654,7 @@ function parseTypeText(text) {
 }
 
 /**
- * The one type normaliser (R4-8) for SQL text (`VARCHAR(50)`,
+ * The one type normaliser for SQL text (`VARCHAR(50)`,
  * `character varying(50)`, `numeric(10,2)`, `"E"[]`) and
  * information_schema.columns rows. Schema qualifiers are dropped.
  * @param {string | { data_type?: string, character_maximum_length?: number | null,
@@ -1683,7 +1683,7 @@ export function normalizeType(input) {
 
 /**
  * Allowlisted in-place widenings that PostgreSQL 18 applies without a
- * rewrite (Step 0 l): varchar(n)→varchar(m≥n), varchar(n)→text,
+ * rewrite: varchar(n)→varchar(m≥n), varchar(n)→text,
  * numeric(p,s)→numeric(p'≥p,s). Never with USING, never for arrays.
  * @param {NormalizedType | undefined} from
  * @param {NormalizedType | undefined} to
@@ -2247,7 +2247,7 @@ function foldStatement(catalog, sql, statement, inRun) {
  * Fold SQL (one file or files in apply order) onto an optional starting
  * catalog: tables and columns (normalized type, NOT NULL, default), PK /
  * unique / CHECK / FK constraints, indexes, enum labels. Columns created by
- * this fold get `newInRun` when a starting catalog is given (§1.6). Anything
+ * this fold get `newInRun` when a starting catalog is given. Anything
  * it cannot model lands in `catalog.unparsed`.
  * @param {string | string[]} input
  * @param {ReturnType<typeof emptyCatalog>} [start]
@@ -2351,7 +2351,7 @@ function enumDefaultValue(expr) {
 
 /**
  * Which of `removed` an enum default expression names (generator header
- * rules, runner 7c-5).
+ * rules, runner contract validation).
  * @param {string | null} exprText
  * @param {string[]} removed
  */
@@ -2382,7 +2382,7 @@ function sameDefault(a, b) {
   return normalizeSql(a) === normalizeSql(b);
 }
 
-// --- Prisma's enum rebuild (Step 0 b) --------------------------------------
+// --- Prisma's enum rebuild -------------------------------------------------
 
 /** A one-action `ALTER TABLE`, or null. */
 function singleAlter(statement) {
@@ -2476,8 +2476,8 @@ function findEnumRebuildsIn(sql, parsed) {
 }
 
 /**
- * Recognize Prisma 7.10's enum value-removal rebuild in a diff (verified text,
- * Step 0 b): optional `BEGIN;`, `CREATE TYPE "E_new" AS ENUM (…)`, one
+ * Recognize Prisma 7.10's enum value-removal rebuild in a diff (verified
+ * text): optional `BEGIN;`, `CREATE TYPE "E_new" AS ENUM (…)`, one
  * `ALTER COLUMN … DROP DEFAULT` per defaulted column (schema-qualified table),
  * one `ALTER COLUMN … TYPE "E_new"[[]] USING (…)` per column, the two
  * renames, `DROP TYPE "<schema>"."E_old"`, then one `SET DEFAULT` per
@@ -2490,8 +2490,8 @@ export function findEnumRebuilds(sql) {
 }
 
 /**
- * Classify one recognized rebuild block against the "from" catalog (§1.3,
- * R4-2). `kept-only`: every label it removes may legitimately linger, and the
+ * Classify one recognized rebuild block against the "from" catalog.
+ * `kept-only`: every label it removes may legitimately linger, and the
  * block is otherwise exactly the catalog (label order, column set, defaults);
  * `mixed`: it removes some allowed and some new labels (`newRemoved` = the
  * new ones); `new` otherwise (`newRemoved` = everything it removes).
@@ -2536,14 +2536,14 @@ export function classifyEnumRebuild(block, catalog, allowedKept) {
   return { kind: "new", removed, newRemoved: removed, added };
 }
 
-/** The C4-3 note for a kept label filtered out of a diff. */
+/** The note for a kept label filtered out of a diff. */
 export function keptLabelNote(enumName, label) {
   return `${enumName}.${label} is kept unused in databases where something used the column when its deletion ran; it is harmless and is never offered to the app.`;
 }
 
 /**
- * Refusal for one diff that removes values from more than one enum (R5-6,
- * R6-5): the first enum by name stays; the values of the others go back.
+ * Refusal for one diff that removes values from more than one enum:
+ * the first enum by name stays; the values of the others go back.
  * @param {Array<{ enumName: string, removed: string[] }>} removals
  */
 export function multiEnumRefusal(removals) {
@@ -2557,7 +2557,7 @@ export function multiEnumRefusal(removals) {
   return `This change removes values from more than one enum (${names.join(", ")}). One migration may remove values from one enum only. Keep the ${names[0]} change and put these values back in the schema: ${putBack.join(", ")}. Run \`pnpm db:migrate\`, then remove them again and run \`pnpm db:migrate\` once more${sorted.length > 2 ? " (repeat until each migration removes values from one enum)" : ""}. All of these migrations can ship in one PR.`;
 }
 
-// --- relax (§1.4.1) ---------------------------------------------------------
+// --- relax -----------------------------------------------------------------
 
 function sentinelFor(column, catalog, removedLabels) {
   if (column.type.array) return "'{}'";
@@ -2612,7 +2612,7 @@ function constraintRoles(catalog, tableKey, column) {
 
 /**
  * What old code needs so it can keep inserting after `tableKey.column` stops
- * existing in the new release's schema (§1.4.1). Null when nothing is needed
+ * existing in the new release's schema. Null when nothing is needed
  * (nullable or defaulted); `{ refuse }` for a primary-key column; otherwise
  * `{ text }`, the marked relax statement for migration.sql.
  * @param {ReturnType<typeof emptyCatalog>} catalog
@@ -2639,11 +2639,11 @@ export function relaxFor(catalog, tableKey, column, { removedLabels = new Map() 
   return { text: relax({ table: tableName, column, sentinel }) };
 }
 
-// --- split (§1.4) -----------------------------------------------------------
+// --- split -----------------------------------------------------------------
 
 /**
  * Split a Prisma diff (from migrations + contracts to the schema) into
- * migration.sql (expand) and contract.sql (contract) statements (§1.4). Pure:
+ * migration.sql (expand) and contract.sql (contract) statements. Pure:
  * the generator writes the files.
  * @param {string} sql the diff (Prisma's `--script` output, kept-only blocks still in)
  * @param {ReturnType<typeof emptyCatalog>} catalog static pre-change catalog
@@ -2704,7 +2704,7 @@ export function splitForContract(sql, catalog, flags = {}) {
     }
   }
 
-  // Enum removals (§1.3, §1.5).
+  // Enum removals.
   const removals = [];
   for (const block of blocks) {
     const allowed = lookup(flags.allowedKept, block.enum.name) ?? [];
@@ -2958,7 +2958,7 @@ function uniqueDropWarning(table, columns, name) {
   return `Dropping the unique index "${name}" on ${display(table)} (${columns.map((c) => `"${c}"`).join(", ")}) keeps the column, and the previous release can no longer roll back to this database. If any code upserts or connectOrCreate's by this field, remove those calls in an earlier PR (docs/schema-changes-recipe.md, Recipe 5).`;
 }
 
-// --- contract analysis (runner 7c-2, CI check 5) ----------------------------
+// --- contract analysis (runner contract validation, CI check 5) ------------
 
 /**
  * Everything wrong with a contract.sql. Allowed: plain drops of tables,
@@ -3044,15 +3044,15 @@ export function analyzeContract(sql, options = {}) {
   return result;
 }
 
-// --- rollback safety (§1.13) ------------------------------------------------
+// --- rollback safety -------------------------------------------------------
 
 const WRAPPER_SET_LOCALS = new Set(
   WRAPPER_PREAMBLE.filter((line) => line.startsWith("SET LOCAL")).map(normalizeSql),
 );
 
 /**
- * May an older release run against the database after this migration
- * (§1.13)? A positive allowlist: anything else is unsafe, with a reason.
+ * May an older release run against the database after this migration?
+ * A positive allowlist: anything else is unsafe, with a reason.
  * @param {string} sql migration.sql
  * @param {{ priorTables?: Set<string> | Map<string, unknown>, catalog?: ReturnType<typeof emptyCatalog>, folder?: string }} [options]
  *   priorTables: tables that existed before (default: every table this file
@@ -3203,11 +3203,10 @@ function parseIndexStatement(sql, statement) {
   return [...scratch.indexes.values()][0] ?? null;
 }
 
-// --- name reuse (§1.7) ------------------------------------------------------
+// --- name reuse ------------------------------------------------------------
 
-// `knowledge_base_sync_` is the sync name before it was renamed to fire first.
 const TEMPLATE_OBJECT =
-  /^(0_knowledge_base_sync|knowledge_base_sync|knowledge_base_enum_new|knowledge_base_enum_old)_[0-9a-f]{8}$/;
+  /^(0_knowledge_base_sync|knowledge_base_enum_new|knowledge_base_enum_old)_[0-9a-f]{8}$/;
 
 function createdKeys(sql) {
   const keys = [];
@@ -3302,7 +3301,7 @@ function droppedKeys(sql, folder) {
 
 /**
  * CREATE / ADD statements that reuse a name an EARLIER folder's contract.sql
- * drops or removes (§1.7). Keys: `table:<schema.t>`, `column:<schema.t>.<c>`,
+ * drops or removes. Keys: `table:<schema.t>`, `column:<schema.t>.<c>`,
  * `type:<schema.E>`, `label:<schema.E>:<L>`, `index:<schema.name>`,
  * `constraint:<schema.t>.<name>`. Template sync/rebuild names are excluded.
  * @param {Array<{ name: string, sql: string, contract?: { sql: string } | null }>} folders in order

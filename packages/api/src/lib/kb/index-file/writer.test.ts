@@ -487,7 +487,7 @@ describe("reader pool probe fixture", () => {
   });
 });
 
-describe("decodeStoredVector (review r2 #2)", () => {
+describe("decodeStoredVector", () => {
   it("accepts only full-width stored vectors of the file's quantization", () => {
     const int8 = Buffer.alloc(12);
     const bits = Buffer.alloc(2);

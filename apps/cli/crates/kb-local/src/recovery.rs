@@ -673,8 +673,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("read-race fixture operation")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("r52b-read-race-{}-{nonce}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("read-race-{}-{nonce}", std::process::id()));
         let store = Store::open(&root).expect("read-race fixture operation");
         let created = store
             .create_kb(
@@ -1139,7 +1138,7 @@ mod settle_tests {
                     .take(git_write::CONSOLIDATE_LOOSE_SAMPLE + 1)
                     .collect();
                 // Force a later publication to write into the blocked fan-out;
-                // random commit/tree hashes used to hit this only occasionally.
+                // random commit/tree hashes would hit it only occasionally.
                 let publication_content = bodies.pop();
                 (bodies, publication_content)
             }
@@ -1418,7 +1417,7 @@ mod settle_tests {
         use kb_client::{decode_input, types::BasesDelete};
 
         // Exercise genuine pre-install, partially retired and deferred intents,
-        // plus stale rows left by a purge completed before this lifecycle fix.
+        // plus stale rows a completed purge left behind.
         for stage in 0..4 {
             let (base, mut store, kb) = due_store("intent-purge");
             let fixture = CleanupFixture(base);

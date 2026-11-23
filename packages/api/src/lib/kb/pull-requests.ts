@@ -233,7 +233,7 @@ async function reviewedMergeValidation(
       input.kbId,
       input.canonicalOrigin,
     ),
-    // L-8: only paths the merge changes on main need live records.
+    // Only paths the merge changes on main need live records.
     baseBlobs: await readCommitBlobsAsync(input.repoPath, input.mainHead, input),
   };
 }
@@ -325,7 +325,7 @@ export async function refreshPrMergeability(
         // Cancellation and the deadline still end the read.
         assertGitReadActive(options);
         failed.push(pr.number);
-        // A stale status is otherwise silent (R3-W3): log every failure with a
+        // A stale status is otherwise silent: log every failure with a
         // process-lifetime count, so a check that always fails stands out.
         logInternalError("pr-mergeability", error, {
           kbId: scope.kbId,
@@ -1154,7 +1154,7 @@ const byPathKind = (a: { path: string; kind: string }, b: { path: string; kind: 
   a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
 
 /**
- * R3-W6: every path an open PR still has to resolve against current main,
+ * Every path an open PR still has to resolve against current main,
  * typed (document or asset), with the revisions each version is read at so
  * the editor can show base, main's and the PR's versions. The recorded
  * conflicts plus what the logical merge finds now, the same union a move
@@ -1283,7 +1283,7 @@ export async function getPullRequestConflicts(
 }
 
 /**
- * R3-W6: the viewer's own open automatic PR (opened from any of their
+ * The viewer's own open automatic PR (opened from any of their
  * credentials or the web) when it changes the document at `path`, so the
  * editor can offer the PR's version instead of silently editing main's.
  */

@@ -1353,7 +1353,7 @@ async function deliverKbEmails(
             signal.throwIfAborted();
             sent.push(message);
           });
-        else sent.push(message); // Historical regression replay uses the old producer.
+        else sent.push(message); // A regression replay without a guard sends directly.
       },
     });
   }
@@ -1507,7 +1507,7 @@ describe("invite and transfer email", () => {
   });
 });
 
-describe("R46r4 queued email authority", () => {
+describe("queued email authority", () => {
   for (const template of ["share_invite", "transfer_offer"]) {
     for (const atEffect of [false, true]) {
       it(`${template} suppresses revoked authority ${atEffect ? "at SMTP handoff" : "before delivery"}`, async () => {
@@ -1966,7 +1966,7 @@ describe("share option includeSealedValues", () => {
   });
 });
 
-describe("R46r2 private control receipt authority", () => {
+describe("private control receipt authority", () => {
   it("denies both original receipts after the new owner removes the former owner's share", async () => {
     const owner = await user("removed-receipt-owner");
     const recipient = await user("removed-receipt-recipient");

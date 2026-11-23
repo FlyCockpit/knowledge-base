@@ -834,7 +834,7 @@ describe("complete rich corpus", () => {
       refs.map((r, i) => ({ ...r, transferId: ids[i] })),
     );
   }, 120000);
-  it("every typed refusal reason matches across transports (R4 review)", async () => {
+  it("every typed refusal reason matches across transports", async () => {
     const reason = async (name: string, args: Record<string, unknown>[], details: unknown) => {
       await both(name, args, true);
       const result = await remote(name, args[0]!);
@@ -1189,7 +1189,7 @@ describe("complete rich corpus", () => {
       ['"planning state"', []],
     ] as const) {
       // `call` asserts server == local; every chunk is in the vector arm (fewer than 80), so
-      // exactly the FTS matches score above one arm's normalized maximum, 0.5 (L-25).
+      // exactly the FTS matches score above one arm's normalized maximum, 0.5.
       const out = await call(
         "knowledge_search",
         kbs.map((v) => ({ kbId: v.id, query, limit: 20 })),

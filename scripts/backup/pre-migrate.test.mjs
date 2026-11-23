@@ -64,7 +64,7 @@ test("startup notice, backups off (default): one notice, exit 0, nothing written
       result.stderr,
       /^NOTICE: Backups are off \(BACKUP_ENABLED is false, the default\)\..*BACKUP_ENABLED=true.*docs\/backup-restore\.md/,
     );
-    // How to enable, as the entrypoint test used to check on the server's stderr.
+    // How to enable, as the server prints it on stderr.
     assert.match(result.stderr, /BACKUP_ENABLED=true.*BACKUP_AGE_RECIPIENT.*BACKUP_DIR/);
     assert.match(result.stderr, /Dokploy generator: --backups true/);
     assert.deepEqual(readdirSync(f.backups), []);

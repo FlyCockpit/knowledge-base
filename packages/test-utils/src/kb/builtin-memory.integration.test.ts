@@ -9,7 +9,7 @@ import { kbTestName } from "./test-names.mjs";
 afterEach(drainDockerFixtures, 300_000);
 
 it.each([512, 1024, 1280, 1536, 2048, 4096])(
-  "46r10 detects a real %i MiB cgroup and recommends only fitting registry options",
+  "detects a real %i MiB cgroup and recommends only fitting registry options",
   { timeout: 60_000 },
   async (mib) => {
     const bytes = mib * 1024 ** 2;

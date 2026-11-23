@@ -4,7 +4,7 @@ import type { LockQuery } from "./lock";
 import { releaseQuota } from "./quota";
 
 /**
- * One liveness rule for index builds (R5 review). A generation's own state
+ * One liveness rule for index builds. A generation's own state
  * says how far its build got; only its durable job says whether anything will
  * still run it. Every "is there pending build work" decision uses
  * `inProgressBuildSql` (or the two state lists below), never the generation
@@ -36,7 +36,7 @@ export function isInProgressBuild(generationState: string, jobState: string): bo
  * Settles an unfinished generation whose durable job is terminal, or is being
  * made terminal in this same transaction: it becomes FAILED (a cancelled job's
  * as `INDEX_BUILD_CANCELLED`, otherwise `errorCode`) and its disk
- * reservations are released in the statement that clears them (I1). Never
+ * reservations are released in the statement that clears them. Never
  * waits: returns false, changing nothing, when the generation's build fence or
  * one of its volume accounts is held elsewhere (the caller retries later).
  * `requireDeadJob` re-checks the job in the final compare-and-set, for callers

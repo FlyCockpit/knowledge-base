@@ -124,8 +124,8 @@ function ensureEnvFile() {
 //
 // apps/web/.env.example is all-optional (every VITE_ var is commented out),
 // so copying it verbatim is a safe, runnable default. Without this file the
-// web app still boots, but onboarding docs previously made this a manual step
-// the user had to remember — fold it into `pnpm run setup` instead.
+// web app still boots, but `pnpm run setup` creates it so the user does not
+// have to remember a manual step.
 // ---------------------------------------------------------------------------
 function ensureWebEnvFile() {
   if (existsSync(WEB_ENV_PATH)) {

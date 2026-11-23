@@ -18,7 +18,7 @@ const HARNESS_BY_PATH: Record<string, string> = {
   "/pr": "pr",
   "/lifecycle": "lifecycle",
   "/kb-settings": "settings",
-  "/r38": "editor",
+  "/kb-editor": "editor",
   "/en-US/mcp-consent": "mcp",
   "/en-US/settings/mcp": "mcp",
   "/en-US/device": "mcp",

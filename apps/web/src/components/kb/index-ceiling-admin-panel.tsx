@@ -94,7 +94,7 @@ function CeilingRow({
         type="submit"
         className="min-h-[44px]"
         disabled={save.isPending}
-        // One Save per quantization: the name says which (R2-19).
+        // One Save per quantization: the name says which.
         aria-label={t("settings.indexCeiling.saveNamed", {
           name: t(`settings.indexCeiling.label.${quantization}`),
         })}
@@ -127,7 +127,7 @@ export function IndexCeilingFields({ view }: { view: CeilingView }) {
   );
 }
 
-/** Instance-admin per-quantization chunk ceilings (§1.9), next to the model panel. */
+/** Instance-admin per-quantization chunk ceilings, next to the model panel. */
 export function IndexCeilingAdminPanel() {
   const { t } = useTranslation("admin");
   const { data, isPending, isError, refetch } = useQuery(

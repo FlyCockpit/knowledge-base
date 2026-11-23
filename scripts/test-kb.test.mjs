@@ -749,7 +749,7 @@ describe("test-kb runner", () => {
   });
 });
 
-it("46r10 missing Gemma artifact names its own required variable", async () => {
+it("missing Gemma artifact names its own required variable", async () => {
   const expected = loadArtifactIdentity(
     join(ROOT, "packages/api/src/lib/kb/fixtures/gemma-artifact.json"),
   );
@@ -870,13 +870,13 @@ it("reaps exact labelled fixture names only after their owning run exits", () =>
 it("TEST_CONTAINER_PREFIX validates and joins with one dash", () => {
   assert.equal(kbTestNamePrefix({}), "");
   assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "" }), "");
-  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "rp5-fubk" }), "rp5-fubk-");
-  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "rp5-fubk-" }), "rp5-fubk-");
+  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "ci-x" }), "ci-x-");
+  assert.equal(kbTestNamePrefix({ TEST_CONTAINER_PREFIX: "ci-x-" }), "ci-x-");
   assert.equal(kbTestName("kb-ssh-x", { TEST_CONTAINER_PREFIX: "a1" }), "a1-kb-ssh-x");
   // `kb-test`/`kb-` prefixes could make one namespace's names parse as another run's.
   for (const bad of [
-    "RP5",
-    "rp5_fubk",
+    "CI-X",
+    "ci_x",
     "-x",
     "x--",
     "a b",
@@ -890,22 +890,22 @@ it("TEST_CONTAINER_PREFIX validates and joins with one dash", () => {
     assert.throws(() => kbTestNamePrefix({ TEST_CONTAINER_PREFIX: bad }), /TEST_CONTAINER_PREFIX/);
 });
 it("a prefixed runner parses and reaps only its own namespace", () => {
-  const env = { TEST_CONTAINER_PREFIX: "rp5-fubk" };
-  assert.deepEqual(parseRunProject("rp5-fubk-kb-test-journal-111-aaaaaa-postgres-1", env), {
-    project: "rp5-fubk-kb-test-journal-111-aaaaaa",
+  const env = { TEST_CONTAINER_PREFIX: "ci-x" };
+  assert.deepEqual(parseRunProject("ci-x-kb-test-journal-111-aaaaaa-postgres-1", env), {
+    project: "ci-x-kb-test-journal-111-aaaaaa",
     pid: 111,
   });
   // The unprefixed namespace and other prefixes are foreign to it, and vice versa.
   assert.equal(parseRunProject("kb-test-journal-111-aaaaaa", env), null);
   assert.equal(parseRunProject("other-kb-test-journal-111-aaaaaa", env), null);
-  assert.equal(parseRunProject("rp5-fubk-kb-test-journal-111-aaaaaa", {}), null);
+  assert.equal(parseRunProject("ci-x-kb-test-journal-111-aaaaaa", {}), null);
 
-  const dead = "rp5-fubk-kb-test-mirror-111-aaaaaa";
+  const dead = "ci-x-kb-test-mirror-111-aaaaaa";
   const unprefixedDead = "kb-test-mirror-333-cccccc";
   const uuid = "01234567-89ab-4cde-8fab-0123456789ab";
   const rows = [
     `own	${dead}-postgres-1	postgres	${dead}	`,
-    `fixture	rp5-fubk-kb-ssh-${uuid}	node:26-slim		${dead}`,
+    `fixture	ci-x-kb-ssh-${uuid}	node:26-slim		${dead}`,
     `unprefixed-fixture	kb-ssh-${uuid}	node:26-slim		${dead}`,
     `other-namespace	${unprefixedDead}-postgres-1	postgres	${unprefixedDead}	`,
   ];
@@ -1298,7 +1298,7 @@ it("an ancestor still drains a nested capture's tools after the nested owner is 
   const directory = mkdtempSync(join(tmpdir(), "kb-registry-ancestor-"));
   const pidFile = join(directory, "tool.pid");
   const runner = new URL("./test-kb.mjs", import.meta.url).href;
-  // The nested owner is a guest in the same namespace (the run-49 topology). Its
+  // The nested owner is a guest in the same namespace (a nested-runner topology). Its
   // tool records its pid, then the owner SIGKILLs itself mid-capture.
   writeFileSync(
     join(directory, "nested.mjs"),
@@ -1657,15 +1657,15 @@ it("flushes deployment image builds before any bounded container start", () => {
   assert.ok(flush < source.indexOf("const vitest ="), "sync precedes the suite");
 });
 
-it("flk13 deployment leaves prebuilt image cleanup to its owning runner", () => {
+it("deployment leaves prebuilt image cleanup to its owning runner", () => {
   const source = readFileSync(join(ROOT, SUITES.deployment.include[0]), "utf8");
   // The fixture consumes a project tag built by test-kb. It must not claim a
-  // shared legacy tag merely because an inspect failed (including a deadline).
+  // shared fixed tag merely because an inspect failed (including a deadline).
   assert.doesNotMatch(source, /kb-mirror-ssh-fixture:43/);
   assert.doesNotMatch(source, /\["image", "rm"/);
 });
 
-it("flk13 all and deployment consume the prebuilt project tag and clean only their own images", () => {
+it("all and deployment consume the prebuilt project tag and clean only their own images", () => {
   const dir = mkdtempSync(join(tmpdir(), "kb-ssh-cli-"));
   const state = join(dir, "state.json");
   const log = join(dir, "commands.jsonl");
@@ -1726,7 +1726,7 @@ if(process.env.KB_TEST_SUITE!=='deployment') process.exit(existsSync(${JSON.stri
 writeFileSync(${JSON.stringify(inspectFailure)},'kill metadata probes after prebuild');
 const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',${JSON.stringify(fixtureProgram)}],{stdio:'inherit'});
 if(result.status!==0) process.exit(result.status ?? 1);
-console.log('flk13 deployment fixture consumed');
+console.log('deployment fixture consumed');
 writeFileSync(${JSON.stringify(deployed)},'');
 process.exit(0);
 `,
@@ -1739,7 +1739,7 @@ process.exit(0);
         timeout: 30_000,
       });
       assert.equal(result.status, mode === "all" ? 1 : 0, result.stderr);
-      assert.match(`${result.stdout}${result.stderr}`, /flk13 deployment fixture consumed/);
+      assert.match(`${result.stdout}${result.stderr}`, /deployment fixture consumed/);
       const suites = readFileSync(suiteLog, "utf8")
         .trim()
         .split("\n")
@@ -1778,8 +1778,8 @@ process.exit(0);
   }
 });
 
-// flk4: these assertions are derived from the suite/build inventory, not hook budgets.
-describe("flk4 build prerequisites", () => {
+// These assertions are derived from the suite/build inventory, not hook budgets.
+describe("build prerequisites", () => {
   it("prebuilds exactly the suites consuming CLI, SDK, SSH and native artifacts", async () => {
     const { buildPrerequisites, BUILD_TIMEOUT_MS } = await import("./test-kb.mjs");
     assert.equal(BUILD_TIMEOUT_MS, 30 * 60 * 1000);
@@ -1968,7 +1968,7 @@ describe("flk4 build prerequisites", () => {
   });
 });
 
-it("flk4 missing executables fail fast with both runner and standalone prebuild instructions", async () => {
+it("missing executables fail fast with both runner and standalone prebuild instructions", async () => {
   const { requireBuiltArtifact } = await import(
     "../packages/test-utils/src/kb/build-artifacts.mjs"
   );
@@ -1994,7 +1994,7 @@ it("flk4 missing executables fail fast with both runner and standalone prebuild 
   }
 });
 
-it("flk4 SSH image builds only for an absent image in the explicit prerequisite path", () => {
+it("SSH image builds only for an absent image in the explicit prerequisite path", () => {
   const dir = mkdtempSync(join(tmpdir(), "kb-ssh-prebuild-check-"));
   const log = join(dir, "log");
   const image = join(dir, "image");
@@ -2075,7 +2075,7 @@ try { const fixture=await createSshFixture();await fixture.close(); } catch(erro
       assert.equal(warm.status, 0, warm.stderr);
       assert.equal(builds(), 1);
     }
-    // flk13: the tag still exists when an inspect client is killed. A metadata
+    // The tag still exists when an inspect client is killed. A metadata
     // probe is not part of container creation and must not fail a warm fixture.
     writeFileSync(inspectFailure, "kill inspect only");
     const warmWithoutInspect = run(false);
@@ -2100,7 +2100,7 @@ try { const fixture=await createSshFixture();await fixture.close(); } catch(erro
   }
 });
 
-it("flk4 runner executes prerequisites before Vitest and a failed build prevents tests", async () => {
+it("runner executes prerequisites before Vitest and a failed build prevents tests", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kb-build-order-"));
   const log = join(dir, "commands");
   const failure = join(dir, "fail");
@@ -2199,7 +2199,7 @@ function buildAlive(pid) {
 }
 
 for (const mode of ["immune", "descendant", "nested"]) {
-  it(`flk4 deadline drains real ${mode} compiler work before cleanup and permits a fresh retry`, {
+  it(`deadline drains real ${mode} compiler work before cleanup and permits a fresh retry`, {
     timeout: 30_000,
   }, async () => {
     const directory = mkdtempSync(join(tmpdir(), "kb-build-drain-"));
@@ -2274,7 +2274,7 @@ for (const mode of ["immune", "descendant", "nested"]) {
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  it(`flk4 ${signal} of a runner drains real compiler descendants before settling`, {
+  it(`${signal} of a runner drains real compiler descendants before settling`, {
     timeout: 20_000,
   }, async () => {
     const directory = mkdtempSync(join(tmpdir(), "kb-build-signal-"));
@@ -2331,7 +2331,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   for (const phase of ["startup", "behavioral"])
-    it(`R5 ${signal} during ${phase} tests drains descendants and removes compose services`, async () => {
+    it(`${signal} during ${phase} tests drains descendants and removes compose services`, async () => {
       const directory = mkdtempSync(join(tmpdir(), "kb-test-behavior-signal-"));
       const marker = join(directory, "pid");
       const resource = join(directory, "service");
@@ -2388,7 +2388,7 @@ setInterval(()=>{},1000);
     });
 }
 
-it("flk4 captured supervisor preserves output/errors, rejects overflow and closes admission on cancellation", async () => {
+it("captured supervisor preserves output/errors, rejects overflow and closes admission on cancellation", async () => {
   const { createBuildSupervisor } = await import("./build-embedding-runtime.mjs");
   const owner = createBuildSupervisor({ timeoutMs: 60_000, graceMs: 50 });
   try {
@@ -2432,7 +2432,7 @@ it("flk4 captured supervisor preserves output/errors, rejects overflow and close
   await assert.rejects(closed.run(process.execPath, ["-e", "process.exit(0)"], ROOT), /closed/);
 });
 
-it("flk4 browser setup rejects absent or deleted harness files before opening a fixture", async () => {
+it("browser setup rejects absent or deleted harness files before opening a fixture", async () => {
   const project = `kb-browser-artifacts-${process.pid}`;
   const harness = buildArtifactPath("browser-harness", project);
   const program = `import setup from ${JSON.stringify(join(ROOT, "apps/web/tests/kb-browser.setup.ts"))};await setup();`;
@@ -2462,7 +2462,7 @@ it("flk4 browser setup rejects absent or deleted harness files before opening a 
   }
 });
 
-it("flk4 uncertain Docker daemon drain retains intent and blocks retry without new builds", {
+it("uncertain Docker daemon drain retains intent and blocks retry without new builds", {
   timeout: 30_000,
 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), "kb-daemon-readback-"));
@@ -2523,7 +2523,7 @@ it("flk4 uncertain Docker daemon drain retains intent and blocks retry without n
   }
 });
 
-it("flk8 real-daemon Docker proof runs only in its own build suite, under build-only bounds", () => {
+it("real-daemon Docker proof runs only in its own build suite, under build-only bounds", () => {
   const docker = "scripts/test-kb-build-docker.test.mjs";
   const owners = Object.entries(SUITES)
     .filter(([, suite]) => (suite.nodeTests ?? []).includes(docker))
@@ -2555,7 +2555,7 @@ it("flk8 real-daemon Docker proof runs only in its own build suite, under build-
   assert.match(supervisor, /const end = Date\.now\(\) \+ drainTimeoutMs;/);
 });
 
-it("flk4 browser harness build covers every entry that setup routes to", () => {
+it("browser harness build covers every entry that setup routes to", () => {
   const tests = join(import.meta.dirname, "../apps/web/tests");
   const setup = readFileSync(join(tests, "kb-browser.setup.ts"), "utf8");
   const routed = new Set(
@@ -2573,7 +2573,7 @@ it("flk4 browser harness build covers every entry that setup routes to", () => {
   for (const entry of routed) assert.ok(existsSync(join(tests, `kb-${entry}.harness.tsx`)), entry);
 });
 
-describe("image git lane (R3-W1)", () => {
+describe("image git lane", () => {
   it("runs every git-heavy suite against the image's git and names what must reach it", () => {
     for (const name of ["pr", "changes", "git-push", "git-http", "mcp"])
       assert.ok(SUITES[name].imageGit.reached.length > 0, name);

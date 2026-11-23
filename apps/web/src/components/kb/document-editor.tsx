@@ -59,7 +59,7 @@ type DocumentEditorViewProps = {
    * was loaded at and that revision's asset manifest.
    */
   preview: { rev: string; assets: readonly AssetRef[] };
-  /** Images staged for the next save, previewed from local object URLs (R3-W7). */
+  /** Images staged for the next save, previewed from local object URLs. */
   stagedImages?: readonly EditorStagedImage[];
   /**
    * The new document's path is fixed: a save naming it is unresolved (a lost
@@ -75,7 +75,7 @@ type DocumentEditorViewProps = {
   image?: {
     /**
      * `at` is the textarea selection when the files arrived, or the end of
-     * the draft while the textarea was never focused (R3-W7).
+     * the draft while the textarea was never focused.
      */
     onFiles: (files: File[], at: { start: number; end: number }) => void;
     status: ImageStatus | null;
@@ -85,7 +85,7 @@ type DocumentEditorViewProps = {
 export type ImageStatus =
   | { kind: "uploading"; name: string; percent: number }
   | { kind: "waiting"; name: string; seconds: number }
-  /** Uploaded and linked; committed by the next save (R3-W7). */
+  /** Uploaded and linked; committed by the next save. */
   | { kind: "staged"; name: string }
   | {
       kind: "error";
@@ -190,7 +190,7 @@ function DraftPreview({
 }
 
 /**
- * Where inserted images go (R3-W7): the selection of a textarea the user has
+ * Where inserted images go: the selection of a textarea the user has
  * focused, else the end of the draft. A never-focused textarea reports a caret
  * at 0, which would glue the image onto the first line.
  */
@@ -219,7 +219,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   const saveLabel = controls.editMode === "direct" ? t("kb:editor.save") : t("kb:editor.propose");
   const image = editable ? props.image : undefined;
   // The caret means something only once the user put it there: an untouched
-  // textarea reports 0, which would glue an image onto the first line (R3-W7).
+  // textarea reports 0, which would glue an image onto the first line.
   const [touched, setTouched] = useState(false);
   const selection = () => imageInsertAt(touched ? textarea : null, props.markdown.length);
   const sendFiles = (files: File[]) => {
@@ -698,7 +698,7 @@ function paragraphBreaks(before: string, after: string): { lead: string; trail: 
 }
 
 /**
- * Inserts dropped, pasted or chosen images into the draft (R3-W7). Each
+ * Inserts dropped, pasted or chosen images into the draft. Each
  * image is its own paragraph: a blank line before it (unless at the start)
  * and after it (unless at the end), and several images are separated by
  * blank lines, so a link never joins a heading or another image. Typing
@@ -903,7 +903,7 @@ export function KbSessionEditor({
       onOpenLatest={() => onOpenLatest(editor.path)}
       isNew={drafting}
       showPath={isNew}
-      // After a save the preview reads the revision it produced (R3-W7).
+      // After a save the preview reads the revision it produced.
       preview={effectivePreview}
       stagedImages={editor.stagedImages}
       image={{ onFiles: (files, at) => void onFiles(files, at), status: imageStatus }}
@@ -1053,7 +1053,7 @@ export function KbDocumentDelete({
 type ProposalModeKb = EditorKb;
 
 /**
- * PR mode (R3-W6): edit a document as the viewer's pull request has it. The
+ * PR mode: edit a document as the viewer's pull request has it. The
  * draft starts from the PR's version (main's, said so, when the PR deletes
  * it); main's version ("theirs") and, for a conflicting path, the common
  * base are shown read-only. Saves go against current main with the PR's

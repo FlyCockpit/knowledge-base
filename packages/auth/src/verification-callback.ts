@@ -42,7 +42,7 @@ import { DEFAULT_LOCALE, isSupportedLocale } from "@knowledge-base/config/locale
  * example.com) a relative path would land the user on the API hostname: wrong
  * cookie scope, wrong canonical URL, and a route the API doesn't serve. Pass
  * the web origin there and the callback is emitted absolute. Omit it for a
- * same-origin deploy and the callback stays relative, as before.
+ * same-origin deploy and the callback stays relative.
  *
  * The path is built from a locale we narrow ourselves against
  * `SUPPORTED_LOCALES`, never from user input.

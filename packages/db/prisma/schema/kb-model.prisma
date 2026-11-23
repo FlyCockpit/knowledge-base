@@ -33,7 +33,7 @@ model LocalModel {
   kvValueType            String          @default("f16")
   /// Increments on every runtime config change; re-embedding rows carry it.
   configEpoch            Int             @default(0)
-  /// Identity of the runtime actually probed; NULL on pre-upgrade installations.
+  /// Identity of the runtime actually probed; NULL until a probe records it.
   runtimeIdentity        String?
   /// Durable target identity; claim/renew/settlement must match the worker binary.
   pendingRuntimeIdentity String?

@@ -247,7 +247,7 @@ describe("context-fit chunking", () => {
   });
 });
 
-// Reference snapshot before W02: keep the full-token scans in splitUnits/spanOf so
+// Reference implementation: keeps the full-token scans in splitUnits/spanOf so
 // recursive splitting, redaction and partial-word byte spans can be compared end to end.
 function embedText(source: string): string | null {
   const safe = redactForEmbed(source);

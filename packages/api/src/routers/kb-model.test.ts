@@ -260,7 +260,7 @@ describe("admin runtime config gate (server-side WARN > 70%, BLOCK > 90%)", () =
   });
 });
 
-describe("46r10 model selection", () => {
+describe("model selection", () => {
   const gemma = {
     modelId: "embeddinggemma-2-q8_0",
     contextTokens: 1024,

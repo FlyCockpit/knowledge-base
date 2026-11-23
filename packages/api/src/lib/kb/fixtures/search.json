@@ -1,5 +1,5 @@
 {
-  "description": "Golden hybrid corpus. Fixture embedder: normalize([1 + count(alpha), 1 + count(beta)]). Fused RRF = sum over arms (vector first) of 1/(60 + rank), rank starting at 1; ties break by bytewise path then chunkIndex. Replies carry it normalized: RRF * 61 / 2 (L-25).",
+  "description": "Golden hybrid corpus. Fixture embedder: normalize([1 + count(alpha), 1 + count(beta)]). Fused RRF = sum over arms (vector first) of 1/(60 + rank), rank starting at 1; ties break by bytewise path then chunkIndex. Replies carry it normalized: RRF * 61 / 2.",
   "documents": {
     "a.md": "alpha alpha alpha\n",
     "b.md": "beta beta\n",

@@ -34,7 +34,7 @@ const KIND_RULES: Record<TranslateInput["contentKind"], string> = {
 };
 
 // es-MX gets an explicit rule because the LLM otherwise drifts toward Iberian
-// Spanish (vosotros, regional vocabulary). Phase 8 generates production
+// Spanish (vosotros, regional vocabulary). `pnpm i18n:translate` generates production
 // translations against this prompt and we need consistency across runs.
 function regionalRules(targetLocale: string): string | null {
   if (targetLocale.toLowerCase() === "es-mx") {

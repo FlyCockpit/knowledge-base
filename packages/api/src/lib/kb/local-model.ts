@@ -376,7 +376,7 @@ type StatusDb = Pick<PrismaClient, "localModel" | "$queryRaw">;
 /**
  * How many live knowledge bases use the built-in model as their embedding
  * profile: what disabling it or applying new runtime settings affects
- * (R3-W9). A count only, for the instance admin.
+ * A count only, for the instance admin.
  */
 export async function countBuiltinAttachedKbs(
   prisma: Pick<PrismaClient, "knowledgeBase">,
@@ -696,7 +696,7 @@ async function queueRuntimeUpgrade(query: LockQuery, row: LockedRow, retry = fal
   if (row.pendingRuntimeIdentity === identity && pendingQwenRuntimeConfig(row)) return;
   const error = z.object({ runtimeIdentity: z.string() }).safeParse(row.configError);
   if (!retry && error.success && error.data.runtimeIdentity === identity) return;
-  // Preserve a requested config through upgrade, including legacy requests.
+  // Preserve a requested config through the upgrade.
   const config = pendingQwenRuntimeConfig(row) ?? storedQwenRuntimeConfig(row);
   await query(
     `UPDATE kb_local_model

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decideLocaleRedirect } from "./redirect-to-default";
 
 /**
- * Phase 2 added the `/$lang/...` URL prefix and a redirect at the root. The
+ * Every URL carries a `/$lang/...` prefix, and the root redirects. The
  * `decideLocaleRedirect` helper is the pure decision boundary the route's
  * `beforeLoad` calls — we exercise it directly here so the tests don't have
  * to mount TanStack Router or import React-only modules.

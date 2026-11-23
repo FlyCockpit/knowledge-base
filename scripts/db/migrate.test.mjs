@@ -70,7 +70,7 @@ test("generated migrations are wrapped and never carry the retired maintenance m
   assert.equal(plain.contract, null);
   assert.equal(plain.rollback.safe, true);
 
-  // F13: a drop + add is split, not marked; the rename warning stays.
+  // A drop + add is split, not marked; the rename warning stays.
   const rename = buildMigration(
     `ALTER TABLE "project" ${DROP} COLUMN "notes",\nADD COLUMN "description" TEXT;\n`,
     { catalog: BASE, folder: FOLDER },

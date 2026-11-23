@@ -660,7 +660,7 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
                   field={field}
                   label={t("settings:credentials.expiryLabel")}
                   description={t("settings:credentials.expiryHelp", { max: MAX_TTL_DAYS })}
-                  // The value is a day count ("90"); show it with its unit (R2-27).
+                  // The value is a day count ("90"); show it with its unit.
                   valueLabel={
                     field.state.value === "custom"
                       ? t("settings:credentials.expiryCustom")

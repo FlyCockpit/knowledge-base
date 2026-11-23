@@ -28,7 +28,7 @@ async function fixture(t) {
   return { dir, identity, key, source, file: join(dir, "backup.age") };
 }
 const metadata = {
-  version: 3,
+  version: 1,
   storage: { mode: "disk" },
   cutoff: "2026-10-08T00:00:00.000Z",
   instanceId: "test",
@@ -70,7 +70,7 @@ test("wrong identity, truncated cipher, missing completion and hash mismatch are
     path = "postgres.dump";
   const bad = Buffer.concat([
     Buffer.from(
-      "kb/backup/3\n" +
+      "kb/backup/1\n" +
         JSON.stringify({
           metadata,
           inventory: [{ path, size: bytes.length, sha256: "0".repeat(64) }],
@@ -196,18 +196,18 @@ test("S3 variant has only an encrypted streamed reference file and rechecks befo
   };
   const sources = [{ path: "asset-inventory.jsonl", source: f.source }];
   await writeFile(f.source, JSON.stringify({ hash: `sha256:${"a".repeat(64)}`, size: 5 }) + "\n");
-  const v2 = { ...metadata, version: 3, storage };
-  await encryptBundle({ ...f, metadata: v2, sources, recipient: f.key });
+  const s3Metadata = { ...metadata, storage };
+  await encryptBundle({ ...f, metadata: s3Metadata, sources, recipient: f.key });
   const result = await readBundle(f.file, f.identity);
-  assert.equal(result.metadata.version, 3);
+  assert.equal(result.metadata.version, 1);
   assert.deepEqual(
     result.files.map((e) => e.path),
     ["asset-inventory.jsonl"],
   );
   for (const [m, paths] of [
     [metadata, sources],
-    [v2, []],
-    [{ ...v2, storage: { ...storage, secret: "no" } }, sources],
+    [s3Metadata, []],
+    [{ ...s3Metadata, storage: { ...storage, secret: "no" } }, sources],
   ]) {
     await assert.rejects(
       encryptBundle({
@@ -225,7 +225,7 @@ test("S3 variant has only an encrypted streamed reference file and rechecks befo
     encryptBundle({
       ...f,
       file: failed,
-      metadata: v2,
+      metadata: s3Metadata,
       sources,
       recipient: f.key,
       beforeComplete: async () => {
@@ -241,7 +241,7 @@ test("S3 variant has only an encrypted streamed reference file and rechecks befo
     encryptBundle({
       ...f,
       file: swapped,
-      metadata: v2,
+      metadata: s3Metadata,
       sources,
       recipient: f.key,
       beforeComplete: async () => {

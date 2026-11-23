@@ -145,11 +145,11 @@ describe("member controls", () => {
     );
     expect(managed).toContain("Ada Lovelace");
     expect(managed).toContain('aria-label="Edit permissions for Ada Lovelace"');
-    // R2-19: repeated row actions name their member.
+    // Repeated row actions name their member.
     expect(managed).toContain('aria-label="Revoke Ada Lovelace"');
     expect(managed).toContain('aria-label="Transfer ownership to Ada Lovelace"');
     expect(managed).not.toContain("(you)");
-    // R2-22: the caller's own row is marked.
+    // The caller's own row is marked.
     expect(
       wrap(
         <MemberRowsView
@@ -294,7 +294,7 @@ describe("server denial handling", () => {
       .getQueryCache()
       .getAll()
       .map((q) => JSON.stringify(q.queryKey));
-    // R2-11: kbs.get stays (invalidated) so the mounted header and tabs refetch.
+    // kbs.get stays (invalidated) so the mounted header and tabs refetch.
     expect(left.filter((k) => k.includes(KB))).toEqual([
       JSON.stringify([["kbs", "get"], { input: { kbId: KB }, type: "query" }]),
     ]);
@@ -340,7 +340,7 @@ describe("KB settings tabs", () => {
   });
 });
 
-describe("acceptance of a request that no longer exists (R2-21)", () => {
+describe("acceptance of a request that no longer exists", () => {
   it("treats NOT_FOUND as used or replaced, not as a permissions error", () => {
     expect(isAcceptRequestGone({ code: "NOT_FOUND" })).toBe(true);
     expect(isAcceptRequestGone({ data: { code: "NOT_FOUND" } })).toBe(true);

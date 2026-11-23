@@ -404,7 +404,7 @@ test("sealed enrollment shows only the opaque reference; grants name one record 
   expect(watch.bypass).toEqual([]);
 });
 
-test("46r10 admin model panel lists both models with recommendation and applies the selected tier through oRPC", async ({
+test("admin model panel lists both models with recommendation and applies the selected tier through oRPC", async ({
   page,
 }) => {
   await as(page, "owner");
@@ -436,7 +436,7 @@ test("46r10 admin model panel lists both models with recommendation and applies 
     response.url().includes("/rpc/kbModel/setRuntimeConfig"),
   );
   await page.getByRole("button", { name: "Apply settings" }).click();
-  // R3-W9: applying is confirmed with its impact first.
+  // Applying is confirmed with its impact first.
   const confirm = page.getByRole("alertdialog");
   await expect(confirm.getByTestId("model-affected-kbs")).toBeVisible();
   // Keyboard activation: the harness's unstyled backdrop swallows pointer clicks.
@@ -451,7 +451,7 @@ test("46r10 admin model panel lists both models with recommendation and applies 
   await page.request.post(`${fx.origin}/fixture/settings/model-user`);
 });
 
-test("46r10 insufficient memory greys every option, explains rejection and blocks enable", async ({
+test("insufficient memory greys every option, explains rejection and blocks enable", async ({
   page,
 }) => {
   await as(page, "owner");

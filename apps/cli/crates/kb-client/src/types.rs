@@ -221,7 +221,7 @@ validated_string!(
 );
 validated_string!(
     /// A raw document-path prefix filter: a [`KbPath`] optionally followed
-    /// by one `/` (L-22: `notes/` matches only the `notes` directory).
+    /// by one `/` (`notes/` matches only the `notes` directory).
     KbPathPrefix,
     |s| check_kb_path(s.strip_suffix('/').unwrap_or(s)).is_ok()
 );
@@ -783,7 +783,7 @@ pub struct ApplyResult {
     pub source_session_ids: Vec<Uuid>,
     #[serde(deserialize_with = "nullable")]
     pub index_job_id: Option<Uuid>,
-    /// L-22: non-blocking notes; omitted when empty.
+    /// Non-blocking notes; omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ApplyWarning>,
 }

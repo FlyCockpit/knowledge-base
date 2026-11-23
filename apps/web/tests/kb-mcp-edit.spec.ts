@@ -36,7 +36,7 @@ const bitsOf = (state: EditState, kbId: string) =>
 async function openEdit(page: Page, seeded: Scenario): Promise<Locator> {
   await page.goto(`${fx.origin}/en-US/settings/mcp`);
   const row = page.locator("li").filter({ has: page.getByText(seeded.clientId, { exact: true }) });
-  // R2-19: each row's control names its app.
+  // Each row's control names its app.
   await row
     .getByRole("button", { name: `Edit access for ${seeded.clientId}`, exact: true })
     .click();

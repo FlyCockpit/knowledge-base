@@ -208,7 +208,7 @@ const HOST_LEVEL_ERROR_CODES = new Set([
 /**
  * Whether a recovery failure may be this KB's own (an I/O error on its files,
  * a Git failure or unreadable storage in its repository, a corrupt journal
- * row) and so a quarantine candidate. Never one, so the pass aborts as before
+ * row) and so a quarantine candidate. Never one, so the pass aborts
  * and the next one retries:
  * - a PostgreSQL error (SQLSTATE `code` plus `severity`) and a lost KB lock;
  * - a host-level errno ({@link HOST_LEVEL_ERROR_CODES}).
@@ -231,7 +231,7 @@ export function isKbLocalRecoveryFailure(error: unknown): boolean {
  * Whether a pass may quarantine its `candidates` newly failing ACTIVE KBs out
  * of `activeKbs`: at most {@link RECOVERY_QUARANTINE_LIMIT_PER_PASS}, and at
  * most half of the ACTIVE KBs (a single-KB instance never isolates; its pass
- * aborts and retries, as before isolation existed).
+ * aborts and retries).
  */
 export function mayQuarantine(candidates: number, activeKbs: number): boolean {
   return candidates <= RECOVERY_QUARANTINE_LIMIT_PER_PASS && candidates * 2 <= activeKbs;
@@ -311,7 +311,7 @@ async function markRecoveryQuarantine(
  * then decides whether to quarantine it. The KB's transaction rolled back, so
  * nothing it held is released: reservations, staged-upload claims and pending
  * CAS rows stay as they were.
- * Everything that is not a KB-local failure still aborts the sweep, as before:
+ * Everything that is not a KB-local failure still aborts the sweep:
  * a lost volume fence (re-asserted first), a database, KB-lock or host-level
  * error ({@link isKbLocalRecoveryFailure}), or a session or lock that cannot be
  * obtained.

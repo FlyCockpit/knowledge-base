@@ -298,7 +298,7 @@ impl Store {
             ));
         }
         tx.execute("UPDATE provider_revisions SET state='REVOKED',attempt=attempt+1 WHERE provider_id=?1 AND state<>'REVOKED'",[id.as_str()])?;
-        // L-7: every live KB on this provider gets a lexical-only
+        // Every live KB on this provider gets a lexical-only
         // generation now (the revoked pin can no longer build), in the same
         // transaction as the revocation.
         let attached = {

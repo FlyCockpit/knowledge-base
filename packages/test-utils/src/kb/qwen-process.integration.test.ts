@@ -410,7 +410,7 @@ it("current-worker admission fences initial capability, READY reload and token-m
   expect(released).toBe(acquired);
 });
 
-describe("R45 cancellation and ownership at real child boundaries", () => {
+describe("cancellation and ownership at real child boundaries", () => {
   it.each(["query", "document", "count"] as const)(
     "aborts an admitted %s during load and execution, reaps before settlement, and admits a successor",
     async (operation) => {
@@ -607,7 +607,7 @@ describe("R45 cancellation and ownership at real child boundaries", () => {
   });
 });
 
-it("R45 cancelling a side-by-side probe preserves serving and its shared lease", async () => {
+it("cancelling a side-by-side probe preserves serving and its shared lease", async () => {
   let acquired = 0,
     released = 0;
   const { supervisor, dir } = make("hold-probe", {
@@ -647,7 +647,7 @@ it("R45 cancelling a side-by-side probe preserves serving and its shared lease",
   expect(released).toBe(1);
 });
 
-it("R45 runtime verification refuses precancellation and a successful verification reaps both children", async () => {
+it("runtime verification refuses precancellation and a successful verification reaps both children", async () => {
   const { probeQwenRuntime } = await import(
     new URL("../../../../apps/worker/src/lib/qwen-probe.ts", import.meta.url).href
   );

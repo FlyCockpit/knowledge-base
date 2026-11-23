@@ -224,7 +224,7 @@ async function purgeOne(
   indexDir: string,
 ): Promise<false | AfterCommit> {
   // FOR UPDATE conflicts with every lease insert's KEY SHARE and with the KEY SHARE every index
-  // file read holds until its reader thread settled (§1.5 CL-INTERLOCK): a generation under a
+  // file read holds until its reader thread settled: a generation under a
   // read is skipped now and purged by a later pass. After this, no new lease or read can attach.
   const locked = await query<{ id: string; kbId: string }>(
     `SELECT g.id, g."kbId" FROM index_generation g
@@ -248,7 +248,7 @@ async function purgeOne(
   );
   if ((leased.rows[0]?.n ?? 0) > 0) return false;
   await query('DELETE FROM generation_document WHERE "generationId" = $1', [id]);
-  // Guard I1 keeps reservation ids off SUPERSEDED/FAILED rows; the PURGED tombstone holds none.
+  // A guard trigger keeps reservation ids off SUPERSEDED/FAILED rows; the PURGED tombstone holds none.
   await query(`UPDATE index_generation SET state = 'PURGED' WHERE id = $1`, [id]);
   return () => removeGenerationFiles(join(indexDir, row.kbId), id).then(() => undefined);
 }
@@ -286,7 +286,7 @@ export async function purgeRetiredGenerations(
 }
 
 /**
- * §1.8 (f) backstop, and convergence for the one liveness rule (`build-liveness.ts`): an
+ * Reservation backstop, and convergence for the one liveness rule (`build-liveness.ts`): an
  * unfinished generation whose durable job is terminal (cancelled, which never writes the
  * generation, or failed on a path that could not settle it) becomes FAILED, its reservations
  * released in the same transaction. Exhausted lease recovery already does this in its own
@@ -340,7 +340,7 @@ async function judgeIndexFile(
   if (parsed.kind === "unknown" || parsed.kind === "side") return "warn";
   const fresh = Date.now() - mtimeMs < graceMs;
   if (parsed.kind === "temp") {
-    // CL3-RECON: a running attempt's temp (and its journal, judged by the temp's name) is kept.
+    // A running attempt's temp (and its journal, judged by the temp's name) is kept.
     if (fresh) return "keep";
     const live = await query<{ live: boolean }>(
       `SELECT EXISTS (SELECT FROM index_generation g JOIN durable_job j ON j.id = g."jobId"
@@ -350,7 +350,7 @@ async function judgeIndexFile(
     );
     return live.rows[0]?.live ? "keep" : "remove";
   }
-  // CL4-FINAL: COMPLETE, SUPERSEDED and FAILED finals belong to retention, never to this pass.
+  // COMPLETE, SUPERSEDED and FAILED finals belong to retention, never to this pass.
   const row = (
     await query<{ state: string; live: boolean }>(
       `SELECT g.state, EXISTS (SELECT FROM durable_job j WHERE j.id = g."jobId" AND j.state IN ${LIVE_JOB_STATES_SQL}) AS live

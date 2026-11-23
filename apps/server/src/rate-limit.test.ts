@@ -170,7 +170,7 @@ describe("createRateLimiterMiddleware", () => {
   });
 
   it("with TRUST_PROXY_HOPS unset (0), a private peer cannot pick its bucket via X-Forwarded-For", async () => {
-    // SEC-02: a LAN caller varying a public-looking X-Forwarded-For still
+    // A LAN caller varying a public-looking X-Forwarded-For still
     // shares its socket bucket (behind an uncounted proxy, everyone does).
     mockGetConnInfo.mockReturnValue({ remote: { address: "192.168.1.20" } });
     for (let i = 0; i < LIMIT; i++) {

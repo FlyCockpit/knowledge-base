@@ -188,7 +188,7 @@ pub fn cli(dir: &std::path::Path) -> assert_cmd::Command {
     // This is an I/O/process watchdog, not a device polling deadline. The
     // production polling tests assert exact expiry/slow_down using paused time;
     // real HTTP cancellation still has its black-box stalled-response test.
-    // Private credential fsync and child startup can consume the old 30s budget
+    // Private credential fsync and child startup can exceed a 30s budget
     // under disk contention, including token imports that never poll at all.
     cmd.timeout(Duration::from_secs(120));
     cmd

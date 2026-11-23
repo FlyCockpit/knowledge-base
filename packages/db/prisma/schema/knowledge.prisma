@@ -28,7 +28,7 @@ enum AuditOutcome {
 
 // Authority, membership, quota reservations, and audit. SQL-owned checks and
 // the live owner+slug unique index live in prisma/migrations/0_init/migration.sql.
-/// SQLite index vector quantization (§1.4); frozen per generation at build time.
+/// SQLite index vector quantization; frozen per generation at build time.
 enum IndexQuantization {
   INT8
   BINARY_INT8_RESCORE
@@ -75,7 +75,7 @@ model KnowledgeBase {
   /// after a runtime config change: most recently queried first.
   lastQueriedAt          DateTime?             @db.Timestamptz(3)
   qwenReembed            QwenReembed?
-  /// Vector quantization for the next index build (owner/manager setting, §1.9).
+  /// Vector quantization for the next index build (owner/manager setting).
   indexQuantization      IndexQuantization     @default(BINARY_INT8_RESCORE)
   /// Owner-set chunk limit; null means `KB_LIMITS.indexChunksDefault`. Always read
   /// through `effectiveChunkLimit()`, which clamps to the admin ceiling and bound.

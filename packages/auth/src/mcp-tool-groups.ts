@@ -26,7 +26,7 @@ export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
  * with propose-only access becomes a pull request, and the person behind it
  * may follow and close it from any of their credentials that can propose
  * so no preset hands out a token that opens PRs it cannot manage
- * (R3-W8). Merging still needs the review permission no editing preset holds.
+ * Merging still needs the review permission no editing preset holds.
  */
 export const MCP_TOOL_PRESETS = {
   read: ["read"],

@@ -51,7 +51,7 @@ describe("isPrivateIp (IPv6)", () => {
   });
 
   it.each(["::127.0.0.1", "::10.0.0.1", "::169.254.169.254", "::a9fe:a9fe"])(
-    "rejects the deprecated IPv4-compatible form %s (pre-move behavior restored)",
+    "rejects the deprecated IPv4-compatible form %s",
     (ip) => {
       expect(isPrivateIp(ip, 6)).toBe(true);
     },

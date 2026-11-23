@@ -8,7 +8,7 @@ const USER_INPUT_ERROR_PATTERN =
   /invalid (password|email|credentials|token|otp|two[- ]?factor)|user not found|email not verified|password is incorrect|account not found|failed to verify|already exists|too many (requests|attempts)/i;
 
 /**
- * Better Auth's logger callback (R3-W3). The library passes free text and the
+ * Better Auth's logger callback. The library passes free text and the
  * original exceptions (which can carry tokens, cookies or SQL); we print a
  * fixed record only: its level and, for an error argument, its class and code.
  */

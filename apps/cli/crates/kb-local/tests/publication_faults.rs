@@ -1,4 +1,4 @@
-//! R52b native recovery and mandatory survivor regressions. No mocked Git,
+//! Native recovery and mandatory survivor regressions. No mocked Git,
 //! SQLite, filesystem barrier or OS fence; every fixture is private.
 #![cfg(target_os = "linux")]
 
@@ -33,7 +33,7 @@ impl Fixture {
             .expect("native fixture operation")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "r52b-{}-{}-{nonce}",
+            "fault-{}-{}-{nonce}",
             std::process::id(),
             SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
@@ -63,12 +63,15 @@ impl Fixture {
             .arg(&library)
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/publication_fault.c"))
             .arg(format!(
-                "-DR52_CONTROL=\"{}\"",
+                "-DPUBLICATION_FAULT_CONTROL=\"{}\"",
                 self.0.join("control").display()
             ))
-            .arg(format!("-DR52_MARKER=\"{}\"", self.0.join("hit").display()))
             .arg(format!(
-                "-DR52_PID=\"{}\"",
+                "-DPUBLICATION_FAULT_MARKER=\"{}\"",
+                self.0.join("hit").display()
+            ))
+            .arg(format!(
+                "-DPUBLICATION_FAULT_PID=\"{}\"",
                 self.0.join("git-pid").display()
             ))
             .arg("-ldl")
@@ -80,7 +83,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if std::env::var_os("R52_ROLE").is_none() {
+        if std::env::var_os("PUBLICATION_FAULT_ROLE").is_none() {
             std::fs::remove_dir_all(&self.0).expect("native fixture operation");
         }
     }
@@ -177,11 +180,11 @@ fn proposer(store: &Store, kb: &KbId) -> kb_local::LocalPrincipal {
 // concurrently executing test's ambient environment.
 #[test]
 fn child_role() {
-    let Ok(role) = std::env::var("R52_ROLE") else {
+    let Ok(role) = std::env::var("PUBLICATION_FAULT_ROLE") else {
         return;
     };
     let fixture = Fixture(PathBuf::from(
-        std::env::var_os("R52_BASE").expect("native fixture operation"),
+        std::env::var_os("PUBLICATION_FAULT_BASE").expect("native fixture operation"),
     ));
     let (store, kb, head) = setup(&fixture);
     let repo = store.paths().repo_dir(&kb);
@@ -378,8 +381,8 @@ fn role_command(fixture: &Fixture, role: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("native fixture operation"));
     command
         .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
-        .env("R52_BASE", &fixture.0)
-        .env("R52_ROLE", role);
+        .env("PUBLICATION_FAULT_BASE", &fixture.0)
+        .env("PUBLICATION_FAULT_ROLE", role);
     command
 }
 

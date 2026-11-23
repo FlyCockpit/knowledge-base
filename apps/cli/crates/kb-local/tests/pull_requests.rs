@@ -1739,10 +1739,10 @@ fn fix_timeout_after_reservation_recovers_abort_before_new_key_publication() {
 }
 
 #[test]
-fn r52c_pr_mutations_share_durable_budget_and_exempt_replay() {
+fn pr_mutations_share_durable_budget_and_exempt_replay() {
     // The local per-actor, per-KB write window.
     const FULL: usize = kb_local::limits::LOCAL_MUTATIONS_PER_MINUTE_PER_KB;
-    let k = Kb::new("r52c-pr-budget");
+    let k = Kb::new("admit-pr-budget");
     k.store.set_cursor_clock_for_tests(2_000_000_000);
     let owner = k.store.owner();
     let head = k.user_branch(&owner, "user/budget", &[("budget.md", b"# Budget\n")]);
@@ -1756,7 +1756,7 @@ fn r52c_pr_mutations_share_durable_budget_and_exempt_replay() {
         (owner.actor_key(),k.kb.as_str()),|r|r.get::<_,i64>(0)).expect("charges")
     };
     seed(FULL - 1);
-    let request = k.create_input("user/budget", &head, "r52c-pr-create-0000");
+    let request = k.create_input("user/budget", &head, "admit-pr-create-0000");
     let created = k
         .store
         .pull_requests_create(&owner, request.clone())
@@ -1775,7 +1775,7 @@ fn r52c_pr_mutations_share_durable_budget_and_exempt_replay() {
                 &owner,
                 &created.pr,
                 decision,
-                &format!("r52c-pr-{decision}-0000"),
+                &format!("admit-pr-{decision}-0000"),
             ),
             ErrorCode::RateLimited,
         );
@@ -1784,11 +1784,11 @@ fn r52c_pr_mutations_share_durable_budget_and_exempt_replay() {
     }
     seed(FULL - 1);
     let merged = k
-        .review(&owner, &created.pr, "merge", "r52c-pr-merge-0000")
+        .review(&owner, &created.pr, "merge", "admit-pr-merge-0000")
         .expect("merge last slot");
     assert_eq!(charges(), FULL as i64);
     assert_eq!(
-        k.review(&owner, &created.pr, "merge", "r52c-pr-merge-0000")
+        k.review(&owner, &created.pr, "merge", "admit-pr-merge-0000")
             .expect("merge replay")
             .operation_id,
         merged.operation_id
@@ -1802,17 +1802,17 @@ fn r52c_pr_mutations_share_durable_budget_and_exempt_replay() {
         .edit(
             &proposer,
             &main,
-            "r52c-pr-propose-0000",
+            "admit-pr-propose-0000",
             edit("create", "close.md", "# Close\n"),
         )
         .proposal
         .expect("proposal");
     let closed = k
-        .review(&owner, &proposal, "close", "r52c-pr-close-final-0000")
+        .review(&owner, &proposal, "close", "admit-pr-close-final-0000")
         .expect("close fresh window");
     assert_eq!(charges(), 1);
     assert_eq!(
-        k.review(&owner, &proposal, "close", "r52c-pr-close-final-0000")
+        k.review(&owner, &proposal, "close", "admit-pr-close-final-0000")
             .expect("close replay")
             .operation_id,
         closed.operation_id
@@ -1834,19 +1834,19 @@ fn proposal_conflict(error: StoreError) -> Box<kb_client::error::ProposalConflic
     }
 }
 
-/// R3-L3: locally, as on the server: a clashing PR reads CONFLICT and
+/// Locally, as on the server: a clashing PR reads CONFLICT and
 /// refuses to merge with typed details; the author moves it onto main by
 /// proposing against current main, progressively, keeping its number and
 /// title; then it merges.
 #[test]
 fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_merged() {
-    let k = Kb::new("d11-local");
+    let k = Kb::new("clash-local");
     let author = k.principal(&[Permission::Propose]);
     let owner = k.store.owner();
     let first = k.edit(
         &author,
         &k.main,
-        "d11-propose-0001-key",
+        "clash-propose-0001-key",
         json!([
             {"op":"create","path":"proposals/three.md","content":{"markdown":"# Three\n\nfrom the PR\n"}},
             {"op":"create","path":"proposals/four.md","content":{"markdown":"# Four\n\nfrom the PR\n"}},
@@ -1861,7 +1861,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         .edit(
             &owner,
             &k.main,
-            "d11-main-000001-key",
+            "clash-main-000001-key",
             json!([
                 {"op":"create","path":"proposals/three.md","content":{"markdown":"# Three\n\nfrom main\n"}},
                 {"op":"create","path":"proposals/four.md","content":{"markdown":"# Four\n\nfrom main\n"}}
@@ -1880,7 +1880,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     );
     // Merge refuses with every clashing path and its three versions.
     let refused = proposal_conflict(
-        k.review(&owner, &viewed, "merge", "d11-merge-00001-key")
+        k.review(&owner, &viewed, "merge", "clash-merge-00001-key")
             .expect_err("conflicting merge"),
     );
     assert_eq!(refused.head_sha, main);
@@ -1906,7 +1906,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     let stale = k.try_edit(
         &author,
         &main,
-        "d11-stale-00001-key",
+        "clash-stale-00001-key",
         edit("create", "other.md", "o"),
         Some(99),
     );
@@ -1919,7 +1919,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         k.try_edit(
             &author,
             &main,
-            "d11-unrelated-01-key",
+            "clash-unrelated-01-key",
             edit("create", "other.md", "o"),
             None,
         )
@@ -1933,7 +1933,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         .try_edit_pr(
             &author,
             &main,
-            "d11-resolve-0001-key",
+            "clash-resolve-0001-key",
             edit("replace", "proposals/three.md", "# Three\n\nresolved\n"),
             pr.number,
             &pr.head_sha,
@@ -1945,7 +1945,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         .try_edit_pr(
             &author,
             &main,
-            "d11-resolve-stale-key",
+            "clash-resolve-stale-key",
             edit("replace", "proposals/four.md", "# Four\n\nstale\n"),
             pr.number,
             &pr.head_sha,
@@ -1957,7 +1957,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     }
     let moved = step.proposal.clone().expect("proposal");
     assert_eq!(moved.number, pr.number);
-    assert_eq!(moved.title, title, "R3-W5: the title is kept");
+    assert_eq!(moved.title, title, "the title is kept");
     assert_eq!(moved.base_sha, main, "the PR moved onto main");
     assert_eq!(moved.status, PrStatus::Conflict);
     assert_eq!(
@@ -1971,7 +1971,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
             &owner,
             &k.get(pr.number, None).pr,
             "merge",
-            "d11-merge-00002-key",
+            "clash-merge-00002-key",
         )
         .expect_err("still conflicting"),
     );
@@ -1986,7 +1986,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         .try_edit(
             &author,
             &main,
-            "d11-resolve-0002-key",
+            "clash-resolve-0002-key",
             edit("replace", "proposals/four.md", "# Four\n\nfrom the PR\n"),
             None,
         )
@@ -1998,7 +1998,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
         .try_edit_pr(
             &author,
             &main,
-            "d11-resolve-0003-key",
+            "clash-resolve-0003-key",
             edit("replace", "proposals/four.md", "# Four\n\nfrom the PR\n"),
             pr.number,
             &step.commit_sha,
@@ -2013,7 +2013,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     let viewed = k.get(pr.number, None).pr;
     assert_eq!(viewed.status, PrStatus::Open);
     let merged = k
-        .review(&owner, &viewed, "merge", "d11-merge-00003-key")
+        .review(&owner, &viewed, "merge", "clash-merge-00003-key")
         .expect("merges once resolved");
     assert_eq!(merged.pr.status, PrStatus::Merged);
     let head = k.head();
@@ -2039,7 +2039,7 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
 /// sides can combine is not a conflict.
 #[test]
 fn moving_onto_main_replays_clean_changes_and_line_merges() {
-    let k = Kb::new("d11-replay");
+    let k = Kb::new("clash-replay");
     let author = k.principal(&[Permission::Propose]);
     let owner = k.store.owner();
     let base = k
@@ -2187,7 +2187,7 @@ fn bulk_commit(k: &Kb, dir: &str, docs: &[(String, Vec<u8>)], parents: &[&str]) 
 
 /// The shared real-Git corpus (`fixtures/text-merge-cases.json`, generated by
 /// the server's merge): every case is one document of ONE local merge, and
-/// the clean results and clashes match the server exactly (R3 review: native
+/// the clean results and clashes match the server exactly (native
 /// merge parity, not stubbed line merges).
 #[test]
 fn native_line_merges_match_the_servers_real_git_corpus() {
@@ -2234,7 +2234,7 @@ fn native_line_merges_match_the_servers_real_git_corpus() {
 /// Near the repository limits (4,000 documents, each changed cleanly on both
 /// sides), the status check and the reviewed merge stay inside the 30-second
 /// PR deadline: one merge-tree for every line merge, not one Git process per
-/// document (R3 review). The deadline itself is not raised.
+/// document. The deadline itself is not raised.
 #[test]
 fn four_thousand_line_merges_fit_the_pr_deadline() {
     let k = Kb::new("near-limit-merges");
@@ -2364,7 +2364,7 @@ fn clashing_pr_by(tag: &str) -> (Kb, PrSummary, Sha, LocalPrincipal) {
     (k, pr, main, author)
 }
 
-/// R3 review: the status filter of a list sees statuses made current first
+/// The status filter of a list sees statuses made current first
 /// (no prior read), so a freshly clashing PR is found under CONFLICT and not
 /// under OPEN, with the main it was checked against.
 #[test]
@@ -2388,7 +2388,7 @@ fn list_filters_on_current_statuses() {
     );
 }
 
-/// R3 review: a Git execution failure during the status check is an error,
+/// A Git execution failure during the status check is an error,
 /// never a cached or recorded content conflict.
 #[test]
 fn git_failures_never_become_conflicts() {
@@ -2424,7 +2424,7 @@ fn git_failures_never_become_conflicts() {
     assert_eq!(k.get(pr.number, None).pr.status, PrStatus::Conflict);
 }
 
-/// R3 review: retrying a refused merge with its key replays the typed
+/// Retrying a refused merge with its key replays the typed
 /// PROPOSAL_CONFLICT (paths and versions), not a bare CONFLICT.
 #[test]
 fn a_refused_merge_replays_its_typed_details() {
@@ -2448,7 +2448,7 @@ fn a_refused_merge_replays_its_typed_details() {
     );
 }
 
-/// R3 review: a dream PR is pinned to its own main — neither an ordinary
+/// A dream PR is pinned to its own main — neither an ordinary
 /// edit naming it nor the author's implicit selection moves it onto main.
 #[test]
 fn ordinary_edits_never_move_a_dream_pr() {
@@ -2489,7 +2489,7 @@ fn ordinary_edits_never_move_a_dream_pr() {
     assert_eq!(k.get(pr.number, None).pr.base_sha, pr.base_sha);
 }
 
-/// R3 review: a no-op names the revision it was evaluated on — the PR head a
+/// A no-op names the revision it was evaluated on — the PR head a
 /// request against main reached, never the request's base.
 #[test]
 fn a_noop_reached_from_main_names_the_pr_head() {
@@ -2563,7 +2563,7 @@ fn object_set(k: &Kb) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-/// R3 review: planning never writes into the canonical object store —
+/// Planning never writes into the canonical object store —
 /// status reads, refused merges and refused updates leave its object set
 /// unchanged; only a successful publication promotes what it needs.
 #[test]
@@ -2664,7 +2664,7 @@ fn deep_commit(k: &Kb, docs: &[(String, Vec<u8>)], parents: &[&str]) -> Sha {
     sha(&k.git.commit(&tree, parents))
 }
 
-/// R3 review: a valid tree with thousands of distinct subtrees (320
+/// A valid tree with thousands of distinct subtrees (320
 /// documents, each 24 directories deep: 7,680 subtrees, about 8,000 entries)
 /// is planned within the 30-second deadline by status checks, a move onto
 /// main and the reviewed merge — trees are written in batches, not one Git
@@ -2782,7 +2782,7 @@ fn thousands_of_distinct_subtrees_fit_the_pr_deadline() {
     );
 }
 
-/// R3 review, one consent rule: a request against main overwrites a path
+/// One consent rule: a request against main overwrites a path
 /// the caller's PR changed — a fresh conflict here, document or asset — only
 /// by naming the PR with the head it read; otherwise nothing is applied.
 #[test]
@@ -2949,7 +2949,7 @@ fn overwriting_any_pr_changed_path_requires_naming_the_pr() {
     }
 }
 
-/// R3 review: promotion installs an indexed pack. An
+/// Promotion installs an indexed pack. An
 /// interrupted install leaves no journal row and no blocked name: the next
 /// attempt publishes, even with Git's temporary garbage left in place.
 #[test]
@@ -3086,7 +3086,7 @@ fn a_truncated_pack_exposes_no_partial_graph_and_retries() {
     assert_eq!(k.head(), merged.pr.merge_commit_sha.unwrap());
 }
 
-/// R3 review: a store path containing `:` (a path-list delimiter) plans and
+/// A store path containing `:` (a path-list delimiter) plans and
 /// publishes; the disposable store reaches the canonical one through its
 /// `info/alternates` file.
 #[cfg(unix)]

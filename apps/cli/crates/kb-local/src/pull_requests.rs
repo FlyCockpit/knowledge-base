@@ -103,9 +103,7 @@ fn review_permission(
 /// Same complete key as the server's proposals::mergeabilityKey. Local sealed
 /// namespaces belong to the immutable store identity (no configured origin).
 pub(crate) fn mergeability_key(main: &Sha, generation: i64, row: Option<(&Sha, u64)>) -> String {
-    // v2: dreams may overwrite `agent` documents (write modes); v1 verdicts
-    // are stale (the server's proposals.ts bumps the same version).
-    let prefix = format!("v2:{}:{generation}:\"\"", main.as_str());
+    let prefix = format!("v1:{}:{generation}:\"\"", main.as_str());
     match row {
         Some((head, version)) => format!("{prefix}:{}:{version}", head.as_str()),
         None => prefix,
@@ -1055,7 +1053,7 @@ mod mergeability_key_tests {
         let key = mergeability_key(&main, 3, Some((&head, 2)));
         assert_eq!(
             key,
-            format!("v2:{}:3:\"\":{}:2", main.as_str(), head.as_str())
+            format!("v1:{}:3:\"\":{}:2", main.as_str(), head.as_str())
         );
         assert_ne!(key, mergeability_key(&head, 3, Some((&head, 2))));
         assert_ne!(key, mergeability_key(&main, 4, Some((&head, 2))));

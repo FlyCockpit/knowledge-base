@@ -93,7 +93,7 @@ export type TreeValidationSuccess = {
 
 export type TreeValidationResult = TreeValidationSuccess | TreeValidationFailure;
 
-/** `blob` is the object holding the reference at `path` (L-8). */
+/** `blob` is the object holding the reference at `path`. */
 export type SealedReferenceOccurrence = { reference: string; path: string; blob: string };
 
 export type TreeValidationOptions = {
@@ -107,7 +107,7 @@ export type TreeValidationOptions = {
     refs: readonly SealedReferenceOccurrence[],
   ) => TreeValidationFailure | null;
   /**
-   * L-8: `path -> blob` of the commit this tree builds on (or the intersection
+   * `path -> blob` of the commit this tree builds on (or the intersection
    * of eligible validated parents for a pushed merge). References in a
    * blob unchanged at its path were validated when it was written, so a later
    * revocation never blocks unrelated writes; only changed paths must
@@ -192,7 +192,7 @@ function repoObjectSource(repoPath: string): TreeObjectSource {
   // across repositories, quarantine contexts or validation calls.
   const sizesBySha = new Map<string, number>();
   // Blobs of the walked tree in one batched read when within the byte
-  // budgets (the per-blob path below reports anything else as before).
+  // budgets (the per-blob path below reads and reports anything else).
   let cached: Map<string, Buffer> | null = null;
   return {
     walkEntries: (treeSha, budget, incoming) => {
@@ -641,7 +641,7 @@ export async function validateNewlyReachableCommits(
     const connectedToOld = new Set([input.oldSha]);
     let tip: TreeValidationResult | undefined;
     for (const commitSha of commits) {
-      // L-8: parent order must never grant a sealed exemption. Follow parents
+      // Parent order must never grant a sealed exemption. Follow parents
       // connected to the branch's old tip; side histories have no branch tip
       // of their own, so every parent is eligible. Only a blob identical at
       // its path in ALL eligible parents is unambiguously unchanged. This

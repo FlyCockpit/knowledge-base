@@ -135,7 +135,7 @@ async fn a_one_document_edit_embeds_only_the_changed_chunks() {
             .query_row("SELECT int8_scale FROM meta", [], |r| r.get(0))
             .expect("scale");
         drop(db);
-        // A one-line edit of one document (L-3).
+        // A one-line edit of one document.
         seen.borrow_mut().clear();
         publish(
             &f,
@@ -217,7 +217,7 @@ async fn an_interrupted_build_resumes_from_its_checkpoint_and_embeds_each_chunk_
         result.err().expect("cancelled").protocol_code(),
         kb_client::ErrorCode::Cancelled
     );
-    // L-1: back to PENDING, never permanently FAILED.
+    // Back to PENDING, never permanently FAILED.
     assert_eq!(f.status().desired_state, Some(IndexState::Pending));
     let first = seen.borrow().len();
     assert!(first > 0);
@@ -371,7 +371,7 @@ async fn superseded_companions_are_retired_and_reclaimed() {
     assert!(f.store.paths().index_file(&f.kb, &job_c).is_file());
 }
 
-/// Codex r7 #1: a shorter admission/lock/storage deadline while the build's
+/// A shorter admission/lock/storage deadline while the build's
 /// watchdog is live is transient, never a stall, however often it happens.
 #[tokio::test]
 async fn an_admission_deadline_inside_a_live_watchdog_is_never_a_stall() {
@@ -471,7 +471,7 @@ fn checkpoint_rows(f: &Fixture) -> Option<i64> {
     })
 }
 
-/// Codex r11 #2 (invariant 1): committed progress resets stall accounting in
+/// Committed progress resets stall accounting in
 /// the same transaction, so stall -> progress/shutdown -> stall -> ... never
 /// reaches INDEX_BUILD_STALLED while progress separates the stalls.
 #[tokio::test]
@@ -529,7 +529,7 @@ async fn progress_between_stalls_resets_stall_accounting() {
     assert_eq!(f.status().desired_state, Some(IndexState::Pending));
 }
 
-/// Codex r11 #3 (invariant 2): repeated superseding builds keep only the
+/// Repeated superseding builds keep only the
 /// current generation's vectors; a revocation (lexical desired) and an
 /// activation reclaim the checkpoint.
 #[tokio::test]
@@ -569,7 +569,7 @@ async fn the_checkpoint_stays_bounded_across_supersession_and_revocation() {
     assert_eq!(checkpoint_rows(&f), None);
 }
 
-/// R3-L2: a commit that supersedes a running semantic build (never
+/// A commit that supersedes a running semantic build (never
 /// published) must not end reuse: the next build copies the unchanged chunks
 /// from the active hybrid file and embeds only the changed ones.
 #[tokio::test]
@@ -618,7 +618,7 @@ async fn a_build_superseded_mid_build_still_reuses_the_active_file() {
     );
 }
 
-/// Review #5: a newest candidate whose hash table is damaged falls through
+/// A newest candidate whose hash table is damaged falls through
 /// to an older usable file instead of failing the build.
 #[tokio::test]
 async fn a_damaged_newest_reuse_candidate_falls_through_to_an_older_one() {
@@ -686,7 +686,7 @@ async fn a_damaged_newest_reuse_candidate_falls_through_to_an_older_one() {
     );
 }
 
-/// Review #5: more unpublished superseded generations than one candidate
+/// More unpublished superseded generations than one candidate
 /// page never hide the retained usable source.
 #[tokio::test]
 async fn a_burst_of_superseded_builds_never_hides_the_reuse_source() {
@@ -730,7 +730,7 @@ async fn a_burst_of_superseded_builds_never_hides_the_reuse_source() {
     );
 }
 
-/// Review r2 #5: cancellation stops the reuse walk at once, however many
+/// Cancellation stops the reuse walk at once, however many
 /// candidates remain; the attempt goes back to PENDING (interrupted).
 #[tokio::test]
 async fn cancellation_stops_the_reuse_walk() {
@@ -788,7 +788,7 @@ async fn cancellation_stops_the_reuse_walk() {
     assert_eq!(f.status().desired_state, Some(IndexState::Pending));
 }
 
-/// Review r2 #2: a stored vector of the wrong width is never copied on: the
+/// A stored vector of the wrong width is never copied on: the
 /// chunk is embedded again and the new file holds only full-width vectors.
 #[tokio::test]
 async fn a_malformed_stored_vector_is_embedded_again_not_copied() {

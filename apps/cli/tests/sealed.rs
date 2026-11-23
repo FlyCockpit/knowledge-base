@@ -202,7 +202,7 @@ fn isolated_native_cli_lifecycle_replays_and_preserves_symbolic_source() {
         "00000000-0000-4000-8000-000000000003".parse().unwrap(),
         [2; 32],
     );
-    // Typed by a person: the unpadded URL-safe spelling is accepted (R3-L12).
+    // Typed by a person: the unpadded URL-safe spelling is accepted.
     let public = recipient
         .public_key_base64()
         .trim_end_matches('=')

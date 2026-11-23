@@ -323,7 +323,7 @@ export function checkRuntimeDeployment(role, env = process.env) {
     artifact("/app/scripts/init-kb-volumes.mjs");
     executable("/usr/local/bin/kb-child-guard");
     checkMigrationArtifacts("/app", artifact);
-    // Index files (P4): the stock better-sqlite3 binary (its packaged glibc
+    // Index files: the stock better-sqlite3 binary (its packaged glibc
     // prebuilt) and the sqlite-vec loadable resolve from the role's own package;
     // the server also needs its reader thread entry.
     const roleRequire = createRequire(`/app/apps/${role}/package.json`);

@@ -20,8 +20,8 @@ vi.mock("openai", () => ({
 
 // Mock @knowledge-base/env/shared (the worker-safe env the translation providers
 // import) because the provider reads TRANSLATION_MODEL/PROVIDER from it at
-// module load. The OpenRouter HTTP-Referer now comes off process.env directly,
-// not validated env, so BETTER_AUTH_URL is no longer mocked here. Default to a
+// module load. The OpenRouter HTTP-Referer comes off process.env directly,
+// not validated env, so BETTER_AUTH_URL is not mocked here. Default to a
 // minimal env; tests that need different values use `vi.doMock` after
 // `vi.resetModules()`.
 vi.mock("@knowledge-base/env/shared", () => ({

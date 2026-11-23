@@ -688,7 +688,7 @@ async function seedFixture() {
   });
   // A FAILED build in the bundle (restored as FAILED, purgeable later), and a BUILDING build whose
   // generation still references the RESERVED reservation: restore must clear the ids before it
-  // cancels the job (guard I2 would refuse the cancel otherwise).
+  // cancels the job (the cancel guard refuses it otherwise).
   const failedBuild = await db.$transaction((tx) => scheduleIndexBuild(prismaAssetQuery(tx), kbId));
   await db.durableJob.update({ where: { id: failedBuild!.jobId }, data: { state: "FAILED" } });
   await db.indexGeneration.update({
@@ -1517,7 +1517,7 @@ it("S3 reference backup ignores cache; replica restore binds generation, preserv
     const file = await coordinateBackup(input);
     const { readBundle } = await import("../../../../scripts/lib/kb-backup.mjs");
     const bundle = await readBundle(file, f.identity);
-    expect(bundle.metadata.version).toBe(3);
+    expect(bundle.metadata.version).toBe(1);
     expect(bundle.files.some((e) => e.path.startsWith("assets/"))).toBe(false);
     expect(bundle.files.find((e) => e.path === "asset-inventory.jsonl")?.bytes.toString()).toBe(
       JSON.stringify({ hash: `sha256:${f.hex}`, size: f.blob.length }) + "\n",

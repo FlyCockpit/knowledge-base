@@ -106,8 +106,8 @@ pub enum StoreError {
     OperationAborted(ErrorCode),
     DeadlineExceeded,
     StorageUnavailable(String),
-    /// A failure with a specific human explanation for the local owner's CLI
-    /// (L-10). The wire carries only `code` with empty details.
+    /// A failure with a specific human explanation for the local owner's
+    /// CLI. The wire carries only `code` with empty details.
     Explained(ErrorCode, String),
     Internal(String),
     Io(io::Error),
@@ -469,7 +469,7 @@ pub struct Store {
     /// launch's own, or one a reopened handle shares; a reopen's own is
     /// never owed.
     pub(crate) runtime_reconcile: std::cell::RefCell<RuntimeReconcile>,
-    /// Review r2 #4: the per-user model cache, so effective availability
+    /// The per-user model cache, so effective availability
     /// sees whether the built-in's file is actually there.
     model_cache: std::cell::RefCell<Option<crate::model_download::ModelCache>>,
     // Owns shutdown/join; expiry never outlives this handle.
@@ -723,7 +723,7 @@ fn initialize_locked(
     Ok(())
 }
 
-/// A nonempty directory without `state.sqlite` is never adopted (L-17): it is
+/// A nonempty directory without `state.sqlite` is never adopted: it is
 /// usually a mistyped `--root`, rarely a store that lost its registry.
 fn not_a_store(root: &Path) -> StoreError {
     StoreError::Explained(
@@ -737,7 +737,7 @@ fn not_a_store(root: &Path) -> StoreError {
 
 impl Store {
     /// Open an existing managed store; never create one (read-only CLI
-    /// commands, L-17).
+    /// commands).
     pub fn open_existing(root: &Path) -> Result<Store, StoreError> {
         match std::fs::symlink_metadata(root) {
             Ok(_) => {}
@@ -1089,7 +1089,7 @@ impl Store {
         Ok(cache.resolve(&crate::qwen::descriptor(model_id)?).is_ok())
     }
 
-    /// Forget this store's query-embedding breakers (R3-L4; tests only).
+    /// Forget this store's query-embedding breakers (tests only).
     #[doc(hidden)]
     pub fn reset_query_breakers_for_tests(&self) {
         crate::breaker::forget(&format!("{}|", self.store_uuid()));
@@ -1306,7 +1306,7 @@ impl Store {
         Ok(LocalPrincipal::new(id.as_str().to_owned(), kind))
     }
 
-    /// L-23: an owner-created CONFIG principal holding `access` (and the
+    /// An owner-created CONFIG principal holding `access` (and the
     /// access it implies) on each of `kbs`, for `kb mcp --principal <id>`.
     /// A propose-only principal's writes become pull requests on the KB.
     pub fn create_config_principal(

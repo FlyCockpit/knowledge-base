@@ -362,7 +362,7 @@ pub(crate) fn apply_proposal_delta(
         )?;
         return Ok(());
     }
-    // R3-W5: an update keeps the PR's title; its own title is only that
+    // An update keeps the PR's title; its own title is only that
     // commit's message. A move onto main also moves the base.
     let advanced = tx.execute(
         "UPDATE pull_requests SET base_sha = ?4, head_sha = ?5, target_sha = ?6, status = ?10, \

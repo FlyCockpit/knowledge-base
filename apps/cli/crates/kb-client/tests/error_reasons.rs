@@ -1,4 +1,4 @@
-//! (L-9): `INVALID_ARGUMENT` / `CONFLICT` reasons and JSON pointers.
+//! `INVALID_ARGUMENT` / `CONFLICT` reasons and JSON pointers.
 
 use kb_client::error::{
     ConflictReason, ErrorCode, ErrorDetails, InvalidReason, KbError, ToolError,
@@ -310,7 +310,7 @@ fn schema_violations_carry_reason_and_pointer() {
         ),
         (
             ToolName::KnowledgeDocumentsList,
-            // L-22: one trailing slash is valid; a traversal is not.
+            // One trailing slash is valid; a traversal is not.
             json!({"kbId": kb, "prefix": "../notes/"}),
             json!({"reason": "INVALID_PREFIX", "field": "/prefix"}),
         ),

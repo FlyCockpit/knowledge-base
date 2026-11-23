@@ -63,7 +63,7 @@ function PullRequestSession({
     ...kbQuery,
     queryKey: [...kbQuery.queryKey, viewerActorKey],
   });
-  // The review panel states every outcome inline; no generic toast on top (R2-4).
+  // The review panel states every outcome inline; no generic toast on top.
   const { mutateAsync: submitReview } = useMutation(
     orpc.pullRequests.review.mutationOptions({ meta: { skipGlobalErrorToast: true } }),
   );

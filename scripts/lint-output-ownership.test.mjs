@@ -1,5 +1,5 @@
 /**
- * R3-W3: the logger writes the dedicated channel; the output supervisor alone
+ * The logger writes the dedicated channel; the output supervisor alone
  * publishes process output. `.oxlintrc.json` enforces direct usage with
  * standard rules as fast developer feedback. Aliases and CommonJS loading
  * are covered by runtime ownership, not an expanding lint blacklist.

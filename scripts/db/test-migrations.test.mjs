@@ -9,17 +9,17 @@ test("the throwaway container: the flag replaces the name, TEST_CONTAINER_PREFIX
     "knowledge-base-test-migrations",
   );
   assert.equal(
-    containerPrefix([], { TEST_CONTAINER_PREFIX: "rp5-x" }),
-    "rp5-x-knowledge-base-test-migrations",
+    containerPrefix([], { TEST_CONTAINER_PREFIX: "ci-x" }),
+    "ci-x-knowledge-base-test-migrations",
   );
   assert.equal(
-    containerPrefix([], { TEST_CONTAINER_PREFIX: "rp5-x-" }),
-    "rp5-x-knowledge-base-test-migrations",
+    containerPrefix([], { TEST_CONTAINER_PREFIX: "ci-x-" }),
+    "ci-x-knowledge-base-test-migrations",
   );
   // The flag wins over the variable.
   assert.equal(
     containerPrefix(["node", "x", "--container-prefix", "ci-2"], {
-      TEST_CONTAINER_PREFIX: "rp5-x",
+      TEST_CONTAINER_PREFIX: "ci-x",
     }),
     "ci-2",
   );

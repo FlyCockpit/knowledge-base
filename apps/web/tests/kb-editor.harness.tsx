@@ -99,10 +99,10 @@ const harness = {
 };
 declare global {
   interface Window {
-    __r38: typeof harness;
+    __kbEditor: typeof harness;
   }
 }
-window.__r38 = harness;
+window.__kbEditor = harness;
 
 createRoot(window.document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>

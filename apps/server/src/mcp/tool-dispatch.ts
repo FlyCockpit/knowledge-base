@@ -118,7 +118,7 @@ export function toolSuccess(name: KbToolName, data: unknown) {
   const parsed = schemas[name].output.parse(data);
   return buildKbSuccessCallToolResult(parsed, indexNoticeWarnings(parsed));
 }
-/** Codes that mean the server failed, not the caller: the operator must see the cause (R3-W3). */
+/** Codes that mean the server failed, not the caller: the operator must see the cause. */
 const LOGGED_FAILURES = new Set(["INTERNAL", "STORAGE_UNAVAILABLE"]);
 export function toolFailure(
   error: unknown,

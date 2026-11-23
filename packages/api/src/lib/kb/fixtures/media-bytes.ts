@@ -397,7 +397,7 @@ export function animatedLosslessWebp(): Buffer {
   );
 }
 
-/** Round-4 review repro: an ANMF containing a one-byte VP8 payload. */
+/** Repro: an ANMF containing a one-byte VP8 payload. */
 export function incompleteAnimatedWebp(): Buffer {
   return Buffer.from(
     "524946463800000057454250565038580a00000002000000000000000000414e4d461a0000000000000000000000000000000000000056503820010000007800",
@@ -405,7 +405,7 @@ export function incompleteAnimatedWebp(): Buffer {
   );
 }
 
-/** Round-4 review repro: box names without mandatory header/sample records. */
+/** Repro: box names without mandatory header/sample records. */
 export function incompleteTrackMp4(): Buffer {
   const box = (type: string, ...parts: Buffer[]) => {
     const payload = Buffer.concat(parts);
@@ -434,7 +434,7 @@ export function incompleteTrackMp4(): Buffer {
   ]);
 }
 
-/** Round-4 review repro: empty format and audio chunks. */
+/** Repro: empty format and audio chunks. */
 export function emptyFormatWav(): Buffer {
   return Buffer.from("524946461400000057415645666d7420000000006461746100000000", "hex");
 }

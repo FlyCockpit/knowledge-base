@@ -252,7 +252,7 @@ fn files_we_did_not_create_always_load_from_a_verified_private_copy() {
     std::fs::write(&file, b"abd").expect("tampered");
     assert!(cache.verified_path(&m).is_err());
     assert!(!cache.private_copy(&m).expect("copy").exists());
-    // R3-L9: `remove` deletes the private copy and leaves the shared file
+    // `remove` deletes the private copy and leaves the shared file
     // it did not create.
     std::fs::write(&file, b"abc").expect("file");
     cache.verified_path(&m).expect("copy again");
@@ -508,7 +508,7 @@ fn killed_writer_partials_are_reclaimed_only_under_the_cache_lock() {
         .expect("healthy publication after recovery");
 }
 
-/// #6: with one directory for downloads and private copies (the default),
+/// With one directory for downloads and private copies (the default),
 /// a checksum-valid group-writable file gets a distinct, owner-only copy.
 #[cfg(unix)]
 #[test]
@@ -538,7 +538,7 @@ fn a_private_copy_never_collides_with_its_source_in_the_default_cache() {
     drop(prepared);
     // The verified copy is what a load finds from now on.
     assert!(cache.resolve(&m).expect("copy").trusted);
-    // R3-L9: the source `kb` did not create stays.
+    // The source `kb` did not create stays.
     assert!(cache.remove(&m).expect("removed"));
     assert!(file.exists() && !cache.private_copy(&m).expect("copy").exists());
 }
@@ -626,7 +626,7 @@ fn a_resident_model_stops_serving_when_its_files_trust_changes() {
         .prepare_load(&m, &unsafe_copy)
         .expect_err("refused, never loaded");
     assert!(error.to_string().contains("another user"), "{error}");
-    // R3-L12: the error names the model cache, never the store.
+    // The error names the model cache, never the store.
     assert!(
         error.to_string().starts_with("unsafe path: model cache: "),
         "{error}"
@@ -664,7 +664,7 @@ fn a_resident_model_stops_serving_when_its_files_acl_is_broadened() {
     assert!(!resident.serves(&m.model_id, &changed));
 }
 
-/// #1: a writer swaps the resolved model file for a FIFO before the load
+/// A writer swaps the resolved model file for a FIFO before the load
 /// opens it. No reader blocks in `open` (no writer ever connects here): each
 /// refuses at once on the opened handle's type.
 #[cfg(unix)]
@@ -716,7 +716,7 @@ fn a_fifo_swapped_in_after_resolve_is_refused_without_blocking() {
     }
 }
 
-/// #5: status and verification name the file they inspected: with a valid
+/// Status and verification name the file they inspected: with a valid
 /// private copy and a missing or corrupted configured source, that is the
 /// private copy, not the source.
 #[cfg(unix)]
@@ -765,7 +765,7 @@ fn status_and_verify_report_the_file_actually_inspected() {
     );
 }
 
-/// Round 6 (THE trust rule): a writer that opened a file while it was
+/// The trust rule: a writer that opened a file while it was
 /// group-writable keeps its descriptor after the permissions become
 /// owner-only. The file is never parsed in place: the native load reads a
 /// fresh inode of ours filled from the hashed stream, so the retained
@@ -839,7 +839,7 @@ fn publications_always_go_to_the_private_cache_never_to_models_dir() {
     }
 }
 
-/// Round 7 (closed world): our own inodes too. A writer keeps a handle opened
+/// Closed world: our own inodes too. A writer keeps a handle opened
 /// while our recorded publication or our `verified/` copy was loosened; after
 /// the mode is restored the inode's ctime no longer matches its creation
 /// mark, so the native load reads a fresh inode filled from the hashed
@@ -921,7 +921,7 @@ fn retained_writers_on_our_own_inodes_never_reach_the_parsed_bytes() {
     );
 }
 
-/// R3-L9 / review #1: `remove` deletes only `kb`'s own creation-marked copy
+/// `remove` deletes only `kb`'s own creation-marked copy
 /// in its private `verified/` (damaged since or not) and names it; a file in
 /// `models_dir` is only ever read, so it is kept and reported with the reason.
 #[test]
@@ -1007,7 +1007,7 @@ fn a_damaged_private_copy_never_shadows_a_good_configured_file() {
     );
 }
 
-/// Review r2 #1/#3: provenance is the directory. `verified/` is `kb`'s own
+/// Provenance is the directory. `verified/` is `kb`'s own
 /// (created by `kb`, owner-only, identity recorded), so whatever is in it is
 /// `kb`'s to delete; a directory swapped in under that name is not, and
 /// nothing in it is ever deleted.
@@ -1063,7 +1063,7 @@ fn deletion_trusts_only_the_verified_directory_kb_created() {
     );
 }
 
-/// Review #1: a `verified/` that is a symlink to another directory is never
+/// A `verified/` that is a symlink to another directory is never
 /// followed to delete what is there.
 #[cfg(unix)]
 #[test]

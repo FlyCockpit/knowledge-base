@@ -50,7 +50,7 @@ describe("encodeCursor / decodeCursor", () => {
     ["not a date", Buffer.from("nope|abc", "utf8").toString("base64url")],
     // Date-parseable, but not a shape we ever minted.
     ["loose date", Buffer.from("2026|abc", "utf8").toString("base64url")],
-    ["a bare row id (the old format)", "clx0000000000000000000000"],
+    ["a bare row id", "clx0000000000000000000000"],
   ])("rejects %s", (_label, token) => {
     expect(decodeCursor(token)).toBeNull();
     expect(cursorTokenSchema.safeParse(token).success).toBe(false);

@@ -945,8 +945,8 @@ if (!/^FROM node:26-trixie-slim@sha256:[a-f0-9]{64} AS native$/m.test(serverDock
 // One Node base for every image: Debian 13 trixie, digest-pinned, read
 // from Dockerfile's base stage. Every stage that starts from a registry image
 // must use exactly that reference, so git/glibc/OpenSSL never differ between
-// the server, worker and dev images (R3-W1: a bookworm image
-// shipped a git too old for the merge code).
+// the server, worker and dev images (a bookworm image ships a git too old
+// for the merge code).
 {
   let base: string | undefined;
   try {

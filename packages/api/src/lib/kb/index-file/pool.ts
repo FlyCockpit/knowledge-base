@@ -1,5 +1,5 @@
 /**
- * Server index reader pool (§1.6): `KB_LIMITS.serverIndexReaders` worker threads, per-lane FIFO
+ * Server index reader pool: `KB_LIMITS.serverIndexReaders` worker threads, per-lane FIFO
  * queues (at most n-1 threads run "large" tasks), abort/deadline handling for queued and
  * dispatched tasks, handle eviction and stale-sweep broadcasts, and error reconstruction.
  * A dispatched task settles only on its thread's reply, so callers keep their slot (and their
@@ -289,7 +289,7 @@ export function createIndexReaderPool(options: IndexReaderPoolOptions): IndexRea
         await Promise.all(
           stopped.map(async (slot) => {
             // A dispatched read settles only once its thread is gone: callers keep their slot
-            // and Postgres lock until no native work on the file can still be running (§1.6).
+            // and Postgres lock until no native work on the file can still be running.
             await slot.worker.terminate();
             slot.busy?.fail(new KbDomainError("INDEX_UNAVAILABLE", "Index unavailable"));
             slot.busy = null;

@@ -96,7 +96,7 @@ export function shareableUrl(path: string, origin = globalThis.location?.origin)
  * Membership changed under this page (an invitation or transfer accepted):
  * drop every cached query holding this KB's private data (content and control
  * lists alike) and re-read `kbs.get` in place, so the header role and the
- * settings tabs mounted on it re-derive what is visible now (R2-11).
+ * settings tabs mounted on it re-derive what is visible now.
  */
 export function refreshAfterAcceptance(queryClient: QueryClient, kbId: string): Promise<unknown> {
   clearKbPrivateQueries(queryClient, kbId, { keepAccessCheck: true });
@@ -396,7 +396,7 @@ function MemberBitsSheet({
 }: {
   kbId: string;
   member: MemberRow;
-  /** Editing your own row: dropping Manage asks first (R2-22). */
+  /** Editing your own row: dropping Manage asks first. */
   isSelf: boolean;
   onClose: () => void;
   onDenied: () => void;
@@ -699,7 +699,7 @@ function MembersPanel({
 }
 
 /**
- * R2-21: accepting a pending request that no longer exists (already accepted,
+ * Accepting a pending request that no longer exists (already accepted,
  * revoked, or replaced by a newer invitation) answers NOT_FOUND. That is not a
  * permissions problem, so the card says the link was used or replaced.
  */

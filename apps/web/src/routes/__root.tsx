@@ -92,7 +92,7 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
       // white-status-bar-in-dark-mode bug when the OS and app themes disagree.
       {
         // Deeper routes name their page; an unknown URL whose boundary has
-        // no head of its own still says so (R3-W9).
+        // no head of its own still says so.
         title: isNotFoundHead(matches)
           ? pageTitle(match.context.i18n.t("errors:pageNotFound.title"))
           : APP_NAME,

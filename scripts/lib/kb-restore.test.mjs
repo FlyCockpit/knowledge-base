@@ -25,7 +25,7 @@ async function fixture(t) {
   return { dir, identity, recipient, file, stage };
 }
 const metadata = {
-  version: 3,
+  version: 1,
   storage: { mode: "disk" },
   instanceId: "00000000-0000-4000-8000-000000000001",
   authorityEpoch: "1",
@@ -46,7 +46,7 @@ async function forged(f, inventory, bytes = Buffer.from("dump"), extra = "") {
     ),
   ];
   const body = Buffer.concat([
-    Buffer.from("kb/backup/3\n" + JSON.stringify({ metadata, inventory }) + "\n"),
+    Buffer.from("kb/backup/1\n" + JSON.stringify({ metadata, inventory }) + "\n"),
     ...inventory.flatMap((entry) => [
       Buffer.from(JSON.stringify({ path: entry.path, size: entry.size }) + "\n"),
       bytes,
@@ -153,7 +153,7 @@ test("S3 extraction dispatches explicitly, excludes CAS and validates streamed i
       forcePathStyle: true,
     }),
   };
-  const v2 = { ...metadata, version: 3, storage };
+  const s3Metadata = { ...metadata, storage };
   const inventory = join(f.dir, "refs");
   const bytes = JSON.stringify({ hash: `sha256:${"a".repeat(64)}`, size: 5 }) + "\n";
   const source = join(f.dir, "data");
@@ -170,7 +170,7 @@ test("S3 extraction dispatches explicitly, excludes CAS and validates streamed i
     await encryptBundle({
       ...f,
       file,
-      metadata: v2,
+      metadata: s3Metadata,
       sources: [
         ...[
           "postgres.dump",
@@ -182,7 +182,7 @@ test("S3 extraction dispatches explicitly, excludes CAS and validates streamed i
     });
     const stage = join(f.dir, `stage-${i}`);
     await mkdir(stage);
-    if (i === 0) assert.equal((await extractBundle(file, f.identity, stage)).metadata.version, 3);
+    if (i === 0) assert.equal((await extractBundle(file, f.identity, stage)).metadata.version, 1);
     else await assert.rejects(extractBundle(file, f.identity, stage));
   }
 });
@@ -307,9 +307,9 @@ test("compatibility refuses unknown history/checksums and every unsupported proj
   );
 });
 
-test("prerelease encrypted bundle headers are explicitly refused", async (t) => {
+test("encrypted bundles with an unknown header are refused", async (t) => {
   const f = await fixture(t);
-  for (const version of [1, 2]) {
+  for (const version of [0, 2]) {
     const cipher = execFileSync("age", ["-r", f.recipient], {
       input: `kb/backup/${version}\n{}\n`,
     });
@@ -322,10 +322,7 @@ test("prerelease encrypted bundle headers are explicitly refused", async (t) => 
         sha256: createHash("sha256").update(cipher).digest("hex"),
       }),
     );
-    await assert.rejects(
-      extractBundle(f.file, f.identity, f.stage),
-      /PRERELEASE_FORMAT_UNSUPPORTED/,
-    );
+    await assert.rejects(extractBundle(f.file, f.identity, f.stage), /INVALID_RESTORE_BUNDLE/);
   }
 });
 

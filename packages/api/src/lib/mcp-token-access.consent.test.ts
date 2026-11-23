@@ -210,7 +210,7 @@ describe("OAuth claims require current-format stored consent", () => {
   );
 });
 
-describe("OAuth refresh of consent approved before write modes", () => {
+describe("OAuth refresh of a consent selection without a write mode", () => {
   const input = {
     referenceId: "a".repeat(64),
     grantId: "11111111-1111-4111-8111-111111111111",
@@ -245,8 +245,8 @@ describe("OAuth refresh of consent approved before write modes", () => {
     );
     return issueMcpGenerationClaims(db, input, () => now);
   };
-  // As stored before write modes: no `authoringMode` key at all.
-  const legacy = {
+  // No `authoringMode` key at all: the mode comes from the grant row.
+  const modeless = {
     scopes: ["mcp:read", "mcp:write", "offline_access"],
     toolGroups: ["read", "edit"],
     acl: [],
@@ -254,22 +254,22 @@ describe("OAuth refresh of consent approved before write modes", () => {
     createdKbBits: [],
   };
 
-  it("keeps refreshing a legacy write selection through its grant's write mode", async () => {
-    await expect(refresh(legacy, "BOTH")).resolves.toEqual({ mcp_grant_id: input.grantId });
+  it("refreshes a write selection without a mode through its grant's write mode", async () => {
+    await expect(refresh(modeless, "BOTH")).resolves.toEqual({ mcp_grant_id: input.grantId });
     // Keys a later release adds are ignored, and a stored mode is still read.
     await expect(
-      refresh({ ...legacy, authoringMode: "edit", laterKey: 1 }, "EDIT"),
+      refresh({ ...modeless, authoringMode: "edit", laterKey: 1 }, "EDIT"),
     ).resolves.toEqual({ mcp_grant_id: input.grantId });
   });
 
   it("still refuses an invalid stored ceiling or unknown scopes", async () => {
     // A write selection with no mode anywhere is no valid ceiling.
-    await expect(refresh(legacy, null)).rejects.toThrow(McpConsentError);
-    await expect(refresh({ ...legacy, scopes: ["mcp:admin"] }, "BOTH")).rejects.toThrow(
+    await expect(refresh(modeless, null)).rejects.toThrow(McpConsentError);
+    await expect(refresh({ ...modeless, scopes: ["mcp:admin"] }, "BOTH")).rejects.toThrow(
       McpConsentError,
     );
     await expect(
-      refresh({ ...legacy, allowCreate: true, createdKbBits: ["read"] }, "BOTH"),
+      refresh({ ...modeless, allowCreate: true, createdKbBits: ["read"] }, "BOTH"),
     ).rejects.toThrow(McpConsentError);
     expect(tx.mcpGrant.update).not.toHaveBeenCalled();
   });

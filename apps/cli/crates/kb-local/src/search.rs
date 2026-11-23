@@ -129,7 +129,7 @@ pub fn fuse_ranks(arms: &[Vec<(String, u64)>]) -> Vec<Ranked> {
     hits.sort_by(|a, b| b.2.total_cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
     hits
 }
-/// L-25 (TS `normalizedRrfScore`): the reply score in (0, 1], the fused RRF
+/// The reply score (TS twin `normalizedRrfScore`) in (0, 1], the fused RRF
 /// sum over its maximum for the arms that ran (`rrf * 61 / arms`). Same
 /// float operations on both sides; orders exactly like the fused sum.
 pub fn normalized_score(rrf: f64, arms: f64) -> f64 {
@@ -279,7 +279,7 @@ fn prepare_eligible(
     Ok(eligible)
 }
 type ArmRow = (i64, String, u64);
-/// Vector arm over `temp.eligible` (§1.4). int8: per-slice vec0
+/// Vector arm over `temp.eligible`. int8: per-slice vec0
 /// KNN (`k = VEC0_SLICE_K`, `rowid IN eligible`), merged and cut to 80. binary_int8_rescore: hamming to the
 /// global K(n) candidates by (distance, id), then int8 cosine rescore.
 fn vector_arm(
@@ -402,7 +402,7 @@ impl Store {
         } else if !self.generation_live(&lease.snapshot, false)? {
             Some(self.unusable_profile_reason(lease.snapshot.hybrid_profile()?)?)
         } else if self.builtin_removed(lease.snapshot.hybrid_profile()?)? {
-            // Review r2 #4: the model file was removed (removed built-in).
+            // The model file was removed (removed built-in).
             Some(LexicalOnlyReason::EmbeddingProfileUnavailable)
         } else {
             None
@@ -592,7 +592,7 @@ impl Store {
         }
         let profile = pin.lease.snapshot.hybrid_profile()?;
         let dims = profile.dimensions;
-        // R3-L4: a target whose last query embedding timed out is
+        // A target whose last query embedding timed out is
         // not tried again until its cooldown ends (one half-open probe then).
         let target = format!(
             "{}|{}:{}:{}",
@@ -1253,7 +1253,7 @@ impl Store {
         }
     }
     /// The built-in runtime a search embeds with names the model cache its
-    /// effective availability reads (review r2 #4).
+    /// effective availability reads.
     fn attach_runtime_cache(&self, io: &IndexEmbedder<'_>) {
         if let IndexEmbedder::Builtin(runtime)
         | IndexEmbedder::Routed {

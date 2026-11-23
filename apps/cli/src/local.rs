@@ -1,5 +1,5 @@
 //! Local-store selection shared by `kb mcp`, `kb model`, `kb sealed` and
-//! `kb providers` (L-16/L-17): `--root`, else the config file's `root`.
+//! `kb providers`: `--root`, else the config file's `root`.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};

@@ -17,7 +17,7 @@ import "@knowledge-base/env/load-dotenv";
 
 // Import-time failures (env validation, a client constructor) never reach
 // Node's default handler, which would print the raw error and its stack: they
-// become one fixed startup record and a non-zero exit (R3-W3). The handlers
+// become one fixed startup record and a non-zero exit. The handlers
 // cover rejections escaping the import too, and hand over to the runtime's own
 // handlers once the application graph has loaded.
 // The output supervisor's record channel first, before anything can log: this

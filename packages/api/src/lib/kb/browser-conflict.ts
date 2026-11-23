@@ -1,5 +1,5 @@
 /**
- * The CONFLICT details a browser save may receive (R3-W6). Pure: the
+ * The CONFLICT details a browser save may receive. Pure: the
  * web editor's tests feed real domain details through this same function, so
  * the router-to-editor contract cannot drift.
  *

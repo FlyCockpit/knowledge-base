@@ -138,7 +138,7 @@ export const pullRequestsRouter = {
         };
       }),
     ),
-  /** R3-W6: the paths an open PR still has to resolve, with their versions' revisions. */
+  /** The paths an open PR still has to resolve, with their versions' revisions. */
   conflicts: protectedProcedure
     .input(kbReadToolSchemas.knowledge_pull_requests_get.input.pick({ kbId: true, number: true }))
     .handler(({ context, input, signal }) =>
@@ -146,7 +146,7 @@ export const pullRequestsRouter = {
         getPullRequestConflicts({ ...reads(context.session.user.id), signal }, input),
       ),
     ),
-  /** R3-W6: the viewer's own open PR changing the document at `path`, if any. */
+  /** The viewer's own open PR changing the document at `path`, if any. */
   forDocument: protectedProcedure
     .input(
       z.object({

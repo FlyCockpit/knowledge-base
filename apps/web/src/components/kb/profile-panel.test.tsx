@@ -163,7 +163,7 @@ describe("generation state", () => {
     expect(wrap(<ProfileStatusView profile={summary()} index={lexical} />)).toContain(
       enKb.settings.profile.lexicalFailing,
     );
-    // R2-27: a reader has no chooser "below".
+    // A reader has no chooser "below".
     const reader = wrap(<ProfileStatusView profile={null} index={lexical} canManage={false} />);
     expect(reader).toContain(enKb.settings.profile.lexicalNoProfileReader);
     expect(reader).not.toContain("below");
@@ -334,7 +334,7 @@ describe("probe failure causes", () => {
       failure: { kind: "http_status", status: 401 },
     });
     expect(status).toContain("The endpoint refused the API key (HTTP 401).");
-    // R2-26: a known cause replaces the generic line instead of contradicting it.
+    // A known cause replaces the generic line instead of contradicting it.
     expect(status).not.toContain("rejected or failed the test request");
     expect(render({ state: "failed", reason: "provider_error", failure: null })).toContain(
       "rejected or failed the test request",

@@ -12,8 +12,8 @@ import type * as React from "react";
 import { useTranslation } from "react-i18next";
 
 /**
- * Confirmation for a consequential one-click action that is not a delete
- * (R2-7): promoting an admin, archiving a user, changing an instance policy,
+ * Confirmation for a consequential one-click action that is not a delete:
+ * promoting an admin, archiving a user, changing an instance policy,
  * dropping your own Manage. Deletes keep `ConfirmDeleteDialog` (type-to-confirm).
  */
 export function ConfirmActionDialog({

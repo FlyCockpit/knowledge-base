@@ -4,7 +4,7 @@
  * native parent-death guard. This is the ONLY module that loads the
  * node-llama-cpp native addon, and only via dynamic import inside the child,
  * so the worker parent never maps it. Process exit is the unload path: in-process
- * dispose leaks ~280 MiB RSS (embed-spike-REPORT.md).
+ * dispose leaks ~280 MiB RSS.
  *
  * The child receives no secrets (the parent passes a minimal env) and returns
  * raw vectors; the parent validates and L2-normalizes them.

@@ -12,10 +12,8 @@
  *
  * When a doc is restructured — a heading renamed, a section merged away — those
  * citations silently rot: the file still exists, so nothing errors, but the
- * "§ <section>" now names a heading that is gone. (This is exactly the drift
- * that motivated adding this check: the route-tree docs were reorganized and a
- * comment kept citing a section title that no longer existed.) This script makes
- * a stale citation a fast, CI-visible error.
+ * "§ <section>" now names a heading that is gone. This script makes a stale
+ * citation a fast, CI-visible error.
  *
  * What counts as a valid citation target (a doc "anchor"):
  *   1. A Markdown heading — any `#`..`######` line.

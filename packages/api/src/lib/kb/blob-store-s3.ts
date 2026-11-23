@@ -87,8 +87,8 @@ export function createS3AssetTransport(config: AssetS3Config, lifecycle: AssetSt
       if (head.Metadata.sha256 !== parseCasHash(hash)) throw unavailable();
       return true;
     }
-    // Size/ETag alone cannot prove integrity. Legacy/compatible objects without
-    // canonical hash metadata are hashed completely without cache admission.
+    // Size/ETag alone cannot prove integrity. Objects without canonical hash
+    // metadata are hashed completely without cache admission.
     const response = await client.send(new GetObjectCommand(params), { abortSignal: signal });
     const body = response.Body as Readable | undefined;
     if (!body || typeof body.destroy !== "function") throw unavailable();
@@ -119,7 +119,8 @@ export function createS3AssetTransport(config: AssetS3Config, lifecycle: AssetSt
   return { client, verifyRemote };
 }
 
-/** Test/offline factory only until P7. No ambient credentials, mode inference,
+/** Runtime, offline and test factory, bound to an explicit publication
+ * state. No ambient credentials, mode inference,
  * fallback authority, multipart, presigning, deletion or public ACLs.
  */
 export function createS3BlobStore(input: {

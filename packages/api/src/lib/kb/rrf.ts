@@ -3,7 +3,7 @@ export const RRF_K = 60;
 export const HYBRID_CANDIDATES_PER_ARM = 80;
 
 /**
- * L-25: the score a hit carries in replies, in (0, 1]: the fused RRF sum divided by its maximum
+ * The score a hit carries in replies, in (0, 1]: the fused RRF sum divided by its maximum
  * for the arms that ran (rank 1 in each), i.e. `rrf * 61 / arms`. 1 means ranked first by every
  * arm; a hybrid hit found by one arm alone scores at most 0.5. It orders exactly like the fused
  * sum and measures rank agreement, not calibrated relevance. Same float operations as the CLI.

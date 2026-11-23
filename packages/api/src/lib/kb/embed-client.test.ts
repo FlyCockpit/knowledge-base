@@ -22,7 +22,7 @@ describe("embedding validation", () => {
       2,
       2,
     );
-    // Neither rounded nor normalized: the index format normalizes exactly once (§1.4).
+    // Neither rounded nor normalized: the index format normalizes exactly once.
     expect(result).toEqual([
       [3, 4],
       [0, 2],

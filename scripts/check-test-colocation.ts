@@ -17,7 +17,7 @@ import process from "node:process";
 
 const ROOT = resolve(import.meta.dirname!, "..");
 
-/** Gaps as of 2026-09-02. Shrink this list; do not grow it without a reason. */
+/** Known gaps. Shrink this list; do not grow it without a reason. */
 const ALLOWLIST: ReadonlyArray<{
   file: string;
   since: string;

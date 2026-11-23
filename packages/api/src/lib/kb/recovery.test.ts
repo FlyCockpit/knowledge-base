@@ -28,7 +28,7 @@ describe("recovery failure isolation", () => {
     expect(isKbLocalRecoveryFailure(new Error("Invalid push delta"))).toBe(true);
   });
 
-  it("never quarantines on a database or KB-lock failure (those abort the sweep, as before)", () => {
+  it("never quarantines on a database or KB-lock failure (those abort the sweep)", () => {
     const serialization = Object.assign(new Error("could not serialize"), {
       code: "40001",
       severity: "ERROR",

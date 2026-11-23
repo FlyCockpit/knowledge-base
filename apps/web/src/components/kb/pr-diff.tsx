@@ -274,7 +274,7 @@ function PrFileCard({
             variant="ghost"
             className="min-h-[44px]"
             aria-expanded={showText}
-            // One toggle per file: the name says which (R2-19).
+            // One toggle per file: the name says which.
             aria-label={t(showText ? "pr.files.hideTextDiffNamed" : "pr.files.showTextDiffNamed", {
               path: file.path,
             })}

@@ -222,7 +222,7 @@ impl Advertised {
             hidden: Vec::new(),
         }
     }
-    /// Keep only read-only tools (R2-27, `kb mcp --server --read-only`):
+    /// Keep only read-only tools (`kb mcp --server --read-only`):
     /// write tools are neither listed nor callable through a forwarder.
     pub fn retain_read_only(self) -> Self {
         self.retain(ToolName::read_only)
@@ -459,7 +459,7 @@ pub fn version_diagnostic(requested: &str) -> Option<String> {
 fn rpc_error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
-/// The per-request 2026-07-28 envelope (R3-L11), checked like the MCP SDK's
+/// The per-request 2026-07-28 envelope, checked like the MCP SDK's
 /// HTTP and stdio entries: `Ok(true)` when the request names the protocol
 /// version in `_meta` and the envelope is valid (it is then served without a
 /// handshake, exactly as on HTTP), `Ok(false)` when it makes no claim (it then
@@ -527,7 +527,7 @@ struct Frames<R> {
     discarding: bool,
 }
 /// One input line: a request, or a line over [`FRAME_MAX_BYTES`] that was
-/// skipped whole (L-20: answered with an error; the session keeps running).
+/// skipped whole (answered with an error; the session keeps running).
 enum Frame {
     Bytes(Vec<u8>),
     Oversize,

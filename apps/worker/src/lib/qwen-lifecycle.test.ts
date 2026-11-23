@@ -958,7 +958,7 @@ describe("createQwenEmbedder input measurement", () => {
   });
 });
 
-it("46r10 dynamic Gemma selection uses its registry artifact and rejects Qwen dimensions before accepting 768-d vectors", async () => {
+it("dynamic Gemma selection uses its registry artifact and rejects Qwen dimensions before accepting 768-d vectors", async () => {
   const { supervisor, current, spawnCalls } = setup({ modelsDir: "/fixture/models" });
   const runtime = { ...rt(1), modelId: "embeddinggemma-2-q8_0" };
   const wrong = supervisor.embed({ purpose: "query", texts: ["hello"], runtime });
@@ -1026,7 +1026,7 @@ it.each(["deadline", "timely result"] as const)(
   },
 );
 
-it("R45 keeps one admission deadline through queue wait and the crash retry", async () => {
+it("keeps one admission deadline through queue wait and the crash retry", async () => {
   vi.useFakeTimers();
   const { supervisor, children } = setup({ servingTimeoutMs: 1000 });
   try {
@@ -1054,7 +1054,7 @@ it("R45 keeps one admission deadline through queue wait and the crash retry", as
   }
 });
 
-it("R45 a suspended document's default deadline removes it without a late dispatch on resume", async () => {
+it("a suspended document's default deadline removes it without a late dispatch on resume", async () => {
   const { supervisor, children } = setup({ servingTimeoutMs: 20 });
   await supervisor.suspend();
   const parked = supervisor.embed({ purpose: "document", texts: ["parked"], runtime: rt(1) });
@@ -1069,7 +1069,7 @@ it("R45 a suspended document's default deadline removes it without a late dispat
   await supervisor.close();
 });
 
-it("R45 renewal expiry kills the child before SQL drain, but close and release join that drain", async () => {
+it("renewal expiry kills the child before SQL drain, but close and release join that drain", async () => {
   vi.useFakeTimers();
   const renewed = Promise.withResolvers<boolean>();
   let renewalSignal: AbortSignal | undefined;
@@ -1120,7 +1120,7 @@ it("R45 renewal expiry kills the child before SQL drain, but close and release j
   }
 });
 
-it("R45 normal last-holder release joins an in-flight heartbeat without cancelling its successor", async () => {
+it("normal last-holder release joins an in-flight heartbeat without cancelling its successor", async () => {
   const renewed = Promise.withResolvers<boolean>();
   const lease = {
     acquire: vi.fn(async () => true),

@@ -15,7 +15,7 @@ describe("proposals", () => {
     const key = mergeabilityKey(snapshot, pr);
     // Shared spelling with the local store's cache-key regression.
     // v2: dreams may overwrite agent documents, so v1 verdicts are stale.
-    expect(key).toBe(`v2:${"a".repeat(40)}:3:"":${"b".repeat(40)}:2`);
+    expect(key).toBe(`v1:${"a".repeat(40)}:3:"":${"b".repeat(40)}:2`);
     for (const other of [
       mergeabilityKey({ ...snapshot, mainHead: "c".repeat(40) }, pr),
       mergeabilityKey({ ...snapshot, policyGeneration: "4" }, pr),

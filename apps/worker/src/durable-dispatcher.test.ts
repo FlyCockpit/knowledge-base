@@ -110,7 +110,7 @@ describe("startDurableDispatcherLoop", () => {
     expect(claim).not.toHaveBeenCalled();
   });
 
-  it("R3-W4: wake runs a cycle at once, and a burst during a cycle coalesces into one more", async () => {
+  it("wake runs a cycle at once, and a burst during a cycle coalesces into one more", async () => {
     let release!: () => void;
     let gate = new Promise<void>((resolve) => {
       release = resolve;

@@ -59,13 +59,13 @@ INSERT INTO durable_job (id,"dedupKey",kind,desired,state,"leaseUntil") VALUES
 INSERT INTO index_generation (id,"kbId","jobId",epoch,"commitSha","documentCount","chunkCount") VALUES
  (repeat('b',24),'fx_kb','fx_job_reserved',1,repeat('b',40),0,0);
 UPDATE index_generation SET state='BUILDING',"quotaReservationIds"=ARRAY['fx_reservation'] WHERE id=repeat('b',24);
--- Grants before write modes existed: a live write grant, a revoked write grant, a read-only grant.
-INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","referenceId",scopes,"toolGroups","createdKbBits","revokedAt") VALUES
- ('00000000-0000-4000-8000-0000000000a1','fx_owner','fx_owner','PAT','kb-pat','fx_write',ARRAY['mcp:read','mcp:write'],ARRAY['read','edit'],ARRAY[]::text[],NULL),
- ('00000000-0000-4000-8000-0000000000a2','fx_owner','fx_owner','PAT','kb-pat','fx_revoked_write',ARRAY['mcp:read','mcp:write'],ARRAY['read','edit'],ARRAY[]::text[],now()),
- ('00000000-0000-4000-8000-0000000000a3','fx_owner','fx_owner','PAT','kb-pat','fx_read',ARRAY['mcp:read'],ARRAY['read'],ARRAY[]::text[],NULL);
-INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","referenceId",scopes,"toolGroups","createdKbBits") VALUES
- ('00000000-0000-4000-8000-0000000000a4','fx_owner','fx_owner','OAUTH','fx_client','fx_oauth_write',ARRAY['mcp:read','mcp:write','offline_access'],ARRAY['read','edit'],ARRAY[]::text[]);
+-- MCP grants: a live write grant, a revoked write grant, a read-only grant (no write mode), an OAuth write grant.
+INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","referenceId",scopes,"toolGroups","createdKbBits","revokedAt","authoringMode") VALUES
+ ('00000000-0000-4000-8000-0000000000a1','fx_owner','fx_owner','PAT','kb-pat','fx_write',ARRAY['mcp:read','mcp:write'],ARRAY['read','edit'],ARRAY[]::text[],NULL,'BOTH'),
+ ('00000000-0000-4000-8000-0000000000a2','fx_owner','fx_owner','PAT','kb-pat','fx_revoked_write',ARRAY['mcp:read','mcp:write'],ARRAY['read','edit'],ARRAY[]::text[],now(),'BOTH'),
+ ('00000000-0000-4000-8000-0000000000a3','fx_owner','fx_owner','PAT','kb-pat','fx_read',ARRAY['mcp:read'],ARRAY['read'],ARRAY[]::text[],NULL,NULL);
+INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","referenceId",scopes,"toolGroups","createdKbBits","authoringMode") VALUES
+ ('00000000-0000-4000-8000-0000000000a4','fx_owner','fx_owner','OAUTH','fx_client','fx_oauth_write',ARRAY['mcp:read','mcp:write','offline_access'],ARRAY['read','edit'],ARRAY[]::text[],'BOTH');
 INSERT INTO consent_intent (id,"referenceId",nonce,"sessionDigest","queryDigest","actorUserIdSnapshot","userId","clientId","redirectUri",resource,scopes,selection,"grantId","expiresAt","approvedAt") VALUES
  ('fx_consent_write','fx_oauth_write','00000000-0000-4000-8000-0000000000c1','d','q','fx_owner','fx_owner','fx_client','https://client.example.test/cb','https://kb.example.test/mcp',ARRAY['mcp:read','mcp:write','offline_access'],'{"scopes":["mcp:read","mcp:write"],"toolGroups":["read","edit"],"acl":[],"allowCreate":false,"createdKbBits":[]}','00000000-0000-4000-8000-0000000000a4',now(),now()),
  ('fx_consent_read','fx_oauth_read','00000000-0000-4000-8000-0000000000c2','d2','q2','fx_owner','fx_owner','fx_client','https://client.example.test/cb','https://kb.example.test/mcp',ARRAY['mcp:read'],'{"scopes":["mcp:read"],"toolGroups":["read"],"acl":[],"allowCreate":false,"createdKbBits":[]}',NULL,now(),NULL);

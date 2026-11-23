@@ -35,8 +35,8 @@ plan-jobs = ["./release-preflight"]
 
 [dist.github-custom-runners]
 global = "ubuntu-latest"
-# The Linux musl binaries are static, so the runner image no longer sets a
-# glibc floor; the build itself runs in the digest-pinned Alpine builder
+# The Linux musl binaries are static, so the runner image sets no glibc
+# floor; the build itself runs in the digest-pinned Alpine builder
 # container (release.yml "Build artifacts"), the runner only hosts Docker.
 x86_64-unknown-linux-musl = "ubuntu-latest"
 # GitHub has no `ubuntu-latest` label for arm64; pin the native arm64 image.

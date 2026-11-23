@@ -134,7 +134,7 @@ export async function assetCacheBinding(input: {
 }
 
 /** The only cache payload writer/remover. Constructing it does no IO, mode
- * inference, recovery or owner registration. P3/P4 supply remote byte policies.
+ * inference, recovery or owner registration. Remote blob stores supply their byte policies.
  */
 export function createAssetCache(input: {
   assetsDir: string;

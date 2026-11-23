@@ -128,7 +128,7 @@ fn blocked_stdout_and_oversized_input_stay_bounded() {
         let mut ready = String::new();
         output.read_line(&mut ready).expect("ready");
         if oversized {
-            // L-20: the oversize line is answered and the server keeps
+            // The oversize line is answered and the server keeps
             // serving; closing stdin then ends it normally.
             input
                 .write_all(&vec![b'x'; 1024 * 1024 + 1])
@@ -487,7 +487,7 @@ fn production_worker_replaces_revoked_pending_lexically_preserves_contention_and
     .expect("permit");
     permit.lock().expect("contention");
     let mut peer = Peer::start(&f.root);
-    // L-7: the revocation superseded the pending hybrid generation with a
+    // The revocation superseded the pending hybrid generation with a
     // lexical-only one, which the production worker builds and activates.
     let lexical = f
         .status()
@@ -1058,7 +1058,7 @@ fn discovery_is_live_and_follows_principal_ceilings_within_one_session() {
     peer.close();
 }
 
-/// L-23: the documented CLI-only review flow. The owner creates a
+/// The documented CLI-only review flow. The owner creates a
 /// propose-only principal, an agent session acting as it proposes a change
 /// (a pull request, never `main`), and the owner's session merges it.
 #[test]
@@ -1144,9 +1144,9 @@ fn cli_principal_proposes_and_the_owner_merges_its_pull_request() {
     );
 }
 
-/// R3 review: a Git older than the PR flow needs refuses `kb mcp` at startup
+/// A Git older than the PR flow needs refuses `kb mcp` at startup
 /// (server parity: a startup probe), naming the found and required
-/// versions in the complete MCP initialization error. R6: the refusal is one
+/// versions in the complete MCP initialization error. The refusal is one
 /// admission decision, so stateless enveloped requests get it too and no
 /// catalog (scoped or not) is ever listed.
 #[cfg(unix)]
@@ -1236,7 +1236,7 @@ fn an_old_git_refuses_startup_with_found_and_required_versions() {
     );
 }
 
-/// R6 review: a stateless (enveloped, no handshake) client sees the scoped
+/// A stateless (enveloped, no handshake) client sees the scoped
 /// session's catalog, so `--read-only` holds without `initialize`.
 #[test]
 fn enveloped_requests_see_the_scoped_read_only_catalog_without_a_handshake() {

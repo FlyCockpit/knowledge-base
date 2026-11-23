@@ -110,7 +110,7 @@ fn child_role_entry() {
         // Initialize and admit the predecessor before arming directory EIO.
         // A real live writer defers startup CAS recovery, so a later recovery
         // flush cannot conceal an omitted managed-parent flush during reopen.
-        let arm = PathBuf::from(std::env::var("R51_NATIVE_SYNC_DIR_ARM").unwrap());
+        let arm = PathBuf::from(std::env::var("KB_TEST_NATIVE_SYNC_DIR_ARM").unwrap());
         let store = Store::open(&root).unwrap();
         let identity = store.store_uuid().clone();
         let guard = store.lock_write(&[]).unwrap();
@@ -146,7 +146,7 @@ fn child_role_entry() {
     }
     #[cfg(target_os = "linux")]
     if role == "native-sync-fault" {
-        let arm = PathBuf::from(std::env::var("R51_NATIVE_SYNC_ARM").unwrap());
+        let arm = PathBuf::from(std::env::var("KB_TEST_NATIVE_SYNC_ARM").unwrap());
         let result = Store::open_observed(&root, &mut |stage| {
             if stage == OpenStage::SyncState {
                 std::fs::write(&arm, b"armed").unwrap();
@@ -281,7 +281,7 @@ fn nonempty_store_missing_state_fails_closed() {
     }
     remove_state(&root);
     let err = Store::open(&root).expect_err("must fail closed");
-    // L-17: explained as "not a kb store", still fail-closed REPAIR_REQUIRED.
+    // Explained as "not a kb store", still fail-closed REPAIR_REQUIRED.
     assert_eq!(err.protocol_code(), ErrorCode::RepairRequired, "{err:?}");
     assert!(
         !root.join("state.sqlite").exists(),
@@ -1247,12 +1247,12 @@ int fsync(int fd) {
     char link[64], path[4096];
     snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
     ssize_t n = readlink(link, path, sizeof(path)-1);
-    const char *arm = getenv("R51_NATIVE_SYNC_ARM");
+    const char *arm = getenv("KB_TEST_NATIVE_SYNC_ARM");
     const char *name = "state.sqlite.init";
     if (n >= 0) {
         path[n] = 0;
-        const char *directory = getenv("R51_NATIVE_SYNC_DIR");
-        const char *directory_arm = getenv("R51_NATIVE_SYNC_DIR_ARM");
+        const char *directory = getenv("KB_TEST_NATIVE_SYNC_DIR");
+        const char *directory_arm = getenv("KB_TEST_NATIVE_SYNC_DIR_ARM");
         struct stat metadata;
         if (directory && (!directory_arm || access(directory_arm, F_OK)==0) && strcmp(directory, path)==0 && fstat(fd, &metadata)==0 && S_ISDIR(metadata.st_mode)) {
             errno = EIO;
@@ -1288,7 +1288,7 @@ int fsync(int fd) {
         ])
         .env(ROLE_ENV, "native-sync-fault")
         .env(ROOT_ENV, &root)
-        .env("R51_NATIVE_SYNC_ARM", &arm)
+        .env("KB_TEST_NATIVE_SYNC_ARM", &arm)
         .env("LD_PRELOAD", &library)
         .stdin(Stdio::null())
         .output()
@@ -1324,9 +1324,9 @@ int fsync(int fd) {
         ])
         .env(ROLE_ENV, "native-sync-fault")
         .env(ROOT_ENV, &directory_root)
-        .env("R51_NATIVE_SYNC_ARM", &directory_arm)
+        .env("KB_TEST_NATIVE_SYNC_ARM", &directory_arm)
         .env(
-            "R51_NATIVE_SYNC_DIR",
+            "KB_TEST_NATIVE_SYNC_DIR",
             base.canonicalize().unwrap().join("new-ancestor"),
         )
         .env("LD_PRELOAD", &library)
@@ -1366,8 +1366,8 @@ int fsync(int fd) {
         ])
         .env(ROLE_ENV, "native-sync-fault")
         .env(ROOT_ENV, &existing_root)
-        .env("R51_NATIVE_SYNC_ARM", &existing_arm)
-        .env("R51_NATIVE_SYNC_DIR", parent.canonicalize().unwrap())
+        .env("KB_TEST_NATIVE_SYNC_ARM", &existing_arm)
+        .env("KB_TEST_NATIVE_SYNC_DIR", parent.canonicalize().unwrap())
         .env("LD_PRELOAD", &library)
         .stdin(Stdio::null())
         .output()
@@ -1392,8 +1392,8 @@ int fsync(int fd) {
         ])
         .env(ROLE_ENV, "native-sync-fault")
         .env(ROOT_ENV, &root)
-        .env("R51_NATIVE_SYNC_ARM", base.join("reopen-arm"))
-        .env("R51_NATIVE_SYNC_DIR", root.canonicalize().unwrap())
+        .env("KB_TEST_NATIVE_SYNC_ARM", base.join("reopen-arm"))
+        .env("KB_TEST_NATIVE_SYNC_DIR", root.canonicalize().unwrap())
         .env("LD_PRELOAD", &library)
         .stdin(Stdio::null())
         .output()
@@ -1416,8 +1416,8 @@ int fsync(int fd) {
         ])
         .env(ROLE_ENV, "native-busy-reopen-sync-fault")
         .env(ROOT_ENV, &root)
-        .env("R51_NATIVE_SYNC_DIR", root.canonicalize().unwrap())
-        .env("R51_NATIVE_SYNC_DIR_ARM", base.join("busy-reopen-arm"))
+        .env("KB_TEST_NATIVE_SYNC_DIR", root.canonicalize().unwrap())
+        .env("KB_TEST_NATIVE_SYNC_DIR_ARM", base.join("busy-reopen-arm"))
         .env("LD_PRELOAD", &library)
         .stdin(Stdio::null())
         .output()

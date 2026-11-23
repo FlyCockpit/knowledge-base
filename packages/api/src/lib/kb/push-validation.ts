@@ -18,7 +18,7 @@ const invalid = () => new PushRefusedError("INVALID_REQUEST");
 
 /**
  * Refusals the pusher can act on. They reach Git as `! [remote rejected] <ref>
- * (<reason>)` through the receive-pack report, never as an HTTP 503 (R3-W10).
+ * (<reason>)` through the receive-pack report, never as an HTTP 503.
  * Each names only the pusher's own push; anything else stays a generic failure.
  */
 export const PUSH_REFUSALS = {

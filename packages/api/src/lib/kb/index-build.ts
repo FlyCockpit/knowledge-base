@@ -2,7 +2,7 @@
  * Index build (worker only; the server must never reach this module — see
  * `apps/server/src/index-file-policy.test.ts`). One attempt writes one SQLite file under
  * `<indexDir>/<kbId>/<gen>.a<attempt>.tmp` and publishes it as `<gen>.sqlite` inside a fenced
- * transaction (§1.2, §1.4, §1.5, §1.8). Every Postgres write runs in a `fenced()` authority
+ * transaction. Every Postgres write runs in a `fenced()` authority
  * transaction; disk is admitted through DISK_VOLUME reservations whose ids live on the
  * generation row and are released (never committed) at publish, failure, the next attempt's
  * reset, cancellation or the retention backstop.
@@ -65,7 +65,7 @@ import { releaseQuota, reserveQuota, statfsDiskMeter } from "./quota";
 import { redactForEmbed } from "./redact-for-embed";
 import { comparePaths } from "./rrf";
 
-/** Pass-1 initial estimate: four times the largest admitted Markdown tree (§1.8 1). */
+/** Pass-1 initial estimate: four times the largest admitted Markdown tree. */
 export const INDEX_TEXT_RESERVATION_BYTES = 4 * KB_TREE_LIMITS.maxTreeBytes;
 /** Reservations are only ever released; the expiry is a ledger backstop, not a lease. */
 const DISK_RESERVATION_MS = 6 * 60 * 60 * 1000;
@@ -357,8 +357,8 @@ async function openReuseSource(
 ): Promise<ReuseSource | null> {
   // Also retain the newest retained semantic generation of the same profile, the active one first.
   // A lexical companion of a newer head may serve meanwhile; the hybrid it retired (SUPERSEDED,
-  // files kept until retention purges them) still holds vectors. R3-L2 (CLI twin
-  // `reuse_source`): candidates are walked in bounded pages until one is usable; a candidate that
+  // files kept until retention purges them) still holds vectors. CLI twin
+  // `reuse_source`: candidates are walked in bounded pages until one is usable; a candidate that
   // cannot serve (file gone or unreadable, another quantization, a damaged hash table) falls
   // through to the next, and none at all means re-embedding. Only the build's own abort stops it.
   const PAGE = 16;
@@ -398,7 +398,7 @@ async function openReuseSource(
     );
     if (activeDone && page.length === 0) return null;
     for (const candidate of page) {
-      // Review r2 #5 (CLI twin): the build's abort is observed between candidates as well as
+      // CLI twin: the build's abort is observed between candidates as well as
       // inside each one's paged hash scan (`yieldToHeartbeat`).
       signal.throwIfAborted();
       if (activeDone) after = { epoch: candidate.epoch, id: candidate.id };
@@ -454,7 +454,7 @@ async function loadReuseCandidate(
       const statement = db.prepare(sql).pluck();
       return (id: number): unknown => statement.get(id);
     };
-    // Review r2 #2: decoded and width-checked once here; a row that fails throws and the
+    // Decoded and width-checked once here; a row that fails throws and the
     // chunk is embedded again (reusePass).
     const stored: (id: number) => StoredVector =
       meta.quantization === "int8"
@@ -609,9 +609,9 @@ async function freshPass(
     if (vectors.length !== ids.length) throw new Error("Embedding count");
     return vectors;
   };
-  // CL2-CALIB: the int8 calibration sample is embedded first and kept, so every chunk is
+  // The int8 calibration sample is embedded first and kept, so every chunk is
   // embedded exactly once.
-  // The writer takes RAW embeddings and normalizes each exactly once (§1.4); the sample keeps
+  // The writer takes RAW embeddings and normalizes each exactly once; the sample keeps
   // the raw values (exact f64 copies) and only derives its unit vectors to compute the scale.
   const sampled = new Map<number, Float64Array>();
   if (chunkCount > 0) {
@@ -717,7 +717,7 @@ export async function buildAttempt(
         return { blobSha: parsed[2]!, path: parsed[3]! };
       })
       .filter((entry) => entry.path.endsWith(".md"))
-      // chunks.id order must equal (path bytes, chunk_index) order (§1.2).
+      // chunks.id order must equal (path bytes, chunk_index) order.
       .sort((a, b) => comparePaths(a.path, b.path));
     const manifest = parseAssetManifest(
       await git(["show", `${snapshot.commitSha}:.assets/manifest.json`]),
@@ -731,7 +731,7 @@ export async function buildAttempt(
         ? (options.embedder ?? selectIndexEmbedder(profile, hybrid, options))
         : null;
 
-    // Disk admission (§1.8): ids are appended to the generation row in the same transaction.
+    // Disk admission: ids are appended to the generation row in the same transaction.
     await mkdir(kbDir, { recursive: true, mode: 0o750 });
     const meter = statfsDiskMeter(kbDir);
     let reservedTotal = 0;
@@ -959,7 +959,7 @@ export async function buildAttempt(
     const reasonCode = failureCode(error);
     // A fixed record: the error class and reason code, never its message (provider/source text).
     logInternalError("kb.index-build", error, { code: reasonCode });
-    // (c) Release, then leave BUILDING in the statement that clears the ids (I1).
+    // (c) Release, then leave BUILDING in the statement that clears the ids.
     await fenced(async (query) => {
       const ids =
         (

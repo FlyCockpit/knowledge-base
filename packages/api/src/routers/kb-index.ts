@@ -88,7 +88,7 @@ export const kbIndexRouter = {
         ),
       ),
     ),
-  /** §1.9 index settings: web/oRPC only, never an MCP tool. */
+  /** Index settings: web/oRPC only, never an MCP tool. */
   settings: protectedProcedure
     .input(kbReadToolSchemas.knowledge_index_status.input)
     .handler(({ context, input }) =>

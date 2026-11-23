@@ -744,7 +744,7 @@ export async function revokeAllCredentials(
  * transaction, with no per-entry payload, so a preset change applies to any
  * number of stored KBs atomically.
  */
-/** Temporary access durations (§5a); 7 days is the maximum. */
+/** Temporary access durations; 7 days is the maximum. */
 export const MCP_ELEVATION_DURATIONS = ["1h", "1d", "7d"] as const;
 export type McpElevationDuration = (typeof MCP_ELEVATION_DURATIONS)[number];
 const ELEVATION_SECONDS: Record<McpElevationDuration, number> = {
@@ -776,7 +776,7 @@ export const grantUpdateInput = z
      */
     authoringMode: patMintInput.shape.authoringMode,
     /**
-     * Absent = a permanent edit. Present = temporary access (§5a): the input
+     * Absent = a permanent edit. Present = temporary access: the input
      * describes the elevated ceiling, which may only add to the stored one,
      * and lapses on its own after this long.
      */

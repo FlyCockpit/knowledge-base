@@ -13,8 +13,8 @@ rmSync(directory, { recursive: true, force: true });
 mkdirSync(directory, { recursive: true });
 try {
   const input: Record<string, string> = {};
-  // Every tests/kb-<entry>.harness.tsx is an entry: a hand-kept list silently
-  // missed the editor harness (2026-10-10); setup still checks each routed entry.
+  // Every tests/kb-<entry>.harness.tsx is an entry: a hand-kept list can
+  // silently miss a harness; setup still checks each routed entry.
   const entries = readdirSync(resolve(webRoot, "tests"))
     .map((name) => /^kb-(.+)\.harness\.tsx$/.exec(name)?.[1])
     .filter((entry): entry is string => entry !== undefined)

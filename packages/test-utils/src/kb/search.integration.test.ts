@@ -49,7 +49,7 @@ import { deliverIndexBuild } from "./index-delivery";
 import { openKbPostgresClusterFromEnv } from "./postgres";
 import { openKbRedisFromEnv } from "./redis";
 
-/** L-25: replies carry the fused RRF sum over its maximum for the arms that ran (rrf * 61 / arms). */
+/** Replies carry the fused RRF sum over its maximum for the arms that ran (rrf * 61 / arms). */
 const normalizedRrfScore = (rrf: number, arms: 1 | 2) => (rrf * 61) / arms;
 
 vi.mock("@knowledge-base/db", () => ({ default: {} }));
@@ -335,7 +335,7 @@ async function hits(f: Fixture, query: string, options?: Partial<SearchOptions>)
   return result as Awaited<ReturnType<typeof searchKnowledgeBase>>;
 }
 const leases = (kbId: string) => prisma.generationLease.count({ where: { generation: { kbId } } });
-/** L-25: replies carry the RRF sum normalized by its two-arm maximum. */
+/** Replies carry the RRF sum normalized by its two-arm maximum. */
 const expectedScore = (row: GoldenRow) =>
   normalizedRrfScore(
     (row.vectorRank ? 1 / (60 + row.vectorRank) : 0) + (row.ftsRank ? 1 / (60 + row.ftsRank) : 0),
@@ -511,7 +511,7 @@ describe("hybrid search and immutable citations", () => {
       const window = body.subarray(hit.span.startByte, hit.span.endByte).toString("utf8");
       expect(tokens[hit.span.startToken]!.startByte).toBe(hit.span.startByte);
       expect(tokens[hit.span.endToken - 1]!.endByte).toBe(hit.span.endByte);
-      // R2-27: the stored window, as plain text.
+      // The stored window, as plain text.
       expect(hit.snippet).toBe(
         citationSnippet(plainSnippet(citationSnippet(window.replace(/\p{White_Space}+/gu, " ")))),
       );
@@ -879,7 +879,7 @@ describe("binary_int8_rescore with a 12-dimensional external profile (pad8)", ()
   });
 });
 
-describe("reader interlocks against the real pool (§1.5)", () => {
+describe("reader interlocks against the real pool", () => {
   const capacityHolders = async () =>
     (
       await db.query(
@@ -969,7 +969,7 @@ describe("reader interlocks against the real pool (§1.5)", () => {
   });
 });
 
-describe("missing index files against the real pool (§1.7)", () => {
+describe("missing index files against the real pool", () => {
   /** Like `search`, but delivers every query embedding the operation admits (retries included). */
   async function searchDelivering(
     f: Fixture,
@@ -1109,7 +1109,7 @@ describe("missing index files against the real pool (§1.7)", () => {
   });
 });
 
-describe("stored vector bytes follow the §1.4 formula through the real build", () => {
+describe("stored vector bytes follow the embedding formula through the real build", () => {
   it("normalizes each embedding exactly once (sampled and unsampled chunks alike)", async () => {
     // Near-unit raw input whose eighth component rounds differently if normalized twice.
     const raw = [...Array.from({ length: 7 }, () => 0.37778007984161377), 0.031233789399266243];

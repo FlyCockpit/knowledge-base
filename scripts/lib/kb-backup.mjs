@@ -1,4 +1,4 @@
-/** Offline, fenced kb/backup/3. No shells, tar traversal, or app secrets. */
+/** Offline, fenced kb/backup/1. No shells, tar traversal, or app secrets. */
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync } from "node:fs";
 import {
@@ -56,25 +56,21 @@ export function pathCheck(path, directory = false) {
 /** The discriminator owns the content policy; missing files never select a mode. */
 export async function bundleVersion(metadata, paths) {
   const version = metadata?.version;
-  if (version === 1 || version === 2)
-    throw new Error(
-      "Prerelease backup format is unsupported; use a migration-aware kb/backup/3 bundle.",
-    );
   if (
-    version === 3 &&
+    version === 1 &&
     metadata.storage?.mode === "disk" &&
     Object.keys(metadata.storage).length === 1 &&
     !paths.includes("asset-inventory.jsonl")
   )
-    return 3;
+    return 1;
   if (
-    version === 3 &&
+    version === 1 &&
     metadata.storage?.mode === "s3" &&
     paths.filter((p) => p === "asset-inventory.jsonl").length === 1 &&
     !paths.some((p) => p.startsWith("assets/"))
   ) {
     (await assetStorageDomain()).checkAssetBundleStorage(metadata.storage);
-    return 3;
+    return 1;
   }
   throw new Error("Invalid bundle storage variant.");
 }
@@ -396,9 +392,7 @@ export async function readBundle(file, identity, { maxBytes = 256 * 1024 * 1024 
       return text;
     };
     const magic = line();
-    if (["kb/backup/1", "kb/backup/2"].includes(magic))
-      throw new Error("Prerelease backup format is unsupported.");
-    if (magic !== "kb/backup/3") throw new Error("Invalid bundle version.");
+    if (magic !== "kb/backup/1") throw new Error("Invalid bundle version.");
     const { metadata, inventory } = JSON.parse(line());
     if (
       !Array.isArray(inventory) ||
@@ -761,7 +755,7 @@ export async function snapshotOffline({
         ? () => verifyAssetInventory(inventoryPath, assetConfig, signal)
         : undefined,
       metadata: {
-        version: 3,
+        version: 1,
         storage: remote ? { mode: "s3", locator: assetConfig.locator } : { mode: "disk" },
         cutoff: snapshot.rows[0].cutoff.toISOString(),
         ...instance,

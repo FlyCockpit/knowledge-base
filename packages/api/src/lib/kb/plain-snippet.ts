@@ -1,5 +1,5 @@
 /**
- * R2-27 (CLI twin `kb-local/src/plain_snippet.rs`, shared corpus
+ * CLI twin `kb-local/src/plain_snippet.rs`, shared corpus
  * `fixtures/plain-snippet.json`): format source windows before clipping citation
  * snippets. Code contents stay literal; Markdown formatting becomes plain text.
  * Unpaired delimiters stay literal because a glob and clipped emphasis cannot

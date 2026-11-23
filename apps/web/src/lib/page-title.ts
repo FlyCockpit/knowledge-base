@@ -5,7 +5,7 @@ import type { i18n as I18n } from "i18next";
 import { orpc } from "@/utils/orpc";
 
 /**
- * Per-page `<title>` (R2-12, WCAG 2.4.2): the page's own name first, then its
+ * Per-page `<title>` (WCAG 2.4.2): the page's own name first, then its
  * context, then the app name — "postgres-failover.md · Engineering Notes ·
  * KnowledgeBase". Empty parts (a KB name not loaded yet) are skipped. The
  * deepest route's `head()` wins over the root's app-name title.
@@ -26,7 +26,7 @@ type HeadMatch = { status: string; _notFound?: boolean };
  * unknown URL (the boundary match carries `_notFound`) or a thrown
  * `notFound()` (`status: "notFound"`). Only the boundary's own `head()` and
  * its ancestors run, and the deepest title wins, so the root and every
- * layout route that can be a boundary must ask this (R3-W9).
+ * layout route that can be a boundary must ask this.
  */
 export function isNotFoundHead(matches: readonly HeadMatch[]): boolean {
   return matches.some((match) => match._notFound === true || match.status === "notFound");

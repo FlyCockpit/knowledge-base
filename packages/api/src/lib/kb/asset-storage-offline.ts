@@ -339,7 +339,7 @@ export function createOfflineAssetCopier(input: {
   };
 }
 
-/** Retire/recover only this actual cache volume, using P2's owned alias cleanup.
+/** Retire/recover only this actual cache volume, using the asset cache's owned alias cleanup.
  * Destination disk growth is never admitted or evicted as live cache payload. */
 export async function drainOfflineAssetCache(input: {
   assetsDir: string;
@@ -404,7 +404,7 @@ export async function drainOfflineAssetCache(input: {
       await cache.registerOwner(input.assertOfflineFences);
       await cache.recover();
       if (input.discardReady) {
-        // P2 owns inode checks, alias removal, all filesystem barriers and
+        // The asset cache owns inode checks, alias removal, all filesystem barriers and
         // quota credit. Dual fences permit draining both roles, never skipping
         // this ownership protocol merely because restore will drop the ledger.
         while (await cache.repair(Date.now() + 5000, undefined, true)) input.assertOfflineFences();

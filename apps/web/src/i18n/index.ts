@@ -333,7 +333,7 @@ if (!i18n.isInitialized) {
 
   // Install the locale-aware Zod error map once init resolves so every form
   // schema's validation messages render in the active language. Resources are
-  // eager-globbed above so this resolves synchronously in practice. Phase 6.
+  // eager-globbed above so this resolves synchronously in practice.
   void initPromise.then(() => installZodErrorMap(i18n));
 }
 

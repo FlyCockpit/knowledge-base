@@ -206,7 +206,7 @@ export function createGitHttp(options: {
       return response;
     } catch (error) {
       if (error instanceof PushSpoolError) return c.json({ error: error.message }, error.status);
-      // A refusal the pusher can act on: Git prints it against the ref (R3-W10).
+      // A refusal the pusher can act on: Git prints it against the ref.
       if (error instanceof PushRefusedError) {
         logEvent("git-http.refused", { opId: requestId, kbId: logKbId, reason: error.refusal });
         const request =
@@ -233,7 +233,7 @@ export function createGitHttp(options: {
         return c.json({ error: "UNAUTHORIZED" }, 401);
       }
       if (code === "NOT_FOUND") return c.json({ error: "NOT_FOUND" }, 404);
-      // Unexpected: the client sees only 503, so the operator log carries the cause (R3-W3).
+      // Unexpected: the client sees only 503, so the operator log carries the cause.
       logInternalError("git-http", error, {
         requestId: c.get("requestId"),
         opId: requestId,

@@ -42,7 +42,7 @@ const generationSnapshotBase = {
   kbId: z.string().regex(/^[a-z0-9]{24,32}$/),
   epoch: z.string().regex(/^\d+$/),
   commitSha: z.string().regex(/^[a-f0-9]{40}$/),
-  /** Frozen per generation (§1.4); the file `meta` row repeats it (hybrid) and it sets the
+  /** Frozen per generation; the file `meta` row repeats it (hybrid) and it sets the
    * KB's chunk ceiling (both modes). */
   quantization: z.enum(INDEX_QUANTIZATIONS),
 };
@@ -590,7 +590,7 @@ export async function requestIndexBuild(
           // only by their owner (anyone else's is NOT_FOUND, see profileForSet).
           const profile = await profileForSet(query, providerId, revision, actor.principal.userId);
           // Re-attaching the profile a semantic generation of the head already
-          // serves (or is building) at the desired epoch starts nothing (R3-L12).
+          // serves (or is building) at the desired epoch starts nothing.
           const same = await sameSemanticWork(query, input.kbId, profile);
           if (same) response = { operationId: randomUUID(), ...same };
           else
@@ -687,7 +687,7 @@ function cancelScopeSql(scope: IndexBuildCancelScope): {
 }
 
 /**
- * The only index-build canceller (§1.8 (d)); runs on the caller's authority transaction, which
+ * The only index-build canceller; runs on the caller's authority transaction, which
  * serializes it with every worker fenced/activation transaction. It locks the jobs, reads the
  * generations' reservation ids fresh, releases them, then cancels; it never takes the
  * generation advisory lock and never writes `index_generation` (the RELEASED ids stay as

@@ -288,7 +288,7 @@ fn empty_config_ambiguous_config_and_explicit_backend_selection() {
         .failure();
     std::fs::create_dir(dir.path().join("config")).unwrap();
     let config = dir.path().join("config/config.toml");
-    // L-16: config paths are absolute (a relative root is rejected outright).
+    // Config paths are absolute (a relative root is rejected outright).
     let unused = dir.path().join("unused");
     std::fs::write(
         &config,
@@ -429,7 +429,7 @@ fn remote_read_only_and_local_principal_cannot_bypass_the_backend_boundary() {
         ],
     );
     peer.request("server/discover", json!({}));
-    // R2-27: write tools are not listed at all on a read-only connection.
+    // Write tools are not listed at all on a read-only connection.
     let listed = peer.request("tools/list", json!({}))["result"]["tools"]
         .as_array()
         .expect("tools")

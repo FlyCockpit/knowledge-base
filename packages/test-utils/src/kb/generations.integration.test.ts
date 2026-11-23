@@ -324,7 +324,7 @@ afterAll(async () => {
 });
 
 describe("pinned generation build and activation", () => {
-  it("R46r5 F1: external provider builds retain both global slots while the built-in permit is held", async () => {
+  it("external provider builds retain both global slots while the built-in permit is held", async () => {
     const permit = new Client({ connectionString: db.urls.runtime });
     await permit.connect();
     const paused = barrier();
@@ -778,7 +778,7 @@ describe("pinned generation build and activation", () => {
       ).toEqual(readStoredVector(generationFilePath(indexDir, f.kbId, a.generationId), chunk.id));
   });
 
-  it("R3-L2: an unusable newest reuse candidate falls through to the next retained hybrid file", async () => {
+  it("an unusable newest reuse candidate falls through to the next retained hybrid file", async () => {
     const large = Array.from({ length: 10_700 }, (_, i) => `word${i}`).join(" ");
     const f = await fixture({ "large.md": large, "other.md": "first version" });
     const a = await f.attach();
@@ -811,7 +811,7 @@ describe("pinned generation build and activation", () => {
     expect(await active(f.kbId)).toBe(c.generationId);
   });
 
-  it("review #5: reuse walks past a newest file whose hash table is damaged", async () => {
+  it("reuse walks past a newest file whose hash table is damaged", async () => {
     const large = Array.from({ length: 10_700 }, (_, i) => `word${i}`).join(" ");
     const f = await fixture({ "large.md": large, "other.md": "first version" });
     const a = await f.attach();
@@ -857,7 +857,7 @@ describe("pinned generation build and activation", () => {
     expect(await active(f.kbId)).toBe(c.generationId);
   });
 
-  it("review r2 #2: a stored vector of another width is embedded again, never copied on", async () => {
+  it("a stored vector of another width is embedded again, never copied on", async () => {
     const large = Array.from({ length: 10_700 }, (_, i) => `word${i}`).join(" ");
     const f = await fixture({ "large.md": large, "other.md": "first version" });
     const a = await f.attach();
@@ -1049,7 +1049,7 @@ describe("pinned generation build and activation", () => {
       expect(await pending).toBeInstanceOf(Error);
       expect(await active(f.kbId)).toBe(a.generationId);
       const { index } = await getIndexProfile(runtime, f.actor, f.kbId);
-      // The revoked file keeps serving its FTS5 arm while the lexical generation builds (L-7).
+      // The revoked file keeps serving its FTS5 arm while the lexical generation builds.
       expect(index).toMatchObject({ activeGenerationId: a.generationId, freshness: "building" });
       const desired = await prisma.indexGeneration.findUniqueOrThrow({
         where: { id: index.desiredGenerationId! },
@@ -1115,7 +1115,7 @@ describe("pinned generation build and activation", () => {
     }
   });
 
-  it("R3-W9: while nothing is active, a finished build of an older commit serves until the head's replaces it", async () => {
+  it("while nothing is active, a finished build of an older commit serves until the head's replaces it", async () => {
     const f = await fixture({ "a.md": "first" });
     const first = await transaction((q) => scheduleIndexBuild(q, f.kbId));
     const next = source(f.kbId, { "a.md": "second" }, f.sha);
@@ -1159,7 +1159,7 @@ describe("pinned generation build and activation", () => {
     expect(await active(f.kbId)).toBe(c!.generationId);
   });
 
-  it("R3-L12: re-attaching the serving or building semantic profile starts nothing; a lexical one never counts", async () => {
+  it("re-attaching the serving or building semantic profile starts nothing; a lexical one never counts", async () => {
     const f = await fixture();
     const generations = () => prisma.indexGeneration.count({ where: { kbId: f.kbId } });
     // Only lexical serves: attaching builds the semantic generation.
@@ -1385,7 +1385,7 @@ describe("pinned generation build and activation", () => {
   });
 });
 
-describe("index files, disk reservations and cancellation (P4)", () => {
+describe("index files, disk reservations and cancellation", () => {
   const reserved = async () =>
     (
       await db.query(
@@ -1517,7 +1517,7 @@ describe("index files, disk reservations and cancellation (P4)", () => {
     expect(embedded.sort()).toEqual(["alpha one", "beta two", "gamma three"]);
   });
 
-  it("guards: no reservation outside BUILDING (I1), no cancel over an unreleased one (I2)", async () => {
+  it("guards: no reservation outside BUILDING, no cancel over an unreleased one", async () => {
     const f = await fixture();
     const a = await f.attach();
     const paused = barrier();
@@ -1685,7 +1685,7 @@ describe("index files, disk reservations and cancellation (P4)", () => {
     expect(filesOf(f.kbId, a.generationId)).toEqual([`${a.generationId}.sqlite`]);
   });
 
-  it("R5 exhausted lease recovery fails the generation with its job; re-attaching schedules a replacement", async () => {
+  it("exhausted lease recovery fails the generation with its job; re-attaching schedules a replacement", async () => {
     const f = await fixture();
     const a = await f.attach();
     const before = await reserved();
@@ -1733,7 +1733,7 @@ describe("index files, disk reservations and cancellation (P4)", () => {
     expect(await semanticActive(f.kbId)).toBe(again.generationId);
   });
 
-  it("R6 one expired lease whose recovery fails stays RUNNING alone, deferred; the rest of the batch dispatches", async () => {
+  it("one expired lease whose recovery fails stays RUNNING alone, deferred; the rest of the batch dispatches", async () => {
     const f = await fixture();
     const a = await f.attach();
     const other = await (await fixture()).attach();
@@ -1835,7 +1835,7 @@ describe("index files, disk reservations and cancellation (P4)", () => {
     expect(await old).toBeInstanceOf(Error);
   });
 
-  it("R5 a generation whose job is terminal is never pending work, and the backstop settles it", async () => {
+  it("a generation whose job is terminal is never pending work, and the backstop settles it", async () => {
     const f = await fixture();
     const a = await f.attach();
     // A canceller never writes the generation: it still reads PENDING.
@@ -1875,7 +1875,7 @@ describe("index files, disk reservations and cancellation (P4)", () => {
   });
 });
 
-describe("cancellation matrix, disk admission and attempt ownership (P4)", () => {
+describe("cancellation matrix, disk admission and attempt ownership", () => {
   type Canceller = "transfer" | "account removal" | "provider revoke";
   const reserved = async () =>
     (
@@ -1920,7 +1920,7 @@ describe("cancellation matrix, disk admission and attempt ownership (P4)", () =>
     };
   };
 
-  // P4 step 9 cancel-lock matrix for the three cancellers this suite can drive (retarget and
+  // Cancel-lock matrix for the three cancellers this suite can drive (retarget and
   // settleLease run in the qwen-reembed suite). The worker pauses INSIDE its fenced reservation
   // transaction (holding AUTH) or just before it.
   //  (i)  the canceller queues on AUTH, the reservation commits, then it is released and cancelled;
@@ -2195,7 +2195,7 @@ const quantizationCases = JSON.parse(
   }>;
 };
 
-describe("stored bytes through the production provider adapter (§1.4)", () => {
+describe("stored bytes through the production provider adapter", () => {
   // Raw near-unit reply whose eighth component quantizes to 10 if normalized twice.
   const NEAR_UNIT = [...Array.from({ length: 7 }, () => 0.37778007984161377), 0.031233789399266243];
   const SPEC = { int8: [127, 127, 127, 127, 127, 127, 127, 11], bitsHex: "ff" };

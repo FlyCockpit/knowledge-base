@@ -45,7 +45,7 @@ import { deliverIndexBuild } from "./index-delivery";
 import { openKbPostgresClusterFromEnv } from "./postgres";
 import { openKbRedisFromEnv } from "./redis";
 
-/** L-25: replies carry the fused RRF sum over its maximum for the arms that ran (rrf * 61 / arms). */
+/** Replies carry the fused RRF sum over its maximum for the arms that ran (rrf * 61 / arms). */
 const normalizedRrfScore = (rrf: number, arms: 1 | 2) => (rrf * 61) / arms;
 
 vi.mock("@knowledge-base/db", () => ({ default: {} }));
@@ -624,7 +624,7 @@ const barrier = () => {
   return { promise, release };
 };
 
-describe("R27 admission and row regressions", () => {
+describe("admission and row regressions", () => {
   it("charges each queryless continuation once and rejects operation 31; hybrid spends one point", async () => {
     const f = await fixture();
     const ratePort = createMemoryRatePort();
@@ -940,7 +940,7 @@ describe("R27 admission and row regressions", () => {
   });
 
   it.each(["cancel", "deadline"])(
-    "R46r5 F4: %s at final recency admission drains the authority waiter without recording the read",
+    "%s at final recency admission drains the authority waiter without recording the read",
     async (exit) => {
       const f = await fixture();
       const stamp = async () =>
@@ -1108,7 +1108,7 @@ describe("R27 admission and row regressions", () => {
 
   it("redacts actual PostgreSQL error context at both private read catches", async () => {
     const f = await fixture();
-    const canary = "r27-synthetic-private-filter";
+    const canary = "synthetic-private-filter";
     const log = captureLog();
     try {
       for (const query of [undefined, "Ada"]) {

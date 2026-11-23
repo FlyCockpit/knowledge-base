@@ -68,7 +68,7 @@ word of the query takes part. Hits rank by how many of the query's words they
 match, then bm25, so a chunk with every word ranks above one with some.
 In a hybrid search the lexical arm keeps only
 chunks that match more than half of the query's words: a note that shares one
-incidental word with a paraphrased question no longer outranks the vector
+incidental word with a paraphrased question cannot outrank the vector
 arm's best hit (with stopwords dropped and all-words-first ranking alone,
 real Gemma reached only 12/20 first hits on the shared corpus; with it, 20/20).
 A lexical-only search keeps every match. Server and CLI build the same words from the shared corpus
@@ -288,7 +288,7 @@ spends the query budget.
 
 ### Measured chunk bounds
 
-The final P7 measurements on 2026-10-19 used the grouped writer at `0472968`,
+The measurements on 2026-10-19 used the grouped writer at `0472968`,
 cached Qwen 1024-dimensional vectors, and a quiet reference host: Intel
 Core i7-8550U (4 cores / 8 threads), 65,831,739,392 bytes RAM (61.3 GiB),
 NE-1TB NVMe disk with ext4, Linux 7.0.0-38-generic, Node v24.21.0.
@@ -309,9 +309,8 @@ vector search/rescoring and RRF; query embedding is excluded.
 | `binary_int8_rescore` | 400,000 | 638.8 | 610.8 | 1,798.0 | Yes |
 | `binary_int8_rescore` | 500,000 | 817.4 | 806.8 | 2,467.8 | No |
 
-Source results: `~/.cache/kb-bench-p7/latency-results-int8-grouped.json` and
-`~/.cache/kb-bench-p7/latency-results-binary-grouped.json` on the measurement
-host. These establish the limits on that reference host, not a latency promise
+Source results: `latency-results-int8-grouped.json` and
+`latency-results-binary-grouped.json` on the measurement host. These establish the limits on that reference host, not a latency promise
 for other hardware or concurrent workloads.
 
 ## Pinned artifacts and native runtime
@@ -487,8 +486,8 @@ Windows keeps held lock files).
 
 ## Execution evidence boundary
 
-The early Qwen host spike used x64 Node25.7.0/rustc1.96.1. It is evidence about
-that host only. Patched Gemma/Qwen host measurements informed memory formulas;
+A host spike (a measurement on one host, such as the x64 Node25.7.0/rustc1.96.1
+Qwen measurement) is evidence about that host only. Gemma/Qwen host measurements informed memory formulas;
 they do not establish Node26 image or arm64/macOS/Windows runtime readiness.
 
 Mandatory architecture smoke is `.github/workflows/kb-model-smoke.yml`: real
@@ -497,6 +496,6 @@ nonzero selected tests, checksum-keyed weights and architecture-tagged evidence.
 Run `pnpm test:kb -- qwen-model` for the local real-image lane; the explicit Rust
 model command is in [apps/cli README](../apps/cli/README.md). The aggregate status
 requires every leg. Cross-compilation and fake inference tests do not prove it.
-Architecture lanes not executed in a documentation pass remain incomplete in
-its handoff; do not relabel missing evidence optional or passed. The handoff
-records actual commands/results separately from inherited spike reports.
+Architecture lanes not executed are reported as incomplete; do not relabel
+missing evidence optional or passed. Record actual commands and results
+separately from earlier host measurements.

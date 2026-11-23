@@ -292,7 +292,7 @@ export async function beginQueryEmbedding(
   const id = randomUUID();
   if (signal?.aborted) throw failure("CANCELLED");
   if (deadline.getTime() <= Date.now()) throw failure("DEADLINE_EXCEEDED");
-  // R3-L4: the embedding target's breaker ticket (kept across a retried transaction).
+  // The embedding target's breaker ticket (kept across a retried transaction).
   let ticket: BreakerTicket | null = null;
   try {
     const admission = await transaction(
@@ -372,7 +372,7 @@ export async function beginQueryEmbedding(
                 deadline.getTime(),
               );
         const profile = availability.profile;
-        // R3-L4: a target whose last query embedding timed out is not tried again
+        // A target whose last query embedding timed out is not tried again
         // until its cooldown ends; the search serves the keyword arm at once (notice).
         const key = `${profile.providerId}:${profile.revision}`;
         if (ticket?.key !== key) {
@@ -1214,7 +1214,7 @@ async function consumeQueryEmbedding<T>(
   let verdict = false;
   try {
     request = await beginQueryEmbedding(options, actor, input, controller.signal);
-    // R3-L4: the embedding's own bound starts when the embedding does, after admission (authority,
+    // The embedding's own bound starts when the embedding does, after admission (authority,
     // SQL, rate limit); only a timeout of that full bound blames the target, never the search's
     // own short budget or slow admission.
     const budgetDeadlineAt = embeddingDeadline(deadlineAt);

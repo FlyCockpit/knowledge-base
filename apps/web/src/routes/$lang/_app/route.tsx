@@ -30,7 +30,7 @@ function AppShellLayout() {
 
   return (
     <>
-      {/* First tab stop: past the header and sidebar to the page (R2-19, WCAG 2.4.1). */}
+      {/* First tab stop: past the header and sidebar to the page (WCAG 2.4.1). */}
       <a
         href="#main-content"
         className="sr-only z-50 bg-background text-sm font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:px-4 focus:py-3 focus:outline-none focus:ring-2 focus:ring-ring"

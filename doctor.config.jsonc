@@ -86,7 +86,7 @@
         ]
       },
       {
-        // Legacy oversized screens tracked for refactor (split per the
+        // Oversized screens tracked for refactor (split per the
         // react-composition pattern). Suppressed per-file so the rules stay
         // active for new code; do not add files to this list — split the
         // component instead.

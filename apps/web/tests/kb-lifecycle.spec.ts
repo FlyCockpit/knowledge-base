@@ -120,6 +120,6 @@ test("maximum document/inventory browser render resolves 18,192 destinations", a
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(await page.locator("article a").last().getAttribute("href")).toContain(`rev=${A}`);
   console.log(
-    `R39 supported volume: ${Date.now() - start}ms, <=2MiB source / 8192 assets / 18192 destinations`,
+    `Supported volume: ${Date.now() - start}ms, <=2MiB source / 8192 assets / 18192 destinations`,
   );
 });

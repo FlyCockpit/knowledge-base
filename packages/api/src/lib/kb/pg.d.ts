@@ -4,7 +4,7 @@ declare module "pg" {
     rowCount: number | null;
   }
 
-  /** A LISTEN notification (R3-W4 dispatcher wake). */
+  /** A LISTEN notification (dispatcher wake). */
   export interface Notification {
     processId: number;
     channel: string;

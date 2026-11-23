@@ -110,7 +110,7 @@ export function loadRootDotenv(): LoadRootDotenvResult {
   }
 
   const envPath = path.join(root, ".env");
-  // quiet: dotenv would otherwise print its own banner to stdout (R3-W3).
+  // quiet: dotenv would otherwise print its own banner to stdout.
   const result = loadEnv({ path: envPath, quiet: true });
 
   return {

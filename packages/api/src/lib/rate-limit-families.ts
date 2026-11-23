@@ -93,7 +93,7 @@ export function scaleFamily(
 
 /**
  * Wire one family: env is read on the FIRST member resolution, not at import.
- * That preserves the laziness profile the old per-surface knobs had —
+ * That keeps the same laziness as a per-surface budget —
  * `createProcedureBudget` builds its limiter on first consume, so a test that
  * imports the router graph without ever hitting a family budget must not need
  * the budget keys in its env mock.

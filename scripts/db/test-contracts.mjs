@@ -11,7 +11,7 @@
  *   admission · 6 transient vs counted failures · 8 name reuse · 9 fresh DB ·
  *   10 the pre-drop backup · 11 enum removal (persistent session, unowned
  *   trigger function, procedure, external cancel) · 12 holds · 13 recover
- * Scenario 5 (FOR SHARE vs FOR UPDATE ordering) is covered by the spike only.
+ * Scenario 5 (FOR SHARE vs FOR UPDATE ordering) has no scenario here.
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -150,7 +150,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
     return dir;
   };
 
-  // Synthetic completed-pair result; KB's real encrypted bundles are covered by W2.
+  // Synthetic completed-pair result; KB's real encrypted bundles are covered by the backup tests.
   const hookLog = path.join(work, "hook.log");
   const failFile = path.join(work, "hook-fail");
   const bundleHook = writeTestBackupHook(work, { logFile: hookLog, failFile });
@@ -805,11 +805,11 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
     const userObjects = [
       `CREATE TYPE "S" AS ENUM ('A', 'B', 'C');`,
       `CREATE TABLE "w" ("id" SERIAL NOT NULL, "s" "S" NOT NULL DEFAULT 'B', "note" TEXT, "n" INTEGER NOT NULL DEFAULT 0, CONSTRAINT "w_pkey" PRIMARY KEY ("id"));`,
-      // A user plpgsql trigger and procedure that bind the enum type (R4-1, R5-1).
+      // A user plpgsql trigger and procedure that bind the enum type.
       `CREATE FUNCTION "w_note"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."s" = 'A'::"S" THEN NEW."note" := 'is-a'; END IF; RETURN NEW; END $$;`,
       // BEFORE triggers fire in name order (byte order). "__w_note" sorts like
-      // the earliest possible unquoted trigger name: before
-      // "knowledge_base_sync_*", after the generated "0_knowledge_base_sync_<hash>".
+      // the earliest possible unquoted trigger name: before any unquoted
+      // name that starts with a letter, after the generated "0_knowledge_base_sync_<hash>".
       // It must see the remapped value ("note" = 'is-a' below), which proves
       // the sync trigger fires first.
       `CREATE TRIGGER "__w_note" BEFORE INSERT OR UPDATE ON "w" FOR EACH ROW EXECUTE FUNCTION "w_note"();`,
@@ -840,7 +840,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       apply(db, names, { folders: ENUM_FOLDERS, image: ENUM_IMAGE, ...options });
 
     await step(
-      "contracts 11 (R4-1, R5-1): a warm pooled session keeps working across two enum rebuilds",
+      "contracts 11: a warm pooled session keeps working across two enum rebuilds",
       async () => {
         const db = "knowledge_base_test_c_enum";
         await createDb(db);
@@ -921,7 +921,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
     );
 
     await step(
-      "contracts 11 (R4-3): an external cancel during the rebuild is transient, then it applies",
+      "contracts 11: an external cancel during the rebuild is transient, then it applies",
       async () => {
         const db = "knowledge_base_test_c_enum_cancel";
         await createDb(db);

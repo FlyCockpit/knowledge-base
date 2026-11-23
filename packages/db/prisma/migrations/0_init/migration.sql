@@ -101,6 +101,9 @@ CREATE TYPE "IndexQuantization" AS ENUM ('INT8', 'BINARY_INT8_RESCORE');
 -- CreateEnum
 CREATE TYPE "McpGrantKind" AS ENUM ('PAT', 'OAUTH');
 
+-- CreateEnum
+CREATE TYPE "McpAuthoringMode" AS ENUM ('DREAM', 'EDIT', 'BOTH');
+
 -- CreateTable
 CREATE TABLE "user" (
     "id" TEXT NOT NULL,
@@ -851,6 +854,7 @@ CREATE TABLE "mcp_grant" (
     "toolGroups" TEXT[],
     "allowCreate" BOOLEAN NOT NULL DEFAULT false,
     "createdKbBits" TEXT[],
+    "authoringMode" "McpAuthoringMode",
     "revokedAt" TIMESTAMPTZ(3),
     "revokeReason" TEXT,
     "widenedAt" TIMESTAMPTZ(3),
@@ -1725,7 +1729,7 @@ ALTER TABLE "oauth_consent" ADD CONSTRAINT "oauth_consent_userId_fkey" FOREIGN K
 ALTER TABLE "device_approval" ADD CONSTRAINT "device_approval_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 
--- Folded from knowledge-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -1764,13 +1768,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS knowledge_base_live_owner_slug
   ON public.knowledge_base ("ownerId", slug)
   WHERE "ownerId" IS NOT NULL AND state <> 'TOMBSTONED'::"KnowledgeBaseState";
 
--- Folded from kb-operations-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- KB_CREATE idempotency: actor+operation+key unique for create reservations.
 CREATE UNIQUE INDEX IF NOT EXISTS operation_intent_kb_create_actor_key
   ON "operation_intent" ("actorKey", operation, "idempotencyKey")
   WHERE operation = 'KB_CREATE';
 
--- Folded from pr-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- Partial unique indexes for active pull requests (OPEN and CONFLICT are active).
 CREATE UNIQUE INDEX IF NOT EXISTS pull_request_active_per_source
   ON public.pull_request ("kbId", "sourceBranch")
@@ -1781,7 +1785,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS pull_request_active_auto_pr_per_actor
   WHERE "isAutoPr" = true
     AND status IN ('OPEN'::"PullRequestStatus", 'CONFLICT'::"PullRequestStatus");
 
--- Folded from kb-assets-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- Asset catalog and lineage checks.
 DO $$
 BEGIN
@@ -1836,7 +1840,7 @@ BEGIN
 END
 $$;
 
--- Folded from generation-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- The application role owns public; nobody else may create objects there.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
@@ -1878,7 +1882,7 @@ BEGIN
     (NEW.id, NEW."kbId", NEW.epoch, NEW."commitSha", NEW."providerId", NEW."providerVersion", NEW.fingerprint, NEW.dimensions, NEW."jobId") THEN
     RAISE EXCEPTION 'Immutable generation snapshot' USING ERRCODE = '23514';
   END IF;
-  -- I1: disk reservations belong only to the live BUILDING attempt; publish and failure release
+  -- Disk reservations belong only to the live BUILDING attempt; publish and failure release
   -- them and clear the ids in the same statement as the state change.
   IF cardinality(NEW."quotaReservationIds") > 0 AND NEW.state <> 'BUILDING' THEN
     RAISE EXCEPTION 'Reservations outside BUILDING' USING ERRCODE = '23514';
@@ -2000,7 +2004,7 @@ END $$;
 CREATE OR REPLACE TRIGGER generation_lease_guard BEFORE INSERT OR UPDATE ON public.generation_lease
   FOR EACH ROW EXECUTE FUNCTION public.kb_guard_lease();
 
--- I2: an index job cannot be cancelled while its generation references an unreleased disk
+-- An index job cannot be cancelled while its generation references an unreleased disk
 -- reservation. Index cancellers release first (cancelIndexBuildJobs). No lock: the target job
 -- row is locked before a BEFORE ROW trigger fires, and PL/pgSQL reads a fresh snapshot.
 CREATE OR REPLACE FUNCTION public.kb_guard_index_job_cancel() RETURNS trigger
@@ -2017,7 +2021,7 @@ CREATE OR REPLACE TRIGGER index_job_cancel_guard BEFORE UPDATE OF state ON publi
   FOR EACH ROW WHEN (NEW.state = 'CANCELLED' AND OLD.state IS DISTINCT FROM 'CANCELLED')
   EXECUTE FUNCTION public.kb_guard_index_job_cancel();
 
--- Folded from auth-authority.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- Per-user authority version. The session cookie cache is bound to it
 -- (packages/auth/src/session-authority.ts): a cached user snapshot is only
 -- reused while its "authorityVersion" equals the live row's. The trigger is
@@ -2064,7 +2068,7 @@ END $$;
 CREATE OR REPLACE TRIGGER account_authority_version AFTER INSERT OR UPDATE OR DELETE ON public.account
   FOR EACH ROW EXECUTE FUNCTION public.kb_account_authority_version();
 
--- Folded from kb-cache-constraints.sql; future changes belong in a new migration.
+-- Hand-written; future changes belong in a new migration.
 -- Byte-accounting bounds. Transitions additionally serialize on asset_cache_state.
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='public.asset_cache_state'::regclass AND conname='asset_cache_state_bounds') THEN
@@ -2096,6 +2100,9 @@ CREATE INDEX IF NOT EXISTS asset_cache_entry_victim_idx
 CREATE INDEX IF NOT EXISTS asset_cache_entry_repair_idx
   ON public.asset_cache_entry ("cacheId", hash)
   WHERE state IN ('INVALID', 'EVICTING');
+
+-- A write grant always carries a write mode and a read-only grant never does.
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_authoring_mode_matches_write" CHECK (("authoringMode" IS NULL) = NOT (coalesce('mcp:write' = ANY("scopes"), false)));
 
 -- knowledge-base:commit-marker (lets the runner prove this transaction committed; keep it last)
 DO $knowledge_base$ DECLARE history text := current_setting('knowledge_base.history', true); BEGIN IF history <> '' THEN EXECUTE format('UPDATE %s SET "logs" = %L WHERE "id" = (SELECT "id" FROM %s WHERE "finished_at" IS NULL AND "rolled_back_at" IS NULL ORDER BY "started_at" DESC LIMIT 1)', history::oid::regclass, 'knowledge-base:committed', history::oid::regclass); END IF; END $knowledge_base$;

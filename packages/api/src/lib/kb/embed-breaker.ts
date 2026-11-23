@@ -1,5 +1,5 @@
 /**
- * R3-L4 (CLI twin `kb-local/src/breaker.rs`): one query embedding waits at most
+ * CLI twin `kb-local/src/breaker.rs`. One query embedding waits at most
  * `QUERY_EMBEDDING_DEADLINE_MS`, and a target (provider revision or built-in model) whose
  * embedding timed out is skipped for a cooldown (a failure is fast, and a too-long query says
  * nothing about the next one): searches serve the keyword arm at once

@@ -240,7 +240,7 @@ async function queryless(
   });
   client.on("error", () => {});
   // While a file read is in flight the client (and its FOR KEY SHARE) stays open; `finally`
-  // ends it after the reader thread acknowledged (§1.5 CL-INTERLOCK).
+  // ends it after the reader thread acknowledged.
   const reading = { active: false };
   const stop = () => {
     if (!reading.active) void client.end().catch(() => {});

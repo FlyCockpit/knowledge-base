@@ -1,4 +1,4 @@
-/** R47 owning-boundary regressions: real SQL and Redis jobs. */
+/** Owning-boundary regressions: real SQL and Redis jobs. */
 
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";

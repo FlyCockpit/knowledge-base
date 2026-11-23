@@ -11,7 +11,7 @@ import {
 
 const config = { contextTokens: 1024, kvKeyType: "f16", kvValueType: "f16" } as const;
 const MiB = 1024 ** 2;
-describe("46r9 model contract", () => {
+describe("model contract", () => {
   it("TS consumes the single Rust/TS descriptor fixture without divergent constants", () => {
     expect(Object.values(BUILTIN_MODELS).map(({ runtime: _runtime, ...model }) => model)).toEqual(
       descriptors.models,
@@ -19,7 +19,7 @@ describe("46r9 model contract", () => {
     expect(descriptors.defaultModel).toBe(GEMMA_MODEL.modelId);
     expect(descriptors.defaultContext).toBe(1024);
   });
-  it("has exactly two optional descriptors, pinned by commit and checksum; legacy default remains Qwen", () => {
+  it("has exactly two optional descriptors, pinned by commit and checksum; QWEN_ARTIFACT stays the Qwen descriptor", () => {
     expect(Object.keys(BUILTIN_MODELS)).toEqual([QWEN_MODEL.modelId, GEMMA_MODEL.modelId]);
     expect(QWEN_ARTIFACT).toMatchObject({
       modelId: QWEN_MODEL.modelId,

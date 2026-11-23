@@ -64,7 +64,7 @@ async function state(page: Page, userCode: string) {
   }>;
 }
 
-test("R34b F3 numeric and mixed links claim the exact code; invalid and expired codes stay visible", async ({
+test("numeric and mixed links claim the exact code; invalid and expired codes stay visible", async ({
   page,
 }) => {
   const numeric = await start(page);
@@ -98,7 +98,7 @@ test("R34b F3 numeric and mixed links claim the exact code; invalid and expired 
   await expect(page.getByText("This code can't be used", { exact: true })).toBeVisible();
 });
 
-test("R34b F1 committed approval with a lost reply and minted PAT shows uncertainty immediately and on re-entry", async ({
+test("committed approval with a lost reply and minted PAT shows uncertainty immediately and on re-entry", async ({
   page,
 }) => {
   const code = await start(page);
@@ -153,7 +153,7 @@ test("R34b F1 committed approval with a lost reply and minted PAT shows uncertai
   ).toHaveCount(0);
 });
 
-test("R34b F2 actual CLI registers its private-file key, browser selects exact unchecked records, PAT decrypts only that recipient", async ({
+test("actual CLI registers its private-file key, browser selects exact unchecked records, PAT decrypts only that recipient", async ({
   page,
 }) => {
   const browserLogs: string[] = [];
@@ -338,7 +338,7 @@ test("R34b F2 actual CLI registers its private-file key, browser selects exact u
 });
 
 for (const delivery of ["success", "failure"] as const) {
-  test(`R34b replacement owns selection and pending controls after an older ${delivery}`, async ({
+  test(`replacement owns selection and pending controls after an older ${delivery}`, async ({
     page,
   }) => {
     const a = await start(page);

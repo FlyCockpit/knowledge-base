@@ -143,7 +143,7 @@ describe("PrActionsView", () => {
   });
 });
 
-describe("PrConflictsView (R3-W6)", () => {
+describe("PrConflictsView", () => {
   const KB = "a".repeat(24);
   const paths: PrConflictPath[] = [
     { path: "notes/a.md", kind: "document", recorded: true, standing: false },

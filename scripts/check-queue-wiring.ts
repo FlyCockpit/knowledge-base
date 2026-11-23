@@ -23,7 +23,7 @@ const JOBS_FILE = "packages/queue/src/jobs.ts";
 const QUEUE_ROUTER = "packages/api/src/routers/queue.ts";
 
 /**
- * Gaps as of 2026-09-02. Keep this empty. Shrink only.
+ * Known gaps. Keep this empty. Shrink only.
  */
 const ALLOWLIST = new Set<string>([]);
 

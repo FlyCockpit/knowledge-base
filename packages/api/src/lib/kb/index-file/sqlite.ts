@@ -1,5 +1,5 @@
 /**
- * The only importer of `better-sqlite3` and `sqlite-vec` (decision 21: stock prebuilt binaries,
+ * The only importer of `better-sqlite3` and `sqlite-vec` (stock prebuilt binaries,
  * plain-path opens, no URI, no env handling). Both packages are resolved at run time with
  * `createRequire(import.meta.url)`, so a bundled app resolves them from its own node_modules
  * (both are `neverBundle` in the server and worker tsdown configs).

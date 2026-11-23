@@ -614,7 +614,7 @@ export function readMergeBases(repoPath: string, a: string, b: string, limit: nu
 
 /**
  * `path -> blob` of one commit's whole tree in a single bounded
- * `ls-tree -r -z` (L-8: which paths a new commit changes). The commit was
+ * `ls-tree -r -z` (which paths a new commit changes). The commit was
  * validated when written, so its paths are already canonical.
  */
 export function readCommitBlobs(repoPath: string, commitSha: string): Map<string, string> {
@@ -777,7 +777,7 @@ export function walkGitTreeEntries(
   // Tree objects come from one batched read per depth level, not one process
   // per directory; the walk itself (order, names, depth, budgets) is unchanged.
   // Best effort: anything the batched read cannot load is walked (and
-  // reported) object by object, exactly as before.
+  // reported) object by object.
   let snapshot: TreeSnapshot | null = null;
   try {
     snapshot = SHA1.test(treeSha) ? loadTreeSnapshotSync(repoPath, treeSha) : null;
@@ -1254,7 +1254,7 @@ const TREE_LISTING_MAX_BYTES = KB_TREE_LIMITS.maxEntries * (KB_PATH_LIMITS.maxBy
  * Every tree object under `rootTree` in two processes, whatever the number of
  * directories or the depth: one recursive listing names the distinct subtree
  * objects, one batched read returns their raw bodies (the walk checks names,
- * order and budgets on those bodies, as before). Null when the listing does not
+ * order and budgets on those bodies). Null when the listing does not
  * fit what a tree within the limits can produce; anything missing is read
  * object by object by the walk, which then reports the budget it exceeds.
  */

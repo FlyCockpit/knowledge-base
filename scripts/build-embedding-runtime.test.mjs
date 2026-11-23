@@ -213,7 +213,7 @@ test("ordinary success, tool failure and re-entry retain their exact outcomes", 
   await assert.rejects(s.run("must-not-spawn", [], "/"), /closed/);
 });
 
-// flk8: the daemon drain readback belongs to the build-only bound. Under I/O
+// The daemon drain readback belongs to the build-only bound. Under I/O
 // pressure one `docker buildx history ls` took 7-25 s, so a fixed 30 s window
 // reported healthy builds as incomplete drains. A slow daemon is waited for;
 // only one that never confirms within the build bound fails closed.
@@ -239,7 +239,7 @@ if (args[0] === 'build') {
   return { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, probes };
 };
 
-test("flk8 Docker drain waits for confirmation beyond the former 30-second ceiling", async (t) => {
+test("Docker drain waits for confirmation beyond a fixed 30-second window", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "kb-drain-slow-"));
   const { env, probes } = fakeDocker(dir, 4);
   const start = Date.now();
@@ -268,7 +268,7 @@ test("flk8 Docker drain waits for confirmation beyond the former 30-second ceili
   }
 });
 
-test("flk8 Docker drain that never confirms fails closed at the build bound", {
+test("Docker drain that never confirms fails closed at the build bound", {
   // Regression guard for the former fixed 30 s readback window.
   timeout: 20_000,
 }, async () => {

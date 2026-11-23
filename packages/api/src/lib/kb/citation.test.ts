@@ -50,7 +50,7 @@ describe("citation projection", () => {
     expect([...hit.snippet]).toHaveLength(240);
     expect(hit.snippet.endsWith("…")).toBe(true);
   });
-  it("R2-27: preserves a plain snippet formatted before clipping, on every transport", () => {
+  it("preserves a plain snippet formatted before clipping, on every transport", () => {
     expect(
       projectCitationHit(
         {

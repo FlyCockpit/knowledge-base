@@ -128,7 +128,7 @@ describe("slices and the rescore K rule", () => {
   });
 });
 
-describe("quantization (§1.4)", () => {
+describe("quantization", () => {
   it("normalizes to f32 unit vectors and refuses invalid input", () => {
     expect([...unitVector([3, -4], 2)]).toEqual([Math.fround(0.6), Math.fround(-0.8)]);
     expect(() => unitVector([1, 2], 3)).toThrow();

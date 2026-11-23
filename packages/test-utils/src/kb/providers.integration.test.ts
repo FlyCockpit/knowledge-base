@@ -332,7 +332,7 @@ describe("providers durable registry and real fake HTTP", () => {
     // A healthy recent probe is never swept.
     expect(await expireStalledProviderProbes(prisma, owner.id)).toBe(0);
   });
-  it("R46r3 F1: repeated Redis publication and failed scheduling cannot renew an unconsumed probe", async () => {
+  it("repeated Redis publication and failed scheduling cannot renew an unconsumed probe", async () => {
     const owner = await user();
     const published = await createProvider(runtime, owner.id, input(), masterKey);
     const unpublished = await createProvider(runtime, owner.id, input(), masterKey);
@@ -386,7 +386,7 @@ describe("providers durable registry and real fake HTTP", () => {
       expect(await probe(id)).toEqual({ skipped: true });
     }
   });
-  it("R46r3 F1: live worker heartbeats keep a slow healthy HTTP probe pending, then ready", async () => {
+  it("live worker heartbeats keep a slow healthy HTTP probe pending, then ready", async () => {
     const owner = await user();
     const created = await createProvider(runtime, owner.id, input(), masterKey);
     await prisma.durableJob.update({
@@ -410,7 +410,7 @@ describe("providers durable registry and real fake HTTP", () => {
     expect(await running).toEqual({ ready: true });
     expect((await listMyProviders(runtime, owner.id)).items[0]!.probe.state).toBe("ready");
   });
-  it("R46r3 F1: timeout during real pending HTTP fences the late response and redelivery", async () => {
+  it("timeout during real pending HTTP fences the late response and redelivery", async () => {
     const owner = await user();
     const created = await createProvider(runtime, owner.id, input(), masterKey);
     const gate = barrier();
@@ -449,7 +449,7 @@ describe("providers durable registry and real fake HTTP", () => {
         { index: 0, embedding: [3, 4] },
       ],
     });
-    // Raw values in input order: the index format normalizes exactly once (§1.4).
+    // Raw values in input order: the index format normalizes exactly once.
     expect(await requestOpenAiEmbeddings(request, ["a", "b"])).toEqual([
       [3, 4],
       [0, 7],

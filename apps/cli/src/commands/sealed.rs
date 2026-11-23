@@ -160,7 +160,7 @@ pub fn run(args: &Args) -> Result<()> {
             reference: r,
         } => {
             let reply = store.sealed_revoke(&owner, &common.kb, r, &common.idempotency_key)?;
-            // L-8: say where the revoked symbol is still written.
+            // Say where the revoked symbol is still written.
             match store.sealed_reference_paths(&common.kb, r) {
                 Ok(paths) if !paths.is_empty() => tracing::warn!(
                     "the revoked record is still referenced in {}; those documents keep the symbol (search redacts it) and remain editable, but a changed document must not keep referencing it",
@@ -183,7 +183,7 @@ pub fn run(args: &Args) -> Result<()> {
         output::json(&reply)?;
     } else {
         // The reference stays alone on its own line so scripts can still
-        // take the last line (R3-L12).
+        // take the last line.
         output::line(format!("{verb} sealed record; reference:"))?;
         output::line(&reply.reference)?;
     }

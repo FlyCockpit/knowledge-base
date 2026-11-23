@@ -70,8 +70,8 @@ export async function issueMcpGenerationClaims(
         )
           return fail();
       } else return fail();
-      // Selections approved before write modes keep refreshing: the grant row
-      // holds the write mode; unknown keys are ignored.
+      // The grant row holds the write mode, so a selection without one still
+      // refreshes; unknown keys are ignored.
       const approvedScopes = approvedConsentScopes(
         intent.selection,
         authoringModeFromDb(grant.authoringMode),

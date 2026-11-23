@@ -144,7 +144,7 @@ pub struct ManifestEntry {
 pub struct SealedOccurrence {
     pub reference: String,
     pub path: String,
-    /// The blob holding the reference at `path` (L-8: an unchanged blob's
+    /// The blob holding the reference at `path` (an unchanged blob's
     /// references were validated when it was written).
     pub blob: String,
 }

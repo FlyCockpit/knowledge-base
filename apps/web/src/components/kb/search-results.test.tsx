@@ -131,7 +131,7 @@ describe("SearchResultList", () => {
     expect(out).toContain(enKb.search.freshness.stale);
     expect(out).toContain("install the thing");
   });
-  it("renders the transport's plain snippet as it is (R2-27: converted once, by the server)", () => {
+  it("renders the transport's plain snippet as it is (converted once, by the server)", () => {
     // `**hello**` is what the server's plain-text reduction leaves of a code span
     // (`` `**hello**` ``); a second conversion here would turn it into `hello`.
     const out = html(

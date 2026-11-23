@@ -325,7 +325,7 @@ fn racing_processes_initialize_one_store_and_reserve_once() {
     assert_eq!(repos.len(), 1, "{repos:?}");
 }
 
-// flk7: first initialization flushed every ancestor through `/` while holding
+// First initialization flushed every ancestor through `/` while holding
 // the store lock, so concurrent openers spent their five-second admission on
 // the host's busiest filesystem. Those directories are not store state. Park
 // that flush deterministically (as a stalled fsync does) and require a

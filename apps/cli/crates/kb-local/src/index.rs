@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BuildStage {
-    /// Before each vector-reuse candidate is examined (review r2 #5).
+    /// Before each vector-reuse candidate is examined.
     ReuseCandidate,
     Rows,
     BeforeFsync,
@@ -31,12 +31,12 @@ impl Store {
         self.verify_generation_file(s, false)
             .map_err(|fault| match fault {
                 FileFault::Corrupt | FileFault::Contract => StoreError::IndexUnavailable,
-                // Any SQLite failure while verifying refuses the file (as before).
+                // Any SQLite failure while verifying refuses the file.
                 FileFault::Transient(StoreError::Sqlite(_)) => StoreError::IndexUnavailable,
                 FileFault::Transient(e) => e,
             })
     }
-    /// Review #4: open and verify a published generation file, classifying
+    /// Open and verify a published generation file, classifying
     /// a refusal: proven damage (`Corrupt`), a file that is not the index
     /// its generation row describes (`Contract`), or a failure that proves
     /// nothing about the file (`Transient`: I/O, locking, the state DB).
@@ -84,7 +84,7 @@ impl Store {
         {
             return Err(FileFault::Contract);
         }
-        // Review r2 #2: every stored vector has the file's width (malformed
+        // Every stored vector has the file's width (malformed
         // rows pass `quick_check` but break distance queries).
         if integrity
             && let (Some(dims), Some(IndexQuantization::BinaryInt8Rescore)) =
@@ -224,7 +224,7 @@ impl Store {
             "UPDATE index_generations SET reserved_bytes=?2 WHERE id=?1 AND attempt=?3",
             (a.snapshot.id.as_str(), reserved as i64, &a.token),
         )?;
-        // (L-2): every admitted unit of work is progress; the watchdog and
+        // Every admitted unit of work is progress; the watchdog and
         // the durable attempt lease move forward together.
         let until = a.until.extend();
         let lease_ms = self.now_ms().saturating_add(
@@ -303,7 +303,7 @@ impl Store {
             .await;
         if let Err(e) = &result {
             let _guard = self.lock_write(&[])?;
-            // (L-1): shutdown cancellation and the no-progress watchdog are
+            // Shutdown cancellation and the no-progress watchdog are
             // transient; the generation resumes from its checkpoint later.
             let progressed = a.progressed.load(std::sync::atomic::Ordering::Acquire);
             if matches!(
@@ -355,7 +355,7 @@ impl Store {
         }
         Ok(vectors)
     }
-    /// Shared format v1 (§1.2): pass 1 writes documents, chunks and FTS text
+    /// Shared format v1: pass 1 writes documents, chunks and FTS text
     /// and enforces the chunk limit before any embedding; pass 2 embeds the
     /// int8 calibration sample first, then every other chunk once, in id
     /// order. A lexical-only generation has no pass 2: no embedding,
@@ -462,7 +462,7 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
         drop(reader);
         paths_at_rev.sort_by(|x, y| x.as_str().cmp(y.as_str()));
-        // R3-L6: the reuse source is opened before pass 1 for a built-in
+        // The reuse source is opened before pass 1 for a built-in
         // build, so context fitting skips the worker round trip for a chunk
         // whose exact text the previous file (same fingerprint, so the same
         // model and context) already stored: it fit then.
@@ -473,7 +473,7 @@ impl Store {
         let mut documents = 0u64;
         let mut chunks = 0u64;
         let mut text_bytes = 0u64;
-        // R3-L6: documents are read in groups through one `cat-file --batch`
+        // Documents are read in groups through one `cat-file --batch`
         // reader each, not three Git children and a manifest read apiece. The
         // reader is dropped before the group is processed: a live Git child
         // holds a store lease, and storage reservation takes the store fence.
@@ -547,7 +547,7 @@ impl Store {
                     },
                 )?;
             }
-            // Before any embedding spend (§1.9; the server-only bounds and
+            // Before any embedding spend (the server-only bounds and
             // admin ceiling do not apply to the CLI).
             if chunks.saturating_add(source.chunked.chunks.len() as u64) > chunk_limit {
                 *code = "INDEX_CHUNK_LIMIT_EXCEEDED";
@@ -670,7 +670,7 @@ impl Store {
                 })?,
             )
         };
-        // The one normalization of every raw embedding (§1.4).
+        // The one normalization of every raw embedding.
         let unit = |raw: Vec<f64>| index_format::unit_vector(&raw, dims);
         let checkpoint = match &s.profile {
             Some(pin) if !lexical => {
@@ -1021,7 +1021,7 @@ pub(crate) struct ReuseSource {
 }
 impl ReuseSource {
     /// The stored vector of chunk `id`, decoded and validated against the
-    /// build's dimensions (review r2 #2); a row that fails is embedded again.
+    /// build's dimensions; a row that fails is embedded again.
     pub(crate) fn stored(
         &self,
         id: i64,
@@ -1060,7 +1060,7 @@ impl Store {
         // first): while lexical@head serves the previous semantic
         // generation is retired but still the reuse source. Retention cannot
         // reclaim it meanwhile: it skips KBs whose build permit is held.
-        // R3-L2: candidates are walked in bounded pages (active first, then
+        // Candidates are walked in bounded pages (active first, then
         // newest epoch) until one is usable; a candidate that cannot serve
         // (superseded mid-build so never published, unreadable, another
         // quantization, no vectors, a damaged hash table) falls through to
@@ -1123,7 +1123,7 @@ impl Store {
                 if active.as_ref().is_none_or(|(a, _)| *a != candidate) {
                     after = Some((epoch, candidate.clone()));
                 }
-                // Review r2 #5: the attempt's cancellation and watchdog are
+                // The attempt's cancellation and watchdog are
                 // observed between candidates and inside each one's load.
                 observer(BuildStage::ReuseCandidate)?;
                 Self::check_build_control(a)?;
@@ -1183,7 +1183,7 @@ impl Store {
     }
 }
 
-/// Why a generation file was refused (review #4).
+/// Why a generation file was refused.
 #[derive(Debug)]
 pub(crate) enum FileFault {
     /// Proven damage: a bad header, a corrupt page, a failed integrity check.
@@ -1222,7 +1222,7 @@ impl FileFault {
     }
 }
 
-/// One document read group of a build (R3-L6): bounded in count, bytes and
+/// One document read group of a build: bounded in count, bytes and
 /// time (well inside the Git child timeout, `git_read::GIT_TIMEOUT`).
 const READ_GROUP_DOCUMENTS: usize = 64;
 const READ_GROUP_BYTES: usize = 16 * 1024 * 1024;

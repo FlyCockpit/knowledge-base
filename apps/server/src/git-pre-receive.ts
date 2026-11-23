@@ -47,7 +47,7 @@ export function pushChannel(socket: Socket) {
 }
 /**
  * A hook failure crosses the process boundary as typed, enumerated detail
- * only — the error's class name and stable code — never its message (R3-W3).
+ * only — the error's class name and stable code — never its message.
  */
 export function pushHookDiagnostic(error: unknown): {
   errorClass: string;
@@ -138,9 +138,9 @@ async function hook() {
     if ((await channel.receive()).ok !== true) throw new Error("PUSH_REJECTED");
   } catch (error) {
     // Tell the server which refusal it was, so the pusher reads the reason
-    // instead of a bare 503 (R3-W10). Flushed before the socket closes.
+    // instead of a bare 503. Flushed before the socket closes.
     // Any other failure crosses the process boundary as a bounded, redacted
-    // diagnostic for the server log: the CGI discards this hook's stderr (R3-W3).
+    // diagnostic for the server log: the CGI discards this hook's stderr.
     const report =
       error instanceof PushRefusedError
         ? { refused: error.refusal, detail: error.detail }

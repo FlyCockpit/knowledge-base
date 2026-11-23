@@ -78,7 +78,7 @@ describe("sealed reference grammar and full-tree boundary", () => {
     ).toMatchObject({ ok: false, code: "TREE_SEALED" });
     expect(sealedTreeValidator(namespace, new Set())([])).toBeNull();
   });
-  it("L-8: a retained revoked reference in an unchanged blob never blocks other writes", () => {
+  it("a retained revoked reference in an unchanged blob never blocks other writes", () => {
     const blobSha = (text: string) =>
       createHash("sha1")
         .update(

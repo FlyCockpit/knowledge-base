@@ -1,4 +1,4 @@
-/** R38: real route/client/router regressions; faults occur AFTER real handlers. */
+/** Real route/client/router regressions; faults occur AFTER real handlers. */
 import { randomUUID } from "node:crypto";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json" with { type: "json" };
 import enKb from "@knowledge-base/locales/src/en-US/kb.json" with { type: "json" };
@@ -57,7 +57,7 @@ async function boot(page: Page) {
   expect(response.ok()).toBe(true);
   actors = await response.json();
   await as(page, "owner");
-  await page.goto(`${fx.origin}/r38`);
+  await page.goto(`${fx.origin}/kb-editor`);
   await expect(page.getByRole("button", { name: enKb.list.create, exact: true })).toBeVisible({
     timeout: 25_000,
   });
@@ -65,11 +65,11 @@ async function boot(page: Page) {
 async function createKb(page: Page, text?: string) {
   return page.evaluate(
     async ({ slug, text, docPath }) => {
-      const { orpc, kbAttachmentSchema } = window.__r38;
+      const { orpc, kbAttachmentSchema } = window.__kbEditor;
       const created = await orpc.kbs.create.call({
         name: slug,
         slug,
-        description: "R38 browser regression KB",
+        description: "Browser regression KB",
         idempotencyKey: crypto.randomUUID(),
       });
       const kb = kbAttachmentSchema.parse(created.kb);
@@ -83,18 +83,18 @@ async function createKb(page: Page, text?: string) {
         });
       return kbAttachmentSchema.parse((await orpc.kbs.get.call({ kbId: kb.id }))?.kb);
     },
-    { slug: `r38-${randomUUID()}`, text, docPath },
+    { slug: `editor-${randomUUID()}`, text, docPath },
   );
 }
 async function go(page: Page, href: string) {
   await page.evaluate(async (href) => {
-    await window.__r38.router.navigate({ href });
+    await window.__kbEditor.router.navigate({ href });
   }, href);
 }
 async function prime(page: Page, kbId: string, document = false) {
   await page.evaluate(
     async ({ kbId, document, docPath }) => {
-      const { queryClient, orpc } = window.__r38;
+      const { queryClient, orpc } = window.__kbEditor;
       await queryClient.fetchQuery(orpc.kbs.get.queryOptions({ input: { kbId } }));
       if (document)
         await queryClient.fetchQuery(
@@ -107,9 +107,9 @@ async function prime(page: Page, kbId: string, document = false) {
 async function read(page: Page, kbId: string, path = docPath) {
   return page.evaluate(
     ({ kbId, path }) =>
-      window.__r38.orpc.documents.get
+      window.__kbEditor.orpc.documents.get
         .call({ kbId, path })
-        .then((r) => window.__r38.documentSchema.parse(r)),
+        .then((r) => window.__kbEditor.documentSchema.parse(r)),
     {
       kbId,
       path,
@@ -215,7 +215,9 @@ async function mutationsSettled(page: Page) {
   // reset()/unmount can retire observers while the actual mutation and its
   // async invalidation callback still run. Assert the successor only afterward.
   await expect
-    .poll(() => page.evaluate(() => window.__r38.queryClient.isMutating()), { timeout: 15_000 })
+    .poll(() => page.evaluate(() => window.__kbEditor.queryClient.isMutating()), {
+      timeout: 15_000,
+    })
     .toBe(0);
 }
 async function fillCreate(page: Page, suffix: string) {
@@ -227,7 +229,7 @@ async function fillCreate(page: Page, suffix: string) {
     .fill(`Private draft ${suffix}`);
 }
 
-test("R5 offline save explains its pause and resumes the same draft", async ({ page }) => {
+test("offline save explains its pause and resumes the same draft", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Before offline");
   await go(page, at(kb.id, docPath));
@@ -246,7 +248,7 @@ test("R5 offline save explains its pause and resumes the same draft", async ({ p
   expect((await read(page, kb.id)).markdown).toBe(human("Saved after reconnecting"));
 });
 
-test("R5 returning to a head document refreshes its cached revision", async ({ page }) => {
+test("returning to a head document refreshes its cached revision", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Cached before remote edit");
   await go(page, readAt(kb.id));
@@ -254,7 +256,7 @@ test("R5 returning to a head document refreshes its cached revision", async ({ p
   await go(page, at(kb.id));
   await page.evaluate(
     ({ kbId, baseRevision, path }) =>
-      window.__r38.orpc.documents.update.call({
+      window.__kbEditor.orpc.documents.update.call({
         kbId,
         baseRevision,
         path,
@@ -267,7 +269,7 @@ test("R5 returning to a head document refreshes its cached revision", async ({ p
   await expect(page.getByTestId("kb-rendered-document")).toContainText("Fresh after remote edit");
 });
 
-test("R5 missing paths on main and a pinned revision explain their absence", async ({ page }) => {
+test("missing paths on main and a pinned revision explain their absence", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Existing document");
   for (const rev of [undefined, kb.headSha!]) {
@@ -278,7 +280,7 @@ test("R5 missing paths on main and a pinned revision explain their absence", asy
   }
 });
 
-test("R5 resolving the last PR conflict retires its comparisons and staged image note", async ({
+test("resolving the last PR conflict retires its comparisons and staged image note", async ({
   page,
 }) => {
   await boot(page);
@@ -289,7 +291,7 @@ test("R5 resolving the last PR conflict retires its comparisons and staged image
   const update = () =>
     page.evaluate(
       ({ kbId, baseRevision, path }) =>
-        window.__r38.orpc.documents.update.call({
+        window.__kbEditor.orpc.documents.update.call({
           kbId,
           baseRevision,
           path,
@@ -302,15 +304,15 @@ test("R5 resolving the last PR conflict retires its comparisons and staged image
   await update();
   const number = await page.evaluate(
     async (kbId) =>
-      (await window.__r38.orpc.pullRequests.list.call({ kbId, limit: 5, status: "OPEN" })).items[0]!
-        .number,
+      (await window.__kbEditor.orpc.pullRequests.list.call({ kbId, limit: 5, status: "OPEN" }))
+        .items[0]!.number,
     kb.id,
   );
   await as(page, "owner");
   // Use different text so the two replacements conflict.
   await page.evaluate(
     ({ kbId, baseRevision, path }) =>
-      window.__r38.orpc.documents.update.call({
+      window.__kbEditor.orpc.documents.update.call({
         kbId,
         baseRevision,
         path,
@@ -338,7 +340,7 @@ test("R5 resolving the last PR conflict retires its comparisons and staged image
 });
 
 // Independently fresh kbs.get must never bless cached document bytes.
-test("F1 cached document pins its own commit, preserves conflict draft and advances only after save", async ({
+test("cached document pins its own commit, preserves conflict draft and advances only after save", async ({
   page,
 }) => {
   await boot(page);
@@ -348,7 +350,7 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
   await go(page, at(kb.id));
   const remote = await page.evaluate(
     async ({ kbId, baseRevision, path }) => {
-      const { orpc, queryClient } = window.__r38;
+      const { orpc, queryClient } = window.__kbEditor;
       const result = await orpc.documents.update.call({
         kbId,
         baseRevision,
@@ -360,7 +362,7 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
         ...orpc.kbs.get.queryOptions({ input: { kbId } }),
         staleTime: 0,
       });
-      return window.__r38.parseApplyResult(result);
+      return window.__kbEditor.parseApplyResult(result);
     },
     { kbId: kb.id, baseRevision: kb.headSha!, path: docPath },
   );
@@ -385,7 +387,7 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
   expect((await read(page, kb.id)).markdown).toBe(human("Next draft D"));
 });
 
-test("F1 metadata pins opening fields/version across dirty refetch; reopen uses fresh snapshot", async ({
+test("metadata pins opening fields/version across dirty refetch; reopen uses fresh snapshot", async ({
   page,
 }) => {
   await boot(page);
@@ -396,7 +398,7 @@ test("F1 metadata pins opening fields/version across dirty refetch; reopen uses 
   await dialog.getByLabel(enKb.create.name, { exact: true }).fill("Local metadata");
   await page.evaluate(
     async ({ kbId, metadataVersion }) => {
-      const { orpc, queryClient } = window.__r38;
+      const { orpc, queryClient } = window.__kbEditor;
       await orpc.kbs.update.call({
         kbId,
         metadataVersion,
@@ -415,7 +417,7 @@ test("F1 metadata pins opening fields/version across dirty refetch; reopen uses 
   await expect(dialog.getByText(enKb.manage.conflict, { exact: true })).toBeVisible();
   expect(
     await page.evaluate(
-      (kbId) => window.__r38.orpc.kbs.get.call({ kbId }).then((r) => r?.kb.name),
+      (kbId) => window.__kbEditor.orpc.kbs.get.call({ kbId }).then((r) => r?.kb.name),
       kb.id,
     ),
   ).toBe("Remote metadata");
@@ -431,7 +433,7 @@ test("F1 metadata pins opening fields/version across dirty refetch; reopen uses 
 });
 
 for (const existing of [false, true])
-  test(`F2 cached KB switch resets ${existing ? "existing" : "new"} document session`, async ({
+  test(`cached KB switch resets ${existing ? "existing" : "new"} document session`, async ({
     page,
   }) => {
     await boot(page);
@@ -445,7 +447,7 @@ for (const existing of [false, true])
       await page.getByLabel(enKb.editor.pathLabel, { exact: true }).fill("private-a.md");
     // Same-KB metadata refresh cannot retire a dirty editor.
     await page.evaluate(async (kbId) => {
-      const { queryClient, orpc } = window.__r38;
+      const { queryClient, orpc } = window.__kbEditor;
       await queryClient.fetchQuery({
         ...orpc.kbs.get.queryOptions({ input: { kbId } }),
         staleTime: 0,
@@ -458,7 +460,7 @@ for (const existing of [false, true])
       await expect(page.getByLabel(enKb.editor.pathLabel, { exact: true })).toHaveValue("");
   });
 
-test("F2 KB header overlays and submitted search filters retire with KB identity", async ({
+test("KB header overlays and submitted search filters retire with KB identity", async ({
   page,
 }) => {
   await boot(page);
@@ -480,7 +482,7 @@ test("F2 KB header overlays and submitted search filters retire with KB identity
   await expect(page.getByText(enKb.search.indexUnavailable, { exact: true })).toHaveCount(0);
 });
 
-test("F2 retired editor delete cannot navigate away from cached successor", async ({ page }) => {
+test("retired editor delete cannot navigate away from cached successor", async ({ page }) => {
   await boot(page);
   const a = await createKb(page, "Delete A");
   const b = await createKb(page);
@@ -550,7 +552,7 @@ function watchDeletes(page: Page) {
   return bases;
 }
 
-test("P3 header delete after a proposed edit targets the proposal head", async ({ page }) => {
+test("header delete after a proposed edit targets the proposal head", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Main text");
   expect(
@@ -566,7 +568,7 @@ test("P3 header delete after a proposed edit targets the proposal head", async (
   await expect(markdown(page)).toHaveValue("Proposed text");
   const proposalHead = await page.evaluate(
     ({ kbId }) =>
-      window.__r38.orpc.pullRequests.list
+      window.__kbEditor.orpc.pullRequests.list
         .call({ kbId, limit: 5, status: "OPEN" })
         .then((page) => page.items[0]?.headSha ?? null),
     { kbId: kb.id },
@@ -575,7 +577,7 @@ test("P3 header delete after a proposed edit targets the proposal head", async (
   // The same session's Delete writes against the proposal it just advanced to.
   await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
   await confirmDelete(page);
-  // R6: deleted in the proposal is a state of its own, never a failed read
+  // Deleted in the proposal is a state of its own, never a failed read
   // (its head read reports PATH_NOT_FOUND) and nothing deletes it again.
   const number = Number(new URL(page.url()).searchParams.get("proposal"));
   const notice = page.getByText(
@@ -611,8 +613,8 @@ test("P3 header delete after a proposed edit targets the proposal head", async (
   });
   // Not awaited: the refetch it starts is the one held above.
   await page.evaluate(() => {
-    void window.__r38.queryClient.invalidateQueries({
-      queryKey: window.__r38.orpc.pullRequests.get.key(),
+    void window.__kbEditor.queryClient.invalidateQueries({
+      queryKey: window.__kbEditor.orpc.pullRequests.get.key(),
     });
   });
   await expect.poll(() => holding).toBe(true);
@@ -629,7 +631,7 @@ test("P3 header delete after a proposed edit targets the proposal head", async (
 });
 
 for (const existing of [false, true])
-  test(`R4 a proposed ${existing ? "edit" : "create"} keeps one editing target across saves, reads, reload, history and lookup failure`, async ({
+  test(`a proposed ${existing ? "edit" : "create"} keeps one editing target across saves, reads, reload, history and lookup failure`, async ({
     page,
   }) => {
     await boot(page);
@@ -643,7 +645,7 @@ for (const existing of [false, true])
     const proposals = () =>
       page.evaluate(
         ({ kbId }) =>
-          window.__r38.orpc.pullRequests.list
+          window.__kbEditor.orpc.pullRequests.list
             .call({ kbId, limit: 5, status: "OPEN" })
             .then((page) => page.items.map((pr) => ({ number: pr.number, version: pr.version }))),
         { kbId: kb.id },
@@ -678,7 +680,7 @@ for (const existing of [false, true])
     await save("Two", 2);
     await save("Three", 3);
     await doneShows("Three");
-    // An inserted image is staged (R3-W7): it writes nothing until the next
+    // An inserted image is staged: it writes nothing until the next
     // save, which commits it with the draft and advances the read head.
     await markdown(page).fill("Draft with image");
     await expect(page.getByTestId("editor-insert-image")).toBeEnabled();
@@ -696,7 +698,7 @@ for (const existing of [false, true])
     await expect(propose()).toBeEnabled();
     const imageHead = await page.evaluate(
       async ({ kbId, number }) =>
-        (await window.__r38.orpc.pullRequests.get.call({ kbId, number })).pr.headSha,
+        (await window.__kbEditor.orpc.pullRequests.get.call({ kbId, number })).pr.headSha,
       { kbId: kb.id, number },
     );
     await page.getByRole("link", { name: enKb.document.doneEditing, exact: true }).click();
@@ -745,7 +747,7 @@ for (const existing of [false, true])
     if (existing) expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
   });
 
-test("P3 a reopened page's delete updates the open proposal and shows its numbered toast", async ({
+test("a reopened page's delete updates the open proposal and shows its numbered toast", async ({
   page,
 }) => {
   await boot(page);
@@ -778,7 +780,7 @@ test("P3 a reopened page's delete updates the open proposal and shows its number
   const proposal = () =>
     page.evaluate(
       ({ kbId }) =>
-        window.__r38.orpc.pullRequests.list
+        window.__kbEditor.orpc.pullRequests.list
           .call({ kbId, limit: 5, status: "OPEN" })
           .then((page) => page.items[0] ?? null),
       { kbId: kb.id },
@@ -802,7 +804,7 @@ test("P3 a reopened page's delete updates the open proposal and shows its number
   expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
 });
 
-test("P3 delete after a concurrent edit re-reads, asks again and deletes the latest", async ({
+test("delete after a concurrent edit re-reads, asks again and deletes the latest", async ({
   page,
 }) => {
   await boot(page);
@@ -812,7 +814,7 @@ test("P3 delete after a concurrent edit re-reads, asks again and deletes the lat
   const bases = watchDeletes(page);
   const remote = await page.evaluate(
     async ({ kbId, baseRevision, path }) => {
-      const { orpc } = window.__r38;
+      const { orpc } = window.__kbEditor;
       const result = await orpc.documents.update.call({
         kbId,
         baseRevision,
@@ -820,7 +822,7 @@ test("P3 delete after a concurrent edit re-reads, asks again and deletes the lat
         content: { markdown: "Version B" },
         idempotencyKey: crypto.randomUUID(),
       });
-      return window.__r38.parseApplyResult(result);
+      return window.__kbEditor.parseApplyResult(result);
     },
     { kbId: kb.id, baseRevision: kb.headSha!, path: docPath },
   );
@@ -839,7 +841,7 @@ test("P3 delete after a concurrent edit re-reads, asks again and deletes the lat
   await expect(read(page, kb.id)).rejects.toThrow();
 });
 
-test("P3 a failed re-read of the reported head keeps delete disabled until Retry succeeds", async ({
+test("a failed re-read of the reported head keeps delete disabled until Retry succeeds", async ({
   page,
 }) => {
   await boot(page);
@@ -849,8 +851,8 @@ test("P3 a failed re-read of the reported head keeps delete disabled until Retry
   const bases = watchDeletes(page);
   const remote = await page.evaluate(
     async ({ kbId, baseRevision, path }) =>
-      window.__r38.parseApplyResult(
-        await window.__r38.orpc.documents.update.call({
+      window.__kbEditor.parseApplyResult(
+        await window.__kbEditor.orpc.documents.update.call({
           kbId,
           baseRevision,
           path,
@@ -891,7 +893,7 @@ test("P3 a failed re-read of the reported head keeps delete disabled until Retry
 });
 
 for (const sibling of [true, false])
-  test(`R5 refuses leading-space paths without changing main or a sibling (sibling ${sibling ? "present" : "absent"})`, async ({
+  test(`refuses leading-space paths without changing main or a sibling (sibling ${sibling ? "present" : "absent"})`, async ({
     page,
   }) => {
     const spaced = " notes/spaced.md";
@@ -901,7 +903,7 @@ for (const sibling of [true, false])
     const write = (path: string, text: string) =>
       page.evaluate(
         async ({ kbId, path, text }) => {
-          const { orpc, parseApplyResult } = window.__r38;
+          const { orpc, parseApplyResult } = window.__kbEditor;
           const head = (await orpc.kbs.get.call({ kbId }))!.kb.headSha!;
           return parseApplyResult(
             await orpc.documents.create.call({
@@ -922,7 +924,7 @@ for (const sibling of [true, false])
     await expect(read(page, kb.id, spaced)).rejects.toThrow("Invalid path");
     expect(
       await page.evaluate(
-        async (kbId) => (await window.__r38.orpc.kbs.get.call({ kbId })).kb.headSha,
+        async (kbId) => (await window.__kbEditor.orpc.kbs.get.call({ kbId })).kb.headSha,
         kb.id,
       ),
     ).toBe(before);
@@ -931,15 +933,15 @@ for (const sibling of [true, false])
   });
 
 for (const failed of [false, true])
-  test(`F4 retired create ${failed ? "failure" : "success"} preserves reopened intent`, async ({
+  test(`retired create ${failed ? "failure" : "success"} preserves reopened intent`, async ({
     page,
   }) => {
     await boot(page);
     if (failed)
       await page.evaluate(() =>
-        window.__r38.orpc.kbs.create.call({
+        window.__kbEditor.orpc.kbs.create.call({
           name: "Taken",
-          slug: "r38-taken",
+          slug: "editor-taken",
           description: "Existing KB for collision",
           idempotencyKey: crypto.randomUUID(),
         }),
@@ -951,7 +953,7 @@ for (const failed of [false, true])
       await page
         .getByRole("dialog")
         .getByLabel(enKb.create.slug, { exact: true })
-        .fill("r38-taken");
+        .fill("editor-taken");
     await page
       .getByRole("dialog")
       .getByRole("button", { name: enKb.create.submit, exact: true })
@@ -980,7 +982,7 @@ for (const failed of [false, true])
   });
 
 for (const failed of [false, true])
-  test(`F4 retired metadata ${failed ? "conflict" : "success"} preserves reopened draft`, async ({
+  test(`retired metadata ${failed ? "conflict" : "success"} preserves reopened draft`, async ({
     page,
   }) => {
     await boot(page);
@@ -990,7 +992,7 @@ for (const failed of [false, true])
     if (failed)
       await page.evaluate(
         ({ kbId, metadataVersion }) =>
-          window.__r38.orpc.kbs.update.call({
+          window.__kbEditor.orpc.kbs.update.call({
             kbId,
             metadataVersion,
             name: "Remote C",
@@ -1025,7 +1027,7 @@ for (const failed of [false, true])
   });
 
 for (const failed of [false, true])
-  test(`F4 retired KB delete ${failed ? "conflict" : "success"} cannot close successor overlay or navigate`, async ({
+  test(`retired KB delete ${failed ? "conflict" : "success"} cannot close successor overlay or navigate`, async ({
     page,
   }) => {
     await boot(page);
@@ -1038,7 +1040,7 @@ for (const failed of [false, true])
     if (failed)
       await page.evaluate(
         ({ kbId, metadataVersion }) =>
-          window.__r38.orpc.kbs.update.call({
+          window.__kbEditor.orpc.kbs.update.call({
             kbId,
             metadataVersion,
             name: "Changed A",
@@ -1067,7 +1069,7 @@ for (const [root, operation] of [
   ["documents", "update"],
   ["documents", "create"],
 ]) {
-  test(`F5 staged retry after lost ${root}.${operation} acknowledgement recovers exact receipt`, async ({
+  test(`staged retry after lost ${root}.${operation} acknowledgement recovers exact receipt`, async ({
     page,
   }) => {
     await boot(page);
@@ -1105,7 +1107,7 @@ for (const [root, operation] of [
   });
 }
 
-test("F5 expired preparation is rejected and a fresh attempt stages anew", async ({ page }) => {
+test("expired preparation is rejected and a fresh attempt stages anew", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Original");
   await go(page, at(kb.id, docPath));
@@ -1126,7 +1128,7 @@ test("F5 expired preparation is rejected and a fresh attempt stages anew", async
 });
 
 for (const structured of [false, true])
-  test(`F3/F8 ${structured ? "structured" : "hybrid"} denial after cached success clears real KB query keys`, async ({
+  test(`${structured ? "structured" : "hybrid"} denial after cached success clears real KB query keys`, async ({
     page,
   }) => {
     await boot(page);
@@ -1140,7 +1142,7 @@ for (const structured of [false, true])
     await go(page, at(a.id));
     await prime(page, a.id, true);
     await page.evaluate(async (kbId) => {
-      const { queryClient, orpc } = window.__r38;
+      const { queryClient, orpc } = window.__kbEditor;
       await queryClient.fetchQuery(orpc.kbMirror.status.queryOptions({ input: { kbId } }));
       await queryClient.fetchQuery(orpc.embeddingProviders.listMine.queryOptions({ input: {} }));
     }, a.id);
@@ -1150,7 +1152,7 @@ for (const structured of [false, true])
     // the check even though TanStack retains successful data on refetch errors.
     await page.evaluate(
       ({ kbId, structured }) => {
-        const { queryClient, orpc } = window.__r38;
+        const { queryClient, orpc } = window.__kbEditor;
         const meta = {
           freshness: "current" as const,
           generationId: "a".repeat(24),
@@ -1181,13 +1183,13 @@ for (const structured of [false, true])
     await expect(page.getByText(enKb.search.noResults, { exact: true })).toBeVisible();
     await as(page, "owner");
     await page.evaluate(
-      ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
+      ({ kbId, shareUserId }) => window.__kbEditor.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
       { kbId: a.id, shareUserId: actors.managerUserId },
     );
     await as(page, "manager");
     await page.evaluate(
       async ({ kbId, structured }) => {
-        const { queryClient } = window.__r38;
+        const { queryClient } = window.__kbEditor;
         await queryClient.refetchQueries({
           predicate: (q) =>
             Array.isArray(q.queryKey[0]) &&
@@ -1200,7 +1202,7 @@ for (const structured of [false, true])
     );
     await expect(page.getByText(enKb.detail.unavailable, { exact: true })).toBeVisible();
     const cache = await page.evaluate(() =>
-      window.__r38.queryClient
+      window.__kbEditor.queryClient
         .getQueryCache()
         .getAll()
         .map((q) => ({ key: q.queryKey, data: q.state.data })),
@@ -1213,7 +1215,7 @@ for (const structured of [false, true])
     expect(JSON.stringify(cache)).toContain("embeddingProviders");
   });
 
-test("F8 confirmed tombstone evicts actual mirror keys; refused owner action retains them", async ({
+test("confirmed tombstone evicts actual mirror keys; refused owner action retains them", async ({
   page,
 }) => {
   await boot(page);
@@ -1224,9 +1226,9 @@ test("F8 confirmed tombstone evicts actual mirror keys; refused owner action ret
   await as(page, "manager");
   await prime(page, kb.id, true);
   await page.evaluate(async (kbId) => {
-    const { queryClient, orpc, recheckKbAccess } = window.__r38;
+    const { queryClient, orpc, recheckKbAccess } = window.__kbEditor;
     await queryClient.fetchQuery(orpc.kbMirror.status.queryOptions({ input: { kbId } }));
-    const kb = window.__r38.kbAttachmentSchema.parse((await orpc.kbs.get.call({ kbId }))?.kb);
+    const kb = window.__kbEditor.kbAttachmentSchema.parse((await orpc.kbs.get.call({ kbId }))?.kb);
     let denied = false;
     try {
       await orpc.kbs.delete.call({
@@ -1249,7 +1251,7 @@ test("F8 confirmed tombstone evicts actual mirror keys; refused owner action ret
   await as(page, "owner");
   await page.evaluate(
     ({ kbId, metadataVersion }) =>
-      window.__r38.orpc.kbs.delete.call({
+      window.__kbEditor.orpc.kbs.delete.call({
         kbId,
         metadataVersion,
         confirm: "DELETE",
@@ -1259,7 +1261,7 @@ test("F8 confirmed tombstone evicts actual mirror keys; refused owner action ret
   );
   await as(page, "manager");
   const result = await page.evaluate(async (kbId) => {
-    const { queryClient, orpc, recheckKbAccess } = window.__r38;
+    const { queryClient, orpc, recheckKbAccess } = window.__kbEditor;
     const loss = await recheckKbAccess(queryClient, kbId);
     return {
       loss,
@@ -1271,7 +1273,7 @@ test("F8 confirmed tombstone evicts actual mirror keys; refused owner action ret
   expect(result).toEqual({ loss: "lost", mirror: undefined });
 });
 
-test("F3 index unavailable retains readable private cache", async ({ page }) => {
+test("index unavailable retains readable private cache", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Keep cached document");
   await prime(page, kb.id, true);
@@ -1282,7 +1284,7 @@ test("F3 index unavailable retains readable private cache", async ({ page }) => 
   expect(
     await page.evaluate(
       ({ kbId, path }) => {
-        const { queryClient, orpc } = window.__r38;
+        const { queryClient, orpc } = window.__kbEditor;
         return queryClient.getQueryData(
           orpc.documents.get.queryOptions({ input: { kbId, path } }).queryKey,
         )?.markdown;
@@ -1292,7 +1294,7 @@ test("F3 index unavailable retains readable private cache", async ({ page }) => 
   ).toBe(human("Keep cached document"));
 });
 
-test("F6/F7 scalar validation permits complete astral filters and rejects invalid fields before RPC", async ({
+test("scalar validation permits complete astral filters and rejects invalid fields before RPC", async ({
   page,
 }) => {
   await boot(page);
@@ -1342,9 +1344,7 @@ test("F6/F7 scalar validation permits complete astral filters and rejects invali
   expect(calls).toHaveLength(before);
 });
 
-test("F4 create completion rechecks ownership after awaited list invalidation", async ({
-  page,
-}) => {
+test("create completion rechecks ownership after awaited list invalidation", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: enKb.list.create, exact: true }).click();
   await fillCreate(page, "A");
@@ -1368,7 +1368,7 @@ test("F4 create completion rechecks ownership after awaited list invalidation", 
   await expect(page).toHaveURL(/\/en-US\/kbs$/);
 });
 
-test("F5 staged receipt replay rechecks live authority after revocation", async ({ page }) => {
+test("staged receipt replay rechecks live authority after revocation", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "Writer original");
   expect(
@@ -1384,7 +1384,7 @@ test("F5 staged receipt replay rechecks live authority after revocation", async 
   expect((await read(page, kb.id)).markdown).toBe(human(big));
   await as(page, "owner");
   await page.evaluate(
-    ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
+    ({ kbId, shareUserId }) => window.__kbEditor.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
     { kbId: kb.id, shareUserId: actors.managerUserId },
   );
   await as(page, "manager");
@@ -1395,7 +1395,7 @@ test("F5 staged receipt replay rechecks live authority after revocation", async 
   await expect(page.getByText(enKb.outcome.appliedTitle, { exact: true })).toHaveCount(0);
 });
 
-test("F6 rejects overlong and excess tags without silently changing filters or sending RPC", async ({
+test("rejects overlong and excess tags without silently changing filters or sending RPC", async ({
   page,
 }) => {
   await boot(page);
@@ -1421,9 +1421,9 @@ test("F6 rejects overlong and excess tags without silently changing filters or s
 });
 
 for (const earlier of ["success", "denial"] as const) {
-  test(`R46r3 F2 fresh access admission ignores an older delayed ${earlier}`, async ({ page }) => {
+  test(`fresh access admission ignores an older delayed ${earlier}`, async ({ page }) => {
     await boot(page);
-    const kb = await createKb(page, "F2 private cached document");
+    const kb = await createKb(page, "private cached document");
     expect((await page.request.post(`${fx.origin}/fixture/editor/share?kbId=${kb.id}`)).ok()).toBe(
       true,
     );
@@ -1432,7 +1432,8 @@ for (const earlier of ["success", "denial"] as const) {
     const revoke = async () => {
       await as(page, "owner");
       await page.evaluate(
-        ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
+        ({ kbId, shareUserId }) =>
+          window.__kbEditor.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
         { kbId: kb.id, shareUserId: actors.managerUserId },
       );
       await as(page, "manager");
@@ -1444,7 +1445,7 @@ for (const earlier of ["success", "denial"] as const) {
       if (isCall(request, "kbs", "get")) reads++;
     });
     await page.evaluate((kbId) => {
-      const { orpc, queryClient } = window.__r38;
+      const { orpc, queryClient } = window.__kbEditor;
       // Keep a raw subscriber too: Query cancellation cannot simply erase
       // the older transport request and accidentally hide transport dedupe.
       void orpc.kbs.get.call({ kbId }).catch(() => undefined);
@@ -1459,7 +1460,7 @@ for (const earlier of ["success", "denial"] as const) {
       await as(page, "owner");
       const invitation = await page.evaluate(
         ({ kbId, email }) =>
-          window.__r38.orpc.kbs.shareInvite.call({
+          window.__kbEditor.orpc.kbs.shareInvite.call({
             kbId,
             email,
             permissions: ["manage"],
@@ -1469,13 +1470,13 @@ for (const earlier of ["success", "denial"] as const) {
       );
       await as(page, "manager");
       await page.evaluate(
-        (requestId) => window.__r38.orpc.kbs.shareAccept.call({ requestId }),
+        (requestId) => window.__kbEditor.orpc.kbs.shareAccept.call({ requestId }),
         invitation.requestId,
       );
     }
     const result = await page.evaluate(
       async ({ kbId, docPath, earlier, metadataVersion }) => {
-        const { orpc, queryClient, recheckKbAccess } = window.__r38;
+        const { orpc, queryClient, recheckKbAccess } = window.__kbEditor;
         // A real post-change action denial precedes the access check.
         let code: unknown;
         try {
@@ -1512,11 +1513,11 @@ for (const earlier of ["success", "denial"] as const) {
     expect(reads).toBeGreaterThanOrEqual(2);
     expect(result.outcome).toBe(earlier === "success" ? "lost" : "kept");
     if (earlier === "success") expect(result.cached).toBeUndefined();
-    else expect(JSON.stringify(result.cached)).toContain("F2 private cached document");
+    else expect(JSON.stringify(result.cached)).toContain("private cached document");
     await held.release();
     const cached = await page.evaluate(
       ({ kbId, docPath }) => {
-        const { orpc, queryClient } = window.__r38;
+        const { orpc, queryClient } = window.__kbEditor;
         return {
           kb: queryClient.getQueryData(orpc.kbs.get.queryOptions({ input: { kbId } }).queryKey),
           doc: queryClient.getQueryData(
@@ -1527,7 +1528,7 @@ for (const earlier of ["success", "denial"] as const) {
       { kbId: kb.id, docPath },
     );
     if (earlier === "success") expect(cached).toEqual({ kb: undefined, doc: undefined });
-    else expect(JSON.stringify(cached)).toContain("F2 private cached document");
+    else expect(JSON.stringify(cached)).toContain("private cached document");
   });
 }
 
@@ -1550,7 +1551,7 @@ async function accessPr(page: Page) {
   actors.managerEmail = data.reviewerEmail;
   await as(page, "manager");
   const href = `/en-US/kbs/${data.pr.kbId}/prs/${data.pr.number}`;
-  await page.goto(`${fx.origin}/r38?${new URLSearchParams({ start: href })}`);
+  await page.goto(`${fx.origin}/kb-editor?${new URLSearchParams({ start: href })}`);
   await expect(page.getByTestId("pr-review")).toBeVisible({ timeout: 45_000 });
   await expect(page.getByTestId("pr-after").first()).toContainText("Private after 0");
   await expect(page.getByTestId("pr-before").first()).toContainText("Private before 0");
@@ -1563,7 +1564,7 @@ async function revokePrAccess(page: Page, kbId: string, retainRead = false) {
   if (retainRead) {
     const invitation = await page.evaluate(
       ({ kbId, email }) =>
-        window.__r38.orpc.kbs.shareInvite.call({
+        window.__kbEditor.orpc.kbs.shareInvite.call({
           kbId,
           email,
           permissions: ["read"],
@@ -1573,12 +1574,12 @@ async function revokePrAccess(page: Page, kbId: string, retainRead = false) {
     );
     await as(page, "manager");
     await page.evaluate(
-      (requestId) => window.__r38.orpc.kbs.shareAccept.call({ requestId }),
+      (requestId) => window.__kbEditor.orpc.kbs.shareAccept.call({ requestId }),
       invitation.requestId,
     );
   } else {
     await page.evaluate(
-      ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
+      ({ kbId, shareUserId }) => window.__kbEditor.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
       { kbId, shareUserId: actors.managerUserId },
     );
     await as(page, "manager");
@@ -1589,7 +1590,7 @@ async function assertPrivatePrForgotten(page: Page, kbId: string) {
   await expect(page.getByTestId("pr-review")).toHaveCount(0);
   const data = await page.evaluate(
     (kbId) =>
-      window.__r38.queryClient
+      window.__kbEditor.queryClient
         .getQueryCache()
         .getAll()
         .filter((q) => JSON.stringify(q.queryKey).includes(kbId))
@@ -1600,7 +1601,7 @@ async function assertPrivatePrForgotten(page: Page, kbId: string) {
 }
 for (const decision of ["merge", "close"] as const) {
   for (const retainRead of [false, true]) {
-    test(`R46r3 F3 ${decision} denial ${retainRead ? "retains readable" : "forgets revoked"} PR content`, async ({
+    test(`${decision} denial ${retainRead ? "retains readable" : "forgets revoked"} PR content`, async ({
       page,
     }) => {
       const pr = await accessPr(page);
@@ -1611,7 +1612,7 @@ for (const decision of ["merge", "close"] as const) {
       });
       await page.getByTestId(`pr-${decision}`).click();
       const dialog = page.getByRole("alertdialog");
-      // Closing is a plain confirmation (R2-27); merging still types MERGE.
+      // Closing is a plain confirmation; merging still types MERGE.
       if (decision === "merge") await dialog.getByPlaceholder("MERGE").fill("MERGE");
       await dialog
         .getByRole("button", {
@@ -1624,7 +1625,7 @@ for (const decision of ["merge", "close"] as const) {
         await expect(page.getByTestId("pr-after").first()).toContainText("Private after 0");
         const cache = await page.evaluate(
           (kbId) =>
-            window.__r38.queryClient
+            window.__kbEditor.queryClient
               .getQueryCache()
               .getAll()
               .filter((q) => JSON.stringify(q.queryKey).includes(kbId))
@@ -1638,7 +1639,7 @@ for (const decision of ["merge", "close"] as const) {
   }
 }
 for (const side of ["before", "after"] as const) {
-  test(`R46r3 F3 lazy ${side} body denial forgets revoked PR content`, async ({ page }) => {
+  test(`lazy ${side} body denial forgets revoked PR content`, async ({ page }) => {
     const pr = await accessPr(page);
     await revokePrAccess(page, pr.kbId);
     // Let the sibling side load from its real pre-revocation response, so
@@ -1646,7 +1647,7 @@ for (const side of ["before", "after"] as const) {
     const opposite = side === "before" ? pr.headSha : pr.baseSha;
     await page.evaluate(
       async ({ kbId, rev }) => {
-        const { queryClient, orpc } = window.__r38;
+        const { queryClient, orpc } = window.__kbEditor;
         // Existing cached immutable bytes from a loaded card, with the selected
         // lazy-card key. The denied side still calls the real document router.
         const cached = queryClient.getQueryData<
@@ -1665,9 +1666,7 @@ for (const side of ["before", "after"] as const) {
   });
 }
 
-test("R46r3 F3 missing lazy document retains a still-readable PR and cached bodies", async ({
-  page,
-}) => {
+test("missing lazy document retains a still-readable PR and cached bodies", async ({ page }) => {
   const pr = await accessPr(page);
   let rechecks = 0;
   page.on("request", (req) => {
@@ -1700,12 +1699,14 @@ test("R46r3 F3 missing lazy document retains a still-readable PR and cached bodi
   // state, never a denial: nothing re-checks KB access over it. A recheck
   // starts from the failed read, so assert only once every fetch settled.
   await expect
-    .poll(() => page.evaluate(() => window.__r38.queryClient.isFetching()), { timeout: 15_000 })
+    .poll(() => page.evaluate(() => window.__kbEditor.queryClient.isFetching()), {
+      timeout: 15_000,
+    })
     .toBe(0);
   expect(rechecks).toBe(0);
   const cached = await page.evaluate(
     (kbId) =>
-      window.__r38.queryClient
+      window.__kbEditor.queryClient
         .getQueryCache()
         .getAll()
         .filter((q) => JSON.stringify(q.queryKey).includes(kbId))
@@ -1715,7 +1716,7 @@ test("R46r3 F3 missing lazy document retains a still-readable PR and cached bodi
   expect(JSON.stringify(cached)).toContain("Private after 0");
 });
 
-test("R4 receipt advances a live session without discarding typing during a held save", async ({
+test("receipt advances a live session without discarding typing during a held save", async ({
   page,
 }) => {
   await boot(page);
@@ -1743,7 +1744,7 @@ test("R4 receipt advances a live session without discarding typing during a held
   expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
 });
 
-test("R4 a new session cannot use cached proposal bytes after New document and failed resolution", async ({
+test("a new session cannot use cached proposal bytes after New document and failed resolution", async ({
   page,
 }) => {
   await boot(page);
@@ -1763,7 +1764,7 @@ test("R4 a new session cannot use cached proposal bytes after New document and f
   await expect(page.getByLabel(enKb.editor.pathLabel)).toBeVisible();
   await page.evaluate(
     async ({ kbId, number, path }) => {
-      const { orpc } = window.__r38;
+      const { orpc } = window.__kbEditor;
       const pr = (await orpc.pullRequests.get.call({ kbId, number })).pr;
       await orpc.documents.update.call({
         kbId,
@@ -1787,7 +1788,7 @@ test("R4 a new session cannot use cached proposal bytes after New document and f
 
 for (const write of ["text", "image"] as const)
   for (const refresh of ["proposal", "document", "main"] as const)
-    test(`R4 ${write} receipt keeps the draft but exposes no stale bytes after failed ${refresh} refresh`, async ({
+    test(`${write} receipt keeps the draft but exposes no stale bytes after failed ${refresh} refresh`, async ({
       page,
     }) => {
       await boot(page);
@@ -1853,7 +1854,7 @@ for (const write of ["text", "image"] as const)
         return route.fulfill({ response, body });
       });
       await markdown(page).fill("LIVE DRAFT");
-      // An image is staged, then committed by the save with the draft (R3-W7).
+      // An image is staged, then committed by the save with the draft.
       if (write === "image") {
         await page.getByTestId("editor-image-input").setInputFiles({
           name: "receipt.png",
@@ -1886,9 +1887,7 @@ for (const write of ["text", "image"] as const)
       );
     });
 
-test("R4 a held proposal receipt preserves Done editing selected while saving", async ({
-  page,
-}) => {
+test("a held proposal receipt preserves Done editing selected while saving", async ({ page }) => {
   await boot(page);
   const kb = await createKb(page, "ORIGINAL MAIN");
   expect(
@@ -1917,7 +1916,7 @@ const shareAsProposer = async (page: Page, kbId: string) =>
   ).toBe(true);
 
 for (const write of ["update", "image", "create"] as const)
-  test(`R5 a held ${write} receipt cannot take navigation back from another KB's pending loader`, async ({
+  test(`a held ${write} receipt cannot take navigation back from another KB's pending loader`, async ({
     page,
   }) => {
     await boot(page);
@@ -1934,7 +1933,7 @@ for (const write of ["update", "image", "create"] as const)
       await go(page, at(kbA.id, docPath));
       await expect(markdown(page)).toHaveValue(human("MAIN A"));
     }
-    // An image is staged and then committed by the held save (R3-W7).
+    // An image is staged and then committed by the held save.
     const held = await holdOnce(page, "documents", write === "create" ? "create" : "update");
     await markdown(page).fill("SAVED IN A");
     if (write === "image") {
@@ -1966,7 +1965,7 @@ for (const write of ["update", "image", "create"] as const)
       .poll(() =>
         page.evaluate(
           (kbB) =>
-            window.__r38.queryClient.isFetching({
+            window.__kbEditor.queryClient.isFetching({
               predicate: (query) => !JSON.stringify(query.queryKey).includes(kbB),
             }),
           kbB.id,
@@ -1975,7 +1974,7 @@ for (const write of ["update", "image", "create"] as const)
       .toBe(0);
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
     // B's loader really is still pending while A's receipt completes.
-    expect(await page.evaluate(() => window.__r38.router.state.status)).toBe("pending");
+    expect(await page.evaluate(() => window.__kbEditor.router.state.status)).toBe("pending");
     expect(new URL(page.url()).pathname).toContain(kbB.id);
     await loader.release();
     await leaving;
@@ -1986,7 +1985,7 @@ for (const write of ["update", "image", "create"] as const)
     // The receipt itself was real: A has the writer's proposal.
     const open = await page.evaluate(
       ({ kbId }) =>
-        window.__r38.orpc.pullRequests.list
+        window.__kbEditor.orpc.pullRequests.list
           .call({ kbId, limit: 5, status: "OPEN" })
           .then((page) => page.items.length),
       { kbId: kbA.id },
@@ -1996,7 +1995,7 @@ for (const write of ["update", "image", "create"] as const)
 
 for (const status of ["CLOSED", "MERGED"] as const)
   for (const view of ["editing", "done"] as const)
-    test(`R5 a ${status} proposal shows its notice and takes no writes, keeping the draft (${view})`, async ({
+    test(`a ${status} proposal shows its notice and takes no writes, keeping the draft (${view})`, async ({
       page,
     }) => {
       await boot(page);
@@ -2019,7 +2018,7 @@ for (const status of ["CLOSED", "MERGED"] as const)
       if (status === "MERGED") await as(page, "owner");
       await page.evaluate(
         async ({ kbId, number, merge }) => {
-          const { orpc } = window.__r38;
+          const { orpc } = window.__kbEditor;
           const pr = (await orpc.pullRequests.get.call({ kbId, number })).pr;
           const kb = (await orpc.kbs.get.call({ kbId }))!.kb;
           await orpc.pullRequests.review.call({
@@ -2036,8 +2035,8 @@ for (const status of ["CLOSED", "MERGED"] as const)
       );
       if (status === "MERGED") await as(page, "manager");
       await page.evaluate(() =>
-        window.__r38.queryClient.invalidateQueries({
-          queryKey: window.__r38.orpc.pullRequests.get.key(),
+        window.__kbEditor.queryClient.invalidateQueries({
+          queryKey: window.__kbEditor.orpc.pullRequests.get.key(),
         }),
       );
       const notice = page.getByText(

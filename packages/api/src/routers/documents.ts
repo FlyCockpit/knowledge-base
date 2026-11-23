@@ -53,7 +53,7 @@ const idempotencyKey = z
   .regex(/^[A-Za-z0-9_-]+$/);
 const baseRevision = z.string().regex(/^[0-9a-f]{40}$/);
 /**
- * Images staged while editing (R3-W7): finished asset uploads committed with
+ * Images staged while editing: finished asset uploads committed with
  * the document's own save, never before it. Paths and uploads are checked by
  * the change-set rules like any `assetPut`.
  */

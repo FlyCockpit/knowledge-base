@@ -25,7 +25,7 @@ export const normalizationFixture = JSON.parse(
 export const REAL_MODEL_PARITY_MIN_COSINE = process.arch === "x64" ? 0.9999 : 0.9995;
 
 /**
- * The embedding contract (§1.4, docs/embeddings.md): a built-in runtime returns the RAW pooled
+ * The embedding contract (docs/embeddings.md): a built-in runtime returns the RAW pooled
  * vector and the index format normalizes it exactly once. Enforced before normalizing: finite,
  * the model's dimensions, and a magnitude within 20x of the recorded raw outputs of that model
  * (real Qwen ~100, Gemma ~1,000; norms vary with input length), so an already-normalized vector

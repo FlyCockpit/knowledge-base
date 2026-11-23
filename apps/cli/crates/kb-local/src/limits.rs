@@ -314,7 +314,7 @@ mod tests {
         use std::time::Duration;
 
         let root = std::env::temp_dir().join(format!(
-            "r52c-store-runner-{}",
+            "store-runner-{}",
             crate::state::new_uuid_v4().expect("test id")
         ));
         let store = crate::Store::open(&root).expect("store");

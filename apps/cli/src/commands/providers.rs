@@ -132,7 +132,7 @@ pub fn run(args: &Args) -> Result<()> {
     let config = crate::config::Config::load()?;
     let native = NativeCredentials::new(std::env::current_exe()?);
     let root = args.root.require(&config)?;
-    // Listing never creates a store (L-17); changes create it on first use.
+    // Listing never creates a store; changes create it on first use.
     let store = match &args.command {
         Sub::List { .. } => match kb_local::Store::open_existing(&root) {
             Ok(store) => store,
@@ -151,7 +151,7 @@ pub fn run(args: &Args) -> Result<()> {
         },
         _ => crate::local::open_or_create(&root)?,
     };
-    // Built-in status reflects whether its file is in the cache (review r2 #4).
+    // Built-in status reflects whether its file is in the cache.
     store.attach_model_cache(crate::paths::model_host(&config)?.cache().clone());
     let owner = store.owner();
     match &args.command {
@@ -162,7 +162,7 @@ pub fn run(args: &Args) -> Result<()> {
                 .iter()
                 .map(|r| r.summary())
                 .collect::<Vec<_>>();
-            // The enabled built-in is attachable like a provider (L-12).
+            // The enabled built-in is attachable like a provider.
             if after.is_none()
                 && let Some(builtin) = store.builtin_provider_summary()?
             {
@@ -211,8 +211,8 @@ pub fn run(args: &Args) -> Result<()> {
             }
             let input = serde_json::from_value(input)?;
             // The store decides under its lock whether that exact profile's
-            // semantic generation of the head already serves or is building
-            // (R3-L12): then nothing is started and no rebuild budget is spent.
+            // semantic generation of the head already serves or is building:
+            // then nothing is started and no rebuild budget is spent.
             let job = store.embedding_profile_set(&owner, input)?;
             if args.json {
                 output::json(&job)?;

@@ -91,7 +91,7 @@ describe("generation admission", () => {
   });
 });
 
-describe("index build cancellation (§1.8 (d))", () => {
+describe("index build cancellation", () => {
   /** Recording LockQuery: answers by statement shape, keeps every statement in order. */
   function recorder(ids: string[][] = [["r1", "r2"], []]) {
     const statements: string[] = [];

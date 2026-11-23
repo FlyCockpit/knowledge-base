@@ -1,8 +1,8 @@
 /**
  * Index reader thread entry (`worker_threads`). Single-flight: one message at a time. Posts only
  * plain data: `{status:'ok', result}` | `{status:'aborted'|'deadline'}` |
- * `{status:'error', code, fileMissing}` (CL-RETRY). Caches read-only handles keyed by generation
- * id with `confirmedAt` (decision 6, CL-READPOOL); no timers.
+ * `{status:'error', code, fileMissing}`. Caches read-only handles keyed by generation
+ * id with `confirmedAt`; no timers.
  */
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

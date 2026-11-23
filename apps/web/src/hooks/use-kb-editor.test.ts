@@ -786,7 +786,7 @@ describe("actual private query key inventory", () => {
   });
 });
 
-describe("image staging (R3-W7)", () => {
+describe("image staging", () => {
   const png = (n: number) => ({
     name: "Screen Shot 1.PNG",
     type: "image/png",
@@ -900,7 +900,7 @@ describe("image staging (R3-W7)", () => {
 });
 
 // Base64-encoding up to 75 MiB is slow on a loaded CI runner.
-describe("image upload rate budget (R3-W7)", { timeout: 60_000 }, () => {
+describe("image upload rate budget", { timeout: 60_000 }, () => {
   const CHUNK = 196_608;
   const MAX = 25 * 1024 * 1024;
   const limited = (retryAfterSeconds: number) =>
@@ -1030,7 +1030,7 @@ describe("image upload rate budget (R3-W7)", { timeout: 60_000 }, () => {
   });
 });
 
-describe("staged images in the save payload (R3-W7)", () => {
+describe("staged images in the save payload", () => {
   const withAssets = (
     markdown: string,
     assets: { path: string; uploadId: string }[],
@@ -1116,7 +1116,7 @@ describe("staged images in the save payload (R3-W7)", () => {
   });
 });
 
-describe("PR mode saves (R3-W6)", () => {
+describe("PR mode saves", () => {
   it("saves against current main with the pull request's number", async () => {
     const { calls, deps } = recorder();
     await runEditorOp(deps, initialEditorMemory(), {
@@ -1176,7 +1176,7 @@ describe("PR mode saves (R3-W6)", () => {
   });
 });
 
-describe("staged image lifecycle across saves (R3-W7)", () => {
+describe("staged image lifecycle across saves", () => {
   const img = (n: number): EditorStagedImage => ({
     path: `assets/img-${String(n).padStart(8, "0")}.png`,
     uploadId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
@@ -1236,7 +1236,7 @@ describe("staged image lifecycle across saves (R3-W7)", () => {
   });
 });
 
-describe("PR-targeted writes name the head they read (R3-W6)", () => {
+describe("PR-targeted writes name the head they read", () => {
   const MAIN = HEAD;
   const PR = 9;
   const head = (n: number) => String(n + 3).repeat(40);
@@ -1349,7 +1349,7 @@ describe("PR-targeted writes name the head they read (R3-W6)", () => {
   });
 });
 
-describe("each Save is an immutable record until its receipt resolves (R3-W7)", () => {
+describe("each Save is an immutable record until its receipt resolves", () => {
   const H0 = "a".repeat(40);
   const H1 = "b".repeat(40);
   const H2 = "c".repeat(40);

@@ -2,7 +2,7 @@
  * Explicit real-daemon cancellation proof: the `test:kb build` suite, never the
  * Docker-free gate or every harness run.
  *
- * flk8: nothing here measures host speed. Docker work (both builds, the daemon
+ * Nothing here measures host speed. Docker work (both builds, the daemon
  * drain inside them, and the CLI readbacks) is bounded only by BUILD_TIMEOUT_MS,
  * the build-only hang guard that never shares a test budget. Everything else is
  * an event wait: the RUN's held request closing, the runner settling, and the
@@ -44,7 +44,7 @@ const hangGuard = (promise, what) => {
   ]).finally(() => clearTimeout(timer));
 };
 
-test("flk4 Docker build cancellation stops real daemon RUN work, then accepts a fresh build", async (context) => {
+test("Docker build cancellation stops real daemon RUN work, then accepts a fresh build", async (context) => {
   const directory = mkdtempSync(join(tmpdir(), "kb-daemon-cancel-"));
   const project = kbTestName(`kb-daemon-${randomUUID()}`);
   const image = `${project}:test`;

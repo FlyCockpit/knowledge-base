@@ -15,7 +15,7 @@ export const DISPATCH_CLAIM_MS = 30_000;
 export const DISPATCH_BATCH_SIZE = 50;
 export const DISPATCH_INTERVAL_MS = 2_000;
 /**
- * R3-W4: Postgres NOTIFY channel a durable enqueue signals on commit; the worker's dispatcher
+ * Postgres NOTIFY channel a durable enqueue signals on commit; the worker's dispatcher
  * LISTENs and runs a cycle at once, so the 2 s poll is only the fallback.
  */
 export const DURABLE_DISPATCH_CHANNEL = "kb_durable_dispatch";
@@ -216,7 +216,7 @@ async function recoverExpiredAttempt(
 ): Promise<boolean> {
   const plan = planAttemptFailure(row.attemptCount, now.getTime());
   let settlesGeneration = false;
-  // An exhausted index build fails together with its generation (R5): the
+  // An exhausted index build fails together with its generation: the
   // job never turns terminal while its generation still reads as building.
   // When that generation can't be settled without waiting (its fence or a
   // volume account is busy), the row stays RUNNING, deferred one claim window.

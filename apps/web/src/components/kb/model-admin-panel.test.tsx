@@ -115,7 +115,7 @@ describe("model admin controls", () => {
     expect(modelControls(status({ state: "READY", removalPending: false })).remove).toBe(false);
   });
 
-  it("keeps polling after Apply until the applied selection is active or failed (R2-23)", () => {
+  it("keeps polling after Apply until the applied selection is active or failed", () => {
     const applied = {
       modelId: "embeddinggemma-2-q8_0",
       contextTokens: 1024,
@@ -346,7 +346,7 @@ describe("runtime config", () => {
   });
 });
 
-describe("46r10 registry view", () => {
+describe("registry view", () => {
   it("lists both models, recommendation, smaller alternatives and disabled blocked options with a translated reason", () => {
     const rows = [
       {

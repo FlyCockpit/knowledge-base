@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
 
 /**
- * One fixed `http.request` record per request (R3-W3): the matched route
+ * One fixed `http.request` record per request: the matched route
  * TEMPLATE (`/api/auth/*`, `/git/:kb/*`), never the raw path or query, so a
  * reset-password or verification token in the URL never reaches a log line;
  * plus method, status, duration and the request id.

@@ -192,7 +192,7 @@ export type PrConflictPath = {
 };
 
 /**
- * The paths this PR still conflicts on (R3-W6). The author resolves a
+ * The paths this PR still conflicts on. The author resolves a
  * document by saving it in PR mode (against current main with the PR's
  * number); assets are resolved by re-adding or removing them over MCP.
  */

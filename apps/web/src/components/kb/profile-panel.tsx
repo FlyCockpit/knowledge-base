@@ -173,7 +173,7 @@ export function ProviderListView({
         const terminal = outcome === "failed" || outcome === "timeout";
         const reason =
           provider.status === "revoked" ? "revoked" : (provider.probe.reason ?? "provider_error");
-        // A known cause replaces the generic "rejected or failed" line (R2-26).
+        // A known cause replaces the generic "rejected or failed" line.
         const causeKnown = reason === "provider_error" && provider.probe.failure !== null;
         return (
           <li
@@ -667,7 +667,7 @@ export function ProfileStatusView({
 }: {
   profile: ProviderSummary | null;
   index: IndexStatus;
-  /** Readers get no chooser, so the lexical notice doesn't point them "below" (R2-27). */
+  /** Readers get no chooser, so the lexical notice doesn't point them "below". */
   canManage?: boolean;
 }) {
   const { t } = useTranslation("kb");
@@ -867,7 +867,7 @@ export function ProfilePanel({ kb, onDenied }: { kb: KbLike; onDenied: () => voi
             </Button>
           </div>
           <ControlError error={setProfile.error ?? rebuild.error} />
-          {/* R2-27: only while the queued build has not finished yet. */}
+          {/* Only while the queued build has not finished yet. */}
           {(setProfile.isSuccess || rebuild.isSuccess) && buildInFlight && (
             <p role="status" className="text-sm">
               {t("settings.profile.started")}

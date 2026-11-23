@@ -66,7 +66,7 @@ describe("test I/O guard", () => {
     const config = path.join(repoRoot, "scripts/vitest-test-io-guard-fixture.config.ts");
     // Use Node's native TS config loader instead of starting esbuild and writing
     // a config bundle while other gate processes are using the shared disk.
-    // TEST (flk14): runner startup is not the invariant. Use the configured outer
+    // TEST: runner startup is not the invariant. Use the configured outer
     // budget only as a hang watchdog, reserving time for close and diagnostics.
     const hangTimeout = Math.floor(task.timeout * 0.9);
     expect(hangTimeout).toBeGreaterThan(0);

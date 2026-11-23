@@ -51,7 +51,7 @@ pub(crate) fn project(
         content_hash: s.content_hash,
         chunk_index: index,
         span: row.map_or(span, |r| r.row.span),
-        // R2-27: plain text on every transport; the span stays exact.
+        // Plain text on every transport; the span stays exact.
         snippet: row.map_or(snippet, |r| r.snippet.clone()),
         score,
         mode: ctx.mode,

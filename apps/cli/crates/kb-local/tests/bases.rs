@@ -1214,7 +1214,7 @@ fn documents_list_pagination_is_complete_bounded_and_pinned() {
     assert_eq!(fresh["items"].as_array().expect("items").len(), 1);
     assert_eq!(fresh["items"][0]["path"], "docs/zz-new.md");
     assert_eq!(fresh["nextCursor"], Value::Null);
-    // L-22: a trailing slash is accepted and keeps the raw-prefix meaning
+    // A trailing slash is accepted and keeps the raw-prefix meaning
     // (one directory); without it the prefix also matches `docs-*` names.
     let dir = list_docs(
         &store,
@@ -1562,7 +1562,7 @@ fn revoked_kbs_do_not_consume_page_slots_or_reappear_through_cursor() {
     ));
 }
 
-// R52c: service-boundary admission regressions. Inspect the durable store before
+// Service-boundary admission regressions. Inspect the durable store before
 // another call can recover CREATING rows or hide tombstones from live lists.
 fn admission_snapshot(root: &Path) -> (i64, i64, usize, i64) {
     let db = rusqlite::Connection::open(root.join("state.sqlite")).expect("inspect state");
@@ -1585,13 +1585,13 @@ fn raw_create(slug: &str) -> kb_local::CreateKbRequest {
         name: "Admission notes".into(),
         slug: slug.into(),
         description: "A valid description for admission tests".into(),
-        idempotency_key: format!("r52c-create-{slug}-0000"),
+        idempotency_key: format!("admit-create-{slug}-0000"),
     }
 }
 
 #[test]
-fn r52c_raw_create_replay_admission_matrix() {
-    let root = temp_root("r52c-create-replay");
+fn raw_create_replay_admission_matrix() {
+    let root = temp_root("admit-create-replay");
     let store = Store::open(&root).expect("open");
     let guard = store.lock_write(&[]).expect("lock");
     let creator = store
@@ -1653,8 +1653,8 @@ fn r52c_raw_create_replay_admission_matrix() {
 }
 
 #[test]
-fn r52c_raw_create_read_revocation_is_independent_of_create() {
-    let root = temp_root("r52c-read-revoke");
+fn raw_create_read_revocation_is_independent_of_create() {
+    let root = temp_root("admit-read-revoke");
     let store = Store::open(&root).expect("open");
     let guard = store.lock_write(&[]).expect("lock");
     let creator = store
@@ -1704,8 +1704,8 @@ fn r52c_raw_create_read_revocation_is_independent_of_create() {
 }
 
 #[test]
-fn r52c_invalid_generated_source_reserves_nothing_and_preserves_hourly_budget() {
-    let root = temp_root("r52c-invalid-source");
+fn invalid_generated_source_reserves_nothing_and_preserves_hourly_budget() {
+    let root = temp_root("admit-invalid-source");
     let store = Store::open(&root).expect("open");
     let before = admission_snapshot(&root);
     // A tab is forbidden in names but allowed in Markdown, so moving only the
@@ -1751,9 +1751,9 @@ fn r52c_invalid_generated_source_reserves_nothing_and_preserves_hourly_budget() 
 }
 
 #[test]
-fn r52c_create_publication_rechecks_persisted_grant() {
+fn create_publication_rechecks_persisted_grant() {
     for revoke in [false, true] {
-        let root = temp_root("r52c-grant-gap");
+        let root = temp_root("admit-grant-gap");
         let store = Store::open(&root).expect("open");
         let guard = store.lock_write(&[]).expect("lock");
         let creator = store
@@ -1802,7 +1802,7 @@ fn r52c_create_publication_rechecks_persisted_grant() {
             "ABORTED"
         );
     }
-    let root = temp_root("r52c-grant-positive");
+    let root = temp_root("admit-grant-positive");
     let store = Store::open(&root).expect("open");
     let guard = store.lock_write(&[]).expect("lock");
     let creator = store
@@ -1827,14 +1827,14 @@ fn r52c_create_publication_rechecks_persisted_grant() {
 }
 
 #[test]
-fn r52c_document_service_encoded_cap_exact_limit_and_overflow() {
-    let root = temp_root("r52c-response");
+fn document_service_encoded_cap_exact_limit_and_overflow() {
+    let root = temp_root("admit-response");
     let store = Store::open(&root).expect("open");
     let created = create(
         &store,
         &store.owner(),
         "response",
-        "r52c-response-create-0000",
+        "admit-response-create-0000",
     );
     let request = input::<DocumentsGet>(json!({"kbId":kb_of(&created),"path":"index.md"}));
     let document = store
@@ -1885,12 +1885,17 @@ fn seed_mutation_window(root: &Path, actor: &str, kb: &KbId, count: usize, now: 
 }
 
 #[test]
-fn r52c_metadata_budget_replay_rollback_delete_and_reentry() {
-    let root = temp_root("r52c-metadata-budget");
+fn metadata_budget_replay_rollback_delete_and_reentry() {
+    let root = temp_root("admit-metadata-budget");
     let store = Store::open(&root).expect("open");
     store.set_cursor_clock_for_tests(2_000_000_000);
     let owner = store.owner();
-    let kb = kb_of(&create(&store, &owner, "budget", "r52c-budget-create-0000"));
+    let kb = kb_of(&create(
+        &store,
+        &owner,
+        "budget",
+        "admit-budget-create-0000",
+    ));
     seed_mutation_window(
         &root,
         &owner.actor_key(),
@@ -1901,19 +1906,19 @@ fn r52c_metadata_budget_replay_rollback_delete_and_reentry() {
     // Force an actual SQLite failure after charging but before receipt commit:
     // the charge, version change and intent must roll back together.
     let db = rusqlite::Connection::open(root.join("state.sqlite")).expect("db");
-    db.execute_batch("CREATE TRIGGER r52c_reject_name BEFORE UPDATE OF name ON kbs WHEN NEW.name='Rejected by trigger' BEGIN SELECT RAISE(ABORT,'injected update failure'); END;")
+    db.execute_batch("CREATE TRIGGER reject_name BEFORE UPDATE OF name ON kbs WHEN NEW.name='Rejected by trigger' BEGIN SELECT RAISE(ABORT,'injected update failure'); END;")
         .expect("private fault trigger");
     let before_failure = admission_snapshot(&root);
     store
         .bases_update(
             &owner,
             input::<BasesUpdate>(json!({"kbId":kb,"metadataVersion":1,
-        "idempotencyKey":"r52c-update-rollback-0000","name":"Rejected by trigger"})),
+        "idempotencyKey":"admit-update-rollback-0000","name":"Rejected by trigger"})),
         )
         .expect_err("actual registry write fails after budget charge");
     assert_eq!(admission_snapshot(&root), before_failure);
     let update = input::<BasesUpdate>(
-        json!({"kbId":kb,"metadataVersion":1,"idempotencyKey":"r52c-update-budget-0000","name":"Changed"}),
+        json!({"kbId":kb,"metadataVersion":1,"idempotencyKey":"admit-update-budget-0000","name":"Changed"}),
     );
     let receipt = store
         .bases_update(&owner, update.clone())
@@ -1928,7 +1933,7 @@ fn r52c_metadata_budget_replay_rollback_delete_and_reentry() {
         receipt.operation_id
     );
     let fresh = input::<BasesUpdate>(
-        json!({"kbId":kb,"metadataVersion":2,"idempotencyKey":"r52c-update-blocked-0000","name":"Denied"}),
+        json!({"kbId":kb,"metadataVersion":2,"idempotencyKey":"admit-update-blocked-0000","name":"Denied"}),
     );
     assert_eq!(
         code(
@@ -1939,7 +1944,7 @@ fn r52c_metadata_budget_replay_rollback_delete_and_reentry() {
         ErrorCode::RateLimited
     );
     let deletion = input::<BasesDelete>(
-        json!({"kbId":kb,"metadataVersion":2,"idempotencyKey":"r52c-delete-budget-0000","confirm":"DELETE"}),
+        json!({"kbId":kb,"metadataVersion":2,"idempotencyKey":"admit-delete-budget-0000","confirm":"DELETE"}),
     );
     assert_eq!(
         code(
@@ -1981,18 +1986,18 @@ fn r52c_metadata_budget_replay_rollback_delete_and_reentry() {
 }
 
 #[test]
-fn r52c_metadata_mismatch_precedes_fresh_domain_validation() {
-    let root = temp_root("r52c-update-order");
+fn metadata_mismatch_precedes_fresh_domain_validation() {
+    let root = temp_root("admit-update-order");
     let store = Store::open(&root).expect("open");
     let owner = store.owner();
     let kb = kb_of(&create(
         &store,
         &owner,
         "update-order",
-        "r52c-update-order-create",
+        "admit-update-order-create",
     ));
     let request = input::<BasesUpdate>(
-        json!({"kbId":kb,"metadataVersion":1,"idempotencyKey":"r52c-update-order-0000","name":"Valid"}),
+        json!({"kbId":kb,"metadataVersion":1,"idempotencyKey":"admit-update-order-0000","name":"Valid"}),
     );
     let receipt = store.bases_update(&owner, request.clone()).expect("update");
     let before = admission_snapshot(&root);
@@ -2030,7 +2035,7 @@ fn r52c_metadata_mismatch_precedes_fresh_domain_validation() {
             ),
             ErrorCode::InvalidArgument
         );
-        value["idempotencyKey"] = json!(format!("r52c-fresh-invalid-{field}"));
+        value["idempotencyKey"] = json!(format!("admit-fresh-invalid-{field}"));
         value["metadataVersion"] = json!(2);
         assert_eq!(
             code(
@@ -2054,7 +2059,7 @@ fn r52c_metadata_mismatch_precedes_fresh_domain_validation() {
 }
 
 #[test]
-fn r52c_create_disk_floor_error_exact_admission_and_replay() {
+fn create_disk_floor_error_exact_admission_and_replay() {
     use kb_local::limits::{FREE_DISK_FLOOR_BYTES, WRITE_DISK_RESERVE_BYTES};
     fn below(_: &kb_local::StorePaths, _: &Path) -> Result<u64, StoreError> {
         Ok(FREE_DISK_FLOOR_BYTES - 1)
@@ -2077,7 +2082,7 @@ fn r52c_create_disk_floor_error_exact_admission_and_replay() {
             )
             .len() as u64)
     }
-    let root = temp_root("r52c-disk");
+    let root = temp_root("admit-disk");
     let store = Store::open(&root).expect("open");
     let before = admission_snapshot(&root);
     for (meter, expected) in [
@@ -2108,7 +2113,7 @@ fn r52c_create_disk_floor_error_exact_admission_and_replay() {
         .create_kb(&store.owner(), raw_create("disk"))
         .expect("exact floor plus reservation");
     let upload = input::<kb_client::types::UploadBegin>(json!({"kbId":receipt.kb_id,
-        "idempotencyKey":"r52c-disk-pending-0000","kind":"markdown","size":1,
+        "idempotencyKey":"admit-disk-pending-0000","kind":"markdown","size":1,
         "contentHash":content_hash(b"x"),"mime":"text/markdown"}));
     store
         .upload_begin(&store.owner(), upload)
@@ -2134,17 +2139,17 @@ fn r52c_create_disk_floor_error_exact_admission_and_replay() {
 }
 
 #[test]
-fn r52c_document_and_raw_commit_share_admission_with_metadata() {
+fn document_and_raw_commit_share_admission_with_metadata() {
     use kb_client::types::{DocumentsCreate, DocumentsUpdate};
-    let root = temp_root("r52c-shared-admission");
+    let root = temp_root("admit-shared-admission");
     let store = Store::open(&root).expect("open");
     let owner = store.owner();
     store.set_cursor_clock_for_tests(2_000_000_000);
-    let created = create(&store, &owner, "shared", "r52c-shared-create-0000");
+    let created = create(&store, &owner, "shared", "admit-shared-create-0000");
     let kb = kb_of(&created);
     let base = head_of(&created);
     let request = input::<DocumentsCreate>(
-        json!({"kbId":kb,"baseRevision":base,"idempotencyKey":"r52c-shared-document-0000","path":"new.md","content":{"markdown":"# New\n"}}),
+        json!({"kbId":kb,"baseRevision":base,"idempotencyKey":"admit-shared-document-0000","path":"new.md","content":{"markdown":"# New\n"}}),
     );
     seed_mutation_window(
         &root,
@@ -2168,7 +2173,7 @@ fn r52c_document_and_raw_commit_share_admission_with_metadata() {
     let raw = CommitRequest {
         kb: kb.clone(),
         base_revision: applied.commit_sha.clone(),
-        idempotency_key: "r52c-shared-raw-0000".into(),
+        idempotency_key: "admit-shared-raw-0000".into(),
         changes: vec![FileChange {
             path: "raw.md".into(),
             content: Some(b"# Raw\n".to_vec()),
@@ -2200,7 +2205,7 @@ fn r52c_document_and_raw_commit_share_admission_with_metadata() {
     assert_eq!(admission_snapshot(&root).3, MUTATIONS_I64);
     // A durable noop is also a fresh operation, but identical replay is free.
     let noop = input::<DocumentsUpdate>(
-        json!({"kbId":kb,"baseRevision":raw_receipt.commit_sha,"idempotencyKey":"r52c-shared-noop-0000","path":"new.md","content":{"markdown":"# New\n"}}),
+        json!({"kbId":kb,"baseRevision":raw_receipt.commit_sha,"idempotencyKey":"admit-shared-noop-0000","path":"new.md","content":{"markdown":"# New\n"}}),
     );
     assert_eq!(
         code(
@@ -2232,7 +2237,7 @@ fn r52c_document_and_raw_commit_share_admission_with_metadata() {
     store.set_disk_meter_for_tests(failed);
     let before = admission_snapshot(&root);
     let update = input::<DocumentsUpdate>(
-        json!({"kbId":kb,"baseRevision":raw_receipt.commit_sha,"idempotencyKey":"r52c-disk-document-0000","path":"new.md","content":{"markdown":"# Different\n"}}),
+        json!({"kbId":kb,"baseRevision":raw_receipt.commit_sha,"idempotencyKey":"admit-disk-document-0000","path":"new.md","content":{"markdown":"# Different\n"}}),
     );
     assert_eq!(
         code(
@@ -2243,7 +2248,7 @@ fn r52c_document_and_raw_commit_share_admission_with_metadata() {
         ErrorCode::StorageUnavailable
     );
     let upload = input::<kb_client::types::UploadBegin>(
-        json!({"kbId":kb,"idempotencyKey":"r52c-disk-upload-0000","kind":"markdown","size":1,"contentHash":content_hash(b"x"),"mime":"text/markdown"}),
+        json!({"kbId":kb,"idempotencyKey":"admit-disk-upload-0000","kind":"markdown","size":1,"contentHash":content_hash(b"x"),"mime":"text/markdown"}),
     );
     assert_eq!(
         code(

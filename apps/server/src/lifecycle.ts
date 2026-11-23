@@ -171,7 +171,7 @@ export function createServerLifecycle(
       // Typed startup stage for the failure record.
       let stage: StartupStage = "config";
       try {
-        // PR merges and conflict checks need git >= 2.45 (R3-W1): refuse an older one here.
+        // PR merges and conflict checks need git >= 2.45: refuse an older one here.
         stage = "git";
         logEvent("server.git", {
           gitVersion: parseGitVersion(await assertSupportedGit({ signal: startup.signal }))?.join(

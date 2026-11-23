@@ -148,7 +148,7 @@ function observeBeforeGrace(wait: () => Promise<void>) {
   );
 }
 
-describe("R46r4 export authority at persisted EOF and acknowledgement", () => {
+describe("export authority at persisted EOF and acknowledgement", () => {
   for (const transport of ["rpc", "zip", "mcp"] as const) {
     it(`${transport}: revocation during EOF grace persistence suppresses confidential bytes`, async () => {
       const test = await setup(transport);

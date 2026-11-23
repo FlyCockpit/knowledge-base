@@ -422,7 +422,7 @@ impl Store {
         };
         Ok(reply)
     }
-    /// Paths on `main` that still mention `r` (L-8: `kb sealed revoke`
+    /// Paths on `main` that still mention `r` (`kb sealed revoke`
     /// warns; those documents stay editable, their unchanged references are
     /// retained, and only changed documents must reference live records).
     pub fn sealed_reference_paths(

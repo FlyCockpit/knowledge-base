@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --prod)
-      echo "error: --prod was removed; run \`pnpm smoke:image\` to test the production images" >&2
+      echo "error: unknown option --prod; run \`pnpm smoke:image\` to test the production images" >&2
       exit 1
       ;;
     --reset)   RESET=1; shift ;;

@@ -7,7 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { assertLoadedRuntime, verifyEmbeddingRuntime } from "./embedding-runtime";
 
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
-describe("46r9 native provenance boundary", () => {
+describe("native provenance boundary", () => {
   let runtimeReadme = "";
   beforeAll(() => {
     runtimeReadme = readFileSync(resolve(import.meta.dirname, "../../native/README.md"), "utf8");

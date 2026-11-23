@@ -270,7 +270,7 @@ fn owner_only_and_memory_rejection_have_no_effect() {
             .expect_err("memory admission");
         assert!(error.to_string().contains("memory budget"), "{error}");
     }
-    // L-18: unknown models/tiers name the valid ones.
+    // Unknown models/tiers name the valid ones.
     let unknown = s
         .model_configure(&s.owner(), &host, "nosuch", 1024, false, Some(8 << 30))
         .expect_err("unknown model");
@@ -1146,7 +1146,7 @@ fn queued_work_succeeds_across_expiry_on_a_fresh_worker() {
     wait_until("drained worker exited", || !pid_alive(old));
 }
 
-/// Round 8 invariant: at most one live worker per identity. The old engine
+/// Invariant: at most one live worker per identity. The old engine
 /// is slow to release its model after idle expiry: a new request's retry
 /// waits for the hand-over (bounded by its deadline) instead of reaching a
 /// second worker, and an unload meanwhile has no proof (no answering worker,
@@ -1196,7 +1196,7 @@ fn a_slow_release_holds_the_identity_until_the_model_is_gone() {
     wait_until("old worker exited", || !pid_alive(old));
 }
 
-/// Round 6: an unload behind inference longer than the remover's wait.
+/// An unload behind inference longer than the remover's wait.
 /// Removal reports the unconfirmed release as an explicit error and deletes
 /// nothing; the accepted unload control is engine state, so it still runs
 /// when the request finishes although its caller has disconnected; a retry
@@ -1245,7 +1245,7 @@ fn an_unload_behind_long_inference_survives_its_caller_and_removal_waits_for_it(
     assert!(!host.cache().private_copy(&m).expect("file").exists());
 }
 
-/// Round 7 (closed world): success of an unload needs positive evidence.
+/// Closed world: success of an unload needs positive evidence.
 /// A stopped worker, a missing or unreadable key and an unverifiable runtime
 /// directory all leave a possibly loaded worker unconfirmed: removal fails
 /// with DEADLINE_EXCEEDED and deletes nothing. No worker at all is proven by
@@ -1316,7 +1316,7 @@ fn unload_without_positive_evidence_is_never_success() {
         .expect("dead worker: proven by the lifecycle lock");
 }
 
-/// Round 5: lifetime is decided at each dequeue from successful-activity
+/// Lifetime is decided at each dequeue from successful-activity
 /// time. Back-to-back requests that fail slowly WHILE RUNNING (a correctly
 /// sized file whose checksum is wrong, verified in full by the production
 /// load path) leave no idle gap, yet the worker still expires: it stops

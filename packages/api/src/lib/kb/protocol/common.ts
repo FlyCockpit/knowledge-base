@@ -240,7 +240,7 @@ export const pathSchema = withKbContract(
 );
 
 /**
- * L-22: a path prefix is a raw prefix of document paths and may end with one
+ * A path prefix is a raw prefix of document paths and may end with one
  * `/` (`notes/` lists only the `notes` directory, `notes` also `notes-old.md`);
  * the part before that slash must be a valid path.
  */
@@ -642,7 +642,7 @@ export const assetDeltaSchema = closed({
 });
 
 /**
- * L-22: a non-blocking note about an applied change. An asset was removed
+ * A non-blocking note about an applied change. An asset was removed
  * while documents of the resulting tree still link to it (their images or
  * links now dangle); `referencedBy` lists up to 20 of them.
  */

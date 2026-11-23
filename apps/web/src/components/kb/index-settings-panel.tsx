@@ -256,7 +256,7 @@ export function quantizationRequest(
   return { ...payload, idempotencyKey: keyFor(payload) };
 }
 
-/** §1.9 per-KB index settings: quantization (manage, RUN-confirmed rebuild) and chunk limit (owner). */
+/** Per-KB index settings: quantization (manage, RUN-confirmed rebuild) and chunk limit (owner). */
 export function IndexSettingsPanel({ kb, onDenied }: { kb: KbLike; onDenied: () => void }) {
   const { t } = useTranslation("kb");
   const queryClient = useQueryClient();

@@ -19,8 +19,8 @@ type AssetMigrationTarget = {
 };
 
 /** Runtime authority must match the active marker. Offline copies are bound to
- * a pending target and synchronous proof of BOTH native role fences. P6 owns
- * installing/activating these records; this module never changes authority.
+ * a pending target and synchronous proof of BOTH native role fences. The offline
+ * storage migration owns installing/activating these records; this module never changes authority.
  */
 export function createAssetPublicationState(input: {
   binding: AssetPublicationBinding;
@@ -37,7 +37,7 @@ export function createAssetPublicationState(input: {
       )
     ).rows[0];
     const active: unknown = record ? JSON.parse(record.value) : undefined;
-    // P6 installs the durable control table outside archive-imported metadata.
+    // The offline storage migration installs the durable control table outside archive-imported metadata.
     // Its absence means migration has never been installed, never an offline
     // target grant. Once present, every pending attempt blocks runtime writes.
     const control = (

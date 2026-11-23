@@ -1,4 +1,4 @@
-//! Build checkpoint (L-1, L-2): one private SQLite file per KB,
+//! Build checkpoint: one private SQLite file per KB,
 //! `indexes/<kbId>/vectors.sqlite`, holding the exact unit vectors of chunks
 //! that builds embedded but that are not yet in an active generation file,
 //! keyed by `chunk_hash` (SHA-256 of the chunk text) under one profile
@@ -283,7 +283,7 @@ impl VectorCache {
     }
 
     /// Commits one embedded batch durably before the build moves on, and in
-    /// the same transaction resets the stall count (invariant 1): committed
+    /// the same transaction resets the stall count: committed
     /// progress is the evidence, and it survives a crash or cancellation.
     pub(crate) fn put_batch(&self, rows: &[([u8; 32], &[f32])]) -> Result<(), StoreError> {
         let tx = self.conn.unchecked_transaction()?;

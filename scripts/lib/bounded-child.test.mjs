@@ -264,7 +264,7 @@ test("lock-owner EOF bounds an unresponsive native client's drain", async () => 
   assert.equal(owner.child.exitCode, 1);
 });
 
-// flk3: diagnosis must survive the same final-close boundary as cancellation.
+// Diagnosis must survive the same final-close boundary as cancellation.
 test("native failures distinguish deadline, cancellation, exit and spawn error without argv", async () => {
   const timeout = boundedChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     timeout: 50,
@@ -283,7 +283,7 @@ test("native failures distinguish deadline, cancellation, exit and spawn error w
     { code: "CHILD_EXIT", exitCode: 17 },
   );
   await assert.rejects(
-    boundedChild("/missing/flk3-client", ["disposable-argv-canary"], { stdio: "ignore" }).done,
+    boundedChild("/missing/test-client", ["disposable-argv-canary"], { stdio: "ignore" }).done,
     (error) =>
       error.code === "CHILD_SPAWN" &&
       error.cause.code === "ENOENT" &&

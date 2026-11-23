@@ -35,7 +35,7 @@ import {
 } from "./kb-write-coordinator.js";
 
 /**
- * Creates and registers the index reader pool (§1.6). The thread entry is the flat
+ * Creates and registers the index reader pool. The thread entry is the flat
  * `dist/kb-index-reader.mjs` next to the bundled server, or the `.ts` source under tsx.
  * `lifecycle.ts` starts it (startup fails if a thread's probe fails) and stops it after drain.
  */

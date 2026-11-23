@@ -205,7 +205,7 @@ fn kill_during_build_fsync_complete_and_activation_never_activates_partial() {
             )
             .expect("valid fixture")
             .desired_state;
-        // L-1: an attempt killed before COMPLETE is released for a retry.
+        // An attempt killed before COMPLETE is released for a retry.
         assert!(matches!(
             state,
             Some(kb_client::types::IndexState::Pending | kb_client::types::IndexState::Complete)

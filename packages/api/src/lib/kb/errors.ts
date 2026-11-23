@@ -36,7 +36,7 @@ export class KbDomainError extends Error {
 
 /**
  * An index file a read needed was absent (ENOENT / SQLITE_CANTOPEN under an existing index
- * directory). The outermost search operation may retry once (§1.7).
+ * directory). The outermost search operation may retry once.
  */
 export class IndexFileMissingError extends KbDomainError {
   constructor() {

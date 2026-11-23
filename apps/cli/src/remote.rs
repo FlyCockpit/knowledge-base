@@ -9,7 +9,7 @@
 //! Write modes: each server's writes are held to the intersection of the
 //! mode its stored login was approved for (none: `both`), `--write-mode` and
 //! its configured `write_mode` ([`effective_mode`]); with none of the three
-//! nothing is narrowed (and one server's bytes are exactly as before). A
+//! nothing is narrowed (and one server's bytes are unchanged). A
 //! dream-only server lists no always-edit tool, and a call the mode does not
 //! allow is refused locally with the server's `WRITE_MODE` details.
 use crate::{auth::Selected, config::Config, state::CredentialStore};
@@ -211,7 +211,7 @@ fn run_one(
             .verify_catalog(&startup)
             .await?
             .with_instructions(discovery.instructions);
-        // R2-27: a read-only connection does not even list write tools.
+        // A read-only connection does not even list write tools.
         let advertised = if read_only {
             advertised.retain_read_only()
         } else {

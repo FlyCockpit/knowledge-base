@@ -347,7 +347,7 @@
   }
 }
 
-/* Toast titles keep the sentence case of their locale strings (R2-10).
+/* Toast titles keep the sentence case of their locale strings.
    sileo's stylesheet capitalizes every word, which also breaks es-MX
    capitalization. Unlayered and one step more specific than sileo's
    `[data-sileo-title]`, so it wins whatever order the two sheets load in. */

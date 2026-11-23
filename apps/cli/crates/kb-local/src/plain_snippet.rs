@@ -1,4 +1,4 @@
-//! R2-27 (TS twin `packages/api/src/lib/kb/plain-snippet.ts`, shared corpus
+//! TS twin `packages/api/src/lib/kb/plain-snippet.ts` (shared corpus
 //! `fixtures/plain-snippet.json`): format source windows before clipping.
 //! Markdown passes mirror the TS version after protecting literal code.
 

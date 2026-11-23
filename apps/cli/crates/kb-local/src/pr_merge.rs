@@ -147,7 +147,7 @@ fn listing(repo: &GitRepo, commit: &Sha) -> Result<BTreeMap<String, Blob>, Store
 /// `git merge-tree --write-tree --merge-base` over three flat synthetic trees
 /// (names are indices, so nothing is renamed or moved). Same algorithm as the
 /// server (merge-ort, histogram diff), one process per merge whatever the
-/// number of documents (R3 review: parity and near-limit performance).
+/// number of documents (for parity and near-limit performance).
 pub(crate) struct GitSource<'a> {
     repo: &'a GitRepo,
     paths: &'a StorePaths,

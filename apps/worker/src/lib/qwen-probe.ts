@@ -83,7 +83,7 @@ export async function probeQwenRuntime(
       });
       for (const vector of [query, document]) {
         // The supervisor validated count/dims/finite and a non-zero norm; vectors stay raw
-        // (the index format normalizes exactly once, §1.4).
+        // (the index format normalizes exactly once).
         if (vector?.length !== descriptor.dimensions) throw new Error("probe dimensions");
         const norm = Math.hypot(...vector);
         if (!Number.isFinite(norm) || norm <= 0) throw new Error("probe norm");

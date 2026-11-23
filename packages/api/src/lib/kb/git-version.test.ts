@@ -72,7 +72,7 @@ describe("git version floor", () => {
   });
 
   it("refuses a git whose merge-tree rejects the merge flags, whatever its version says", async () => {
-    // Bookworm's 2.39 answer to the line-merge argv (R3-W1).
+    // Bookworm's 2.39 answer to the line-merge argv.
     fakeGit(
       "git version 2.99.0",
       `[ "$1" = merge-tree ] && { echo "error: unknown switch \\\`X'" >&2; exit 129; }\nexec git "$@"`,

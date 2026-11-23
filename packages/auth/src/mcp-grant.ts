@@ -137,8 +137,7 @@ export function canonicalToolGroups(groups: readonly string[]): McpToolGroup[] {
  * - toolGroups: non-empty, unique, known groups (stored in canonical order);
  * - allowCreate defaults false; createdKbBits must be empty unless allowCreate;
  * - allowCreate requires literal mcp:write and createdKbBits containing read;
- * - allowCreate requires the kb_admin tool group, which holds knowledge_bases_create
- *   (e2e decision 7);
+ * - allowCreate requires the kb_admin tool group, which holds knowledge_bases_create;
  * - ACL: unique KB ids, non-empty known bits, bounded entry count;
  * - authoringMode (the write mode): required with mcp:write, refused without it.
  */

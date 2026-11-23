@@ -46,7 +46,7 @@ export type MarkdownContext = {
   /** Auxiliary previews namespace IDs; canonical document views keep shareable section slugs. */
   fragmentPrefix?: string;
   /**
-   * Editor preview only (R3-W7): images staged for the next save, shown from
+   * Editor preview only: images staged for the next save, shown from
    * a local `blob:` object URL. Nothing is fetched from the server for them.
    */
   staged?: readonly (AssetRef & { objectUrl: string })[];
@@ -289,7 +289,7 @@ function renderImage(destination: string, alt: string, ctx: IndexedContext): Rea
 /**
  * A document renders under its page's own `<h1>` (the file name), so its
  * Markdown headings sit one level lower in the outline: `#` becomes `<h2>`,
- * down to `<h6>` (R2-19). Each keeps its source level's look via `md-hN`.
+ * down to `<h6>`. Each keeps its source level's look via `md-hN`.
  */
 const DEMOTED = { h1: "h2", h2: "h3", h3: "h4", h4: "h5", h5: "h6", h6: "h6" } as const;
 function demotedHeadings(): Components {

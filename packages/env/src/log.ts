@@ -109,7 +109,7 @@ export function logInternalError(site: LogSite, error: unknown, fields: LogField
   emit(logRecord(site, fields, error));
 }
 
-/** Process-lifetime count of mergeability refresh failures (R3-W3). */
+/** Process-lifetime count of mergeability refresh failures. */
 let mergeabilityFailures = 0;
 export function countMergeabilityFailure(): number {
   mergeabilityFailures += 1;

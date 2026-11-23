@@ -309,7 +309,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { runGitCgi, gitCgiEnvironment } from ${JSON.stringify(cgi)};
 import { pingProcessFence, isAdmissionOpen, spawnMutatingChild } from ${JSON.stringify(fence)};
 const dir = process.env.KB_DATA_ROOT + "/repos";
-const mark = (name, value = "ready") => process.stdout.write("R36 " + name + ": " + value + "\\n");
+const mark = (name, value = "ready") => process.stdout.write("MARK " + name + ": " + value + "\\n");
 await pingProcessFence();
 if (["cleanup", "not-started"].includes(${JSON.stringify(mode)})) {
   const kbId = "a123456789012345678901234";
@@ -416,7 +416,7 @@ process.exit(0);
       const fixtureIoBudget = 60000;
       const arrived = async (name: string, ms: number) => {
         const deadline = Date.now() + ms;
-        while (!output.includes("R36 " + name + ":")) {
+        while (!output.includes("MARK " + name + ":")) {
           if (child.exitCode !== null || Date.now() >= deadline)
             throw new Error(`missing ${name}: ${output}`);
           await delay(20);
@@ -426,20 +426,20 @@ process.exit(0);
         if (mode === "cleanup" || mode === "not-started") {
           await arrived("drained", fixtureIoBudget);
           expect(await exit).toBe(0);
-          expect(output).toContain("R36 cleaning:");
-          expect(output).toContain("R36 disposed:");
+          expect(output).toContain("MARK cleaning:");
+          expect(output).toContain("MARK disposed:");
           return;
         }
         await arrived("stopped", fixtureIoBudget);
         await arrived("settled", mode === "cancel" ? 10000 : 75000);
-        const elapsed = Number(/R36 settled: (\d+)/.exec(output)?.[1]);
+        const elapsed = Number(/MARK settled: (\d+)/.exec(output)?.[1]);
         process.stdout.write(
           `real supervisor ${mode}: caller settled in ${elapsed}ms while peer remained stopped\n`,
         );
         expect(elapsed).toBeGreaterThanOrEqual(mode === "cancel" ? 5000 : 65000);
         expect(elapsed).toBeLessThan(mode === "cancel" ? 9000 : 68000);
-        expect(output).toContain("R36 unconfirmed:");
-        expect(output).not.toContain("R36 done:");
+        expect(output).toContain("MARK unconfirmed:");
+        expect(output).not.toContain("MARK done:");
         expect(
           readdirSync(join(dir, "cgi")).filter((name) => name.startsWith("kb-cgi-")),
         ).toHaveLength(1);

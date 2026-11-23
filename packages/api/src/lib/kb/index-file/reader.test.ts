@@ -757,7 +757,7 @@ describe("slices", () => {
             NO_STOP,
           );
           for (const text of ["alpha", "gamma", "absent"]) {
-            // Reference ranking uses the old full join and explicit path/index tie order.
+            // Reference ranking uses a plain full join and explicit path/index tie order.
             const expected = db
               .prepare(
                 `SELECT c.id AS id,c.path AS path,c.chunk_index AS chunkIndex,bm25(chunk_fts) AS score

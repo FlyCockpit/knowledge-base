@@ -269,7 +269,7 @@ function DeviceRecipients({
   const form = useForm({
     defaultValues: { reference: "", expiresAt: "", checked: false },
     // Unadded input blocks Approve, so a record that failed to add is never
-    // silently left out of the issued token (R2-27).
+    // silently left out of the issued token.
     listeners: {
       onChange: ({ formApi }) => {
         const { reference, expiresAt, checked } = formApi.state.values;

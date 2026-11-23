@@ -80,7 +80,7 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-test("F1 provider refusal after commit shows saved approval and offers Settings revocation", async ({
+test("provider refusal after commit shows saved approval and offers Settings revocation", async ({
   page,
 }) => {
   const request = await start(page);
@@ -100,7 +100,7 @@ test("F1 provider refusal after commit shows saved approval and offers Settings 
   await page.getByRole("link", { name: "Review connected apps" }).click();
   await expect(page.getByText(request.clientId, { exact: true })).toBeVisible();
   const row = page.locator("li").filter({ has: page.getByText(request.clientId, { exact: true }) });
-  // R2-19: the row's control names the app (its client name).
+  // The row's control names the app (its client name).
   await row.getByRole("button", { name: /^Revoke / }).click();
   const dialog = page.getByRole("alertdialog");
   await dialog.getByPlaceholder(request.clientId).fill(request.clientId);
@@ -110,7 +110,7 @@ test("F1 provider refusal after commit shows saved approval and offers Settings 
     .toBeTruthy();
 });
 
-test("F1/F4 reply-lost approval retries and re-entry preserve nonce and exact committed ACL", async ({
+test("reply-lost approval retries and re-entry preserve nonce and exact committed ACL", async ({
   page,
 }) => {
   const request = await start(page);
@@ -150,7 +150,7 @@ test("F1/F4 reply-lost approval retries and re-entry preserve nonce and exact co
   await expect(page).toHaveURL(/https:\/\/client.invalid\/cb\?code=/);
 });
 
-test("F4 same-route signed-request replacement clears every selection", async ({ page }) => {
+test("same-route signed-request replacement clears every selection", async ({ page }) => {
   const a = await start(page);
   const b = await start(page);
   await review(page, a);
@@ -165,7 +165,7 @@ test("F4 same-route signed-request replacement clears every selection", async ({
   await expect(page.getByText(/No knowledge bases selected/)).toBeVisible();
 });
 
-test("F4 a replaced approval completion cannot continue or overwrite the newer review", async ({
+test("a replaced approval completion cannot continue or overwrite the newer review", async ({
   page,
 }) => {
   const a = await start(page);
@@ -194,7 +194,7 @@ test("F4 a replaced approval completion cannot continue or overwrite the newer r
 });
 
 for (const mode of ["success-unmount", "failure-replace", "success-replace"] as const) {
-  test(`F4 late provider ${mode} cannot navigate or overwrite the current request`, async ({
+  test(`late provider ${mode} cannot navigate or overwrite the current request`, async ({
     page,
   }) => {
     const a = await start(page);
@@ -286,7 +286,7 @@ async function settled(page: Page) {
   );
 }
 
-test("F2 reply-lost PAT mint refreshes the list and requires unrecoverable-token revocation", async ({
+test("reply-lost PAT mint refreshes the list and requires unrecoverable-token revocation", async ({
   page,
 }) => {
   const name = `Lost ${randomUUID()}`;
@@ -316,7 +316,7 @@ test("F2 reply-lost PAT mint refreshes the list and requires unrecoverable-token
   expect(await caches(page)).not.toContain("kbp_");
 });
 
-test("F2 pending close/reopen does not reveal the old secret or replace a newer draft", async ({
+test("pending close/reopen does not reveal the old secret or replace a newer draft", async ({
   page,
 }) => {
   await openMint(page, `Pending ${randomUUID()}`);
@@ -395,7 +395,7 @@ test("fresh OAuth denial returns the real access_denied callback without a grant
   expect((await state(page)).grants.some((g) => g.clientId === request.clientId)).toBe(false);
 });
 
-test("F5/F6 OAuth filtering and permission pages survive count changes and unchanged-preview tail replacement", async ({
+test("OAuth filtering and permission pages survive count changes and unchanged-preview tail replacement", async ({
   page,
 }) => {
   const response = await page.request.post(`${fx.origin}/fixture/mcp/inventory`);

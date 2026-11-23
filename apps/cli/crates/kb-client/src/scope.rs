@@ -1,6 +1,5 @@
 //! Owner-chosen tool scope of one local stdio session (`kb mcp --root
-//! --tools/--kb`), with the server's discovery and authorization rules
-//! (tool-scoping plan §§1, 3, 4, 7).
+//! --tools/--kb`), with the server's discovery and authorization rules.
 //!
 //! * **Discovery** ([`ToolScope::lists`]), computed from the principal's
 //!   current [`LiveAuthority`] on every `tools/list`: a grouped tool is listed
@@ -617,7 +616,7 @@ mod tests {
         ] {
             assert!(direct.contains(&tool), "{tool}");
         }
-        // R3-W8: every editing preset follows and closes its own PRs.
+        // Every editing preset follows and closes its own PRs.
         assert!(direct.contains(&"knowledge_pull_requests_list"));
         assert!(
             !listed(&ToolScope::new(&selected(&["edit"]), false, None))

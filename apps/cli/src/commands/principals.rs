@@ -1,4 +1,4 @@
-//! L-23: owner-only control of local CONFIG principals, the identities a
+//! Owner-only control of local CONFIG principals, the identities a
 //! `kb mcp --principal <id>` session acts as. A `propose` principal's writes
 //! become pull requests the owner reviews (`knowledge_pull_requests_review`).
 use crate::{config::Config, local::RootArg, output};

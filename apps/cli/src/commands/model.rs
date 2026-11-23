@@ -107,7 +107,7 @@ struct Status {
     /// A worker is alive even when it did not answer (`worker` is null):
     /// never reported as "not running" without proof.
     worker_alive: bool,
-    /// R3-L7: why no worker could be started from here (null when one can).
+    /// Why no worker could be started from here (null when one can).
     worker_error: Option<String>,
 }
 
@@ -133,7 +133,7 @@ struct Verified {
 #[serde(rename_all = "camelCase")]
 struct Removed {
     model_id: String,
-    /// Every file deleted (R3-L9: the actual paths).
+    /// Every file deleted (the actual paths).
     files: Vec<PathBuf>,
     /// Model files left in place, each with why.
     kept: Vec<KeptFile>,
@@ -169,7 +169,7 @@ fn confirm_removal(model_id: &str) -> Result<bool> {
     Ok(line.trim() == model_id)
 }
 
-/// Review #1: `kb` never writes to a configured `models_dir` (it only reads
+/// `kb` never writes to a configured `models_dir` (it only reads
 /// it); a download always lands in the private cache, and the user is told
 /// so when a different `models_dir` is configured (stderr, so `--json`
 /// stays parseable).
@@ -226,7 +226,7 @@ fn preflight_enable(
     Ok(())
 }
 
-/// Bounded stderr progress for long downloads (L-18).
+/// Bounded stderr progress for long downloads.
 fn progress(model: &str) -> impl FnMut(u64, u64) {
     let tty = std::io::stderr().is_terminal();
     let mut last = std::time::Instant::now();

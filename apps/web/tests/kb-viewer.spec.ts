@@ -276,9 +276,9 @@ test("ACK deadline owns its fetch while a simultaneous production read succeeds"
     (input) =>
       (
         window as unknown as {
-          __r39AckWithSibling: (value: typeof input) => Promise<PromiseSettledResult<unknown>[]>;
+          __ackWithSibling: (value: typeof input) => Promise<PromiseSettledResult<unknown>[]>;
         }
-      ).__r39AckWithSibling(input),
+      ).__ackWithSibling(input),
     { kbId: fx.kbId, transferId: "00000000-0000-4000-8000-000000000001" },
   );
   void pending.catch(() => undefined);
@@ -337,7 +337,7 @@ test("editor: typing updates the safe live preview; saving sends exactly the typ
   const textarea = page.getByTestId("editor-markdown");
   await expect(textarea).toBeVisible({ timeout: 45_000 });
   const preview = page.getByTestId("editor-preview");
-  // R2-19: a document's own `# H1` renders one level down, under the page's h1.
+  // A document's own `# H1` renders one level down, under the page's h1.
   await expect(preview.locator("h2").first()).toHaveText("Draft start");
 
   // Raw Markdown with bytes a rich editor would rewrite: trailing spaces, tabs,

@@ -659,7 +659,7 @@ afterAll(async () => {
   await cluster.close();
 });
 describe("device HTTP/PG boundary", () => {
-  it("R34b registration is immutable, secret-bound, pre-claim only, and cannot authorize substituted recipient keys", () =>
+  it("registration is immutable, secret-bound, pre-claim only, and cannot authorize substituted recipient keys", () =>
     runOwnedDeviceAction(async () => {
       const f = await fixture();
       const keyPair = generateKeyPairSync("x25519");
@@ -1527,7 +1527,7 @@ describe("device HTTP/PG boundary", () => {
     });
   });
   describe.each(["select", "approve", "exchange"] as const)(
-    "R29a requires enrolled 2FA for sealed device recipients at %s",
+    "requires enrolled 2FA for sealed device recipients at %s",
     (stage) => {
       sealedDeviceTest("checks the real device boundary", async (f) => {
         try {
@@ -1567,7 +1567,7 @@ describe("device HTTP/PG boundary", () => {
   );
 
   describe.each(["select", "approve", "exchange"] as const)(
-    "R29a rejects unusable keys and finer expiry at device %s without consumption",
+    "rejects unusable keys and finer expiry at device %s without consumption",
     (stage) => {
       for (const defect of ["low-order", "expiry"]) {
         sealedDeviceTest(defect, async (f) => {
@@ -1629,7 +1629,7 @@ describe("device HTTP/PG boundary", () => {
     },
   );
 
-  describe("R29a round trips a generated device key through real PAT admission and recipient decryption", () => {
+  describe("round trips a generated device key through real PAT admission and recipient decryption", () => {
     sealedDeviceTest("checks the real device boundary", async (f) => {
       try {
         await f.approve(f.selection);
@@ -1706,7 +1706,7 @@ describe("device HTTP/PG boundary", () => {
     });
   });
 
-  it("R29a leaves ordinary device approvals available to an unforced unenrolled user", () => {
+  it("leaves ordinary device approvals available to an unforced unenrolled user", () => {
     return runOwnedDeviceAction(async () => {
       const f = await fixture();
       await prisma.user.update({ where: { id: f.user.id }, data: { twoFactorEnabled: false } });

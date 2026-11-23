@@ -26,7 +26,7 @@ export { type KbAdmissionCode, KbAdmissionError, type LiveIdentity } from "./pri
 
 export const PERMISSIONS = ["read", "propose", "write", "review", "manage"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
-/** Owner-only operations additionally require the `manage` bit (§1.9: index chunk limit). */
+/** Owner-only operations additionally require the `manage` bit (the index chunk limit). */
 export type KbOperation = Permission | "delete" | "configure_index_limit";
 
 export type KnowledgeBaseState = "CREATING" | "ACTIVE" | "TOMBSTONED" | "REPAIR_REQUIRED";

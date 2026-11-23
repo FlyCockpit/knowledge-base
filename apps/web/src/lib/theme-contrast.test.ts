@@ -212,8 +212,8 @@ describe("theme token contrast (WCAG AA)", () => {
         contrast(token(scope, "destructive"), token(scope, "background")),
       ).toBeGreaterThanOrEqual(3);
     }
-    // Rings are drawn at full opacity: a translucent ring re-introduces the
-    // R2-5 failure (the old 50% ring measured about 1.4:1).
+    // Rings are drawn at full opacity: a translucent ring fails contrast (a 50%
+    // ring measures about 1.4:1).
     for (const file of [
       "button",
       "input",
@@ -235,14 +235,14 @@ describe("theme token contrast (WCAG AA)", () => {
     );
   });
 
-  it("measures the old tokens as failing, so the check discriminates", () => {
+  it("measures known-failing tokens as failing, so the check discriminates", () => {
     const oldLight = oklchToSrgb(0.577, 0.245, 27.325);
     expect(contrast(oldLight, token(":root", "muted"))).toBeLessThan(AA);
     const oldDark = oklchToSrgb(0.443, 0.11, 240.79);
     const oldMuted = oklchToSrgb(0.56, 0.021, 213.5);
     expect(contrast(oldMuted, token(":root", "muted"))).toBeLessThan(AA);
     expect(contrast(oldDark, token(".dark", "background"))).toBeLessThan(AA);
-    // The old 80% link hover fill under the new dark primary.
+    // An 80% link hover fill under the dark primary.
     const darkPrimary = token(".dark", "primary");
     const darkHover = over(darkPrimary, 0.8, token(".dark", "background"));
     expect(contrast(token(".dark", "primary-foreground"), darkHover)).toBeLessThan(AA);
@@ -250,13 +250,13 @@ describe("theme token contrast (WCAG AA)", () => {
 });
 
 describe("toast titles", () => {
-  it("override sileo's capitalize so titles keep their locale's sentence case (R2-10)", () => {
+  it("override sileo's capitalize so titles keep their locale's sentence case", () => {
     expect(css).toMatch(/:root \[data-sileo-title\] \{\s*text-transform: none;/);
   });
 });
 
 /**
- * The focus ring of an invalid field (R2-5, review): `aria-invalid:ring-*`
+ * The focus ring of an invalid field: `aria-invalid:ring-*`
  * utilities come after the focus rules in the generated CSS, so an invalid
  * focused control would show the faint 20%/40% error ring. Compile each
  * control's real classes with Tailwind and resolve the cascade (specificity,

@@ -152,7 +152,7 @@ function readJsonFile(path: string): JsonObject {
 }
 
 function stableStringify(obj: JsonObject): string {
-  // Match Phase 7 / existing-file convention: top-level keys sorted, 2-space
+  // Match the existing-file convention: top-level keys sorted, 2-space
   // indent, trailing newline. Nested keys are emitted in en-US source order so
   // the diff against the source bundle stays readable.
   const sortedTop: JsonObject = {};
@@ -271,8 +271,8 @@ function shouldTranslate(leaf: LeafPath): boolean {
   // tgt === src (literal copy of source). Two cases:
   //   1. Source is genuinely the same in both languages (e.g. "Slug",
   //      "{{label}} #{{index}}", proper nouns) — accept it, don't churn.
-  //   2. Source was never translated (a Phase 7 dump that copy-pasted en-US
-  //      values into es-MX) — translate it.
+  //   2. Source was never translated (en-US values copy-pasted into es-MX)
+  //      — translate it.
   // We can't reliably distinguish these from the file alone. Heuristic: if
   // the source is "short and lacks whitespace" treat it as case 1. Anything
   // with multiple words or >=5 chars likely needs a real translation.

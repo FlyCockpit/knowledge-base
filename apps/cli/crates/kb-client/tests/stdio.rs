@@ -197,7 +197,7 @@ async fn cancellation_eof_and_concurrency_are_bounded() {
 }
 #[tokio::test]
 async fn oversized_frame_gets_an_error_and_the_session_continues() {
-    // L-20: one oversize line never takes the agent host's connection down.
+    // One oversize line never takes the agent host's connection down.
     let (client, server) = tokio::io::duplex(64 * 1024);
     let (sr, sw) = tokio::io::split(server);
     let work = tokio::spawn(serve(sr, sw, |_, _, _| unreachable!("no call admitted")));
@@ -622,7 +622,7 @@ fn version_diagnostic_names_both_versions_and_escapes_input() {
 fn envelope(version: Value) -> Value {
     json!({"io.modelcontextprotocol/protocolVersion":version,"io.modelcontextprotocol/clientCapabilities":{}})
 }
-/// R3-L11: stateless 2026-07-28 requests need no handshake (HTTP parity), and a
+/// Stateless 2026-07-28 requests need no handshake (HTTP parity), and a
 /// per-request version claim is validated in and out of a session.
 #[tokio::test]
 async fn enveloped_requests_need_no_handshake_and_claims_are_validated() {
@@ -725,7 +725,7 @@ async fn enveloped_requests_need_no_handshake_and_claims_are_validated() {
     cw.shutdown().await.expect("EOF");
     work.await.expect("server").expect("serve");
 }
-/// R3-L11 review: every reserved envelope field and nested capability shape is
+/// Every reserved envelope field and nested capability shape is
 /// checked as the pinned SDK checks it, from the shared case table, and the
 /// error is the SDK's `-32602` envelope frame, in a session and outside one.
 #[tokio::test]

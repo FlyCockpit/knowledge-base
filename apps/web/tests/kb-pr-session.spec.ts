@@ -1,4 +1,4 @@
-/** R40: production routes/RPC; faults lose or delay completed real responses. */
+/** Production routes/RPC; faults lose or delay completed real responses. */
 
 import enKb from "@knowledge-base/locales/src/en-US/kb.json" with { type: "json" };
 import { expect, type Page, type Request, test } from "@playwright/test";
@@ -37,7 +37,7 @@ async function boot(page: Page, role: "author" | "reviewer" = "reviewer") {
   expect(response.ok()).toBe(true);
   const scenario = (await response.json()) as Scenario;
   await as(page, scenario.cookies[role]);
-  await page.goto(`${fx.origin}/r38?${new URLSearchParams({ start: href(scenario.a) })}`);
+  await page.goto(`${fx.origin}/kb-editor?${new URLSearchParams({ start: href(scenario.a) })}`);
   await ready(page);
   return scenario;
 }
@@ -46,12 +46,12 @@ async function ready(page: Page) {
 }
 async function go(page: Page, href: string) {
   await page.evaluate(async (href) => {
-    await window.__r38.router.navigate({ href });
+    await window.__kbEditor.router.navigate({ href });
   }, href);
 }
 async function state(page: Page, pr: KbBrowserPr) {
   return page.evaluate(
-    ({ kbId, number }) => window.__r38.orpc.pullRequests.get.call({ kbId, number }),
+    ({ kbId, number }) => window.__kbEditor.orpc.pullRequests.get.call({ kbId, number }),
     pr,
   );
 }
@@ -71,7 +71,7 @@ async function open(page: Page, decision: "merge" | "close") {
 }
 async function confirm(page: Page, decision: "merge" | "close") {
   const dialog = await open(page, decision);
-  // Closing is a plain confirmation (R2-27); merging still types MERGE.
+  // Closing is a plain confirmation; merging still types MERGE.
   if (decision === "merge") await dialog.getByPlaceholder("MERGE").fill("MERGE");
   await dialog
     .getByRole("button", {
@@ -125,7 +125,7 @@ async function holdReview(
       await expect
         .poll(() =>
           page.evaluate(() =>
-            window.__r38.queryClient
+            window.__kbEditor.queryClient
               .getMutationCache()
               .getAll()
               .some((mutation) => mutation.state.status === "pending"),
@@ -142,7 +142,7 @@ async function holdReview(
 
 for (const decision of ["merge", "close"] as const) {
   for (const destination of ["b", "other"] as const) {
-    test(`R40 ${decision} confirmation resets on cached ${destination} navigation and history`, async ({
+    test(`${decision} confirmation resets on cached ${destination} navigation and history`, async ({
       page,
     }) => {
       const scenario = await boot(page, decision === "close" ? "author" : "reviewer");
@@ -182,7 +182,7 @@ for (const decision of ["merge", "close"] as const) {
 
 for (const outcome of ["success", "conflict", "retryable"] as const) {
   for (const destination of ["b", "other", "reentry"] as const) {
-    test(`R40 late ${outcome} is retired after ${destination}`, async ({ page }) => {
+    test(`late ${outcome} is retired after ${destination}`, async ({ page }) => {
       const s = await boot(page);
       if (outcome === "conflict")
         expect(
@@ -209,7 +209,7 @@ for (const outcome of ["success", "conflict", "retryable"] as const) {
   }
 }
 
-test("R40 same-session unknown result retries the exact key and displays the durable receipt", async ({
+test("same-session unknown result retries the exact key and displays the durable receipt", async ({
   page,
 }) => {
   const s = await boot(page);
@@ -230,15 +230,15 @@ test("R40 same-session unknown result retries the exact key and displays the dur
   expect((await state(page, s.a)).pr.status).toBe("MERGED");
 });
 
-test("R40 actor switch retires typed confirmation, and explicit refresh retires revised confirmation", async ({
+test("actor switch retires typed confirmation, and explicit refresh retires revised confirmation", async ({
   page,
 }) => {
   const s = await boot(page);
   await open(page, "close");
   await as(page, s.cookies.author);
   await page.evaluate(async () => {
-    await window.__r38.authClient.getSession({ query: { disableCookieCache: true } });
-    window.__r38.authClient.$store.notify("$sessionSignal");
+    await window.__kbEditor.authClient.getSession({ query: { disableCookieCache: true } });
+    window.__kbEditor.authClient.$store.notify("$sessionSignal");
   });
   await expect(page.getByTestId("pr-merge")).toHaveCount(0);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -246,8 +246,8 @@ test("R40 actor switch retires typed confirmation, and explicit refresh retires 
   await next.getByRole("button", { name: "Cancel", exact: true }).press("Enter");
   await as(page, s.cookies.reviewer);
   await page.evaluate(async () => {
-    await window.__r38.authClient.getSession({ query: { disableCookieCache: true } });
-    window.__r38.authClient.$store.notify("$sessionSignal");
+    await window.__kbEditor.authClient.getSession({ query: { disableCookieCache: true } });
+    window.__kbEditor.authClient.$store.notify("$sessionSignal");
   });
   await expect(page.getByTestId("pr-merge")).toBeVisible();
   await page.request.post(`${fx.origin}/fixture/advance-main?kbId=${s.a.kbId}`);
@@ -265,7 +265,7 @@ test("R40 actor switch retires typed confirmation, and explicit refresh retires 
 });
 
 for (const path of ["added.md", "deleted.md"] as const) {
-  test(`R40 ${path} recovers a lost existing-side response with an errored absent cache`, async ({
+  test(`${path} recovers a lost existing-side response with an errored absent cache`, async ({
     page,
   }) => {
     const s = await boot(page);
@@ -273,7 +273,7 @@ for (const path of ["added.md", "deleted.md"] as const) {
     const absentRev = path === "added.md" ? s.a.baseSha : s.a.headSha;
     await page.evaluate(
       async (input) => {
-        const { queryClient, orpc } = window.__r38;
+        const { queryClient, orpc } = window.__kbEditor;
         const { presentRev, ...documentInput } = input;
         await queryClient
           .fetchQuery({
@@ -339,7 +339,7 @@ for (const path of ["added.md", "deleted.md"] as const) {
   });
 }
 
-test("R40 late success after actor change cannot overwrite the new actor's session", async ({
+test("late success after actor change cannot overwrite the new actor's session", async ({
   page,
 }) => {
   const s = await boot(page);
@@ -348,7 +348,7 @@ test("R40 late success after actor change cannot overwrite the new actor's sessi
   await held.handled;
   await as(page, s.cookies.author);
   await page.evaluate(() => {
-    window.__r38.authClient.$store.notify("$sessionSignal");
+    window.__kbEditor.authClient.$store.notify("$sessionSignal");
   });
   await expect(page.getByTestId("pr-status")).toHaveText("Closed");
   await held.release();
@@ -357,9 +357,7 @@ test("R40 late success after actor change cannot overwrite the new actor's sessi
   await expect(page.getByTestId("pr-close")).toHaveCount(0);
 });
 
-test("R40 replacing displayed revisions retires an already typed confirmation", async ({
-  page,
-}) => {
+test("replacing displayed revisions retires an already typed confirmation", async ({ page }) => {
   const s = await boot(page);
   const dialog = await open(page, "merge");
   await dialog.getByPlaceholder("MERGE").fill("MERGE");
@@ -367,7 +365,7 @@ test("R40 replacing displayed revisions retires an already typed confirmation", 
     true,
   );
   const freshTarget = await page.evaluate(async ({ kbId, number }) => {
-    const { queryClient, orpc } = window.__r38;
+    const { queryClient, orpc } = window.__kbEditor;
     const fresh = await orpc.pullRequests.get.call({ kbId, number });
     // Deliver an actual handler's new page without a loading interlude. This
     // specifically exercises the revision boundary, independently of unmount.
@@ -388,14 +386,14 @@ test("R40 replacing displayed revisions retires an already typed confirmation", 
 
 async function changeReviewerAccess(page: Page, s: Scenario, retainRead: boolean) {
   const email = await page.evaluate(
-    () => window.__r38.authClient.$store.atoms.session?.get().data?.user.email,
+    () => window.__kbEditor.authClient.$store.atoms.session?.get().data?.user.email,
   );
   if (!email) throw new Error("Expected the scenario reviewer's real session");
   await as(page, fx.cookie.value);
   if (retainRead) {
     const invitation = await page.evaluate(
       ({ kbId, email }) =>
-        window.__r38.orpc.kbs.shareInvite.call({
+        window.__kbEditor.orpc.kbs.shareInvite.call({
           kbId,
           email,
           permissions: ["read"],
@@ -405,12 +403,12 @@ async function changeReviewerAccess(page: Page, s: Scenario, retainRead: boolean
     );
     await as(page, s.cookies.reviewer);
     await page.evaluate(
-      (requestId) => window.__r38.orpc.kbs.shareAccept.call({ requestId }),
+      (requestId) => window.__kbEditor.orpc.kbs.shareAccept.call({ requestId }),
       invitation.requestId,
     );
   } else {
     await page.evaluate(
-      ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
+      ({ kbId, shareUserId }) => window.__kbEditor.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
       { kbId: s.a.kbId, shareUserId: s.reviewerId },
     );
     await as(page, s.cookies.reviewer);
@@ -419,7 +417,7 @@ async function changeReviewerAccess(page: Page, s: Scenario, retainRead: boolean
 async function privateData(page: Page, kbId: string) {
   return page.evaluate(
     (kbId) =>
-      window.__r38.queryClient
+      window.__kbEditor.queryClient
         .getQueryCache()
         .getAll()
         .filter((q) => {
@@ -432,7 +430,7 @@ async function privateData(page: Page, kbId: string) {
 }
 for (const decision of ["merge", "close"] as const) {
   for (const retainRead of [false, true]) {
-    test(`R40 retired ${decision} denial ${retainRead ? "keeps readable" : "forgets revoked"} cached successor`, async ({
+    test(`retired ${decision} denial ${retainRead ? "keeps readable" : "forgets revoked"} cached successor`, async ({
       page,
     }) => {
       const s = await boot(page);
@@ -473,7 +471,7 @@ for (const decision of ["merge", "close"] as const) {
   }
 }
 
-test("R40 retired denied review cannot recheck or clear a changed actor's cached successor", async ({
+test("retired denied review cannot recheck or clear a changed actor's cached successor", async ({
   page,
 }) => {
   const s = await boot(page);
@@ -488,7 +486,7 @@ test("R40 retired denied review cannot recheck or clear a changed actor's cached
   await go(page, href(s.b));
   await ready(page);
   await as(page, s.cookies.author);
-  await page.evaluate(() => window.__r38.authClient.$store.notify("$sessionSignal"));
+  await page.evaluate(() => window.__kbEditor.authClient.$store.notify("$sessionSignal"));
   await expect(page.getByTestId("pr-merge")).toHaveCount(0);
   await expect(page.getByTestId("pr-close")).toBeEnabled();
   await expect(page.getByTestId("pr-after").first()).toContainText("Added document");
@@ -505,7 +503,7 @@ test("R40 retired denied review cannot recheck or clear a changed actor's cached
 });
 
 for (const retainRead of [false, true]) {
-  test(`R40 actor change during a retired ${retainRead ? "readable" : "lost"} access check preserves successor`, async ({
+  test(`actor change during a retired ${retainRead ? "readable" : "lost"} access check preserves successor`, async ({
     page,
   }) => {
     const s = await boot(page);
@@ -523,7 +521,7 @@ for (const retainRead of [false, true]) {
     await denied.release();
     await access.handled;
     await as(page, s.cookies.author);
-    await page.evaluate(() => window.__r38.authClient.$store.notify("$sessionSignal"));
+    await page.evaluate(() => window.__kbEditor.authClient.$store.notify("$sessionSignal"));
     await expect(page.getByTestId("pr-merge")).toHaveCount(0);
     await expect(page.getByTestId("pr-close")).toBeEnabled();
     await expect(page.getByTestId("pr-after").first()).toContainText("Added document");
@@ -532,7 +530,7 @@ for (const retainRead of [false, true]) {
       .poll(() =>
         page.evaluate(
           (key) =>
-            window.__r38.queryClient
+            window.__kbEditor.queryClient
               .getQueryCache()
               .getAll()
               .some((q) => q.queryKey.at(-1) === key && q.state.fetchStatus === "fetching"),

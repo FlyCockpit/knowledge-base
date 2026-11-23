@@ -532,7 +532,7 @@ describe("kb/1 protocol catalog", () => {
     }
   });
 
-  it("L-22: path prefixes accept one trailing slash and keep it", () => {
+  it("path prefixes accept one trailing slash and keep it", () => {
     const list = kbReadToolSchemas.knowledge_documents_list.input;
     expect(list.parse({ kbId: FIXTURE_KB_ID, prefix: "notes/" }).prefix).toBe("notes/");
     expect(list.parse({ kbId: FIXTURE_KB_ID, prefix: "notes" }).prefix).toBe("notes");

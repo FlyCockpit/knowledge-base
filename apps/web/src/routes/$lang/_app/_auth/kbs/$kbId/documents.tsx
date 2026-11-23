@@ -41,7 +41,7 @@ import { orpc } from "@/utils/orpc";
  * `proposal`: the writer's pull request this document is being edited in.
  * It lives in the URL so a reload, or leaving and coming back, reopens
  * the proposal's version and keeps extending that same PR.
- * `pr`: PR mode (R3-W6), resolving this document's version in that pull
+ * `pr`: PR mode, resolving this document's version in that pull
  * request against main; it has its own session (`KbProposalDocumentEditor`).
  */
 type DocumentSearch = {
@@ -95,7 +95,7 @@ export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/documents")({
 const short = (sha: string) => sha.slice(0, 12);
 
 /*
- * Ownership rules of this page (R5 review). Each concern has one owner, so no
+ * Ownership rules of this page. Each concern has one owner, so no
  * render guard has to reconcile them:
  *
  * 1. Navigation authority. Only the router's latest requested location
@@ -693,7 +693,7 @@ function AbsenceNotice({
 }
 
 /**
- * The viewer's own open pull request already changes this document (R3-W6):
+ * The viewer's own open pull request already changes this document:
  * say so, so editing never silently starts from main's version over it.
  */
 function ProposalNotice({

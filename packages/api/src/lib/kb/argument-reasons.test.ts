@@ -44,7 +44,7 @@ const apply = (changes: unknown[]) => ({
   sourceSessionIds: [],
 });
 
-describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
+describe("INVALID_ARGUMENT reasons", () => {
   it("names unknown arguments by pointer and missing ones apart from wrong ones", () => {
     expect(details("knowledge_documents_get", { kbId: KB, path: "a.md", revision: SHA })).toEqual({
       reason: "UNKNOWN_ARGUMENT",
@@ -64,7 +64,7 @@ describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
     });
   });
   it("covers prefix, query length and limit bounds", () => {
-    // L-22: one trailing slash is valid; a traversal is not.
+    // One trailing slash is valid; a traversal is not.
     expect(details("knowledge_documents_list", { kbId: KB, prefix: "../notes/" })).toEqual({
       reason: "INVALID_PREFIX",
       field: "/prefix",
@@ -130,7 +130,7 @@ describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
       field: "/changes/0/path",
     });
   });
-  it("states the bounds a size or range refusal broke, as kb/1 declares them (R3-W9)", () => {
+  it("states the bounds a size or range refusal broke, as kb/1 declares them", () => {
     // Both declared ends, whichever was broken; an unsafe integer too.
     for (const limit of [21, 0, 2 ** 53])
       expect(details("knowledge_search", { kbId: KB, query: "q", limit })).toEqual({
@@ -166,7 +166,7 @@ describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
         }),
       ).toEqual({ reason: "CONFIRM_REQUIRED", field: "/confirm" });
   });
-  it("a bound inside a content union is the value's own branch bound (R4 review)", () => {
+  it("a bound inside a content union is the value's own branch bound", () => {
     const huge = "a".repeat(131073);
     expect(
       details("knowledge_documents_create", {
@@ -184,7 +184,7 @@ describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
       ),
     ).toEqual({ reason: "TOO_LARGE", field: "/changes/0/content/markdown", max: 131072 });
   });
-  it("selects union branches, missing union fields and bounds from the artifact (R4 review)", () => {
+  it("selects union branches, missing union fields and bounds from the artifact", () => {
     const input = { kbId: KB, baseRevision: SHA, idempotencyKey: "k".repeat(16), path: "a.md" };
     for (const name of ["knowledge_documents_create", "knowledge_documents_update"] as const) {
       expect(details(name, { ...input, content: { markdown: 1 } })).toEqual({
@@ -218,7 +218,7 @@ describe("INVALID_ARGUMENT reasons (L-9 cases)", () => {
       }),
     ).toEqual({ reason: "SCHEMA", field: "/headBranch", min: 1, max: 256 });
   });
-  it("a wrong type is SCHEMA wherever it is, never a domain reason (R3-L12)", () => {
+  it("a wrong type is SCHEMA wherever it is, never a domain reason", () => {
     for (const [name, input, field] of [
       ["knowledge_search", { kbId: KB, query: "q", limit: "5" }, "/limit"],
       ["knowledge_documents_list", { kbId: KB, prefix: 5 }, "/prefix"],

@@ -119,7 +119,7 @@ describe("strict canonical mirror SSH URL", () => {
       rejects(bad);
   });
 
-  it("tells private-network hosts apart from malformed URLs (R2-18)", () => {
+  it("tells private-network hosts apart from malformed URLs", () => {
     const reason = (raw: string) => {
       try {
         parseMirrorSshUrl(raw);

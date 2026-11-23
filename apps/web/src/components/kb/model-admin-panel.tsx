@@ -141,7 +141,7 @@ export function modelControls(status: Pick<LocalModelStatusLike, "state" | "remo
 }
 
 /**
- * R2-23: after "Apply settings" the panel keeps polling until the status shows the applied
+ * After "Apply settings" the panel keeps polling until the status shows the applied
  * selection active, or its load probe failed, instead of relying on the pending flag alone.
  */
 export function awaitingApplied(
@@ -344,7 +344,7 @@ function RuntimeConfigForm({
     meta: { errorFallbackKey: "admin:settings.model.runtime.applyFailed" },
   });
   // Applying reloads the model and re-embeds every attached KB: confirm with
-  // the impact first (R3-W9).
+  // the impact first.
   const [confirming, setConfirming] = useState<Parameters<typeof apply.mutate>[0] | null>(null);
   const form = useForm({
     defaultValues: {
@@ -601,7 +601,7 @@ export function ModelAdminPanel() {
   const { data, isPending, isError, refetch } = useQuery({
     ...orpc.kbModel.status.queryOptions(),
     // Poll while downloading, while a config awaits its load probe or an applied selection is
-    // not active yet (R2-23), while weights are being removed, or while re-embedding runs.
+    // not active yet, while weights are being removed, or while re-embedding runs.
     refetchInterval: (query) => {
       const current = query.state.data;
       if (!current) return false;

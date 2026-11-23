@@ -91,7 +91,7 @@ function AdminUsers() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reveal, setReveal] = useState<InviteReveal | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  // Promote, demote and archive confirm first (R2-7); restore is one click.
+  // Promote, demote and archive confirm first; restore is one click.
   const [pendingAction, setPendingAction] = useState<{
     kind: "promote" | "demote" | "archive";
     user: UserRow;

@@ -1,6 +1,6 @@
 # Schema migrations
 
-Knowledge Base uses Prisma Migrate with committed SQL. `packages/db/prisma/schema/` describes the desired schema; `packages/db/prisma/migrations/0_init/migration.sql` creates the current baseline, including KB constraints, triggers and indexes. Later timestamped folders contain `migration.sql` and, for scheduled deletions, `contract.sql`. Merged folders are immutable. Ship schema and SQL together. `20261123010000_add_grant_authoring_mode` adds `McpGrant.authoringMode` (the MCP write mode) and backfills every grant holding `mcp:write`, live or revoked, to `BOTH` (exactly the authority it already had, and no sealed approval bound to a grant id is stranded); a CHECK then requires the mode exactly with write. Approved OAuth consent selections are not rewritten: refresh accepts a selection without a write mode and takes the mode from its grant, so selections written before write modes keep working. The CHECK deliberately makes this migration rollback-unsafe (fail-closed): the runner does not admit a release from before write modes against this schema, since that release would mint write grants without a mode.
+Knowledge Base uses Prisma Migrate with committed SQL. `packages/db/prisma/schema/` describes the desired schema; `packages/db/prisma/migrations/0_init/migration.sql` creates the current baseline, including KB constraints, triggers and indexes. Later timestamped folders contain `migration.sql` and, for scheduled deletions, `contract.sql`. Merged folders are immutable. Ship schema and SQL together.
 
 ## Local commands
 
@@ -80,7 +80,7 @@ An intact transactional migration with a committed marker is resolved applied wi
 
 ### A database with tables but no migration history
 
-A nonempty database without history is refused. This unreleased baseline has no automatic legacy adoption path: use an empty disposable destination or a separately reviewed maintainer migration. Checksum mismatch requires restoring the original migration bytes and adding a new folder.
+A nonempty database without history is refused. There is no automatic adoption path for it: use an empty disposable destination or a separately reviewed maintainer migration. Checksum mismatch requires restoring the original migration bytes and adding a new folder.
 
 Restore only completed encrypted bundles into empty DB and empty/skeleton-only data volume with both runtimes stopped. Snapshot history may be behind the restoring image: restore source state unchanged only if catalog preflight proves current restore projections compatible. Otherwise use a compatible image. Do not run pending migrations inside offline restore; next normal startup takes a new full bundle and applies them. Preserve source/attempt binding, durable restore intent and original master/auth keys. See [backup and restore](./backup-restore.md).
 

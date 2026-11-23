@@ -93,8 +93,8 @@ impl Config {
     }
 
     /// Load and parse the file without checking its values: `kb config` is the
-    /// repair tool, so an invalid `root` or `models_dir` must not lock it out
-    /// (R3-L12). Everything else uses [`Config::load`].
+    /// repair tool, so an invalid `root` or `models_dir` must not lock it
+    /// out. Everything else uses [`Config::load`].
     pub fn load_unchecked() -> Result<Self> {
         let path = crate::paths::config_file()?;
         // The shared untrusted-path opener: no link followed, no blocking
@@ -288,7 +288,7 @@ impl Config {
     fn check(&self, key: &str) -> Result<()> {
         match key {
             // MCP hosts launch from arbitrary working directories: a relative
-            // path would silently create a different store per launch (L-16).
+            // path would silently create a different store per launch.
             "root" | "models_dir" => {
                 let path = if key == "root" {
                     &self.root
@@ -416,7 +416,7 @@ fn mutation_lock() -> Result<std::fs::File> {
     }
 }
 
-/// What `kb config init` writes: every setting, commented out (L-16).
+/// What `kb config init` writes: every setting, commented out.
 pub const TEMPLATE: &str = r#"# kb configuration. Every setting is optional; uncomment to use.
 #
 # Default local store for `kb mcp`, `kb model`, `kb sealed` and

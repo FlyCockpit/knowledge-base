@@ -463,7 +463,7 @@ export async function destroyProviderCredentials(
     `UPDATE provider_revision r SET ciphertext=NULL FROM embedding_provider p WHERE r."providerId"=p.id AND p."ownerId"=$1 AND ($2::text IS NULL OR p.id=$2)`,
     [userId, providerId],
   );
-  // Index builds release their disk reservations before they are cancelled (§1.8 (d)).
+  // Index builds release their disk reservations before they are cancelled.
   await cancelIndexBuildJobs(query, { providerOwnerId: userId, providerId });
   await query(
     `UPDATE durable_job j SET state='CANCELLED',"cancelledAt"=now(),"workerOwner"=NULL,"leaseUntil"=NULL WHERE j.id IN (SELECT r."jobId" FROM provider_revision r JOIN embedding_provider p ON p.id=r."providerId" WHERE p."ownerId"=$1 AND ($2::text IS NULL OR p.id=$2)) AND j.state NOT IN ('COMPLETE','CANCELLED')`,
@@ -472,7 +472,7 @@ export async function destroyProviderCredentials(
 }
 
 /**
- * L-7: in the revocation transaction, every live KB on the provider gets a lexical-only
+ * In the revocation transaction, every live KB on the provider gets a lexical-only
  * generation (the revoked profile can no longer build); its hybrid generation keeps serving
  * its FTS5 arm until that one is active. Keyset pages of 100 KBs.
  */

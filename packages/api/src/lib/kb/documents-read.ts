@@ -273,7 +273,7 @@ export async function listDocumentsAtRevision(
   }
   let normalizedPrefix: string | undefined;
   if (input.prefix) {
-    // L-22: a trailing `/` restricts the raw prefix to one directory.
+    // A trailing `/` restricts the raw prefix to one directory.
     const directory = input.prefix.endsWith("/");
     const normalized = normalizeKbPath(directory ? input.prefix.slice(0, -1) : input.prefix);
     if (!normalized.ok) throw new KbDomainError("INVALID_ARGUMENT", "Invalid path prefix");

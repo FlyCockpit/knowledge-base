@@ -145,7 +145,7 @@ describe("normalizeGrantCeiling", () => {
     });
   });
 
-  it("decision 7: creation always requires the kb_admin group", () => {
+  it("creation always requires the kb_admin group", () => {
     const create = {
       ...base,
       scopes: ["mcp:write"],

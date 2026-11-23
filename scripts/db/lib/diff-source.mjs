@@ -65,7 +65,7 @@ export function keptLabelsFromNotices(messages) {
 const LOCK_FILE = 'provider = "postgresql"\n';
 
 /**
- * Build the synthetic migrations directory (§1.3).
+ * Build the synthetic migrations directory.
  * @param {Array<{ name: string, sql: string, contract: { sql: string } | null }>} migrations folder order
  * @param {{ lockFile?: string }} [options] the real migration_lock.toml text
  * @returns {{ dir: string, contracts: number, cleanup: () => void }}
@@ -107,7 +107,7 @@ export async function diffToSchema(dir, { env, schemaDir = SCHEMA_DIR, run = pri
 
 /**
  * The static pre-change catalog: `prisma migrate diff --from-empty
- * --to-migrations <synthetic> --script` (Step 0 e), folded by catalogFromSql.
+ * --to-migrations <synthetic> --script`, folded by catalogFromSql.
  * @param {string} dir synthetic directory
  * @param {{ env?: NodeJS.ProcessEnv, run?: typeof prisma }} [options]
  */
@@ -169,7 +169,7 @@ export function retiredColumnTypes(migrations) {
 
 /**
  * Drop the enum rebuild blocks that only remove labels an earlier contract
- * already removes (`kept-only`, §1.3) from a diff script.
+ * already removes (`kept-only`) from a diff script.
  * @param {string} script Prisma's `--script` output
  * @param {ReturnType<typeof catalogFromSql>} catalog the "from" side (staticCatalog)
  * @param {Map<string, string[]>} priorRemoved from priorRemovedLabels

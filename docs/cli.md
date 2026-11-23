@@ -176,7 +176,7 @@ kb mcp --server work=https://kb.work.example --server lab=https://kb.lab.example
 `--server` takes a URL, `name=<url>` or a configured name (names are 1-32 of
 `a-z`, `0-9`, `-`; `kb config remove-server <name>` drops one). `kb mcp` with no
 `--server` serves `mcp_servers`, else `server`. One selected server is served
-exactly as before. With several, each tool is listed once (the pinned
+through the single-server forwarder, with no `server` argument. With several, each tool is listed once (the pinned
 description and input schema, about 8k tokens for the whole catalog, instead of
 once per server) and takes a required `server` argument whose `enum` is the
 servers that listed it. The argument is removed before forwarding; a call goes
@@ -313,9 +313,7 @@ new `kb` first opens the store: the same work as building those KBs from
 scratch, resumable, while each one is searched by keyword with the
 `EMBEDDING_MODEL_CHANGED` notice until its new index activates. `kb mcp`
 reports the affected count at startup and each completion on stderr (details
-in [embeddings](./embeddings.md)). A store last used by a `kb` whose pins
-name no runtime is upgraded the same way: it opens, and its built-in KBs
-re-embed once.
+in [embeddings](./embeddings.md)).
 
 Local rate limits are the store's own, far above the server's
 multi-tenant budgets but still bounded so a runaway agent loop stops: 600

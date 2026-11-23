@@ -82,7 +82,7 @@ const responseSchema = z.object({
 
 /**
  * Validates a provider/child embedding response and returns the RAW vectors in input order.
- * Callers never receive unit vectors: normalization is the index format's job (§1.4).
+ * Callers never receive unit vectors: normalization is the index format's job.
  */
 export function validateEmbeddings(body: unknown, count: number, dimensions: number): number[][] {
   if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 2000)
@@ -101,7 +101,7 @@ export function validateEmbeddings(body: unknown, count: number, dimensions: num
       });
     // Validation only: every component representable as a finite f32 and a non-zero norm. The
     // RAW values are returned; the index writer and the query arm normalize exactly once
-    // (u = f32(v / ‖v‖), §1.4), so nothing here may round or normalize.
+    // (u = f32(v / ‖v‖)), so nothing here may round or normalize.
     const f32 = embedding.map(Math.fround);
     if (f32.some((value) => !Number.isFinite(value))) throw bad();
     const norm = Math.hypot(...f32);

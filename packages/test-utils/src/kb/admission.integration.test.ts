@@ -385,7 +385,7 @@ describe("owned credential SQL and forced-2FA authority", () => {
         owned(signal, (q) =>
           run(async <R>(sql: string, params?: unknown[]) => {
             const result = await q<R>(sql, params);
-            // R30 writes both tombstones in one statement (grant CTE + PAT
+            // Consent shrink writes both tombstones in one statement (grant CTE + PAT
             // update). Fail after it executes, inside the same transaction.
             if (sql.includes('UPDATE "mcp_grant"') && sql.includes('UPDATE "mcp_personal_token"')) {
               tokenUpdated = true;

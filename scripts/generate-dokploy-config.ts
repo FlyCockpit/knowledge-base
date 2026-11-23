@@ -144,7 +144,9 @@ function validated(options: Options) {
   if (!["development", "production"].includes(options.environment))
     throw new Error("Choose development or production.");
   if (Object.hasOwn(options, "topology"))
-    throw new Error("--topology was removed; server leads migrations and worker waits.");
+    throw new Error(
+      "--topology is not an option: the server leads migrations and the worker waits.",
+    );
   if (options.environment === "development" && options.gitRef !== "main")
     throw new Error("Development automatic deployment follows main.");
   if (options.environment === "production" && !/^release\/[a-f0-9]{40}$/.test(options.gitRef))

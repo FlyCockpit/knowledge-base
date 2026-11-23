@@ -367,7 +367,7 @@ describe("ensureSystemBuiltinProvider", () => {
   });
 });
 
-it("46r10 rejects an unknown durable model download and accepts registered Gemma", () => {
+it("rejects an unknown durable model download and accepts registered Gemma", () => {
   expect(
     modelDownloadDesiredSchema.parse({ modelId: "embeddinggemma-2-q8_0", epoch: 1 }).modelId,
   ).toBe("embeddinggemma-2-q8_0");

@@ -52,7 +52,7 @@ describe("golden search fixture", () => {
       expect(fused.map(({ path }) => path)).toEqual(expected.map(({ path }) => path));
     }
   });
-  it("normalizes the fused sum by its maximum for the arms that ran (L-25)", () => {
+  it("normalizes the fused sum by its maximum for the arms that ran", () => {
     expect(normalizedRrfScore(1 / 61, 1)).toBe(1);
     expect(normalizedRrfScore(1 / 61, 2)).toBe(0.5);
     expect(normalizedRrfScore(1 / 61 + 1 / 61, 2)).toBe(1);

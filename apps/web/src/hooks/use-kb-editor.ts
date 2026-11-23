@@ -76,7 +76,7 @@ export function kbControls(bits: readonly string[]): KbControls {
   };
 }
 
-/** A finished staged image upload the document save commits with it (R3-W7). */
+/** A finished staged image upload the document save commits with it. */
 export type StagedAssetInput = { path: string; uploadId: string };
 /** Server ceiling on staged images per save (`DOCUMENT_STAGED_ASSETS_MAX`). */
 export const DOCUMENT_STAGED_ASSETS_MAX = 7;
@@ -592,7 +592,7 @@ export type AssetDeps = Pick<
 export type StagedImages = Map<string, EditorMemory & { key: string }>;
 
 /**
- * An image staged for the next save (R3-W7): its upload is finished but
+ * An image staged for the next save: its upload is finished but
  * nothing is committed until the document is saved with it.
  */
 export type StagedImage = {
@@ -612,7 +612,7 @@ export type ImageStageRun =
 
 /**
  * Stages one image through the shared upload service (begin/write/finish,
- * kind "asset") and stops there: the document save commits it (R3-W7), so an
+ * kind "asset") and stops there: the document save commits it, so an
  * abandoned edit commits nothing and its upload simply expires. Rate-budget
  * refusals are waited out from the last acknowledged chunk. An interrupted
  * transfer is kept in `staged`, and inserting the same image resumes it.
@@ -709,7 +709,7 @@ export function clearKbPrivateQueries(
     /**
      * Keep the KB's `kbs.get` entry for the caller to refetch: removing a
      * query detaches its mounted observers, which then keep showing the old
-     * role and controls until a reload (R2-11).
+     * role and controls until a reload.
      */
     keepAccessCheck?: boolean;
   } = {},
@@ -826,7 +826,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 /**
  * A staged image with the local object URL the live preview shows it from.
  * `sentWith` names the one save in flight that carries it; unset while it
- * waits for a save (R3-W7).
+ * waits for a save.
  */
 export type EditorStagedImage = StagedImage & { objectUrl: string; sentWith?: string };
 
@@ -869,7 +869,7 @@ export function settleImageSave(
 }
 
 /**
- * What the preview shows after saves of this session (R3-W7): the revision
+ * What the preview shows after saves of this session: the revision
  * the last save produced and the assets saves committed, known from their
  * staging (path, hash, size, mime). Merged over the opening read's manifest
  * until that read itself lists them.
@@ -1003,7 +1003,7 @@ const sameOp = (a: EditorOp, b: EditorOp) =>
   (a.kind === "delete" || (b.kind !== "delete" && a.markdown === b.markdown));
 
 /**
- * One Save (R3-W7). Each save is an immutable record (`memory.request`: key,
+ * One Save. Each save is an immutable record (`memory.request`: key,
  * exact payload, its images) kept until its receipt resolves:
  *
  * - While a record is unresolved, Save first resends exactly that record. An
@@ -1188,7 +1188,7 @@ export function useKbEditor(input: {
   /** False for a document the next save creates (a new draft, or one its proposal deletes). */
   initialExists?: boolean;
   /**
-   * A proposal target's head as read (PR mode, R3-W6), when the session's base
+   * A proposal target's head as read (PR mode), when the session's base
    * is not that head: every write names it, so a save never lands on a PR
    * that moved since (another editor, another tab).
    */
@@ -1248,7 +1248,7 @@ export function useKbEditor(input: {
   const imageWrite = useMutation({ ...orpc.kbUploads.write.mutationOptions(), ...quiet });
   const imageFinish = useMutation({ ...orpc.kbUploads.finish.mutationOptions(), ...quiet });
   const partialImages = useRef<StagedImages>(new Map());
-  // Finished image uploads waiting for the next save (R3-W7). The ref mirrors
+  // Finished image uploads waiting for the next save. The ref mirrors
   // the state so a save reads the list as it is when it is sent.
   const [stagedImages, setStagedImagesState] = useState<EditorStagedImage[]>([]);
   const stagedRef = useRef<EditorStagedImage[]>([]);
@@ -1281,7 +1281,7 @@ export function useKbEditor(input: {
       try {
         const before = ownedRef.current;
         // Resolves an unresolved earlier save first, then sends this draft
-        // as its own record with only the images still staged (R3-W7).
+        // as its own record with only the images still staged.
         const run = await runSave(
           {
             create: create.mutateAsync,
@@ -1395,7 +1395,7 @@ export function useKbEditor(input: {
   );
 
   /**
-   * Stages one image for the next save (R3-W7). Nothing is committed: the
+   * Stages one image for the next save. Nothing is committed: the
    * preview shows it from a local object URL and Save sends it with the text.
    */
   const insertImage = useCallback(

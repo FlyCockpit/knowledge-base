@@ -320,7 +320,7 @@ describe("grants: PAT mint", () => {
   });
 });
 
-describe("grants: creation implies kb_admin (e2e decision 7)", () => {
+describe("grants: creation implies kb_admin", () => {
   it("rejects create without kb_admin on mint and edit", async () => {
     const owner = await user();
     const kb = await activeKb(owner.id);
@@ -1900,7 +1900,7 @@ async function consentCreator(aclCount = 0) {
           ownerId: sharers[Math.floor(i / 20)]!.id,
           name: `Shared ${i}`,
           slug: `shared-${randomUUID()}`,
-          description: "R34a shared KB fixture",
+          description: "shared KB fixture",
           state: "ACTIVE" as const,
           headSha: "a".repeat(40),
         })),
@@ -1935,7 +1935,7 @@ async function consentCreator(aclCount = 0) {
       clientResources: { create: { resourceId: resource } },
     },
   });
-  const secret = "disposable-R30-consent-secret";
+  const secret = "disposable-consent-secret";
   const service = createMcpConsentService({ db: prisma, secret, resource });
   const actor = { userId: u.id, sessionId: session.id };
   async function approve(bits: ["read"] | ["read", "manage"], reuseGrantId?: string) {
@@ -1983,7 +1983,7 @@ async function consentCreator(aclCount = 0) {
   return { u, session, principal, shrink: () => approve(["read"], grant.grantId) };
 }
 
-describe("R30 regressions", () => {
+describe("consent and authority regressions", () => {
   const adapter = () => createBootstrapDatabaseAdapter(prisma)({ plugins: [admin(), twoFactor()] });
   const context = (u: Awaited<ReturnType<typeof user>>, sessionPatch = {}) => ({
     session: { user: u, session: { impersonatedBy: null, ...sessionPatch } },
@@ -2014,14 +2014,14 @@ describe("R30 regressions", () => {
     });
 
   it.each(["PREPARED", "COMMITTING"] as const)(
-    "F1 consent shrink at %s respects reservation",
+    "consent shrink at %s respects reservation",
     async (phase) => {
       setKbRecoveryComplete(true);
       const f = await consentCreator();
       const input = {
-        name: "R30",
-        slug: `r30-${randomUUID().slice(0, 8)}`,
-        description: "R30 consent shrink fixture",
+        name: "Consent shrink",
+        slug: `consent-${randomUUID().slice(0, 8)}`,
+        description: "consent shrink fixture",
         idempotencyKey: randomUUID(),
       };
       const interrupted: KbRuntimeConfig =
@@ -2037,7 +2037,7 @@ describe("R30 regressions", () => {
                           ...o.barrier,
                           prepare: async (lease) => {
                             await o.barrier!.prepare?.(lease);
-                            throw new Error("R30 interruption");
+                            throw new Error("consent interruption");
                           },
                         }
                       : undefined,
@@ -2049,13 +2049,13 @@ describe("R30 regressions", () => {
               createGitExecutor: () => ({
                 exec(call) {
                   executor.exec(call);
-                  if (call.argv.includes("update-ref")) throw new Error("R30 interruption");
+                  if (call.argv.includes("update-ref")) throw new Error("consent interruption");
                 },
               }),
             };
       await expect(
         createKnowledgeBaseAsGrant(interrupted, f.principal, verifier, input),
-      ).rejects.toThrow("R30 interruption");
+      ).rejects.toThrow("consent interruption");
       const intent = await prisma.operationIntent.findFirstOrThrow({
         where: { actorKey: `grant:${f.principal.grantId}`, idempotencyKey: input.idempotencyKey },
       });
@@ -2084,7 +2084,7 @@ describe("R30 regressions", () => {
     },
   );
   it.each(["policy", "enrollment"])(
-    "F2 stale admission preserves successor after %s change",
+    "stale admission preserves successor after %s change",
     async (change) => {
       const u = await user();
       await prisma.user.update({
@@ -2175,7 +2175,7 @@ describe("R30 regressions", () => {
       }
     },
   );
-  it.each([false, true])("F3 quiet grace lapse before enrollment (late=%s)", async (late) => {
+  it.each([false, true])("quiet grace lapse before enrollment (late=%s)", async (late) => {
     const u = await user();
     await prisma.user.update({
       where: { id: u.id },
@@ -2213,7 +2213,7 @@ describe("R30 regressions", () => {
       revoked: true,
     },
     { role: "ADM\u0130N", revoked: false },
-  ])("F2/F3 SQL role matching agrees with JS (revoked=$revoked)", async ({ role, revoked }) => {
+  ])("SQL role matching agrees with JS (revoked=$revoked)", async ({ role, revoked }) => {
     const u = await user();
     await prisma.user.update({
       where: { id: u.id },
@@ -2246,7 +2246,7 @@ describe("R30 regressions", () => {
     else await expect(admit(bearer(minted.secret))).resolves.toBeDefined();
   });
   it.each(["ban", "2fa"])(
-    "F4 all five controls deny a stale session after %s before effects",
+    "all five controls deny a stale session after %s before effects",
     async (loss) => {
       const u = await user();
       const minted = await mintPersonalToken(runtime, u.id, {
@@ -2302,7 +2302,7 @@ describe("R30 regressions", () => {
       }
     },
   );
-  it("F2 settlement excludes enrollment until paired tombstones commit; rollback/re-entry stays atomic", async () => {
+  it("settlement excludes enrollment until paired tombstones commit; rollback/re-entry stays atomic", async () => {
     const u = await user();
     await prisma.user.update({
       where: { id: u.id },
@@ -2412,7 +2412,7 @@ describe("R30 regressions", () => {
   });
 
   it.each(["enrollment", "role", "sweep"])(
-    "F3 quiet OAuth lapse is durable across %s",
+    "quiet OAuth lapse is durable across %s",
     async (transition) => {
       const f = await consentCreator();
       await adapter().update({
@@ -2441,7 +2441,7 @@ describe("R30 regressions", () => {
   );
 });
 
-describe("R30 F6 library identity-taking capabilities", () => {
+describe("library identity-taking capabilities", () => {
   it("rejects legacy impersonated consent without changing its approved grant", async () => {
     const f = await consentCreator();
     expect((await f.shrink()).grantId).toBe(f.principal.grantId);
@@ -2470,7 +2470,7 @@ describe("R30 F6 library identity-taking capabilities", () => {
         store,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
-    const secret = "disposable-R30-auth-signing-secret";
+    const secret = "disposable-auth-signing-secret";
     const { knowledgeBaseAdminPermissions } = await import("@knowledge-base/auth/roles");
     const { defaultAc, userAc } = await import(
       pathToFileURL(
@@ -2610,7 +2610,7 @@ describe("R30 F6 library identity-taking capabilities", () => {
   });
 });
 
-describe("R46r2 live committing policy authority", () => {
+describe("live committing policy authority", () => {
   beforeEach(async () => {
     await prisma.appSetting.upsert({
       where: { key: "force2faPublicUsers" },
@@ -2799,7 +2799,7 @@ function admitOwned() {
   });
 }
 
-describe("R46r2 outgoing lapse across real row contention", () => {
+describe("outgoing lapse across real row contention", () => {
   beforeEach(async () => {
     await prisma.appSetting.upsert({
       where: { key: "force2faPublicUsers" },
@@ -3049,7 +3049,7 @@ describe("R46r2 outgoing lapse across real row contention", () => {
   });
 });
 
-describe("R34a complete credential inspection", () => {
+describe("complete credential inspection", () => {
   let creator: Awaited<ReturnType<typeof consentCreator>>;
   // Seed the realistic 13-owner/256-share approval under the existing fixture
   // hook budget; the behavioral test retains the suite's unchanged deadline.
@@ -3057,7 +3057,7 @@ describe("R34a complete credential inspection", () => {
     setKbRecoveryComplete(true);
     creator = await consentCreator(256);
   });
-  it("F5 pages the 257th creator ACL without clipping a 256-entry approval or duplicating a retry", async () => {
+  it("pages the 257th creator ACL without clipping a 256-entry approval or duplicating a retry", async () => {
     setKbRecoveryComplete(true);
     const f = creator;
     const before = await listGrants(runtime, f.u.id, { kind: "OAUTH" });
@@ -3067,9 +3067,9 @@ describe("R34a complete credential inspection", () => {
     expect(repeated.acl).toEqual(before.items[0]?.acl);
     expect(repeated.aclSnapshot).not.toBe(before.items[0]?.aclSnapshot);
     const input = {
-      name: "R34a creator",
-      slug: `r34a-${randomUUID().slice(0, 8)}`,
-      description: "R34a creator ACL fixture",
+      name: "Creator",
+      slug: `creator-${randomUUID().slice(0, 8)}`,
+      description: "creator ACL fixture",
       idempotencyKey: randomUUID(),
     };
     const created = await createKnowledgeBaseAsGrant(runtime, f.principal, verifier, input);
@@ -3105,7 +3105,7 @@ describe("R34a complete credential inspection", () => {
     expect(await prisma.grantKbAcl.count({ where: { grantId: row.id } })).toBe(257);
   });
 
-  it("F6 filters kinds before pagination while preserving PAT and OAuth tombstones", async () => {
+  it("filters kinds before pagination while preserving PAT and OAuth tombstones", async () => {
     const owner = await user();
     await prisma.mcpGrant.createMany({
       data: Array.from({ length: 20 }, (_, i) => ({
@@ -3233,8 +3233,8 @@ describe("revoke all after a password reset", () => {
 
 type Versioner = ReturnType<typeof CreateSessionCacheVersion>;
 
-describe("R3 cached session authority and server-owned user columns", () => {
-  const secret = "disposable-R3-cookie-cache-signing-secret";
+describe("cached session authority and server-owned user columns", () => {
+  const secret = "disposable-cookie-cache-signing-secret";
   let resetToken = "";
   async function authWithCookieCache(aroundVersion?: (version: Versioner) => Versioner) {
     const { knowledgeBaseAdminPermissions } = await import("@knowledge-base/auth/roles");

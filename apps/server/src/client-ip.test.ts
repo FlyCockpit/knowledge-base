@@ -32,8 +32,8 @@ describe("resolveClientIp (TRUST_PROXY_HOPS = 0, the default)", () => {
   });
 
   it("ignores a spoofed X-Forwarded-For from a LAN client", () => {
-    // SEC-02: a private-network caller used to pick its own bucket by sending
-    // a public-looking X-Forwarded-For. With no trusted proxy it keys on the socket.
+    // A private-network caller must not pick its own bucket by sending a
+    // public-looking X-Forwarded-For. With no trusted proxy it keys on the socket.
     expect(resolveClientIp(ctx({ socket: "192.168.1.20", xff: "203.0.113.9" }))).toBe(
       "192.168.1.20",
     );

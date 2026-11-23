@@ -39,7 +39,7 @@ const until = async (check: () => boolean, ms = 3_000) => {
   }
 };
 
-describe("listenForDispatchWake (R3-W4)", () => {
+describe("listenForDispatchWake", () => {
   it("close() cancels a stalled handshake at once instead of waiting for it", async () => {
     const pg = stalledPostgres();
     let wakes = 0;

@@ -49,7 +49,7 @@ const DROP = "DROP";
 
 // Prisma 7.10.1's exact `migrate diff --script` text for removing E.B from
 // enum E (columns T.c with a default, T.d without, T.tags E[] with a default,
-// U.c), recorded in the Step 0 b spike. It writes the TARGET default inside
+// U.c), recorded as reference input. It writes the TARGET default inside
 // the block and repeats the changed ones in a separate `-- AlterTable`.
 const PRISMA_ENUM_REMOVE = [
   "-- AlterEnum",
@@ -166,7 +166,7 @@ describe("wrapper", () => {
     assert.equal(checkWrapper(markerNotLast).ok, false);
     const editedMarker = wrapped.replace("'knowledge-base:committed'", "'knowledge-base:other'");
     assert.equal(checkWrapper(editedMarker).ok, false);
-    // The marker no longer depends on search_path, so the body may change it
+    // The marker does not depend on search_path, so the body may change it
     // (and may use the word freely), but it may not reset the captured setting.
     for (const ok of [
       "SET LOCAL search_path = other;",
@@ -414,9 +414,8 @@ const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 const expandOf = (header = HEADER) => enumRemoveExpand(header);
 
 describe("templates (v1)", () => {
-  // v1 is in no release yet (no tag; no committed migration uses it). Its pins
-  // last changed when the sync trigger was renamed `0_knowledge_base_sync_*` so
-  // it fires before an app's own BEFORE triggers; from 1.0.0 on, a change
+  // The v1 text is pinned: the sync trigger is named `0_knowledge_base_sync_*`
+  // so it fires before an app's own BEFORE triggers. From 1.0.0 on, a change
   // needs v2.
   test("the v1 text is pinned byte for byte (never edit a released template: add v2)", () => {
     assert.equal(LATEST_TEMPLATE_VERSION, "v1");
@@ -760,7 +759,7 @@ describe("enum rebuilds", () => {
     ENUM_BASE.replace("DEFAULT 'B'", "DEFAULT 'C'").replace("ARRAY['B', 'C']", "ARRAY['C']"),
   );
 
-  test("recognizes Prisma 7.10's rebuild block (Step 0 b)", () => {
+  test("recognizes Prisma 7.10's rebuild block", () => {
     const [block, ...rest] = findEnumRebuilds(PRISMA_ENUM_REMOVE);
     assert.equal(rest.length, 0);
     assert.equal(block.enum.key, "public.E");
@@ -1056,7 +1055,7 @@ describe("splitForContract", () => {
     assert.match(out.refusals[0], /All of these migrations can ship in one PR/);
   });
 
-  test("kept-only blocks are dropped with the C4-3 note; mixed asks only for the new label", () => {
+  test("kept-only blocks are dropped with the kept-label note; mixed asks only for the new label", () => {
     const kept = catalogFromSql(
       ENUM_BASE.replace("DEFAULT 'B'", "DEFAULT 'C'").replace("ARRAY['B', 'C']", "ARRAY['C']"),
     );
@@ -1319,7 +1318,7 @@ describe("rollbackSafety", () => {
   });
 });
 
-describe("reviewed annotation (§1.9)", () => {
+describe("reviewed annotation", () => {
   const reviewed = (statement) =>
     analyzeMigration(`${REVIEWED_MARKER} batched backfill, checked on a copy\n${statement}`)
       .notAnalyzed;
@@ -1419,10 +1418,9 @@ describe("findNameReuse", () => {
     assert.deepEqual(findNameReuse(folders), []);
   });
 
-  test("template object names, current and earlier sync prefixes, are excluded", () => {
+  test("template object names are excluded", () => {
     const names = [
       "0_knowledge_base_sync_00000000",
-      "knowledge_base_sync_00000000",
       "knowledge_base_enum_new_00000000",
       "knowledge_base_enum_old_00000000",
     ];

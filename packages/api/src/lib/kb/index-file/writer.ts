@@ -87,7 +87,7 @@ export type IndexChunkInput = {
 export type StoredVector = { readonly bits: Buffer | null; readonly int8: Buffer };
 
 /**
- * Review r2 #2 (CLI twin `StoredVector::decode`): the one typed decoding of stored vector bytes
+ * CLI twin `StoredVector::decode`. The one typed decoding of stored vector bytes
  * at the read/reuse boundary. `int8` holds exactly `dimensions` values and `bits`
  * (binary_int8_rescore only) exactly the padded bit width; anything else (a damaged or foreign
  * row) throws, so the chunk is embedded again instead of copied on.
@@ -250,7 +250,7 @@ export class IndexWriter {
     if (this.closed) fail("closed");
   }
 
-  /** The calibrated scale (§1.4); required before any vector of an int8 quantization. */
+  /** The calibrated scale; required before any vector of an int8 quantization. */
   setInt8Scale(scale: number): void {
     this.assertOpen();
     if (this.int8Scale !== null) fail("int8 scale already set");
@@ -363,7 +363,7 @@ export class IndexWriter {
 
   /**
    * Pass 2. Input contract: RAW embeddings (as the provider returned them), never unit vectors;
-   * each is normalized here exactly once, `u = f32(v / ‖v‖)` (§1.4). One per chunk id; each is validated (length, finite, unit norm after
+   * each is normalized here exactly once, `u = f32(v / ‖v‖)`. One per chunk id; each is validated (length, finite, unit norm after
    * `f32(v/‖v‖)`) before entering the bounded write buffer. A throw fails the attempt.
    */
   appendVectors(entries: ReadonlyArray<{ id: number; vector: ArrayLike<number> }>): void {
@@ -393,7 +393,7 @@ export class IndexWriter {
     this.scale();
     const layout = this.vectorLayout;
     for (const { id, stored } of entries) {
-      // Only typed, full-width vectors are written (review r2 #2).
+      // Only typed, full-width vectors are written.
       decodeStoredVector(layout.quantization, layout.dimensions, stored.bits, stored.int8);
       this.reserve(id);
       this.vectorBatch.push({ id, stored });

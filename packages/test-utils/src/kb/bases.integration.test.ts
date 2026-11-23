@@ -165,7 +165,7 @@ async function createKb(userId: string, slug: string) {
 }
 
 describe("kb lifecycle integration", () => {
-  it("R52c persists scalar-boundary metadata and prioritizes changed-key mismatch over domain validation", () =>
+  it("persists scalar-boundary metadata and prioritizes changed-key mismatch over domain validation", () =>
     runOwnedAction(async () => {
       setKbRecoveryComplete(true);
       const user = await owner();

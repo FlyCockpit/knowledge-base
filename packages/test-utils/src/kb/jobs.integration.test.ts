@@ -241,7 +241,7 @@ async function spawnCrashingDispatcher(
 
 describe("durable jobs integration", () => {
   probeFixtureTest(
-    "R3-W4: a committed enqueue wakes the dispatcher listener; a rolled-back one never does",
+    "a committed enqueue wakes the dispatcher listener; a rolled-back one never does",
     async (fixture) => {
       let wakes = 0;
       const woke: Array<() => void> = [];

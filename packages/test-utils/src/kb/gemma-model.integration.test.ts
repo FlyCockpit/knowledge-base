@@ -66,7 +66,7 @@ afterEach(async () => {
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const cosine = (a: number[], b: number[]) =>
   a.reduce((s, v, i) => s + v * b[i]!, 0) / (Math.hypot(...a) * Math.hypot(...b));
-describe("46r9 real Gemma runtime", () => {
+describe("real Gemma runtime", () => {
   it.each([QWEN_MODEL, GEMMA_MODEL])(
     "downloads $modelId through production HTTPS/DNS/redirect/hash publication from an empty volume",
     { timeout: 300_000 },
@@ -161,7 +161,7 @@ describe("46r9 real Gemma runtime", () => {
   );
 });
 
-it("46r10 one supervisor switches Qwen to Gemma and back, choosing each artifact and dimension, reaping the previous child", {
+it("one supervisor switches Qwen to Gemma and back, choosing each artifact and dimension, reaping the previous child", {
   timeout: 180_000,
 }, async () => {
   const qwenPath = process.env.KB_QWEN_MODEL_PATH;

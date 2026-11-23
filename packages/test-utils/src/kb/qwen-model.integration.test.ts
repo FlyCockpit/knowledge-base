@@ -135,7 +135,7 @@ const ARTIFACT = JSON.parse(
 ) as { modelId: string; sha256: string; sizeBytes: number; dimensions: number };
 /** Each rt() fixture requests {4096, f16, f16}; the default-tier READY test is separate. */
 const CONTEXT_TOKENS = 4096;
-/** Spike inputs/token counts; archived vectors diagnose hardware drift, not batching. */
+/** Reference inputs/token counts; archived vectors diagnose hardware drift, not batching. */
 const REFERENCE = JSON.parse(
   readFileSync(join(import.meta.dirname, "qwen-batch-reference.json"), "utf8"),
 ) as {
@@ -456,7 +456,7 @@ describe("real model through the forked child", () => {
   );
 });
 
-describe("46r9 patched Qwen context tiers", () => {
+describe("patched Qwen context tiers", () => {
   // These measurements assert full-context memory, not idle-host CPU speed.
   // The unchanged two-minute product deadline is pinned separately with virtual
   // time in qwen-lifecycle.test.ts, including a result just before expiry.
@@ -488,7 +488,7 @@ describe("memory-aware runtime", () => {
     modelInference(async () => {
       const peaks: number[] = [];
       const { supervisor } = make({ onPeakRss: (bytes: number) => peaks.push(bytes) });
-      // 4085 tokens + EOS: the near-limit input that drove the old full-batch child past 5.6 GiB.
+      // 4085 tokens + EOS: the near-limit input that drives a full-batch child past 5.6 GiB.
       const [vector] = await supervisor.embed({
         purpose: "document",
         texts: [tokens(CONTEXT_TOKENS - 11)],
@@ -510,7 +510,7 @@ describe("memory-aware runtime", () => {
   );
 
   it(
-    "batch-512 vectors equal a same-hardware single-batch reference on the spike fixtures (cosine >= 0.99999)",
+    "batch-512 vectors equal a same-hardware single-batch reference on the reference fixtures (cosine >= 0.99999)",
     {
       timeout: 600_000,
     },

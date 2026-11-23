@@ -407,10 +407,9 @@ registerCliInstallRoutes(app);
 //
 // SIGNUP_ENABLED=false and first-admin selection are enforced inside the
 // wrapped Better Auth adapter transaction (packages/auth/src/bootstrap.ts).
-// An earlier revision additionally rejected non-members here with an
-// immediate 403 while members proceeded into Better-Auth — the immediate-403
-// vs Better-Auth-processing split (shape + timing) revealed which emails are
-// admins, so it was removed. Do NOT re-add an email-based early reject here.
+// Do NOT add an email-based early reject here: an immediate 403 for
+// non-members while members proceed into Better-Auth splits responses by
+// shape and timing, which reveals which emails are admins.
 app.use("/api/auth/sign-up/email", adminBootstrapMarker(ADMIN_EMAIL));
 
 app.use(
@@ -757,7 +756,7 @@ if (env.NODE_ENV === "production") {
     headers.delete("x-csp-nonce");
     headers.delete(LOCALE_MODULEPRELOAD_HEADER);
     headers.delete(CANONICAL_ORIGIN_HEADER);
-    // Configured origin for the public home page's canonical/og URLs (F17).
+    // Configured origin for the public home page's canonical/og URLs.
     headers.set(CANONICAL_ORIGIN_HEADER, new URL(env.BETTER_AUTH_URL).origin);
     if (typeof nonce === "string") {
       headers.set("x-csp-nonce", nonce);

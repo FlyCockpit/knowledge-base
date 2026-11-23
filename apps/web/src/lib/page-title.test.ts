@@ -6,7 +6,7 @@ import { orpc } from "@/utils/orpc";
 
 import { cachedKbName, isNotFoundHead, pageHead, pageTitle, routeHead } from "./page-title";
 
-describe("pageTitle (R2-12)", () => {
+describe("pageTitle", () => {
   it("orders the page, its context and the app name, skipping missing parts", () => {
     expect(pageTitle("a.md", "Engineering Notes")).toBe(
       `a.md · Engineering Notes · ${env.VITE_APP_NAME}`,
@@ -27,7 +27,7 @@ describe("pageTitle (R2-12)", () => {
     expect(cachedKbName(queryClient, kbId)).toBe("Engineering Notes");
   });
 
-  it("names a not-found page, whichever route is the boundary (R3-W9)", () => {
+  it("names a not-found page, whichever route is the boundary", () => {
     const ok = { status: "success" };
     expect(isNotFoundHead([ok, ok])).toBe(false);
     expect(isNotFoundHead([ok, { status: "success", _notFound: true }])).toBe(true);

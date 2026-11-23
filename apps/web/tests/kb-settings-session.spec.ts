@@ -113,12 +113,12 @@ async function delay(page: Page, procedure: string, outcome: Outcome) {
 
 for (const mode of ["create", "probe"] as const) {
   for (const outcome of ["success", "rejection", "interruption"] as const) {
-    test(`R41 ${mode}: pending close and late ${outcome} preserve the reopened draft and forget secrets`, async ({
+    test(`${mode}: pending close and late ${outcome} preserve the reopened draft and forget secrets`, async ({
       page,
     }) => {
       // Keep the real 5/minute provider budget intact for each registrant.
       await owner(page, "providers", s.editor.kbId, registrants[outcome]);
-      const name = `R41 ${randomUUID().slice(0, 8)}`;
+      const name = `Settings ${randomUUID().slice(0, 8)}`;
       await page.getByTestId("provider-create").click();
       await fillProvider(page, name);
       if (mode === "probe") {
@@ -164,11 +164,11 @@ for (const mode of ["create", "probe"] as const) {
 
 for (const outcome of ["success", "rejection", "interruption"] as const) {
   for (const retire of [false, true]) {
-    test(`R41 sealed pending ${retire ? "unmount" : "edited draft"} survives late ${outcome}`, async ({
+    test(`sealed pending ${retire ? "unmount" : "edited draft"} survives late ${outcome}`, async ({
       page,
     }) => {
       await owner(page, "kb");
-      const literal = `sealed-r41-${randomUUID()}`;
+      const literal = `sealed-${randomUUID()}`;
       await page.getByLabel("Secret value").fill(literal);
       const held = await delay(page, "kbSealed/enroll", outcome);
       try {
@@ -233,11 +233,9 @@ for (const outcome of ["success", "rejection", "interruption"] as const) {
 }
 
 for (const outcome of ["rejection", "interruption"] as const) {
-  test(`R41 unchanged sealed retry after ${outcome} reuses its committed receipt`, async ({
-    page,
-  }) => {
+  test(`unchanged sealed retry after ${outcome} reuses its committed receipt`, async ({ page }) => {
     await owner(page, "kb");
-    const literal = `unchanged-r41-${randomUUID()}`;
+    const literal = `unchanged-${randomUUID()}`;
     const keys: string[] = [];
     page.on("request", (request) => {
       if (request.method() === "POST" && request.url().includes("/rpc/kbSealed/enroll")) {
@@ -275,7 +273,7 @@ for (const outcome of ["rejection", "interruption"] as const) {
   });
 }
 
-test("R41 warm and cold KB navigation retires profile approvals, sealed/member/mirror drafts", async ({
+test("warm and cold KB navigation retires profile approvals, sealed/member/mirror drafts", async ({
   page,
 }) => {
   await owner(page, "kb");
@@ -307,7 +305,7 @@ test("R41 warm and cold KB navigation retires profile approvals, sealed/member/m
   }
 });
 
-test("R41 acceptance state belongs to each kind and request; an old success cannot accept the next link", async ({
+test("acceptance state belongs to each kind and request; an old success cannot accept the next link", async ({
   page,
   browser,
 }) => {
@@ -374,7 +372,7 @@ test("R41 acceptance state belongs to each kind and request; an old success cann
   }
 });
 
-test("R41 invalid local inputs report errors; name-less Unicode re-probe and exact revoke still work", async ({
+test("invalid local inputs report errors; name-less Unicode re-probe and exact revoke still work", async ({
   page,
 }) => {
   await owner(page);
@@ -470,7 +468,7 @@ test.afterEach(async ({ page }) => {
   expect(reset.status(), await reset.text()).toBe(200);
 });
 
-test("R41 enabled built-in is selectable by a manager and attaches its exact revision through the real router", async ({
+test("enabled built-in is selectable by a manager and attaches its exact revision through the real router", async ({
   page,
 }) => {
   await owner(page, "kb");
@@ -539,7 +537,7 @@ test("R41 enabled built-in is selectable by a manager and attaches its exact rev
   expect(operations).toEqual(["/rpc/kbIndex/setProfile", "/rpc/kbIndex/rebuild"]);
 });
 
-test("R41 owner changes the sealed-share flag through the real control; manager cannot expose it", async ({
+test("owner changes the sealed-share flag through the real control; manager cannot expose it", async ({
   page,
 }) => {
   await owner(page, "kb", s.kbId, "owner", "members");

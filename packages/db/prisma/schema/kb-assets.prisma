@@ -234,7 +234,8 @@ model AssetCachePin {
   @@map("asset_cache_pin")
 }
 
-/// Historical generations remain inventory evidence; P5/P6 define activation.
+/// Historical generations remain inventory evidence; the storage marker and
+/// migration control decide activation.
 model AssetRetainedObject {
   storageGeneration String              @db.Uuid
   locator           String

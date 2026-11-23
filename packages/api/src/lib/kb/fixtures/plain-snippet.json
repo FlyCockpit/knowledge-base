@@ -1,5 +1,5 @@
 {
-  "description": "R2-27 plain-text citation snippets shared by the server (plain-snippet.ts plainSnippet) and the CLI (kb-local citation.rs plain_snippet). `cases`: a raw snippet and its exact plain text; the second part is generated over a Markdown-heavy alphabet (deterministic xorshift seed) to pin both implementations to the same output. Code contents are literal. Ambiguous unpaired delimiters are preserved; clippedCases exercises formatting the full available source before the 240-scalar citation limit.",
+  "description": "Plain-text citation snippets shared by the server (plain-snippet.ts plainSnippet) and the CLI (kb-local citation.rs plain_snippet). `cases`: a raw snippet and its exact plain text; the second part is generated over a Markdown-heavy alphabet (deterministic xorshift seed) to pin both implementations to the same output. Code contents are literal. Ambiguous unpaired delimiters are preserved; clippedCases exercises formatting the full available source before the 240-scalar citation limit.",
   "cases": [
     {
       "input": "# Postgres failover Run `pg_isready` first, then **promote** the replica.",

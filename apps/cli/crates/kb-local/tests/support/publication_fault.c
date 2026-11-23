@@ -11,7 +11,7 @@
 
 static int fault(int fd) {
     char mode[32], target[4096], path[4096], link[64];
-    FILE *control = fopen(R52_CONTROL, "r");
+    FILE *control = fopen(PUBLICATION_FAULT_CONTROL, "r");
     if (!control) return 0;
     int parsed = fscanf(control, "%31s\n%4095[^\n]", mode, target);
     fclose(control);
@@ -26,7 +26,7 @@ static int fault(int fd) {
         ? S_ISREG(meta.st_mode) && strstr(path, target) && strstr(path, "/objects/")
         : strcmp(path, target) == 0;
     if (!matches) return 0;
-    int marker = open(R52_MARKER, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    int marker = open(PUBLICATION_FAULT_MARKER, O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (marker >= 0) {
         dprintf(marker, "%s %s\n", mode, path);
         close(marker);
@@ -35,11 +35,11 @@ static int fault(int fd) {
         // The parent kills this recorded Git PID while its actual ref lock
         // exists and the inherited store fence is still held. Published by
         // rename so the parent, which polls for existence, never reads it empty.
-        marker = open(R52_PID ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        marker = open(PUBLICATION_FAULT_PID ".tmp", O_WRONLY | O_CREAT | O_TRUNC, 0600);
         if (marker >= 0) {
             dprintf(marker, "%d\n", getpid());
             close(marker);
-            rename(R52_PID ".tmp", R52_PID);
+            rename(PUBLICATION_FAULT_PID ".tmp", PUBLICATION_FAULT_PID);
         }
         for (int i=0; i<12000; ++i) usleep(10000);
     }

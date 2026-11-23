@@ -1,4 +1,4 @@
-//! L-14 — the local store keeps Git internals owner-only on Unix: Git runs
+//! The local store keeps Git internals owner-only on Unix: Git runs
 //! with `core.sharedRepository=0600`, a new repository is tightened after
 //! `git init`, and opening a store tightens repositories written by an older
 //! `kb` (or under a looser umask).
@@ -107,7 +107,7 @@ fn store_git_internals_are_owner_only_and_tightened_on_open() {
     );
     drop(store);
 
-    // A repository written before this fix: group/other bits everywhere.
+    // A repository written by an older `kb`: group/other bits everywhere.
     loosen(&repo);
     assert!(!loose_entries(&repo).is_empty());
     let store = Store::open(&root).expect("reopen");

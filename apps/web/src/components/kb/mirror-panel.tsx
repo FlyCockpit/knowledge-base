@@ -14,7 +14,7 @@ import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { useRenewableAttemptKey } from "@/hooks/use-renewable-attempt-key";
 import { orpc } from "@/utils/orpc";
 
-/** The server's private-network egress refusal (R2-18), told apart from a malformed URL. */
+/** The server's private-network egress refusal, told apart from a malformed URL. */
 function mirrorPrivateHost(error: unknown): boolean {
   return (error as { data?: { reason?: unknown } } | null)?.data?.reason === "PRIVATE_NETWORK_HOST";
 }

@@ -70,7 +70,7 @@ export function projectCitationHit(
       startByte: row.startByte,
       endByte: row.endByte,
     },
-    // R2-27: plain text on every transport (MCP included); the span stays exact.
+    // Plain text on every transport (MCP included); the span stays exact.
     snippet: row.snippet,
     score: context.score,
     mode: context.mode ?? "hybrid",

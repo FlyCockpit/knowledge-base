@@ -13,7 +13,7 @@ describe("audit metadata", () => {
   });
 });
 
-describe("index settings audit metadata (§1.9)", () => {
+describe("index settings audit metadata", () => {
   it.each([
     ["index_quantization_set", { kbId: "kb1", state: "int8" }],
     ["index_chunk_limit_set", { kbId: "kb1", amount: "250000" }],

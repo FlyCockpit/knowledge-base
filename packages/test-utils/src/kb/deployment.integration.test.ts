@@ -515,7 +515,7 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
 
   it("boots the empty instance with image-owned artifacts, nonroot mounts and no client key", async () => {
     expect(await ready()).toMatchObject({ status: 200, ok: true, checks: { workers: true } });
-    // One data volume, read-write for both roles (decision 19).
+    // One data volume, read-write for both roles.
     for (const role of ["server", "worker"]) {
       const mounts = JSON.parse(
         await docker(["inspect", await id(role), "--format", "{{json .Mounts}}"]),
@@ -649,10 +649,14 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
     expect((await git(["-C", clone, "rev-parse", "HEAD^{tree}"])).stdout.trim()).toBe(
       (await git(["-C", clone, "rev-parse", `${proposed.commitSha}^{tree}`])).stdout.trim(),
     );
-    expect(await readFile(join(clone, "proposed.md"), "utf8")).toBe("# Deployment proposal\n");
+    // The PAT is an agent credential: its proposal is stamped `provenance: agent`.
+    expect(await readFile(join(clone, "proposed.md"), "utf8")).toBe(
+      "---\nprovenance: agent\n---\n# Deployment proposal\n",
+    );
     await writeFile(
       join(clone, "pushed.md"),
-      "# Runtime deployment search\nContainer packaging is tested through Git.\n",
+      // Git pushes come from a token, so new Markdown must say `provenance: agent`.
+      "---\nprovenance: agent\n---\n# Runtime deployment search\nContainer packaging is tested through Git.\n",
     );
     await git(["-C", clone, "add", "pushed.md"]);
     await git([

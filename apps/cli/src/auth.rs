@@ -456,8 +456,7 @@ struct Exchange {
     #[serde(rename = "expiresAt")]
     _expires_at: String,
     resource: String,
-    /// The approved write mode; `null` for a read-only credential (absent
-    /// from servers before write modes).
+    /// The approved write mode; `null` (or absent) for a read-only credential.
     #[serde(rename = "authoringMode", default)]
     authoring_mode: Option<AuthoringMode>,
 }

@@ -1156,7 +1156,7 @@ async function runSteps(server) {
     );
 
     await step(
-      "expand/contract 11 (R4-2): a view added after a merged removal → CI passes, the next diff is empty",
+      "expand/contract 11: a view added after a merged removal → CI passes, the next diff is empty",
       async () => {
         const r = node("migrate.mjs", ["project_kind_view", "--empty"]);
         assert.equal(r.code, 0, r.out);

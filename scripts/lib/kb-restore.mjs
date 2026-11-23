@@ -131,7 +131,7 @@ async function parents(root, relative) {
 }
 function metadataCheck(metadata, inventory) {
   if (
-    metadata?.version !== 3 ||
+    metadata?.version !== 1 ||
     !UUID.test(metadata.instanceId) ||
     !/^[1-9][0-9]{0,30}$/.test(metadata.authorityEpoch) ||
     !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(metadata.cutoff) ||
@@ -437,9 +437,7 @@ export async function extractBundle(file, identity, stage, { maxBytes = 2 ** 40,
   };
   try {
     const magic = await line(32);
-    if (["kb/backup/1", "kb/backup/2"].includes(magic))
-      fail("RESTORE_PRERELEASE_FORMAT_UNSUPPORTED");
-    if (magic !== "kb/backup/3") fail("INVALID_RESTORE_BUNDLE");
+    if (magic !== "kb/backup/1") fail("INVALID_RESTORE_BUNDLE");
     const { metadata, inventory } = JSON.parse(await line());
     if (!Array.isArray(inventory) || inventory.length > 1000000) fail("INVALID_RESTORE_INVENTORY");
     metadataCheck(metadata, inventory);
@@ -888,7 +886,7 @@ async function resetAuthority(client, metadata, attemptId) {
     await client.query(
       'UPDATE query_embedding_request SET state=\'CANCELLED\',"queryCiphertext"=NULL,"resultCiphertext"=NULL WHERE id IS NOT NULL',
     );
-    // Restored generations never keep build reservations (guards I1/I2); the ledger itself is
+    // Restored generations never keep build reservations; the ledger itself is
     // released in bulk below.
     await client.query(
       'UPDATE index_generation SET "quotaReservationIds"=\'{}\' WHERE cardinality("quotaReservationIds") > 0',

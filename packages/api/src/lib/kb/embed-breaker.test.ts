@@ -5,7 +5,7 @@ import {
   EMBED_BREAKER_MAX_COOLDOWN_MS,
 } from "./embed-breaker";
 
-describe("query embedding breaker (R3-L4)", () => {
+describe("query embedding breaker", () => {
   it("opens on failure, lets one half-open probe through after the cooldown, closes on success", () => {
     let now = 0;
     const breaker = createEmbedBreaker(() => now);

@@ -610,7 +610,7 @@ impl Http for Stalled {
         Box::pin(std::future::pending())
     }
 }
-/// #4: a provider key removed outside kb is reported as that provider's
+/// A provider key removed outside kb is reported as that provider's
 /// key, with the recovery that exists (a new revision), not the sealed
 /// master-key guidance.
 #[test]

@@ -993,7 +993,7 @@ export async function createKbBrowserFixture(options: {
         },
       }),
     });
-    // R34a: real provider and real cookie sessions for consent/credential transport.
+    // Real provider and real cookie sessions for consent/credential transport.
     const authSecret = process.env.BETTER_AUTH_SECRET!;
     const mcpAuth = betterAuth({
       database: prismaAdapter(prisma, { provider: "postgresql" }),
@@ -1277,7 +1277,7 @@ export async function createKbBrowserFixture(options: {
       return c.json({ clientId, grantId: inspectionGrantId, lastKb: kbIds.at(-1) });
     });
 
-    // Edit access (MCP scoping phase 5): one OAuth app whose stored ACL holds a
+    // Edit access: one OAuth app whose stored ACL holds a
     // revoked share, a downgraded share and `fillers` owned KBs (paging past 50).
     const editKb = (prefix: string) => `${prefix}${randomBytes(10).toString("hex")}`;
     fixture.post("/fixture/mcp/edit-scenario", async (c) => {
@@ -1436,12 +1436,12 @@ export async function createKbBrowserFixture(options: {
       }
       return matched && response ? response : c.json({ error: "NOT_FOUND" }, 404);
     });
-    // R40: fresh real principals and PRs per lifetime/retry scenario. No shared
+    // Fresh real principals and PRs per lifetime/retry scenario. No shared
     // budgets are widened; reads/reviews still pass through production /rpc.
     fixture.post("/fixture/pr/scenario", async (c) => {
       const users = await prisma.user.createManyAndReturn({
         data: ["author", "reviewer"].map((role) => ({
-          name: `R40 ${role}`,
+          name: `PR ${role}`,
           email: `${randomUUID()}@example.invalid`,
           emailVerified: true,
           twoFactorEnabled: true,
@@ -1466,10 +1466,10 @@ export async function createKbBrowserFixture(options: {
         // The same real cookie also authenticates fixture-only setup operations.
         sessions.set(cookie, userId!);
       }
-      const main = { "index.md": "# R40 index\n", "deleted.md": "# Removed document\n" };
-      const head = { "index.md": "# R40 index\n", "added.md": "# Added document\n" };
+      const main = { "index.md": "# PR index\n", "deleted.md": "# Removed document\n" };
+      const head = { "index.md": "# PR index\n", "added.md": "# Added document\n" };
       const a = await seedPr({
-        slug: `r40-a-${randomUUID()}`,
+        slug: `pr-a-${randomUUID()}`,
         main,
         head,
         mainAssets: [],
@@ -1478,7 +1478,7 @@ export async function createKbBrowserFixture(options: {
         reviewerId,
       });
       const b = await seedPr({
-        slug: `r40-b-${randomUUID()}`,
+        slug: `pr-b-${randomUUID()}`,
         main,
         head,
         mainAssets: [],
@@ -1489,7 +1489,7 @@ export async function createKbBrowserFixture(options: {
         existingMain: true,
       });
       const other = await seedPr({
-        slug: `r40-other-${randomUUID()}`,
+        slug: `pr-other-${randomUUID()}`,
         main,
         head,
         mainAssets: [],
@@ -1548,7 +1548,7 @@ export async function createKbBrowserFixture(options: {
           kbId,
           keyVersion: 1,
           remoteVersion: 0,
-          url: "ssh://git@private-r38.example/team/private.git",
+          url: "ssh://git@private-mirror.example/team/private.git",
           hostKeys: [publicKey],
           publicKey,
           fingerprint: "SHA256:fixture-public-key",

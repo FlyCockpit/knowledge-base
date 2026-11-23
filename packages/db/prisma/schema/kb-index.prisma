@@ -43,7 +43,7 @@ model IndexGeneration {
   /// SUPERSEDED or FAILED; cleared on retry. Retention measures its TTLs from here.
   retiredAt           DateTime?               @db.Timestamptz(3)
   /// DISK_VOLUME reservations of the live BUILDING attempt (index file bytes). Released, never
-  /// committed; non-empty only while BUILDING (guard trigger I1).
+  /// committed; non-empty only while BUILDING (enforced by a guard trigger).
   quotaReservationIds String[]                @default([])
   documents           GenerationDocument[]
   queryRequests       QueryEmbeddingRequest[]

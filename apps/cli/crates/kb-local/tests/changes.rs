@@ -701,7 +701,7 @@ fn competing_base_revisions_conflict_without_effects() {
             .expect_err("stale");
         assert_eq!(code(&err), ErrorCode::Conflict);
     }
-    // R3-W6: while the proposal sits on main, an edit against current main
+    // While the proposal sits on main, an edit against current main
     // applies on the proposal HEAD; only a path the proposal changed needs
     // its proposalNumber, else PROPOSAL_CONFLICT with both versions.
     let proposer = kb.principal(&[Permission::Propose]);
@@ -1929,9 +1929,9 @@ fn maintain_now(kb: &Kb) {
     panic!("bounded cleanup batches did not finish");
 }
 
-/// Phase P review: one pack per publication and no Git maintenance made
-/// every Git spawn slower without bound; the first fix rewrote the whole
-/// repository. Rollups are geometric: the pack count stays bounded, a large
+/// One pack per publication with no Git maintenance would make every Git
+/// spawn slower without bound, and rewriting the whole repository is no
+/// remedy. Rollups are geometric: the pack count stays bounded, a large
 /// pack is never rewritten, no object (reachable or not) is lost, a reader
 /// that already mapped the old packs keeps resolving every object, and
 /// concurrent kb-local reads stay correct throughout.
@@ -2330,9 +2330,9 @@ fn a_deferred_rollup_backs_off_and_never_fails_the_lock() {
     );
 }
 
-/// Five failed attempts formerly shrank the cap to 1 MiB. All the packs
-/// here are ~600 KiB, with no loose objects: that cap could fold only one,
-/// and "nothing to fold" kept the KB stuck forever. Retry spacing must
+/// Failed attempts never shrink the cap. All the packs here are ~600 KiB,
+/// with no loose objects: a 1 MiB cap could fold only one, and "nothing to
+/// fold" would keep the KB stuck forever. Retry spacing must
 /// recover without changing the cap or weakening its freeze bound.
 #[test]
 fn a_rollup_makes_progress_after_five_injected_failures() {
@@ -2416,7 +2416,7 @@ fn a_rollup_makes_progress_after_five_injected_failures() {
 }
 
 /// Retry history must also recover when there is nothing left to fold.
-/// Previously five failures meant a sticky 1 MiB cap, even for idle stores.
+/// Failures never leave a sticky reduced cap, even for idle stores.
 #[test]
 fn a_repository_with_no_rollup_work_clears_old_failures() {
     let kb = new_kb("pack-idle");

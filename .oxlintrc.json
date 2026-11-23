@@ -40,7 +40,7 @@
           "error",
           {
             "name": "console",
-            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+            "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
           }
         ],
         "no-restricted-properties": [
@@ -48,22 +48,22 @@
           {
             "object": "process",
             "property": "stdout",
-            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+            "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
           },
           {
             "object": "process",
             "property": "stderr",
-            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+            "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
           },
           {
             "object": "globalThis",
             "property": "console",
-            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+            "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
           },
           {
             "object": "globalThis",
             "property": "process",
-            "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+            "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
           }
         ],
         "no-restricted-imports": [
@@ -72,19 +72,19 @@
             "paths": [
               {
                 "name": "console",
-                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+                "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
               },
               {
                 "name": "node:console",
-                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+                "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
               },
               {
                 "name": "process",
-                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+                "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
               },
               {
                 "name": "node:process",
-                "message": "R3-W3: process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
+                "message": "Process output belongs to @knowledge-base/env/log only \u2014 use logEvent/logInternalError (fixed records)."
               }
             ]
           }

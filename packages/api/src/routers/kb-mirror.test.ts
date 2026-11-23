@@ -145,7 +145,7 @@ describe("human mirror controls", () => {
     });
   });
 
-  it("names the private-network egress block and nothing else (R2-18)", async () => {
+  it("names the private-network egress block and nothing else", async () => {
     const client = createRouterClient(kbMirrorRouter, { context: () => context });
     const input = {
       kbId,

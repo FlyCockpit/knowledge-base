@@ -80,7 +80,7 @@ async function encryptedInventory(file: string, identity: string) {
       const first = header.indexOf(10);
       const second = header.indexOf(10, first + 1);
       if (first >= 0 && second >= 0) {
-        expect(header.subarray(0, first).toString()).toBe("kb/backup/3");
+        expect(header.subarray(0, first).toString()).toBe("kb/backup/1");
         inventory = JSON.parse(header.subarray(first + 1, second).toString()).inventory;
         header = Buffer.alloc(0);
       } else if (header.length > 1024 * 1024)
@@ -187,9 +187,9 @@ it("drains a live Hono auth request and real worker job, denies late OAuth/uploa
       env: environment,
       stdio: "pipe",
     });
-    // P6: only the fenced server may initialize storage authority on an empty instance.
+    // Only the fenced server may initialize storage authority on an empty instance.
     for (const role of ["server", "worker"]) {
-      const name = kbTestName(`kb-65-live-${role}-${randomUUID()}`);
+      const name = kbTestName(`kb-storage-live-${role}-${randomUUID()}`);
       const env = {
         ...environment,
         SERVER_PORT: String(port),
@@ -1250,7 +1250,7 @@ it("S3 backup checks remote authority with an empty cache and refuses a disappea
       assetEnvironment: environment,
     });
     const bundle = await readBundle(file, identity);
-    expect(bundle.metadata.version).toBe(3);
+    expect(bundle.metadata.version).toBe(1);
     expect(bundle.files.filter((e) => e.path.startsWith("assets/"))).toEqual([]);
     expect(
       remote.requests.every(

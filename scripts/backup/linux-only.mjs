@@ -1,7 +1,7 @@
 /**
  * host.sh and pre-migrate.sh are Linux-only (they run on the deployment
- * server and inside the Debian app image, with GNU find/mktemp/mountpoint;
- * owner decision 2026-11-13). Their tests run directly on Linux (CI), inside
+ * server and inside the Debian app image, with GNU find/mktemp/mountpoint).
+ * Their tests run directly on Linux (CI), inside
  * a throwaway Linux container where Docker exists, and are skipped with a
  * clear message otherwise.
  *

@@ -7,7 +7,7 @@ import { PageShell } from "@/components/page-shell";
 import { publicHomeHead } from "@/lib/public-home-head";
 
 export const Route = createFileRoute("/$lang/_public/")({
-  // Translated canonical/hreflang/og metadata — public copy only (F17).
+  // Translated canonical/hreflang/og metadata — public copy only.
   head: ({ match, params }) =>
     publicHomeHead({
       origin: match.context.canonicalOrigin,

@@ -730,7 +730,7 @@ describe("mirror execution against real SSH", () => {
     for (const name of ["owner", "group"])
       for (const fault of ["unreadable", "malformed"])
         mirrorFixtureTest(
-          `F1 ${consumer} preserves RESERVED, ciphertext and ${fault} ${name} evidence`,
+          `${consumer} preserves RESERVED, ciphertext and ${fault} ${name} evidence`,
           async (f) => {
             const root = mkdtempSync("/dev/shm/mirror-fault-");
             let group: Awaited<ReturnType<typeof recoveryGroup>> | undefined;
@@ -817,7 +817,7 @@ describe("mirror execution against real SSH", () => {
         );
 
   mirrorFixtureTest(
-    "F1 generic post-dispatch cleanup failure cannot reuse pre-dispatch drain permission",
+    "generic post-dispatch cleanup failure cannot reuse pre-dispatch drain permission",
     async (f) => {
       const root = mkdtempSync("/dev/shm/mirror-fault-");
       let group: Awaited<ReturnType<typeof recoveryGroup>> | undefined;

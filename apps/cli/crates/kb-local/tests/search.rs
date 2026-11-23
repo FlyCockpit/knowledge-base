@@ -478,7 +478,7 @@ async fn invalid_vector_falls_back_lexically_cancel_timeout_never_and_reenter() 
         [IndexNotice::LexicalOnly(n)] if n.detail == LexicalOnlyReason::EmbeddingProfileUnavailable
     ));
     no_leases(&f);
-    // R3-L4: that search's own short budget timed out, which says nothing
+    // That search's own short budget timed out, which says nothing
     // about the target. A search with the full budget waits at most the
     // query-embedding bound, and its timeout opens the target's breaker.
     // Admission and return can wait on durable SQLite writes. Measure the
@@ -621,7 +621,7 @@ async fn invalid_vector_falls_back_lexically_cancel_timeout_never_and_reenter() 
         );
         assert_eq!(vector_completed, barrier == SearchStage::Fts);
         no_leases(&f);
-        // Review r2 #2: a missing arm is a broken index contract, not a
+        // A missing arm is a broken index contract, not a
         // transient failure: the file is retired, this request serves the
         // retained lexical companion, and the semantic generation is rebuilt.
         let code: Option<String> = f
@@ -676,7 +676,7 @@ async fn filters_before_eighty_candidate_cap_and_shared_cost_caps() {
     for extra in [json!({"pathPrefix":"z"}), json!({"documentId":"wanted"})] {
         let out = f.query(extra).await.expect("valid fixture");
         assert_eq!(out.results.len(), 1);
-        // L-25: first in both arms is the normalized maximum.
+        // First in both arms is the normalized maximum.
         assert_eq!(out.results[0].score, 1.);
     }
     assert_eq!(
@@ -1231,7 +1231,7 @@ async fn query_breakers_charge_only_target_io_through_the_production_adapter() {
     }
 }
 
-/// Review r5 #1: what must arrive within the target budget is the MCP
+/// What must arrive within the target budget is the MCP
 /// handler's reply, not merely its `block_on`. The resolver here blocks a
 /// thread of the runtime's blocking pool and never answers in time, as a
 /// stalled `getaddrinfo` under `tokio::net::lookup_host` does. A handler that
@@ -1398,7 +1398,7 @@ fn a_blocked_resolver_thread_does_not_hold_the_mcp_reply() {
     rt.shutdown_background();
 }
 
-/// Round 7: `builtin` without a revision resolves the CURRENT configuration
+/// `builtin` without a revision resolves the CURRENT configuration
 /// after A -> B -> A (never the newest or a stale one); the pin is A's.
 #[tokio::test]
 async fn builtin_alias_follows_a_switch_back_to_an_earlier_configuration() {
@@ -1758,7 +1758,7 @@ async fn host_builtin_query_and_explicit_identity_lexical_mode() {
         .await
         .expect("valid fixture");
     assert_eq!(out.results[0].mode, SearchMode::Lexical);
-    // L-25: the lexical arm alone ran; its first hit is the normalized maximum.
+    // The lexical arm alone ran; its first hit is the normalized maximum.
     assert_eq!(out.results[0].score, 1.);
     assert!(matches!(
         &out.index_notices[0],
@@ -1807,7 +1807,7 @@ async fn fts_v1_folds_diacritics_ors_words_and_matches_phrases() {
             .expect("valid fixture");
         // Every chunk is in the vector arm (fewer than 80); only FTS matches
         // add a second reciprocal rank, so they score above one arm's
-        // normalized maximum, 0.5 (L-25).
+        // normalized maximum, 0.5.
         let lexical = out
             .results
             .iter()
@@ -2041,7 +2041,7 @@ async fn index_rebuild_without_a_usable_profile_schedules_a_lexical_generation()
     no_leases(&f);
 }
 
-/// L-7: revoking the provider in use serves the hybrid file's FTS5 arm at
+/// Revoking the provider in use serves the hybrid file's FTS5 arm at
 /// once (`EMBEDDING_PROFILE_REVOKED`, never INDEX_UNAVAILABLE) and schedules a
 /// lexical-only generation in the revocation transaction.
 #[tokio::test]
@@ -2466,7 +2466,7 @@ async fn only_classified_embedding_failures_degrade_to_lexical() {
     }
 }
 
-/// R3-L8: an unreadable active index file heals like a deleted one: the
+/// An unreadable active index file heals like a deleted one: the
 /// generation fails (`INDEX_FILE_LOST`), the KB is rescheduled (its lexical
 /// companion first) and search serves again once that completes. Both a
 /// damaged header (found by every lock pass) and damaged pages (found when
@@ -2490,8 +2490,8 @@ async fn a_corrupted_active_index_is_lost_and_rebuilt() {
                 .expect("writable");
         }
         if damage == "meta" || damage == "vectors" {
-            // Intact SQLite, broken index contract (review #4): metadata, or
-            // stored vectors of the wrong width (review r2 #2).
+            // Intact SQLite, broken index contract: metadata, or stored
+            // vectors of the wrong width.
             rusqlite::Connection::open(&path)
                 .expect("file")
                 .execute_batch(if damage == "meta" {
@@ -2568,7 +2568,7 @@ async fn a_corrupted_active_index_is_lost_and_rebuilt() {
     }
 }
 
-/// Review #4: a failure that proves nothing about the file (here it cannot
+/// A failure that proves nothing about the file (here it cannot
 /// be read for a moment) never retires a healthy index.
 #[cfg(unix)]
 #[tokio::test]
@@ -2603,7 +2603,7 @@ async fn a_transient_read_failure_never_retires_the_active_index() {
     );
 }
 
-/// R3-L9 (review #2): `kb model remove` is never refused by stores that
+/// `kb model remove` is never refused by stores that
 /// enabled the model, like the server's Remove: both stores serve their
 /// keyword arm with EMBEDDING_PROFILE_UNAVAILABLE while it is gone, and
 /// return to hybrid with the same generation once it is downloaded again.
@@ -2706,7 +2706,7 @@ async fn removing_a_model_two_stores_enabled_degrades_both_until_it_returns() {
     remove_short_runtime_dirs(&top);
 }
 
-/// Review r2 #4: effective availability sees the model file. A removal
+/// Effective availability sees the model file. A removal
 /// between the query embedding and the return re-ranks by keyword (ordinary
 /// and structured), and profile/provider status say unavailable until the
 /// file is back, then ready again.
@@ -3688,166 +3688,6 @@ async fn runtime_upgrade_reembeds_builtin_kbs_and_serves_keywords_meanwhile() {
     assert_eq!(status.rebuild_pending, None);
     // (No model file in this fixture's cache: hybrid serving with the real
     // worker is the `qwen_model` lane's upgrade test.)
-    let out = f
-        .store
-        .search_generation(
-            &f.store.owner(),
-            input(&f, json!({"query":"alpha"})),
-            &SearchControl::default(),
-            async |p, _| Ok(vec![1.; p.dimensions]),
-            &mut |_| Ok(()),
-        )
-        .await
-        .expect("search");
-    assert!(
-        !out.index_notices
-            .iter()
-            .any(|n| matches!(n, IndexNotice::RebuildPending(_)))
-    );
-    no_leases(&f);
-}
-
-/// A store whose built-in pins predate recorded runtimes (no
-/// `runtimeIdentity` in the KB pin or its generations' snapshots) opens:
-/// such a pin is of the unknown runtime, never this binary's, so the launch
-/// lists the KB stale, serves it by keyword and re-embeds it once, after
-/// which it is hybrid again; the new pin, naming this runtime, is left
-/// alone by later launches.
-#[tokio::test]
-async fn pins_without_a_runtime_reembed_at_launch() {
-    let current = kb_local::qwen::runtime_identity();
-    let f = Fixture::new(2);
-    publish(
-        &f,
-        vec![("index.md", Some("# Index\n\nalpha keyword body".into()))],
-        "unknown-runtime-publish-01",
-    );
-    f.db()
-        .execute("UPDATE builtin_model SET enabled=1 WHERE id=1", [])
-        .expect("enable");
-    // What a `kb` from before recorded runtimes left: a built-in KB whose
-    // pin and generation snapshot carry no `runtimeIdentity` (the unknown
-    // runtime is never written).
-    f.store
-        .set_runtime_identity_for_tests(kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY);
-    let revision = f.store.model_state().expect("state").epoch + 1;
-    let job = f.store.embedding_profile_set(&f.store.owner(),serde_json::from_value(json!({"kbId":f.kb,"providerId":"builtin","revision":revision,"idempotencyKey":"unknown-runtime-profile-01","confirm":"RUN"})).expect("input")).expect("profile");
-    assert!(
-        f.store
-            .activate_built(f.build(&job.generation_id).await)
-            .expect("old generation")
-    );
-    f.store.set_runtime_identity_for_tests(current);
-    let db = f.db();
-    let recorded: (i64, i64) = db
-        .query_row(
-            "SELECT json_type(k.profile_json,'$.builtin.runtimeIdentity') IS NULL AND json_type(k.profile_json,'$.builtin')='object', json_type(g.snapshot_json,'$.profile.builtin.runtimeIdentity') IS NULL AND json_type(g.snapshot_json,'$.profile.builtin')='object' FROM kbs k JOIN index_generations g ON g.id=k.active_generation_id WHERE k.id=?1",
-            [f.kb.as_str()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .expect("old pins");
-    assert_eq!(recorded, (1, 1), "old-format pins name no runtime");
-    let old = f
-        .store
-        .generation_snapshot(&job.generation_id)
-        .expect("old pin decodes")
-        .profile
-        .expect("hybrid");
-    assert_eq!(
-        old.builtin.as_ref().expect("builtin").runtime_identity,
-        kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY
-    );
-    assert_ne!(kb_local::qwen::UNKNOWN_RUNTIME_IDENTITY, current);
-
-    // The upgraded launch opens the store and re-pins it to this runtime.
-    let upgraded = kb_local::Store::open(&f.root).expect("old-format store opens");
-    assert!(!upgraded.runtime_reconcile_pending());
-    assert_eq!(
-        upgraded.builtin_runtime_stale_kbs().expect("progress"),
-        vec![f.kb.clone()]
-    );
-    let status = f.status();
-    assert_eq!(
-        status.rebuild_pending,
-        Some(RebuildPendingReason::EmbeddingModelChanged)
-    );
-    assert_eq!(status.active_generation_id, Some(job.generation_id.clone()));
-    let desired = status.desired_generation_id.expect("re-embed scheduled");
-    assert_ne!(desired, job.generation_id);
-    let pin: Option<String> = db
-        .query_row(
-            "SELECT json_extract(profile_json,'$.builtin.runtimeIdentity') FROM kbs WHERE id=?1",
-            [f.kb.as_str()],
-            |r| r.get(0),
-        )
-        .expect("pin");
-    assert_eq!(pin.as_deref(), Some(current));
-    let snapshot = f
-        .store
-        .generation_snapshot(&desired)
-        .expect("desired")
-        .profile
-        .expect("hybrid");
-    assert_eq!(
-        snapshot.builtin.as_ref().expect("builtin").runtime_identity,
-        current
-    );
-    // Once: another launch schedules nothing more.
-    drop(kb_local::Store::open(&f.root).expect("relaunch"));
-    assert_eq!(f.status().desired_generation_id, Some(desired.clone()));
-
-    // Meanwhile: keyword search, no query embedding, the pending notice.
-    f.settle_companion(&desired).await;
-    let out = f
-        .store
-        .search_generation(
-            &f.store.owner(),
-            input(&f, json!({"query":"alpha"})),
-            &SearchControl::default(),
-            async |_, _| panic!("vectors of an unknown runtime never meet query vectors"),
-            &mut |_| Ok(()),
-        )
-        .await
-        .expect("keyword search");
-    assert_eq!(out.results[0].mode, SearchMode::Lexical);
-    assert!(matches!(
-        &out.index_notices[0],
-        IndexNotice::RebuildPending(n) if n.detail == RebuildPendingReason::EmbeddingModelChanged
-    ));
-
-    // The re-embedded generation activates: hybrid again, nothing pending.
-    assert!(
-        f.store
-            .activate_built(f.build(&desired).await)
-            .expect("re-embedded")
-    );
-    assert!(
-        upgraded
-            .builtin_runtime_reembedded(&f.kb)
-            .expect("progress")
-    );
-    assert!(
-        upgraded
-            .builtin_runtime_stale_kbs()
-            .expect("progress")
-            .is_empty()
-    );
-    let status = f.status();
-    assert_eq!(status.active_generation_id, Some(desired.clone()));
-    assert_eq!(status.rebuild_pending, None);
-    // A semantic generation of this runtime serves it. (No model file in
-    // this fixture's cache: hybrid serving with the real worker is the
-    // `qwen_model` lane's.)
-    let active = f
-        .store
-        .generation_snapshot(&desired)
-        .expect("active")
-        .profile
-        .expect("hybrid");
-    assert_eq!(
-        active.builtin.as_ref().expect("builtin").runtime_identity,
-        current
-    );
     let out = f
         .store
         .search_generation(

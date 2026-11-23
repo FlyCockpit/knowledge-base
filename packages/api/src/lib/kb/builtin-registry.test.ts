@@ -4,7 +4,7 @@ import { builtinRecommendations, builtinSelectionSchema } from "./builtin-regist
 import { estimateBuiltinPeakBytes } from "./qwen-runtime-config";
 
 const config = { contextTokens: 1024, kvKeyType: "f16", kvValueType: "f16" } as const;
-describe("46r10 built-in registry and recommendation", () => {
+describe("built-in registry and recommendation", () => {
   it("has exactly the two pinned optional models and four measured tiers each", () => {
     const rows = builtinRecommendations(null);
     expect(rows).toHaveLength(8);

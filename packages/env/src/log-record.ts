@@ -7,7 +7,7 @@ export type LogLevel = "error" | "warn" | "info";
 
 /** Each site has a fixed level and message. */
 export const LOG_SITES = {
-  // R3-W3: the request paths that answered only with a generic code.
+  // The request paths that answered only with a generic code.
   "mcp.tool": ["error", "MCP tool call failed with an internal error"],
   "mcp.endpoint": ["error", "MCP endpoint failed before answering"],
   "mcp.oauth": ["error", "signing-key service unavailable"],

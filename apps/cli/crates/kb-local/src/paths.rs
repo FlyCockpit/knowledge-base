@@ -793,7 +793,7 @@ mod untrusted_open_tests {
 
 #[cfg(test)]
 mod directory_durability_tests {
-    /// Review r2 #1: a directory handle opened read-only cannot be a
+    /// A directory handle opened read-only cannot be a
     /// durability barrier on Windows, so every directory sync goes through
     /// [`super::sync_dir`]; nothing else opens a directory and syncs it.
     #[test]

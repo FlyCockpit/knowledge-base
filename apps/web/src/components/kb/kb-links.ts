@@ -1,6 +1,6 @@
 /**
  * Document URL; `rev` pins an immutable commit (citations always pass theirs).
- * `pr` opens the editor on that pull request's version (PR mode, R3-W6).
+ * `pr` opens the editor on that pull request's version (PR mode).
  */
 export function kbDocumentHref(
   lang: string,

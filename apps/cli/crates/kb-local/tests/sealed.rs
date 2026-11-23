@@ -280,7 +280,7 @@ fn losing_a_ready_native_key_never_regenerates_or_rebinds_records() {
         .enrollment(Some(uuid(2)), "enroll-lost-key-001", CANARY)
         .expect_err("the lost master key is reported");
     assert_eq!(lost.protocol_code(), ErrorCode::StorageUnavailable);
-    // #4: the guidance names the master key and only recoveries that exist
+    // The guidance names the master key and only recoveries that exist
     // (revoke needs no key; a new store has its own), never re-enrollment here.
     let why = lost.to_string();
     assert!(
@@ -327,7 +327,7 @@ fn enrolled_tree_policy_rejects_foreign_missing_and_revoked_with_zero_publish_ef
     );
 }
 #[test]
-fn l8_revoked_reference_in_an_unchanged_document_never_blocks_other_writes() {
+fn revoked_reference_in_an_unchanged_document_never_blocks_other_writes() {
     let mut t = Test::new();
     let r = t.enroll(3);
     t.source(&r);
@@ -1188,7 +1188,7 @@ fn fix_tombstone_cleanup_failure_rolls_back_lifecycle_and_authority() {
     assert_eq!(t.count("SELECT count(*) FROM operation_intents"), receipts);
 }
 
-/// R3 review: a PR's status comes from the reviewed merge's own validated
+/// A PR's status comes from the reviewed merge's own validated
 /// plan. A PR adding a sealed reference whose record is then revoked, with
 /// no Git head moving, reads CONFLICT exactly when the
 /// merge of those heads is refused.

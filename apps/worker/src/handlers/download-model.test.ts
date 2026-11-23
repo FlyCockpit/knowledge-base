@@ -60,7 +60,7 @@ describe("model download worker wiring", () => {
   });
 });
 
-// 46r10: download dispatch must use the selected descriptor, never the old fixed Qwen file.
+// Download dispatch must use the selected descriptor, never a fixed Qwen file.
 it("registry accepts both pinned durable model ids and refuses an arbitrary artifact selector", () => {
   expect(
     modelDownloadDesiredSchema.safeParse({ modelId: "embeddinggemma-2-q8_0", epoch: 1 }).success,

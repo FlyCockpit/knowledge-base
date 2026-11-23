@@ -198,7 +198,7 @@ beforeEach(() => {
   });
 });
 
-describe("bounds (decision 22)", () => {
+describe("bounds", () => {
   it("uses the measured per-quantization bounds even below the base default", () => {
     expect(BOUND).toEqual({ int8: 200_000, binary_int8_rescore: 400_000 });
     expect(DEFAULT).toBe(400_000);
@@ -502,7 +502,7 @@ describe("settings view", () => {
     );
   });
 
-  it("clamps the int8 default, maximum and legacy ceiling to 200k on read and reset", async () => {
+  it("clamps the int8 default, maximum and an over-bound stored ceiling to 200k on read and reset", async () => {
     const db = fakeDb({ quantization: "INT8" });
     const runtime = runtimeFor(db.query);
     for (const stored of [undefined, "400000"]) {

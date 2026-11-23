@@ -66,9 +66,9 @@ it; terminal failure releases immediately. After completion it is unreadable.
 A lost acknowledgement leaves a verified local ZIP usable; do not claim the
 server received it. See [CLI export](./cli.md).
 
-## Storage boundary (P1)
+## Storage boundary
 
-Disk remains the only backend. Runtime injects a `BlobStore`; constructing it
+Disk is the default backend. Runtime injects a `BlobStore`; constructing it
 performs no IO. Publication still completes before Git refs or catalog/lineage
 finalization. Staging and ZIP artifacts keep their existing local directories.
 
@@ -78,20 +78,19 @@ finalization. Staging and ZIP artifacts keep their existing local directories.
 | GET, HEAD and Range | `authorizedAssetStream` owns a store reader with `download` purpose | Complete disk preflight, bounded frames, completion before terminal frame/HEAD, final live authority before enqueue; authorized-stream and asset-http suites |
 | ZIP source assets | Same authorized reader with `internal` purpose | Revision/recipient/lineage checks and ZIP/transfer caps; exports and CLI export suites |
 | Runtime/document/MCP publication | Explicit `blobStore` dependency, including the existing MCP runtime spread | No ambient backend fallback; staged documents, imports and changes suites |
-| Offline backup/restore | Existing dedicated disk inventory/promotion modules | Archive layout unchanged; storage-aware offline operations belong to P5 |
+| Offline backup/restore | Existing dedicated disk inventory/promotion modules | Disk-mode archive layout; storage-aware operations are described below |
 | Git quarantine, push/merge scratch, local ZIP transfers and CLI local CAS | Existing owners | No new asset-byte reads or storage dependency |
 
 `blob-store.ts` exposes verified metadata/durability and owned readers, with no
 filesystem paths. Only disk internals and explicit disk fixtures use CAS path
 helpers. `scripts/check-cas-ownership.mjs`, registered in `policy:checks`, guards
 these operations and the disk modules' import purity with focused exceptions.
-S3, cache accounting, storage configuration and offline mode migration remain
-later phases; P1 adds no configuration or remote operations.
+S3, cache accounting, storage configuration and offline mode migration are
+described in the sections below.
 
-## Shared cache foundation (P2)
+## Shared cache
 
-P2 adds the cache coordinator for the future S3 backend. Disk remains the only
-selected runtime backend; no environment setting enables caching in this phase.
+The cache coordinator serves the S3 backend; disk mode uses no cache.
 The cache modules perform no database, filesystem or network IO on construction.
 They receive the recorded S3 storage generation, canonical configuration, actual
 filesystem/root identity, transaction port, disk meter and role lifecycle explicitly.
@@ -118,7 +117,7 @@ to its stores. Startup registers it under that role's fence, then recovers its
 predecessors. Attaching a store never reaps pins; restarting the server cannot
 reap worker or same-generation sibling ownership. Missing metadata over existing
 payload is refused; only a verified empty namespace may be initialized under
-both offline fences. Future migration/reconciliation must establish recorded S3
+both offline fences. Migration/reconciliation must establish recorded S3
 authority before treating any existing disk files as cache.
 
 To change the effective cache limit/configuration, stop **both** roles and retain
@@ -129,7 +128,7 @@ charge above the new limit, or a live/uncertain owner refuses installation. Rest
 both roles with the same recorded configuration. No running process shrinks the
 limit independently.
 
-Download readers/fills expose a post-enqueue sample hook for P4. It records advisory
+Download readers/fills expose a post-enqueue sample hook. It records advisory
 recency in a bounded transaction on the exact incarnation, with one outstanding
 sample per reader. READY promotion preserves the maximum, and hash breaks eviction
 ties. Failed/lost samples never delay pin release or require recovery. HEAD,
@@ -138,11 +137,10 @@ independently of samples, then joins started SQL before database disconnect and
 maintenance acknowledgement. Remote publication, HTTP wiring and operator mode
 commands use these ownership rules.
 
-## Durable S3 publication foundation (P3)
+## Durable S3 publication
 
-The S3 publication factory is selected by the P7 opt-in runtime configuration
-below. P3 installed the publication boundary, P4 downloads, P5 backup/restore
-and P6 mode migration/startup guards. Disk remains the default.
+The S3 publication factory is selected by the opt-in runtime configuration
+below. Disk remains the default.
 
 The existing descriptor-pinned CAS verifier supplies the remote publisher with
 complete, hash/size-checked and sniffed bytes. Remote verification scratch is
@@ -171,24 +169,24 @@ version, S3 mode, generation and canonical locator, with no pending migration.
 Offline target writes additionally require a matching COPYING attempt in
 `knowledge_base_control.asset_storage_migration` and both native role fences;
 these retained-byte copies bypass cache admission while runtime publication
-always requires it. P6 owns creating/activating these records. Historical
+always requires it. The offline storage migration creates and activates these records. Historical
 generations never authorize a new write. Credentials are explicit and excluded
 from locator identity; asset storage remains separate from backup S3 credentials.
 
-| P3 surface / invariants | Enforcement | Evidence |
+| Surface | Enforcement | Evidence |
 | --- | --- | --- |
-| Both publishers; I2–I4, I16 | Common verification -> retained intent -> remote confirmation -> cache admission -> ref/catalog | CAS regressions; SDK HTTP fixture; 403, lost response, metadata-free/corrupt dedup, body replay and cancellation tests |
-| Unpublished READY claims; I3 | Drained S3 error settles the unchanged operation journal before ref update | Real PG/Git upload retry with fresh key; aborted-key conflict; orphan retained evidence |
-| Imported grants; I2, I6 | Existing live source/target authority plus remote durability before target ref; no admission | Missing remote refuses lineage; valid remote HEAD succeeds without cache fill |
-| Cache ownership; I7–I8, I9 | P2 reservation/admission/close protocol; no publication touch | Batch with two 14 MiB assets on a 25 MiB cache; zero remaining byte pins |
-| Durable orphan/ref crash; I2–I3, I15, I17 | Remote intent independent of catalog; existing journal recovery after ref | Concurrent KB publishers; SIGKILL after S3-backed ref fsync; exactly-once recovery |
+| Both publishers | Common verification -> retained intent -> remote confirmation -> cache admission -> ref/catalog | CAS regressions; SDK HTTP fixture; 403, lost response, metadata-free/corrupt dedup, body replay and cancellation tests |
+| Unpublished READY claims | Drained S3 error settles the unchanged operation journal before ref update | Real PG/Git upload retry with fresh key; aborted-key conflict; orphan retained evidence |
+| Imported grants | Existing live source/target authority plus remote durability before target ref; no admission | Missing remote refuses lineage; valid remote HEAD succeeds without cache fill |
+| Cache ownership | Cache reservation/admission/close protocol; no publication touch | Batch with two 14 MiB assets on a 25 MiB cache; zero remaining byte pins |
+| Durable orphan/ref crash | Remote intent independent of catalog; existing journal recovery after ref | Concurrent KB publishers; SIGKILL after S3-backed ref fsync; exactly-once recovery |
 
 `blob-store-s3.test.ts` exercises bounded replay/deadline and failure cleanup;
 `asset-manifest` integration uses the pinned SDK against an in-process HTTP
 fixture plus real disposable Postgres, Git and cache files. Existing default-off
 CAS, uploads, changes and export suites remain the disk regression contract.
 
-## Streaming S3 readers (P4)
+## Streaming S3 readers
 
 The S3 store supports downloads through the opt-in runtime selection below.
 Backup/restore and offline mode commands use the same storage domain.
@@ -217,17 +215,16 @@ cancellation/shutdown drains the GET and actual byte work before releasing pins.
 Oversized objects bypass admission and touches; ordinary capacity contention
 waits within the existing deadline and fails closed rather than bypassing cache.
 
-| P4 surface / invariants | Enforcement | Evidence |
+| Surface | Enforcement | Evidence |
 | --- | --- | --- |
-| GET/Range; I4–I8 | Bounded tee, full SHA/size/EOF, terminal frame after READY and final live authority | S3 reader unit tests; asset-http real SDK/SQL/Git/cache overlap, range, corrupt-tail, repair and revocation cases |
-| Advisory recency; I9 | Post-enqueue hook, exact P2 incarnation, independent pin close | Authorized-stream sampling/denial tests; FILLING -> READY HTTP evidence; P2 lifecycle/state race tests |
-| HEAD/internal; I5, I9–I11 | Complete verification, no admission/touch on misses; hits have no remote dependency | HEAD/internal/outage/416 HTTP tests; oversized and full-capacity unit tests |
-| Lifecycle; I17 | Owned reader abort, body drain, fill/cache close before pin release | Blocked-body shutdown unit test and partial-fill HTTP cancellation/shutdown cases |
+| GET/Range | Bounded tee, full SHA/size/EOF, terminal frame after READY and final live authority | S3 reader unit tests; asset-http real SDK/SQL/Git/cache overlap, range, corrupt-tail, repair and revocation cases |
+| Advisory recency | Post-enqueue hook, exact cache incarnation, independent pin close | Authorized-stream sampling/denial tests; FILLING -> READY HTTP evidence; cache lifecycle/state race tests |
+| HEAD/internal | Complete verification, no admission/touch on misses; hits have no remote dependency | HEAD/internal/outage/416 HTTP tests; oversized and full-capacity unit tests |
+| Lifecycle | Owned reader abort, body drain, fill/cache close before pin release | Blocked-body shutdown unit test and partial-fill HTTP cancellation/shutdown cases |
 
-## Storage-aware encrypted backup and restore (P5)
+## Storage-aware encrypted backup and restore
 
-Both storage modes write `kb/backup/3`, the migration-aware format (prerelease
-`kb/backup/1` and `kb/backup/2` bundles are refused). In disk mode the bundle
+Both storage modes write `kb/backup/1`, the migration-aware format. In disk mode the bundle
 includes every retained disk CAS object. In S3 mode it contains **no asset
 bytes or cache files**.
 It encrypts a sorted, streamed `asset-inventory.jsonl` of every catalog
@@ -259,7 +256,7 @@ that delete retained asset keys; the encrypted S3 bundle depends on external
 object retention. Keep encryption identities and original application keys
 separately. Runtime activation and offline migration are described below.
 
-## Offline storage migration (P6)
+## Offline storage migration
 
 The versioned `kb.asset-storage` marker fixes the active mode, normalized locator
 and storage generation. Credentials may rotate without a migration. Changing
@@ -319,12 +316,12 @@ requested limit with an empty cache. Completed-attempt replay verifies the targe
 again under a durable VERIFYING state and resolves a lost final acknowledgement
 without contacting retired stores.
 
-| P6 invariant | Enforcement | Verification |
+| Guarantee | Enforcement | Verification |
 | --- | --- | --- |
-| I12 | Marker and pending-control guards precede recovery/effects/readiness | Startup mismatch/outage and control guard tests |
-| I15 | Current-generation predicate, catalog union, disk scan/current namespace listing | Above-limit A → disk → B → disk, orphans and absent PENDING tests |
-| I7–I8, I17 | Native dual fences, existing cache cleanup, verified trim and fsync | Native kill during trim, checkpoint/replay and bounded-cache tests |
-| I16, I18 | Shared publisher/reader and explicit operator credentials | Real SDK HTTP fixture; no remote delete operations |
+| Startup admission | Marker and pending-control guards precede recovery/effects/readiness | Startup mismatch/outage and control guard tests |
+| Complete inventory | Current-generation predicate, catalog union, disk scan/current namespace listing | Above-limit A → disk → B → disk, orphans and absent PENDING tests |
+| Cache fencing | Native dual fences, existing cache cleanup, verified trim and fsync | Native kill during trim, checkpoint/replay and bounded-cache tests |
+| Byte paths and custody | Shared publisher/reader and explicit operator credentials | Real SDK HTTP fixture; no remote delete operations |
 
 Runtime activation and complete role propagation follow the configuration matrix below.
 
@@ -412,11 +409,11 @@ remap verifies the bundle's referenced inventory at the target; it does not copy
 source-only orphans or asset bytes. Retain age identities, original master/auth
 keys and bucket recovery access separately.
 
-| P7 coverage / invariants | Enforcement | Evidence |
+| Coverage | Enforcement | Evidence |
 | --- | --- | --- |
-| Runtime selection; I1, I10–I12 | Import-pure role validation; marker-bound factory; prepared cache attachment before listen | Env/role tests; native migration + configured factory integration; disk and S3 HTTP regressions |
-| Role custody; I18 | Shared interpolation sources; schema IDs only; offline operator pair; no runtime secret forwarding | Generated A/B/A, A/B/B, A/B/C and missing-ID fixtures; cron/snapshot tests |
-| Packaging/lifecycle; I16–I18 | Existing common offline artifact and native fences; recovery registered on the role lifecycle | Docker COPY/artifact probes, setup and deployment tests |
+| Runtime selection | Import-pure role validation; marker-bound factory; prepared cache attachment before listen | Env/role tests; native migration + configured factory integration; disk and S3 HTTP regressions |
+| Role custody | Shared interpolation sources; schema IDs only; offline operator pair; no runtime secret forwarding | Generated A/B/A, A/B/B, A/B/C and missing-ID fixtures; cron/snapshot tests |
+| Packaging/lifecycle | Existing common offline artifact and native fences; recovery registered on the role lifecycle | Docker COPY/artifact probes, setup and deployment tests |
 
 Local HTTP fixtures exercise the pinned SDK and failure behavior; they do not
 certify arbitrary S3 providers or a multi-host deployment.

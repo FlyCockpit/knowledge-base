@@ -289,7 +289,7 @@ describe("DocumentEditorView image upload", () => {
   });
 });
 
-describe("image insertion while typing (R3-W7)", () => {
+describe("image insertion while typing", () => {
   const staged = (path: string): ImageStageRun => ({
     ok: true,
     image: {
@@ -418,7 +418,7 @@ describe("image insertion while typing (R3-W7)", () => {
   });
 });
 
-describe("staged images in the live preview (R3-W7)", () => {
+describe("staged images in the live preview", () => {
   it("shows a staged image from its local object URL, never the server route", () => {
     const out = render({
       markdown: "![cat](/assets/cat-12345678.png)",
@@ -445,7 +445,7 @@ describe("staged images in the live preview (R3-W7)", () => {
   });
 });
 
-describe("save outcomes for staged images and pull requests (R3-W6, R3-W7)", () => {
+describe("save outcomes for staged images and pull requests", () => {
   it("too many images asks to save first", () => {
     const out = render({ outcome: { kind: "error", reason: "tooManyImages" } });
     expect(out).toContain("at most 7 new images");
@@ -521,7 +521,7 @@ function SessionEditorPreviewHarness({
   return element;
 }
 
-describe("committed images keep rendering after a save (R3-W7)", () => {
+describe("committed images keep rendering after a save", () => {
   it("a PR-mode preview shows the committed image at the proposal head", () => {
     const hash = `sha256:${"d".repeat(64)}`;
     const preview = previewAfterSaves(
@@ -599,7 +599,7 @@ describe("committed images keep rendering after a save (R3-W7)", () => {
   );
 });
 
-describe("PR mode deletion-only resolution (R3-W6)", () => {
+describe("PR mode deletion-only resolution", () => {
   const MAIN = "7".repeat(40);
   const PR = "8".repeat(40);
   const BASE = "6".repeat(40);

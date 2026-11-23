@@ -128,7 +128,7 @@ import { waitUntilReady, withTimeout, workerDrainMs } from "./runtime-lifecycle.
 // The host owns signals, fatal exit, and the shared Prisma/producer connections.
 let claimed = false;
 
-/** An alert names the failure by class and stable code only, never its message (R3-W3). */
+/** An alert names the failure by class and stable code only, never its message. */
 function failureSummary(error: unknown): string {
   const code = errorCodeOf(error);
   return `${errorClassOf(error)}${code === undefined ? "" : ` (${code})`}; see the worker log for its job record`;
@@ -817,7 +817,7 @@ export async function startWorkerRuntime(options: {
       DISPATCH_INTERVAL_MS,
     );
     sweepFailedJobs();
-    // R3-W4: a committed enqueue (a query embedding above all) dispatches at once.
+    // A committed enqueue (a query embedding above all) dispatches at once.
     const dispatcher = durableDispatcher;
     dispatchWake = listenForDispatchWake(env.DATABASE_URL.reveal(), () => dispatcher.wake());
     requireRunning();

@@ -86,8 +86,8 @@ pub fn format_version() -> Result<i64, StoreError> {
 pub fn readable_format(format: i64) -> Result<bool, StoreError> {
     Ok(spec()?.readable_formats.contains(&format))
 }
-/// Whether `conn` holds every table its kind's shared DDL creates (review r2
-/// #2): a file missing one opens and passes `quick_check`, yet fails every
+/// Whether `conn` holds every table its kind's shared DDL creates: a file
+/// missing one opens and passes `quick_check`, yet fails every
 /// query on that arm, so it is a broken contract. `meta` is read first
 /// (`read_meta`), which fixes `format`.
 pub(crate) fn has_required_tables(conn: &Connection, meta: &FileMeta) -> Result<bool, StoreError> {
@@ -311,7 +311,7 @@ pub(crate) const VECTOR_WRITE_BATCH_ROWS: usize = 4096;
 /// One buffered vector row: a fresh unit vector, or the stored bytes of an
 /// unchanged chunk copied from a file with the same profile and int8 scale
 /// Writers accept only these typed rows, each checked against the
-/// file's dimensions (review r2 #2).
+/// file's dimensions.
 pub(crate) enum VectorRow {
     Unit(Vec<f32>),
     Stored(StoredVector),
@@ -447,7 +447,7 @@ pub(crate) fn insert_vectors(
 }
 
 /// Refuses anything but a SQLite 3 file in rollback-journal format.
-/// Review #4: `Ok(false)` for a header that proves the file is not an
+/// `Ok(false)` for a header that proves the file is not an
 /// index (too short, wrong magic or version), `Err` for a failed read.
 pub(crate) fn header_valid(file: &mut std::fs::File) -> std::io::Result<bool> {
     let mut header = [0u8; 100];

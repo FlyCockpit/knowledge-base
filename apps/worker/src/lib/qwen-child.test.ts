@@ -188,7 +188,7 @@ describe("configured context and native options", () => {
         }
   });
 
-  it("fits the CPU allocation without starving a one-core runtime or raising the old six-thread cap", () => {
+  it("fits the CPU allocation without starving a one-core runtime or exceeding the six-thread cap", () => {
     const config = { contextTokens: 4096, kvKeyType: "f16", kvValueType: "f16" } as const;
     for (const [available, expected] of [
       [1, 1],
@@ -403,7 +403,7 @@ describe("addon confinement", () => {
   });
 });
 
-describe("46r9 descriptor driven input and noncausal batch", () => {
+describe("descriptor driven input and noncausal batch", () => {
   const config = { contextTokens: 1024, kvKeyType: "f16", kvValueType: "f16" } as const;
   const tokenize = (text: string) => Array.from(text, () => 42);
   it("empty/default and primary queries/documents include Gemma's prompts and BOS/EOS exactly once", () => {

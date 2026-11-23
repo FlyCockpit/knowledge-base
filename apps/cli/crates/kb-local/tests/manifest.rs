@@ -627,7 +627,7 @@ fn historical_list_and_document_refs_survive_remove_without_cas_gc() {
         json!([{"op":"assetRemove","path":"a.png"}]),
     )
     .expect("remove");
-    // L-22: the removal succeeds but says which documents now dangle, and
+    // The removal succeeds but says which documents now dangle, and
     // the warning is part of the replayed receipt.
     assert_eq!(removed.warnings.len(), 1);
     assert_eq!(removed.warnings[0].path.as_str(), "a.png");
@@ -1581,7 +1581,7 @@ fn scanner_work_clock_excludes_off_cpu_waiting() {
 }
 
 #[test]
-fn l22_removing_an_asset_with_its_only_reference_warns_nothing() {
+fn removing_an_asset_with_its_only_reference_warns_nothing() {
     let f = fixture::Fixture::new("manifest-warning");
     let s = Store::open(&f.root.join("store")).expect("store");
     let k = kb(&s, "warning");

@@ -335,7 +335,7 @@ describe("breaking gate: statements old code cannot run against (incompatible)",
     assert.deepEqual(r.calls, [], "nothing deployed past the gate");
   });
 
-  test("the retired MAINTENANCE_DEPLOY variable no longer lets it through", async () => {
+  test("MAINTENANCE_DEPLOY has no effect: the migration is still refused", async () => {
     const db = fakeDb({ rows: [done("0_init")] });
     const r = await runtime(db, {
       migrationsDir: idir,
@@ -534,7 +534,7 @@ describe("breaking gate: SQL the analyzer cannot read (notAnalyzed)", () => {
     assert.deepEqual(r.calls, ["migrate deploy"]);
   });
 
-  test("an annotation on a statement the §1.9 regex excludes is ignored", async () => {
+  test("an annotation on a statement the annotation regex excludes is ignored", async () => {
     const { dir, done } = dirFor(
       `-- knowledge-base:reviewed trust me\nDO $$ BEGIN EXECUTE 'SELECT 1'; END $$;`,
     );
@@ -993,7 +993,7 @@ describe("backup hook cancellation", () => {
   });
 });
 
-// The backup gate (owner decision): BACKUP_ENABLED=true with no destination
+// The backup gate: BACKUP_ENABLED=true with no destination
 // refuses the migration, a brand-new database too; off never runs the hook.
 describe("backup gate", () => {
   const gate = mkdtempSync(path.join(tmpdir(), "kb-backup-gate-"));

@@ -20,7 +20,7 @@ import {
   runGitAsync,
 } from "./git-read";
 
-// Mirror kb-local git_write::plan_rollup (fix/r4-minors). No reachability GC:
+// Mirror kb-local git_write::plan_rollup. No reachability GC:
 // aborted objects, historical assets and unpublished commits are all retained.
 export const GIT_ROLLUP = {
   packs: 8,

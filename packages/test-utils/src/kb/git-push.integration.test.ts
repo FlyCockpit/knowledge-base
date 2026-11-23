@@ -597,7 +597,7 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
       await expect(push(`${tip}:refs/heads/main`)).rejects.toMatchObject({
         code: 1,
         killed: false,
-        // A content refusal is reported against the ref, never as a 503 (R3-W10).
+        // A content refusal is reported against the ref, never as a 503.
         stderr: expect.stringMatching(
           /! \[remote rejected\] \S+ -> main \(A pushed commit does not pass this knowledge base's checks/,
         ),
@@ -648,7 +648,7 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
       await expect(push(`${foreign}:refs/heads/main`)).rejects.toMatchObject({
         code: 1,
         killed: false,
-        // A content refusal is reported against the ref, never as a 503 (R3-W10).
+        // A content refusal is reported against the ref, never as a 503.
         stderr: expect.stringMatching(
           /! \[remote rejected\] \S+ -> main \(A pushed commit does not pass this knowledge base's checks/,
         ),

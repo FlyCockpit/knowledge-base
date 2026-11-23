@@ -319,7 +319,7 @@ describe("runQwenConfigProbeTick", () => {
   );
 });
 
-it("R45 one pending claim renewal is joined before commit and volume release", async () => {
+it("one pending claim renewal is joined before commit and volume release", async () => {
   const probed = Promise.withResolvers<{ peakRssBytes: number | null }>();
   const renewed = Promise.withResolvers<boolean>();
   const h = harness({ budget: ROOMY, probe: () => probed.promise });

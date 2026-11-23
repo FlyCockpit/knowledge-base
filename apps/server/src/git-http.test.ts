@@ -180,7 +180,7 @@ describe("Git HTTP permission refusals", () => {
     }
   });
 });
-describe("Git HTTP push refusals and failures (R3-W10, R3-W3)", () => {
+describe("Git HTTP push refusals and failures", () => {
   const pkt = (line: string) =>
     `${(Buffer.byteLength(line) + 4).toString(16).padStart(4, "0")}${line}`;
   const branchBody = (capabilities: string) =>

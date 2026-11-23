@@ -17,7 +17,7 @@ import { orpc } from "@/utils/orpc";
 
 // Transport regression: invoke two real procedures in the same batch window.
 Object.assign(window, {
-  __r39AckWithSibling: (input: ExportCompleteInput) =>
+  __ackWithSibling: (input: ExportCompleteInput) =>
     Promise.allSettled([
       orpc.kbExports.complete.call(input),
       orpc.kbs.get.call({ kbId: input.kbId }),

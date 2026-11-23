@@ -194,7 +194,7 @@ impl Drop for CancelGuard {
 /// longer build resumes from its checkpoint in a later attempt.
 pub const MAX_BUILD_ATTEMPT: Duration = Duration::from_secs(6 * 60 * 60);
 /// Watchdog expiries in a row that embedded nothing before a generation is
-/// marked FAILED instead of being retried (L-1).
+/// marked FAILED instead of being retried.
 pub const MAX_STALLED_ATTEMPTS: i64 = 3;
 /// How a build attempt ended without completing. An attempt's end is
 /// never a verdict on still-desired work: only an observed no-progress stall
@@ -208,7 +208,7 @@ pub(crate) enum AttemptEnd {
     /// something (or the checkpoint grew) first.
     WatchdogExpired { progressed: bool },
 }
-/// (L-2): a build's "still making progress" deadline. Every completed unit
+/// A build's "still making progress" deadline. Every completed unit
 /// of work (a document in pass 1, an embedding batch in pass 2) extends it by
 /// the no-progress window, never past [`MAX_BUILD_ATTEMPT`] from the claim.
 #[derive(Clone, Debug)]
@@ -419,14 +419,14 @@ enum ProfileTarget {
 pub struct SweepCursor {
     scratch: Option<(KbId, String)>,
     tombstone: Option<KbId>,
-    /// R3-L10: after this lock file name.
+    /// After this lock file name.
     locks: Option<String>,
 }
 /// Whether a generation's scratch (`.tmp`, `.tmp-journal`) or cancellation
 /// intent may be deleted, given its state, once the owning permits are held.
 /// Scratch has no reader outside a live attempt; the intent is read by the
 /// activation of a COMPLETE generation, so it stays until that generation is
-/// active (R3-L10: then nothing reads it; a recovered activation recreates it).
+/// active (then nothing reads it; a recovered activation recreates it).
 fn generation_file_disposable(state: Option<&str>, cancel_intent: bool, active: bool) -> bool {
     let Some(state) = state else {
         return true; // no row: nothing can own it
@@ -450,7 +450,7 @@ fn stale_builtin_sql(g: &str, param: u8) -> String {
         "(json_type({g}.snapshot_json,'$.profile.builtin')='object' AND json_extract({g}.snapshot_json,'$.profile.builtin.runtimeIdentity') IS NOT ?{param})"
     )
 }
-/// Concurrent built-in builds per store (R3-L5); they share one worker.
+/// Concurrent built-in builds per store; they share one worker.
 pub const BUILTIN_BUILD_SLOTS: usize = 2;
 /// Concurrent external-provider builds per store.
 pub const EXTERNAL_BUILD_SLOTS: usize = 2;
@@ -572,7 +572,7 @@ impl Store {
     /// structured; profile and provider status): the profile can embed a
     /// query now. A built-in must be enabled, not reloading (an exclusive
     /// config probe or reload), serving the pinned model, and its file must
-    /// be in the model cache (review r2 #4: a removal changes no stored
+    /// be in the model cache (a removal changes no stored
     /// state); a user provider must be usable (not revoked, revision ready).
     pub(crate) fn effective_available(&self, pin: &ProfileSnapshot) -> Result<bool, StoreError> {
         if let Some(b) = &pin.builtin {
@@ -783,7 +783,7 @@ impl Store {
             model: d.model_id,
             dimensions: d.dimensions as i64,
             context_tokens: Some(i64::from(b.context_tokens)),
-            // Review r2 #4: removed from the cache is not ready.
+            // Removed from the cache is not ready.
             status: if present {
                 ProviderStatus::Ready
             } else {
@@ -938,7 +938,7 @@ impl Store {
         }
         // Re-attaching the profile a semantic generation of the head already
         // serves (or is building) at the desired epoch starts nothing and
-        // spends no rebuild budget (R3-L12, server `sameSemanticWork`).
+        // spends no rebuild budget (server `sameSemanticWork`).
         if profile.is_some()
             && let Some(pin) = &pin
             && let Some((generation_id, job_id, state)) = self.same_semantic_work(kb, pin)?
@@ -1166,8 +1166,8 @@ impl Store {
             self.interrupt_generation(&companion, None, AttemptEnd::Interrupted)?;
             return Err(StoreError::RateLimited(1));
         }
-        // R3-L5: built-in builds of different KBs no longer queue behind
-        // one store-wide permit. The one shared worker runs one inference at
+        // Built-in builds of different KBs do not queue behind one
+        // store-wide permit. The one shared worker runs one inference at
         // a time and serves concurrent builds batch by batch, so a small
         // incremental build finishes between a large build's batches instead
         // of waiting for all of it. Built-in and external builds each have
@@ -1520,7 +1520,7 @@ impl Store {
         let (conn, meta) = match self.open_generation_file(&s) {
             Ok(opened) => opened,
             Err(e) => {
-                // R3-L8: an unreadable active file heals: it is lost and
+                // An unreadable active file heals: it is lost and
                 // rebuilt (companion first) instead of failing every search.
                 if requested.is_none() && self.generation_file_unreadable(kb, &id, true) {
                     drop(lock);
@@ -1834,7 +1834,7 @@ impl Store {
                 if let Some(_drained) =
                     locks::try_named_model_lock(&self.paths, &kb_permit(&s.kb_id))?
                 {
-                    // L-1: the owning process exited mid-build: a host
+                    // The owning process exited mid-build: a host
                     // interruption, retried from the checkpoint, never a stall.
                     self.interrupt_generation(&s, None, AttemptEnd::Interrupted)?;
                 }
@@ -1858,7 +1858,7 @@ impl Store {
                 } else {
                     false
                 };
-                // R3-L8: an active file that is no longer an index (a damaged
+                // An active file that is no longer an index (a damaged
                 // header) is lost like a missing one, and its generation
                 // fails so that completion recovery never re-activates it.
                 let active_corrupt = !active_missing
@@ -1890,7 +1890,7 @@ impl Store {
         }
         Ok(())
     }
-    /// R3-L8 / review #4: whether a published generation file is proven
+    /// Whether a published generation file is proven
     /// unable to serve: damaged (header, pages, integrity) or not the index
     /// its generation describes (meta, format, schema). `deep` verifies the
     /// whole contract with `quick_check`; otherwise only the header. A
@@ -1974,7 +1974,7 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
-    /// (L-1, L-2): an attempt ended by shutdown, its no-progress watchdog
+    /// An attempt ended by shutdown, its no-progress watchdog
     /// or its process exiting goes back to PENDING (the next claim resumes
     /// from the KB's vector checkpoint). An attempt that embedded nothing
     /// counts as a stall; [`MAX_STALLED_ATTEMPTS`] in a row fail it. Caller
@@ -2030,7 +2030,7 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
-    /// L-21/L-22: dead scratch and tombstoned KB data, removed without
+    /// Dead scratch and tombstoned KB data, removed without
     /// waiting for generation retention. Bounded per call (200 scratch
     /// names, five tombstones), resuming after `cursor`; a host runs it with
     /// each retention pass and carries the returned cursor (`None`: the pass
@@ -2252,7 +2252,7 @@ impl Store {
             .flatten()
             .unwrap_or(false))
     }
-    /// R3-L10: one bounded page (in name order, after `after`) of permit
+    /// One bounded page (in name order, after `after`) of permit
     /// files nothing can need again: a generation's completion permit once
     /// it is SUPERSEDED, FAILED or CANCELLED, its read permit once FAILED or
     /// CANCELLED (a superseded one still serves leases), either once it is
@@ -2445,7 +2445,7 @@ impl Store {
                 "UPDATE index_generations SET reclaimed=1 WHERE id=?1",
                 [id.as_str()],
             )?;
-            // L-21: a reclaimed generation is never visited again; its
+            // A reclaimed generation is never visited again; its
             // permit files (held here) go with it instead of piling up.
             // Windows keeps them: a held lock file cannot be unlinked there
             // without a delete-pending window for other openers.

@@ -412,10 +412,10 @@ describe("sealed real authority, PostgreSQL and Git", () => {
           env: {
             ...process.env,
             CARGO_TARGET_DIR: resolve(import.meta.dirname, "../../../../apps/cli/target"),
-            KB_R50_RESOURCE: `${runtime.canonicalOrigin}/mcp`,
-            KB_R50_PAT: proposer.secret,
-            KB_R50_OWNER_PAT: owner.secret,
-            KB_R50_FIXTURE: JSON.stringify({
+            KB_PRODUCTION_ADAPTER_RESOURCE: `${runtime.canonicalOrigin}/mcp`,
+            KB_PRODUCTION_ADAPTER_PAT: proposer.secret,
+            KB_PRODUCTION_ADAPTER_OWNER_PAT: owner.secret,
+            KB_PRODUCTION_ADAPTER_FIXTURE: JSON.stringify({
               kbId: f.kbId,
               reference: created.reference,
               recipientKeyId: grant.recipientKeyId,
@@ -746,7 +746,7 @@ describe("sealed real authority, PostgreSQL and Git", () => {
   });
 });
 
-describe("R29a sealed control regressions", () => {
+describe("sealed control regressions", () => {
   it.each(["public-unforced", "admin-grace"])(
     "requires live enrolled 2FA for every real-router owner operation: %s",
     async (policy) => {

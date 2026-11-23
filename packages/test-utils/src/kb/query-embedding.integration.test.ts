@@ -975,7 +975,7 @@ describe("leased query embeddings", () => {
     const next = await begin(f);
     await cancelQueryEmbedding(opts, f.actor, next.id);
   });
-  it("R3-L4: a query embedding waits at most its bound; the timeout opens the target's breaker", {
+  it("a query embedding waits at most its bound; the timeout opens the target's breaker", {
     timeout: 60_000,
   }, async () => {
     const f = await fixture();
@@ -1004,7 +1004,7 @@ describe("leased query embeddings", () => {
     ).rejects.toMatchObject({ fallback: "EMBEDDING_FAILED" });
     expect(Date.now() - otherAt).toBeLessThan(2_000);
   });
-  it("R3-L4: the bound starts after admission; slow admission never opens the breaker for anyone", {
+  it("the bound starts after admission; slow admission never opens the breaker for anyone", {
     timeout: 60_000,
   }, async () => {
     const f = await fixture();
@@ -1167,7 +1167,7 @@ describe("leased query embeddings", () => {
   });
 });
 
-describe("R30 F5 durable PAT admission", () => {
+describe("durable PAT admission", () => {
   it.each(["null", "dated", "expired", "revoked"])(
     "worker restores %s expiry/generation correctly",
     async (mode) => {

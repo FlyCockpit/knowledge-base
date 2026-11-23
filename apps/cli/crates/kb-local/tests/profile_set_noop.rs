@@ -1,4 +1,4 @@
-//! R3-L12 review: re-attaching a profile is a no-op only when a SEMANTIC
+//! Re-attaching a profile is a no-op only when a SEMANTIC
 //! generation of exactly that profile (provider, revision, fingerprint) of the
 //! head at the desired epoch is active (`CURRENT`) or in flight (`PENDING`).
 //! A current or building lexical generation never counts (server parity,

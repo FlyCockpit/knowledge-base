@@ -44,7 +44,7 @@ describe("ToolGroupPicker", () => {
     expect(presetFor(["read"])).toBe("read");
     expect(presetFor(["read", "edit", "pull_requests"])).toBe("propose");
     expect(presetFor(["read", "edit", "assets", "pull_requests"])).toBe("direct");
-    // R3-W8: Direct includes pull_requests, so the old Direct set is now custom.
+    // Direct includes pull_requests, so read + edit + assets without it is custom.
     expect(presetFor(["read", "edit", "assets"])).toBe("custom");
     expect(presetFor(["read", "edit"])).toBe("custom");
     expect(presetFor([])).toBe("custom");

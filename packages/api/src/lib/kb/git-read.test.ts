@@ -587,7 +587,7 @@ describe("batched blob reads own their subprocess lifecycle", () => {
   });
 });
 
-describe("ref reads tell a missing ref from a broken one (R3-W10 review)", () => {
+describe("ref reads tell a missing ref from a broken one", () => {
   const repo = () => {
     const dir = mkdtempSync(join(tmpdir(), "kb-ref-read-"));
     const env = { ...gitReads.hardenedGitEnv() };

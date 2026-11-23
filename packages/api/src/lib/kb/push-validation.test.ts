@@ -242,7 +242,7 @@ describe("logical writes of a branch update", () => {
   });
 });
 
-describe("push ancestry (R3-W10)", () => {
+describe("push ancestry", () => {
   let repo: string;
   const git = (...args: string[]) =>
     execFileSync("git", args, {

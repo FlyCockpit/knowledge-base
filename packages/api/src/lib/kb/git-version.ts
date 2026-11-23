@@ -9,8 +9,7 @@ import { hardenedGitEnv, runGitAsync } from "./git-read";
  * tree (not a commit) as `--merge-base` and as both sides, all added in git
  * 2.45. The other version-sensitive calls are older: `rev-list
  * --no-commit-header` (2.33), `init --initial-branch` (2.28).
- * Debian 12 bookworm ships 2.39, so every shipped image uses Debian 13 trixie
- * (R3-W1).
+ * Debian 12 bookworm ships 2.39, so every shipped image uses Debian 13 trixie.
  */
 export const MIN_GIT_VERSION = [2, 45, 0] as const;
 const MIN_TEXT = MIN_GIT_VERSION.join(".");

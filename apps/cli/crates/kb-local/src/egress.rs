@@ -74,7 +74,7 @@ pub struct Endpoint {
 }
 impl Endpoint {
     pub fn parse(raw: &str, allow_loopback: bool) -> Result<Self, StoreError> {
-        // L-10: say which endpoint rule failed; the wire code is unchanged.
+        // Say which endpoint rule failed; the wire code is unchanged.
         let refuse = |why: &str| {
             StoreError::Explained(
                 kb_client::ErrorCode::IndexUnavailable,

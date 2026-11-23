@@ -150,7 +150,7 @@ export type ChangesApplyPreparedDelta = {
   mergeStatus?: { status: "OPEN" | "CONFLICT"; checkedSha: string; epoch: string; key: string };
   /** The PR's unresolved conflicts after this publication. */
   pendingConflicts?: ConflictItem[];
-  /** L-22: replayed with the receipt. */
+  /** Replayed with the receipt. */
   warnings?: ApplyWarning[];
 };
 
@@ -307,7 +307,7 @@ export type ChangesApplyEditRequest = {
 export type ChangesApplyRequest = ChangesApplyEditRequest | DreamChangesApplyRequest;
 
 /**
- * Images the web editor staged while editing (R3-W7): each finished
+ * Images the web editor staged while editing: each finished
  * asset upload joins the document's own save as an `assetPut`, so one
  * commit (or one PR update) holds the document and the images it links,
  * and an abandoned edit commits nothing.
@@ -685,7 +685,7 @@ async function planPublication(input: {
         rebase = { pr, step: "resolve" };
         return;
       }
-      // Already on main with nothing recorded (R3-W6): the edit applies on
+      // Already on main with nothing recorded: the edit applies on
       // the PR head. Main's version of a path the PR did not change is the
       // PR's own, so only a path the PR changed can be overwritten, which
       // the same guard as a move onto main refuses.
@@ -931,7 +931,7 @@ async function planPublication(input: {
       input.kbId,
       input.canonicalOrigin,
     ),
-    // L-8: only paths this write changes (against the tree it applies to)
+    // Only paths this write changes (against the tree it applies to)
     // need live sealed records.
     baseBlobs: await readCommitBlobsAsync(repoPath, treeRevision, input.gitOptions, durableObjects),
   };
@@ -1018,7 +1018,7 @@ async function planPublication(input: {
   const writtenObjectShas = input.reclaim.written;
   const newBranch = pendingNewAutoPr && !planned.noop;
   // A noop names the revision it was evaluated on: the target ref's head (a
-  // request against main may reach the caller's PR, R3-W6), never just the
+  // request against main may reach the caller's PR), never just the
   // request's base.
   let headSha = planned.noop && oldRef ? oldRef : baseRevision;
   let binding: TreeValidationSuccess | undefined;
@@ -1749,7 +1749,7 @@ export function changesPublicationForDocument(
       ...(input.proposalNumber === undefined ? {} : { proposalNumber: input.proposalNumber }),
       ...(input.proposalHeadSha === undefined ? {} : { proposalHeadSha: input.proposalHeadSha }),
     }),
-    // Staged images are `assets[i]` of the browser request (R3-W7).
+    // Staged images are `assets[i]` of the browser request.
     fieldFor: (index, key) =>
       index === 0
         ? documentToolField(index, key)

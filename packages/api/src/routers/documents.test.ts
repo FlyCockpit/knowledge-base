@@ -182,7 +182,7 @@ describe("documents.get provenance and documents.history", () => {
     await expect(signedIn().history({ kbId, path: "a.md", limit: 51 })).rejects.toMatchObject({
       code: "BAD_REQUEST",
     });
-    // The cursor is opaque but strict: a bare sha (the old form), a zero or
+    // The cursor is opaque but strict: a bare sha, a zero or
     // padded offset, or anything else is refused before any read.
     for (const cursor of [
       "not-a-sha",

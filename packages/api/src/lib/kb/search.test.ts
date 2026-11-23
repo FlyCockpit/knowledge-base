@@ -125,7 +125,7 @@ describe("hybrid search service", () => {
       indexedCommitSha: commitSha,
     });
     expect(result.results.map((h) => [h.path, h.score, h.mode, h.snippet])).toEqual([
-      // L-25: first of one arm, absent from the other: half the two-arm maximum.
+      // First of one arm, absent from the other: half the two-arm maximum.
       ["a.md", 0.5, "hybrid", "alpha beta"],
       ["b.md", 0.5, "hybrid", "alpha beta"],
     ]);
@@ -133,7 +133,7 @@ describe("hybrid search service", () => {
     expect(sql).toContain("BEGIN ISOLATION LEVEL REPEATABLE READ");
     expect(sql.some((text) => /idle_in_transaction_session_timeout = \d+/.test(text))).toBe(true);
     const lease = sql.find((text) => text.includes("generation_lease"))!;
-    // The generation row is held FOR KEY SHARE until the file read settled (§1.5).
+    // The generation row is held FOR KEY SHARE until the file read settled.
     expect(lease).toContain("FOR KEY SHARE OF g");
     expect(sql.join("\n")).not.toContain("alpha");
     expect(sql.indexOf("COMMIT")).toBeGreaterThan(sql.indexOf(lease));
@@ -216,7 +216,7 @@ describe("hybrid search service", () => {
   });
 });
 
-describe("missing index file (§1.7)", () => {
+describe("missing index file", () => {
   it("logs an integrity failure for a COMPLETE generation and re-admits exactly once", async () => {
     const log = captureLog();
     read
@@ -291,7 +291,7 @@ describe("missing index file (§1.7)", () => {
   });
 });
 
-describe("read interlock (§1.5 CL-INTERLOCK)", () => {
+describe("read interlock", () => {
   it("an abort during the file read never ends the client before the read settled", async () => {
     const controller = new AbortController();
     vi.mocked(withQueryEmbedding).mockImplementationOnce(async (_o, _a, _i, consume) =>

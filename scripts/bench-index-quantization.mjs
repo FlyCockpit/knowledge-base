@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Opt-in P7 benchmark for the SQLite index quantizations (plan §1.4, P7). Never part of the
+ * Opt-in benchmark for the SQLite index quantizations. Never part of the
  * gate: it downloads nothing, but it embeds a public corpus with the built-in models for hours
  * and writes multi-gigabyte index files. Run it with `pnpm bench:index-quantization <command>`.
  *
@@ -129,7 +129,7 @@ export function summarize(values) {
 }
 
 /**
- * Bound[q] (P7): the largest N whose p95 ≤ budget, by linear interpolation between measured
+ * Bound[q]: the largest N whose p95 ≤ budget, by linear interpolation between measured
  * points at the first crossing, rounded down to 100k. `{ bound: null, below: true }` when even
  * the smallest measured N is over budget; `capped` when no measured N exceeds it.
  */
@@ -1389,7 +1389,7 @@ async function commandLatency(options) {
   for (const [quantization, bound] of Object.entries(record.bounds))
     if (bound.below)
       console.log(
-        `STOP: ${quantization} is over budget at the smallest measured N — ask the user (decision 22).`,
+        `STOP: ${quantization} is over budget at the smallest measured N — ask the user.`,
       );
 }
 

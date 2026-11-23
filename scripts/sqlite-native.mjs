@@ -1,6 +1,6 @@
 /**
  * Prove the stock better-sqlite3 prebuilt binary and the sqlite-vec loadable work
- * for one workspace package (decision 21, CL-NATIVE):
+ * for one workspace package:
  *
  *   node scripts/sqlite-native.mjs apps/server
  *

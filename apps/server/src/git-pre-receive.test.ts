@@ -45,7 +45,7 @@ describe("image-owned receive hook", () => {
   });
 });
 
-describe("hook failure diagnostics (R3-W3 review)", () => {
+describe("hook failure diagnostics", () => {
   it("carry only the class name and stable code, never the message", () => {
     const pat = `kbp_${"a".repeat(16)}_${"b".repeat(43)}`;
     const error = Object.assign(new Error(`fsync failed for ${pat} password=hunter2`), {

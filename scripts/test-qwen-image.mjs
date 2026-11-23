@@ -299,7 +299,7 @@ async function insideImage(modelPath) {
 
   // Exercise the shutdown IPC message and OS exit. Supervisor idle timers are
   // exercised separately by the host qwen-model/qwen-process tests.
-  // idleExitState is the legacy evidence key for this shutdown/reload check.
+  // idleExitState is the evidence key for this shutdown/reload check.
   first.child.send({ t: "shutdown" });
   await Promise.race([
     first.exit,

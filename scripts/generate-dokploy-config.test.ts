@@ -172,7 +172,7 @@ test("both public generator APIs validate refs, project, network and URL before 
       assert.throws(() => generate({ ...defaults, url }), /URL|HTTPS/);
     assert.throws(() => generate({ ...defaults, environment: "production" }), /immutable/);
     assert.throws(() => generate({ ...defaults, gitRef: "other" }), /main/);
-    assert.throws(() => generate({ ...defaults, ...{ topology: "app-applier" } }), /removed/);
+    assert.throws(() => generate({ ...defaults, ...{ topology: "app-applier" } }), /not an option/);
   }
   const config = generateDokployConfig({
     ...defaults,
@@ -541,7 +541,7 @@ test("container development retains the production worker security boundary", ()
       ?.split(/^ {2}[a-z][a-z-]*:[^\n]*\n/m)[0];
     assert.ok(block, name);
     assert.match(block, /KB_MASTER_KEY:/);
-    // One read-write data volume everywhere (decision 19).
+    // One read-write data volume everywhere.
     assert.match(block, /^ {6}- kb-data:\/var\/lib\/knowledge-base$/m);
     assert.doesNotMatch(block, /kb-(repos|assets|models)|knowledge-base:ro/);
     if (name.startsWith("worker"))

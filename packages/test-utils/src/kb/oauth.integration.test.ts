@@ -58,7 +58,7 @@ vi.mock("@knowledge-base/env/server", () => ({
     BETTER_AUTH_SECRET: new Secret("disposable-oauth-integration-secret-only"),
     PUBLIC_APP_URL: "https://translation-metadata.example.invalid",
     KB_MASTER_KEY: new Secret(Buffer.alloc(32, 1).toString("base64")),
-    KB_DATA_ROOT: "/tmp/r31b-unused-data",
+    KB_DATA_ROOT: "/tmp/oauth-unused-data",
   },
 }));
 vi.mock("@knowledge-base/queue", () => ({ redisConnection: {} }));

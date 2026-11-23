@@ -77,8 +77,7 @@ export function mergeabilityKey(
   pr?: Pick<PullRequestRow, "headSha" | "version">,
   canonicalOrigin?: string,
 ): string {
-  // v2: dreams may overwrite `agent` documents (write modes); v1 verdicts are stale.
-  const prefix = `v2:${snapshot.mainHead}:${snapshot.policyGeneration}:${JSON.stringify(canonicalOrigin ?? "")}`;
+  const prefix = `v1:${snapshot.mainHead}:${snapshot.policyGeneration}:${JSON.stringify(canonicalOrigin ?? "")}`;
   return pr ? `${prefix}:${pr.headSha}:${pr.version}` : prefix;
 }
 
@@ -187,7 +186,7 @@ export async function upsertPullRequestHead(
      VALUES ($1, $2, $3, $4, 'main', $5, $6, $7, $12::"PullRequestStatus", $8, $9, $10, $11::jsonb, $13,
              $14::bigint, $16, $15::jsonb, now())
      ON CONFLICT ("kbId", number) DO UPDATE
-       -- R3-W5: a PR keeps the title it was opened with; an update's title
+       -- A PR keeps the title it was opened with; an update's title
        -- is only that commit's message.
        SET "baseSha" = EXCLUDED."baseSha",
            "headSha" = EXCLUDED."headSha",

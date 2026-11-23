@@ -1921,7 +1921,7 @@ fn referenced_object(error: GitError) -> SourceError {
 }
 
 /// [`read_document`] through an open reader, for a `commit` the caller
-/// already proved readable and whose root `tree` it read (R3-L6: an index
+/// already proved readable and whose root `tree` it read (an index
 /// build reads every document of one revision through one reader).
 pub fn read_document_at(
     reader: &mut ObjectReader,

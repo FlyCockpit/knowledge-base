@@ -1146,14 +1146,14 @@ it.each(["FAILED", "READY"] as const)(
     // executed. This fault neither mocks nor replaces the transaction boundary.
     await db.query(
       "applier",
-      `CREATE OR REPLACE FUNCTION r44_settlement_fault() RETURNS trigger
-      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'r44 interrupted settlement'; END $$`,
+      `CREATE OR REPLACE FUNCTION test_settlement_fault() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'interrupted settlement'; END $$`,
     );
     await db.query(
       "applier",
-      `CREATE OR REPLACE TRIGGER r44_settlement_fault
+      `CREATE OR REPLACE TRIGGER test_settlement_fault
       BEFORE UPDATE ON kb_local_model FOR EACH ROW
-      WHEN (NEW.state::text IN ('READY', 'FAILED')) EXECUTE FUNCTION r44_settlement_fault()`,
+      WHEN (NEW.state::text IN ('READY', 'FAILED')) EXECUTE FUNCTION test_settlement_fault()`,
     );
     try {
       const interrupted = run(dir, row.jobId, transport(chain(full)), {
@@ -1161,8 +1161,7 @@ it.each(["FAILED", "READY"] as const)(
           if (outcome === "FAILED") throw new ModelArtifactError("MODEL_RUNTIME_UNSUPPORTED");
         },
       });
-      if (outcome === "FAILED")
-        await expect(interrupted).rejects.toThrow("r44 interrupted settlement");
+      if (outcome === "FAILED") await expect(interrupted).rejects.toThrow("interrupted settlement");
       else await expect(interrupted).resolves.toMatchObject({ state: "RETRY" });
       expect(
         (
@@ -1180,7 +1179,7 @@ it.each(["FAILED", "READY"] as const)(
       // Leave a no-op fixture trigger until this disposable database is removed.
       await db.query(
         "applier",
-        `CREATE OR REPLACE FUNCTION r44_settlement_fault() RETURNS trigger
+        `CREATE OR REPLACE FUNCTION test_settlement_fault() RETURNS trigger
         LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`,
       );
     }
@@ -1394,8 +1393,8 @@ it("a killed lease holder leaves no process permit and its expired DB lease can 
   const source = `import { PrismaClient } from '@knowledge-base/db/client';
     import { createPrismaPgAdapter } from '@knowledge-base/db/prisma-adapter';
     import { acquireModelVolumeLease } from '@knowledge-base/api/lib/kb/local-model';
-    const db = new PrismaClient({adapter:createPrismaPgAdapter({connectionString:process.env.R44_FIXTURE_DATABASE_URL})});
-    if (!(await acquireModelVolumeLease({ connectionString: process.env.R44_FIXTURE_DATABASE_URL },{owner:'killed-holder',now:new Date()}))) process.exit(2);
+    const db = new PrismaClient({adapter:createPrismaPgAdapter({connectionString:process.env.KB_TEST_FIXTURE_DATABASE_URL})});
+    if (!(await acquireModelVolumeLease({ connectionString: process.env.KB_TEST_FIXTURE_DATABASE_URL },{owner:'killed-holder',now:new Date()}))) process.exit(2);
     process.stdout.write('HELD\\n'); setInterval(()=>{},1000);`;
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source], {
     cwd: resolve(import.meta.dirname, "../.."),
@@ -1405,7 +1404,7 @@ it("a killed lease holder leaves no process permit and its expired DB lease can 
       BACKUP_ENABLED: "false",
       DATABASE_URL: db.urls.runtime,
       REDIS_URL: "redis://127.0.0.1:1",
-      R44_FIXTURE_DATABASE_URL: db.urls.runtime,
+      KB_TEST_FIXTURE_DATABASE_URL: db.urls.runtime,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1509,7 +1508,7 @@ it("shutdown keeps the volume permit until aborted stream cleanup drains, then p
   expect(await run(dir, row.jobId, transport(chain(full)))).toMatchObject({ state: "READY" });
 });
 
-// R45 uses production admission, SQL leases, epoch settlement and the runtime
+// These tests use production admission, SQL leases, epoch settlement and the runtime
 // wrapper. Only native model computation is replaced by the guarded IPC fixture.
 const { createQwenSupervisor } = await import(
   new URL("../../../../apps/worker/src/lib/qwen-lifecycle.ts", import.meta.url).href
@@ -1518,7 +1517,7 @@ const { probeQwenRuntime } = await import(
   new URL("../../../../apps/worker/src/lib/qwen-probe.ts", import.meta.url).href
 );
 function processFixture(dir: string, mode: string, children: ChildProcess[]) {
-  // Prebuilt by test-kb.mjs outside timed hooks (flk4).
+  // Prebuilt by test-kb.mjs outside timed hooks.
   const guard = requireBuiltArtifact(
     buildArtifactPath("child-guard"),
     "pnpm test:kb --build-only model-download",
@@ -1539,13 +1538,13 @@ function processFixture(dir: string, mode: string, children: ChildProcess[]) {
 async function waitForBoundary(check: () => boolean, ms = 5000) {
   const end = Date.now() + ms;
   while (!check()) {
-    if (Date.now() >= end) throw new Error("R45 boundary not reached");
+    if (Date.now() >= end) throw new Error("boundary not reached");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null;
 
-describe("R45 download verification cancellation", () => {
+describe("download verification cancellation", () => {
   it.each(
     (["disable", "supersede", "shutdown"] as const).flatMap((action) =>
       ["hold-load", "hold-document", "hold-probe"].map((mode) => ({ action, mode })),
@@ -1562,7 +1561,7 @@ describe("R45 download verification cancellation", () => {
       let receivedSignal: AbortSignal | undefined;
       const writer = runModelDownload(prisma, {
         durableJobId: row.jobId,
-        workerId: `r45-${action}-${mode}`,
+        workerId: `lease-${action}-${mode}`,
         connectionString: db.urls.runtime,
         modelsDir: dir,
         expected,
@@ -1597,7 +1596,7 @@ describe("R45 download verification cancellation", () => {
         );
         // An active verifier retains the permit even if SQL expiry is forged.
         expect(
-          await acquireModelVolumeLease(runtime, { owner: "r45-premature", now: new Date() }),
+          await acquireModelVolumeLease(runtime, { owner: "lease-premature", now: new Date() }),
         ).toBe(false);
         if (action === "shutdown") shutdown.abort();
         else {
@@ -1611,9 +1610,9 @@ describe("R45 download verification cancellation", () => {
         expect(result.state).toBe(action === "shutdown" ? "RETRY" : "SUPERSEDED");
         expect((await getLocalModelStatus(prisma)).state).not.toBe("READY");
         expect(
-          await acquireModelVolumeLease(runtime, { owner: "r45-successor", now: new Date() }),
+          await acquireModelVolumeLease(runtime, { owner: "lease-successor", now: new Date() }),
         ).toBe(true);
-        await releaseModelVolumeLease(runtime, { owner: "r45-successor" });
+        await releaseModelVolumeLease(runtime, { owner: "lease-successor" });
       } finally {
         shutdown.abort();
         await writer;
@@ -1632,7 +1631,7 @@ describe("R45 download verification cancellation", () => {
   );
 });
 
-describe("R45 SQL heartbeat ownership", () => {
+describe("SQL heartbeat ownership", () => {
   it("a held SQL row allows only one renewal, keeps the Prisma pool usable, kills the real child and joins release", async () => {
     const dir = modelsDir();
     const children: ChildProcess[] = [];
@@ -1641,7 +1640,7 @@ describe("R45 SQL heartbeat ownership", () => {
       maximum = 0,
       releaseStarted = false,
       released = false;
-    const owner = "r45-row-stall";
+    const owner = "lease-row-stall";
     const supervisor = createQwenSupervisor({
       ...processFixture(dir, "", children),
       termGraceMs: 100,
@@ -1717,7 +1716,7 @@ describe("R45 SQL heartbeat ownership", () => {
       expect(pending).toBe(0);
       expect(released).toBe(false);
       expect(
-        await acquireModelVolumeLease(runtime, { owner: "r45-overlap", now: new Date() }),
+        await acquireModelVolumeLease(runtime, { owner: "lease-overlap", now: new Date() }),
       ).toBe(false);
       let closed = false;
       const close = supervisor.close().then(() => {
@@ -1742,7 +1741,7 @@ describe("R45 SQL heartbeat ownership", () => {
   it.each([false, true])(
     "delayed renewal samples database time after the row lock (expired=%s)",
     async (expire) => {
-      const owner = "r45-delayed";
+      const owner = "lease-delayed";
       const blocker = new Client({
         connectionString: db.urls.runtime,
         connectionTimeoutMillis: 1000,
@@ -1787,8 +1786,8 @@ describe("R45 SQL heartbeat ownership", () => {
   );
 });
 
-it("R45 abort during real SQL acquisition drains the tentative permit without spawning, then admits healthy work", async () => {
-  const owner = "r45-acquire-cancel";
+it("abort during real SQL acquisition drains the tentative permit without spawning, then admits healthy work", async () => {
+  const owner = "lease-acquire-cancel";
   const dir = modelsDir();
   const children: ChildProcess[] = [];
   expect(await acquireModelVolumeLease(runtime, { owner, now: new Date() })).toBe(true);
@@ -1852,7 +1851,7 @@ it("R45 abort during real SQL acquisition drains the tentative permit without sp
   }
 });
 
-it("R45 a verifier that ignores shutdown and returns successfully cannot mark its download READY", async () => {
+it("a verifier that ignores shutdown and returns successfully cannot mark its download READY", async () => {
   const dir = modelsDir();
   await enableLocalModel(runtime);
   const row = await modelRow();

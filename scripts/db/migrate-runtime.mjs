@@ -569,7 +569,7 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
     });
   }
 
-  // Pre-deploy gates, before anything mutates the history (§1.14 step 3).
+  // Pre-deploy gates, before anything mutates the history.
   const toApply = [...recoverable.map((f) => f.name), ...state.pending];
   // Both conditions, so this never rests on 0_init failing on a non-empty
   // schema: nothing applied, and the baseline is the first thing to apply.
@@ -694,7 +694,7 @@ const knownTablesOf = (catalog) =>
   new Map([...catalog.tables].map(([key, table]) => [key, new Set(table.columns.keys())]));
 
 /**
- * §1.14 step 3, over `toApply` (folder order):
+ * Pre-deploy gates, over `toApply` (folder order):
  *   - breaking gate: a statement old code cannot run against (`incompatible`:
  *     an in-place drop, rename or type change, with column types from the
  *     live database folded through the earlier pending folders), SQL the
@@ -806,7 +806,7 @@ async function preDeployGates(ctx, { toApply, freshDatabase, byName }) {
   }
 }
 
-/** The image's own Prisma schema as a catalog (7c-4). Errors are returned, not thrown. */
+/** The image's own Prisma schema as a catalog (contract validation). Errors are returned, not thrown. */
 async function imageCatalog(ctx) {
   if (ctx.contracts.imageCatalog) return ctx.contracts.imageCatalog();
   try {
@@ -824,7 +824,7 @@ async function imageCatalog(ctx) {
 }
 
 /**
- * Steps 5–8 of §1.14, on every successful apply (also when nothing was
+ * After the apply, on every successful apply (also when nothing was
  * pending): record, register, scheduled deletions, prune, schedule log.
  * Nothing here fails the start.
  * @param {{ fresh: boolean, backup: { ran: boolean, label: string | null } | null }} run
@@ -881,7 +881,7 @@ async function afterUpToDate(ctx, lock, run) {
   }
 }
 
-/** §1.14 step 7 (identity → plan → validate → backup → clock → apply) and step 8. */
+/** Contracts: identity → plan → validate → backup → clock → apply, then the schedule log. */
 async function contractsPhase(ctx, client, lock, migrations, run) {
   const schema = ctx.schema;
   const level = migrations.at(-1)?.name ?? "";
@@ -1123,7 +1123,7 @@ async function reportReplayError(ctx, migration) {
 }
 
 /**
- * W2 BACKUP_RESULT_FILE interface (JSON, version 1), published atomically by
+ * BACKUP_RESULT_FILE interface (JSON, version 1), published atomically by
  * scripts/backup/pre-migrate.sh only after a verified full encrypted KB bundle:
  * {version:1, runId:<UUID>, label:"pre-migrate"|"pre-drop"|"manual"|"daily",
  *  createdAt:<ISO UTC>, utcDay:"YYYY-MM-DD", bundlePath:<absolute backup-UUID.age>,
@@ -1244,7 +1244,7 @@ export async function runBackupHook(ctx, args = []) {
  * A brand-new database (proven-empty catalog, `0_init` first) has nothing to
  * back up, and a full bundle cannot be taken before `0_init` creates the
  * catalog it coordinates through. BACKUP_ENABLED=true still requires a usable
- * destination, a brand-new database too (owner decision): the hook runs in
+ * destination, a brand-new database too: the hook runs in
  * `--check-destination` mode (recipient, a mounted BACKUP_DIR or BACKUP_S3_BUCKET, BACKUP_S3_*
  * settings; no bundle) and a failure or a missing hook refuses the migration.
  * With backups off nothing runs.

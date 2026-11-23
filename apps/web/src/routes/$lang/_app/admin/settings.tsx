@@ -133,7 +133,7 @@ function SecurityPolicyCard({
   onToggle: (key: ForceTwoFactorSettingKey, newValue: "true" | "false") => void;
 }) {
   const { t } = useTranslation("admin");
-  // Changing who must use 2FA applies to every covered account: confirm first (R2-7).
+  // Changing who must use 2FA applies to every covered account: confirm first.
   const [pending, setPending] = useState<{
     key: ForceTwoFactorSettingKey;
     newValue: "true" | "false";

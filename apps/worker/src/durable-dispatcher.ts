@@ -5,7 +5,7 @@ import {
 import { logInternalError } from "@knowledge-base/env/log";
 
 export type DurableDispatcherLoop = {
-  /** R3-W4: run a cycle now (a committed enqueue), coalescing with one already queued. */
+  /** Run a cycle now (a committed enqueue), coalescing with one already queued. */
   wake(): void;
   stop(): Promise<void>;
 };

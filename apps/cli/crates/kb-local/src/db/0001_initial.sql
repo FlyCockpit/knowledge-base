@@ -49,7 +49,7 @@ CREATE TABLE kbs (
   profile_json TEXT CHECK(profile_json IS NULL OR json_valid(profile_json)),
   -- Set when the active index file was lost; cleared by the next build.
   index_rebuild_required INTEGER NOT NULL DEFAULT 0 CHECK (index_rebuild_required IN (0, 1)),
-  -- L-22: a tombstoned KB's repository and indexes were deleted; the row and
+  -- A tombstoned KB's repository and indexes were deleted; the row and
   -- its receipts stay. Cleanup revisits only if maintenance residue remains.
   data_purged INTEGER NOT NULL DEFAULT 0 CHECK (data_purged IN (0, 1)),
   created_at TEXT NOT NULL,

@@ -924,7 +924,7 @@ describe("PR conflicts, updates and ownership", () => {
     },
   );
   prFixtureTest(
-    "while the PR sits on main, an edit against main applies on its head (R3-W6)",
+    "while the PR sits on main, an edit against main applies on its head",
     async (f) => ({ p: await apply(f.id, f.author, edit(f.base, "a.md", "a")) }),
     async (f, { p }) => {
       // A path the PR did not change: main's version is the PR's own.
@@ -932,7 +932,7 @@ describe("PR conflicts, updates and ownership", () => {
       expect(next.proposal).toMatchObject({ number: 1, version: 2, baseSha: f.base });
       expect(runGit(f.repo, ["rev-parse", `${next.commitSha}^`])).toBe(p.commitSha);
       expect(runGit(f.repo, ["show", `${next.commitSha}:a.md`])).toBe(human("a"));
-      // R3-W5: the PR keeps the title it was opened with.
+      // The PR keeps the title it was opened with.
       expect(next.proposal?.title).toBe("proposal");
       // Rewriting the PR's own path against main needs its number.
       await expect(
@@ -1548,7 +1548,7 @@ describe("every actor path selects the person's proposal", () => {
     async (f, { pat, oauth, readOnly, strangerPat, opened }) => {
       expect(opened.proposal).toMatchObject({ number: 1, authorActorKey: `grant:${pat.grantId}` });
       // The web editor reading main is told about the token's open PR and its
-      // version of the document (R3-W6: rewriting the PR's own path against
+      // version of the document (rewriting the PR's own path against
       // main needs its proposalNumber)...
       await expect(webUpdate(f.author, f.id, f.base, "doc.md", "web\n")).rejects.toMatchObject({
         code: "CONFLICT",
@@ -1742,7 +1742,7 @@ describe("a slower status check never overwrites a newer one", () => {
   );
 });
 
-describe("a failing status check is logged, not silent (R3-W3)", () => {
+describe("a failing status check is logged, not silent", () => {
   prFixtureTest(
     "an unreadable head keeps the cached status and logs the failure with its PR",
     async (f) => {

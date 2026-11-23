@@ -951,8 +951,8 @@ describe("kb staged uploads", () => {
           { timeout: 10_000 },
         );
         // Observe a real blocked lock request, not timing luck or a mocked
-        // permission result. An unlocked identity read lets the ban commit and
-        // this assertion fails on the original F05 implementation.
+        // permission result. An unlocked identity read would let the ban commit
+        // and fail this assertion.
         await expect
           .poll(
             async () => {

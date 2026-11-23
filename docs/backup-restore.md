@@ -2,7 +2,7 @@
 
 Back up Git, asset authority and PostgreSQL metadata together. Disk bundles
 include all retained CAS bytes; S3 bundles record verified remote references
-without asset bytes, as described in [asset storage](./assets.md#storage-aware-encrypted-backup-and-restore-p5). The
+without asset bytes, as described in [asset storage](./assets.md#storage-aware-encrypted-backup-and-restore). The
 SQLite search index under `index/` is rebuildable and excluded; authority,
 journals, sealed/provider records and Git history are not disposable. Model
 weights and Valkey are also excluded. Every pre-migration/pre-drop backup is this same full recovery unit; a database-only dump cannot restore a KB instance.
@@ -108,7 +108,7 @@ converts storage modes or restores local cache bytes.
 After a successful S3 restore, initialize its empty local cache ledger before
 starting runtimes: run `asset-storage cache-reconcile` with the target locator,
 operator pair, desired `KB_ASSET_CACHE_MAX_BYTES` and a fresh reconciliation
-attempt UUID (see [offline commands](./assets.md#offline-storage-migration-p6)).
+attempt UUID (see [offline commands](./assets.md#offline-storage-migration)).
 The restore path discards imported cache metadata; runtime attachment refuses
 missing metadata and never guesses that existing payload is safe to reclaim.
 
@@ -231,7 +231,7 @@ operator guide for active/historical generations and offline migration retry.
 
 ## Snapshot migration history and deletion holds
 
-Bundles contain shipped migration SQL/checksums and snapshot-consistent applied _prisma_migrations plus _knowledge_base_* contract state and source catalog, captured in the same exported snapshot as pg_dump. Applied history may be a matching subset of shipped files, including out-of-order merges; pre-drop snapshots intentionally retain retired data. Prerelease archive formats are refused. Source control schema is excluded so destination restore intent remains authoritative.
+Bundles contain shipped migration SQL/checksums and snapshot-consistent applied _prisma_migrations plus _knowledge_base_* contract state and source catalog, captured in the same exported snapshot as pg_dump. Applied history may be a matching subset of shipped files, including out-of-order merges; pre-drop snapshots intentionally retain retired data. Only `kb/backup/1` bundles are accepted. Source control schema is excluded so destination restore intent remains authoritative.
 
 Before import, restore checks every current authority-reset, key, audit, model/job and asset projection against the source catalog. The explicit `RESTORE_SURFACE` in `scripts/lib/kb-restore.mjs` defines required typed columns and enum labels, including cache reconciliation and authority reset. Retired application fields and unused labels outside that surface do not prevent same-image restore. Use a compatible image if the restore surface is unsupported. Restore source state unchanged; do not apply pending migrations inside the offline operation. Final commit publishes READY, invalidates imported live registrations and extends the restore deletion hold to at least seven days without shortening existing holds. Next normal startup applies newer migrations, taking a backup first only when backups are enabled.
 
@@ -240,6 +240,6 @@ Runner exclusion is acquired before offline preflight, then request/maintenance,
 The server image also offers `hold-deletions [days|--clear]` (default seven days) and `restore-drill`. Drills use a disposable database AND isolated KB data volume with the operator identity; never drill against the live data root. Restore CLI remains `restore <bundle.age> <identity-file> <attempt-uuid> [--asset-source-remap]`, requires empty targets, and retries the same source and attempt.
 
 
-Restore discovery (`--list` and `latest`) accepts every verified `.age` + `.age.complete` pair in the backup directory. Local `.result.json` delivery sidecars are optional and portable across directory moves. Without a valid sidecar, discovery uses the marker's creation time (or its modification time for legacy markers) and labels the pair `imported`; unknown delivery metadata never counts as scheduler success or authorizes automatic pruning.
+Restore discovery (`--list` and `latest`) accepts every verified `.age` + `.age.complete` pair in the backup directory. Local `.result.json` delivery sidecars are optional and portable across directory moves. Without a valid sidecar, discovery uses the marker's creation time (or its modification time for a marker without one) and labels the pair `imported`; unknown delivery metadata never counts as scheduler success or authorizes automatic pruning.
 
 A failed snapshot after a clean runtime drain reopens maintenance only after the snapshot child has settled and maintenance exclusion is reacquired. Incomplete drains, inherited recovery requests and a still-held snapshot lock keep admission closed until offline recovery succeeds.

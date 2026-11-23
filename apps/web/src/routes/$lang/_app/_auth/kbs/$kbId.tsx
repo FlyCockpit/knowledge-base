@@ -33,7 +33,7 @@ import { cachedKbName, routeHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId")({
-  // Every KB page's title names the KB (R2-12). `head()` runs after the
+  // Every KB page's title names the KB. `head()` runs after the
   // loaders, so priming `kbs.get` here names it on a cold load too. A KB the
   // viewer can't read resolves to nothing: the layout (or Settings, for an
   // invitation recipient) renders that state from its own query.
@@ -73,7 +73,7 @@ function KbLayout() {
   const onPrs = Boolean(matchRoute({ to: "/$lang/kbs/$kbId/prs", fuzzy: true }));
   const prMatch = matchRoute({ to: "/$lang/kbs/$kbId/prs/$number" });
   // Anything else under the KB (e.g. `/pull-requests`) is not the KB home: the
-  // Outlet renders the router's not-found page instead of Documents (R2-13).
+  // Outlet renders the router's not-found page instead of Documents.
   const onHome = Boolean(matchRoute({ to: "/$lang/kbs/$kbId" }));
   const prNumber = prMatch ? prMatch.number : null;
   const { data, isPending, isError, error, refetch } = useQuery(

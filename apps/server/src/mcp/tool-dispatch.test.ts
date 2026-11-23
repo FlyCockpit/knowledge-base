@@ -79,7 +79,7 @@ describe("closed MCP envelopes", () => {
         .details,
     ).toEqual({});
   });
-  it("logs server-side failures with their context and nothing else (R3-W3)", () => {
+  it("logs server-side failures with their context and nothing else", () => {
     const logged = captureLog();
     try {
       toolFailure(new Error("Command failed: git merge-tree token=CANARY_TOOL"), {

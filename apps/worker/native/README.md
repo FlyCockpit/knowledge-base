@@ -17,8 +17,8 @@ by Git and is never part of the model download volume.
 
 The source is built unpatched. Upstream llama.cpp now skips the LM head and the
 logits buffer for pooled embedding contexts (ggml-org/llama.cpp#30445, in
-v0.7.0), which is what the former `output-buffer.patch` did for the Qwen graph;
-node-llama-cpp 3.22.x fills batches itself, retiring `node-batch-compat.patch`.
+v0.7.0), so the Qwen graph needs no output-buffer patch, and node-llama-cpp
+3.22.x fills batches itself, so no batch-compat patch is needed either.
 The real-model lanes still assert maximum-input peak memory, so a source that
 allocated logits again cannot pass them. Neither change touched the tokenizer
 or pooling.

@@ -4,7 +4,7 @@ import corpus from "./fixtures/plain-snippet.json" with { type: "json" };
 import * as formatter from "./plain-snippet";
 import { plainSnippet } from "./plain-snippet";
 
-describe("plainSnippet (R2-27, CLI twin plain_snippet.rs)", () => {
+describe("plainSnippet (CLI twin plain_snippet.rs)", () => {
   it("reduces every shared corpus case exactly", () => {
     expect(corpus.cases.length).toBeGreaterThan(300);
     for (const { input, plain } of corpus.cases) expect(plainSnippet(input), input).toBe(plain);

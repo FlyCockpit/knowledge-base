@@ -778,9 +778,9 @@ const roundTripped = parseDotenv(output);
 for (const [key, value] of values) {
   if (roundTripped[key] !== value) {
     // Deliberately does NOT print the value or its encoding: this message is
-    // an invitation to file a bug report, and the old wording pasted the secret
-    // into terminal scrollback and CI logs while asking the reader not to share
-    // it. Describe the shape instead.
+    // an invitation to file a bug report: pasting the secret would put it in
+    // terminal scrollback and CI logs while asking the reader not to share it.
+    // Describe the shape instead.
     fail(
       `internal encoding error: ${key} does not survive a dotenv round trip.\n` +
         `  value shape: ${describeShape(value)}\n` +

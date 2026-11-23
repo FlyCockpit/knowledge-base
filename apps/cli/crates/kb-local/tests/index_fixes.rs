@@ -1,4 +1,4 @@
-//! Review regressions at the actual store, file, and recovery boundaries.
+//! Regressions at the actual store, file, and recovery boundaries.
 #[path = "support/index_fixture.rs"]
 mod support;
 use kb_client::{ErrorCode, types::*};
@@ -520,7 +520,7 @@ async fn pre_admission_expiry_never_calls_embedder_or_creates_index() {
             .index_file(&f.kb, &job.generation_id)
             .exists()
     );
-    // An expired watchdog is a stall, retried (L-2), never a permanent failure at once.
+    // An expired watchdog is a stall, retried, never a permanent failure at once.
     assert_eq!(f.status().desired_state, Some(IndexState::Pending));
 }
 #[tokio::test]
@@ -670,7 +670,7 @@ async fn sweep_keeps_the_cancellation_intent_of_completions_awaiting_activation(
     f.store.sweep_disposable(None).expect("sweep");
     assert!(intent.exists(), "held completion keeps its intent");
     assert!(f.store.activate_built(built).expect("activate"));
-    // R3-L10: active, nothing reads the intent any more (a recovered
+    // Active, nothing reads the intent any more (a recovered
     // activation recreates it): it goes instead of piling up.
     f.store.sweep_disposable(None).expect("sweep");
     #[cfg(unix)]
@@ -702,7 +702,7 @@ async fn sweep_keeps_the_cancellation_intent_of_completions_awaiting_activation(
     );
 }
 
-/// #3: the scratch scan is bounded but progresses: more than a page of
+/// The scratch scan is bounded but progresses: more than a page of
 /// retained cancellation intents (COMPLETE generations) sorted before an
 /// orphan's scratch cannot keep the orphan from being removed when the
 /// host carries the cursor from pass to pass.
@@ -768,7 +768,7 @@ async fn completion_recovery_recreates_a_lost_cancellation_intent() {
 }
 
 #[test]
-fn l21_l22_sweep_removes_dead_scratch_and_tombstoned_kb_data() {
+fn sweep_removes_dead_scratch_and_tombstoned_kb_data() {
     let f = Fixture::new(2);
     let job = f.set("profile-sweep-scratch");
     let id = job.generation_id;
@@ -983,7 +983,7 @@ fn large_retained_history_is_paged_and_purges_complete_once() {
     assert_eq!(f.store.sweep_disposable(None).expect("pass").1, None);
 }
 
-/// R3-L10: permit files of generations that can never complete or be read
+/// Permit files of generations that can never complete or be read
 /// again, and of purged KBs, are swept instead of accumulating; those still
 /// needed stay.
 #[cfg(unix)]

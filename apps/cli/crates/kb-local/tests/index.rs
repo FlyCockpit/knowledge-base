@@ -391,7 +391,7 @@ fn confirmations_permissions_idempotence_and_durable_jobs() {
                 .get::<_, i64>(0))
             .expect("valid fixture"),
         5,
-        "the create's lexical job (D6), the profile set with its lexical companion, and the commit with its companion (nothing semantic was active)"
+        "the create's lexical job, the profile set with its lexical companion, and the commit with its companion (nothing semantic was active)"
     );
 }
 
@@ -411,7 +411,7 @@ fn real_os_build_permits_bound_kb_and_recover_abandoned_attempt() {
     f.store.sweep_generations(u64::MAX).expect("valid fixture");
     assert_eq!(f.status().desired_state, Some(IndexState::Building));
     drop(attempt);
-    // L-1: an abandoned attempt (its process exited) is a host interruption:
+    // An abandoned attempt (its process exited) is a host interruption:
     // retried however often it happens, never a stall, never FAILED.
     for _ in 0..=kb_local::generations::MAX_STALLED_ATTEMPTS {
         drop(f.store.lock_write(&[]).expect("valid fixture"));
@@ -765,7 +765,7 @@ async fn builtin_disable_changed_model_and_pinned_runtime_dispatch() {
         result.expect_err("cancel native request").protocol_code(),
         kb_client::ErrorCode::Cancelled
     );
-    // L-1: cancellation releases the generation for a later attempt.
+    // Cancellation releases the generation for a later attempt.
     assert_eq!(f.status().desired_state, Some(IndexState::Pending));
     assert_eq!(f.status().active_generation_id, Some(covering));
     // The abandoned request still occupies the shared worker until it ends.
@@ -817,7 +817,7 @@ async fn cancellation_timeout_failure_retention_and_live_owner_fences() {
                 kb_client::ErrorCode::DeadlineExceeded
             }
         );
-        // L-1/L-2: shutdown cancellation and the no-progress watchdog release
+        // Shutdown cancellation and the no-progress watchdog release
         // the generation; it is never permanently FAILED by them.
         assert_eq!(f.status().desired_state, Some(IndexState::Pending));
         // An unfinished attempt never reaches the final name.
@@ -879,7 +879,7 @@ async fn superseded_live_builder_file_is_not_swept_and_snapshot_never_changes() 
             },
         )
         .await;
-    // Newer desired work no longer cancels a build that still outranks what
+    // Newer desired work does not cancel a build that still outranks what
     // serves: it completes and serves until the desired one does.
     let built = result.expect("the outranking build completes");
     assert!(f.store.activate_built(built).expect("activation"));
@@ -969,7 +969,7 @@ async fn late_mixed_dimensions_roll_back_all_rows() {
     assert!(no_semantic_active(&f));
 }
 
-/// R3-L5: built-in builds of different KBs run side by side up to the
+/// Built-in builds of different KBs run side by side up to the
 /// store's built-in slots (they share one worker); one more waits.
 #[test]
 fn builtin_generations_of_different_kbs_do_not_serialize() {
@@ -1081,7 +1081,7 @@ async fn tombstone_cancels_durable_job_and_partial_file_expires() {
             .sweep_generations(now_ms() + 8 * 24 * 60 * 60 * 1000)
             .expect("sweep"),
         3,
-        "plus the create's superseded lexical generation and the profile set's lexical companion (D6)"
+        "plus the create's superseded lexical generation and the profile set's lexical companion"
     );
     assert!(
         !f.store
@@ -1611,7 +1611,7 @@ async fn reader_refuses_tampered_meta_and_non_rollback_headers() {
         // documented behavior is refusal, never a silent rollback.
         match leased {
             Err(StoreError::IndexUnavailable) if tamper != "wal-header" => {}
-            // A damaged header is always caught by the lock pass (R3-L8):
+            // A damaged header is always caught by the lock pass:
             // the file is lost and, by the serving order, the head's
             // retained lexical companion serves meanwhile. The damaged file
             // itself is never leased.
@@ -1645,7 +1645,7 @@ async fn retention_reclaims_a_journal_beside_a_published_file() {
             .sweep_generations(now_ms() + 8 * 24 * 60 * 60 * 1000)
             .expect("sweep"),
         3,
-        "plus the create's superseded lexical generation and the profile set's lexical companion (D6)"
+        "plus the create's superseded lexical generation and the profile set's lexical companion"
     );
     assert!(!file.exists());
     assert!(!journal.exists(), "no orphan after reclamation");
@@ -2332,7 +2332,7 @@ async fn generation_state_machine_walks_every_transition() {
     assert_eq!(active(), Some(covering));
 }
 
-/// Codex r3 #3: completion recovery walks the serve order (semantic@head,
+/// Completion recovery walks the serve order (semantic@head,
 /// lexical@head, newest first) and falls through a refused activation. Both
 /// generations of the head are COMPLETE and unactivated, and the semantic
 /// profile became unusable without a reschedule: the lexical one serves.
@@ -2469,7 +2469,7 @@ fn normalization_matches_the_server_on_real_model_output() {
     }
 }
 
-/// Codex r9: dependency satisfaction is a completion question, not attempt
+/// Dependency satisfaction is a completion question, not attempt
 /// liveness. An unbuilt companion attempt that expired and was dropped never
 /// unblocks the semantic claim on the same open store (no recovery in
 /// between): the claim, holding the KB permit, requeues the abandoned

@@ -205,8 +205,8 @@ async function fixture() {
   let attached = false;
   /** Stops at `stopAt` ("BUILDING" for a build that will fail) or activates. */
   const build = async (stopAt?: "BUILDING") => {
-    // Attach the profile once; re-attaching the serving profile starts nothing
-    // (R3-L12), so every later build is an explicit rebuild.
+    // Attach the profile once; re-attaching the serving profile starts nothing,
+    // so every later build is an explicit rebuild.
     const b = await requestIndexBuild(
       runtime,
       { principal: { kind: "browser", userId: owner.id } },
@@ -501,7 +501,7 @@ describe("generation TTLs", () => {
   });
 });
 
-describe("index files and build reservations (P4)", () => {
+describe("index files and build reservations", () => {
   const HOUR_AGO = (Date.now() - 3_600_000) / 1000;
   const touch = (kbId: string, name: string, old = true) => {
     mkdirSync(join(indexDir, kbId), { recursive: true });

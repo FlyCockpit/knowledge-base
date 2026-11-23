@@ -17,7 +17,7 @@ import { kbWriteToolSchemas } from "./protocol/writes";
 import type { KbRuntimeConfig } from "./runtime";
 
 /**
- * §1.9 (decisions 14, 22): the only module that reads or writes the index chunk
+ * The only module that reads or writes the index chunk
  * limit, the per-quantization admin ceilings and the KB quantization. Every write
  * validates against the hard bound; every read clamps (a stored value above a
  * later-lowered bound is never effective). Web/oRPC only — never an MCP tool.
@@ -84,7 +84,7 @@ function maxOwnerLimit(q: IndexQuantizationName, ceilings: ChunkCeilings): numbe
   return Math.min(ceilings[q], KB_LIMITS.indexChunkBound[q]);
 }
 
-/** `min(limit ?? default, ceiling[q], bound[q])`; the build reads exactly this (P4). */
+/** `min(limit ?? default, ceiling[q], bound[q])`; the build reads exactly this. */
 export function effectiveChunkLimit(
   kb: { indexChunkLimit: number | null },
   q: IndexQuantizationName,
@@ -354,7 +354,7 @@ export type SetQuantizationOutput = z.infer<typeof setQuantizationOutputSchema>;
 /**
  * Manager-level, like `knowledge_embedding_profile_set`: idempotent, RUN-confirmed,
  * charged as a rebuild, and the build is scheduled in the same authority
- * transaction as the refusal checks (§1.9).
+ * transaction as the refusal checks.
  */
 export async function setIndexQuantization(
   runtime: KbRuntimeConfig,

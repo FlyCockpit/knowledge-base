@@ -257,7 +257,7 @@ describe("GFM block rendering", () => {
     expect(out).toContain('<h2 id="setext" class="md-h1">Setext</h2>');
   });
 
-  it("renders headings one level below the page's own h1 (R2-19)", () => {
+  it("renders headings one level below the page's own h1", () => {
     const out = html("# One\n\n###### Six\n");
     expect(out).not.toContain("<h1");
     expect(out).toContain('<h2 id="one" class="md-h1">One</h2>');

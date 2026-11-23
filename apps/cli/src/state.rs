@@ -77,7 +77,7 @@ impl CredentialStore {
         Ok(self.load_entry(resource)?.map(|(token, _)| token))
     }
     /// The stored token and the write mode its login was approved for
-    /// (`None`: imported, read-only, or stored before write modes).
+    /// (`None`: imported or read-only).
     pub fn load_entry(
         &self,
         resource: &McpResource,
@@ -125,7 +125,7 @@ impl CredentialStore {
         self.save_with_mode(resource, token, None)
     }
     /// Save `token` with the write mode it was approved for (`None` stores
-    /// no mode, exactly as before write modes).
+    /// no mode).
     pub fn save_with_mode(
         &self,
         resource: &McpResource,
@@ -198,7 +198,7 @@ struct DiskWrite<'a> {
     origin: &'a str,
     resource: &'a str,
     secret: &'a str,
-    /// The approved write mode; omitted when unknown (older files have none).
+    /// The approved write mode; omitted when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     authoring_mode: Option<AuthoringMode>,
 }
@@ -626,7 +626,7 @@ mod tests {
         )
         .expect("resource");
         let token = SecretToken::new("disposable-mode".into());
-        // No mode: the file is exactly the pre-write-mode shape.
+        // No mode: the file carries no `authoring_mode` key.
         store.save(&resource, &token).expect("save");
         let file = fs::read_dir(&root)
             .expect("dir")

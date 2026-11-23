@@ -34,7 +34,7 @@ pub(crate) struct Policy<'a> {
     pub store: &'a Store,
     pub kb: &'a KbId,
     pub pending: &'a [ManifestEntry],
-    /// L-8: `path -> blob` of the commit this one builds on. References in
+    /// `path -> blob` of the commit this one builds on. References in
     /// a blob unchanged at its path were validated when it was written, so
     /// a later revocation never blocks unrelated writes; only changed paths
     /// must reference live records. `None` validates every reference.

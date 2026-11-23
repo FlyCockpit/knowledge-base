@@ -76,7 +76,7 @@ pub fn vector(text: &str) -> Vec<f64> {
         1. + text.matches("beta").count() as f64,
     ]
 }
-/// Normalized hybrid score of a golden row (L-25: RRF sum * 61 / 2 arms).
+/// Normalized hybrid score of a golden row (RRF sum * 61 / 2 arms).
 pub fn score(w: &Value) -> f64 {
     let rrf: f64 = ["vectorRank", "ftsRank"]
         .iter()

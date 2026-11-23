@@ -13,11 +13,11 @@ describe("CIMD production TLS connection boundary", () => {
     const suffix = randomBytes(4).toString("hex");
     const part = (Number.parseInt(randomBytes(2).toString("hex"), 16) || 1).toString(16);
     const networks = [
-      kbTestName(`kb-r31b-blocked-${suffix}`),
-      kbTestName(`kb-r31b-public-${suffix}`),
+      kbTestName(`kb-cimd-blocked-${suffix}`),
+      kbTestName(`kb-cimd-public-${suffix}`),
     ];
-    const container = kbTestName(`kb-r31b-cimd-${suffix}`);
-    const dir = mkdtempSync(resolve(tmpdir(), "kb-r31b-cimd-"));
+    const container = kbTestName(`kb-cimd-${suffix}`);
+    const dir = mkdtempSync(resolve(tmpdir(), "kb-cimd-"));
     const root = resolve(import.meta.dirname, "../../../..");
     const blocked = `2001:100:${part}::2`;
     const allowed = `2001:3:${part}::2`;

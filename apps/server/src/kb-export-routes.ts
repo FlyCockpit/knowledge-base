@@ -62,7 +62,7 @@ export function createKbExportRoutes(options: {
       if (code === "UNAUTHORIZED") return c.json({ error: "UNAUTHORIZED" }, 401);
       if (code === "FORBIDDEN") return c.json({ error: "FORBIDDEN" }, 403);
       // Unexpected: the client sees only 503, so the operator log carries the
-      // cause (R3-W3). A disconnect is not an outage.
+      // cause. A disconnect is not an outage.
       if (!c.req.raw.signal.aborted)
         logInternalError("http.unhandled", error, {
           requestId: c.get("requestId"),

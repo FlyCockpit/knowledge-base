@@ -8,12 +8,12 @@ import type { Context, Next } from "hono";
 // this middleware NEVER rejects, so member and non-member addresses stay
 // indistinguishable at this layer:
 //
-//   - An earlier revision rejected non-members here with an immediate 403
-//     while members proceeded into Better-Auth. The immediate-403 vs
-//     Better-Auth-processing split (different status/body shapes AND different
-//     timing) let anyone probe which emails are admins. Any email-based early
-//     reject reintroduces that oracle — including for malformed bodies, where
-//     Better-Auth would otherwise return identical 400s for every address.
+//   - Rejecting non-members here with an immediate 403 while members proceed
+//     into Better-Auth would split responses (different status/body shapes AND
+//     different timing) and let anyone probe which emails are admins. Any
+//     email-based early reject creates that oracle — including for malformed
+//     bodies, where Better-Auth would otherwise return identical 400s for
+//     every address.
 //   - With pass-through, every input class yields identical responses for
 //     member and non-member addresses: same 400s for invalid input, same
 //     generic 200 for already-registered emails, same 422 for a blocked

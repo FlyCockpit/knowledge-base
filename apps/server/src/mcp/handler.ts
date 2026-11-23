@@ -216,7 +216,7 @@ export function createMcpEndpoint(options: {
       } catch (error) {
         // A denial (401/403) is the answer; any other code, including an
         // admission STORAGE_UNAVAILABLE, is a server failure the client sees
-        // only as 503, so the operator log gets it (R3-W3).
+        // only as 503, so the operator log gets it.
         if (!isAdmissionDenial(error) && !permit.signal.aborted)
           logInternalError("mcp.endpoint", error, { requestId });
         return admissionErrorResponse(error, options.origin);

@@ -501,7 +501,7 @@ describe("checkClusterIdentity", () => {
     assert.equal(second.db.holds.size, 0);
   });
 
-  test("the registry oid is read inside the compare transaction with a typed parameter (R6-1)", async () => {
+  test("the registry oid is read inside the compare transaction with a typed parameter", async () => {
     const { client } = await run({ stored: same });
     const read = client.queries.find((q) => /to_regclass/.test(q.sql));
     assert.equal(read.inTx, true);
@@ -673,18 +673,18 @@ describe("validateContract", () => {
     assert.equal(validate(`${enumRemoveContract(ENUM_HEADER)}\n`).ok, true);
   });
 
-  test("7c-1: a checksum that differs from the recorded one", () => {
+  test("a checksum that differs from the recorded one", () => {
     const result = validate(`ALTER TABLE "t" ${DROP} COLUMN "x";\n`, {
       row: { contract_checksum: "other" },
     });
     assert.match(result.finding, /differs from the copy recorded/);
   });
 
-  test("7c-2: anything outside the allowlist", () => {
+  test("anything outside the allowlist", () => {
     assert.match(validate(`UPDATE "t" SET "x" = NULL WHERE true;\n`).finding, /not allowed/);
   });
 
-  test("7c-3: a NOT NULL column without a default means the expand step is missing", () => {
+  test("a NOT NULL column without a default means the expand step is missing", () => {
     const image = catalogFromSql(`CREATE TABLE "t" ("id" INTEGER NOT NULL);`);
     assert.match(
       validate(`ALTER TABLE "t" ${DROP} COLUMN "y";\n`, { image }).finding,
@@ -692,7 +692,7 @@ describe("validateContract", () => {
     );
   });
 
-  test("7c-4: an object that still exists in the image's schema", () => {
+  test("an object that still exists in the image's schema", () => {
     assert.match(
       validate(`ALTER TABLE "t" ${DROP} COLUMN "y";\n`, {
         live: catalogFromSql(`CREATE TABLE "t" ("y" TEXT);`),
@@ -702,7 +702,7 @@ describe("validateContract", () => {
     assert.match(validate(`${DROP} TABLE "t";\n`).finding, /table "t" still exists/);
   });
 
-  test("7c-4: the image's enum still has the removed label", () => {
+  test("the image's enum still has the removed label", () => {
     const image = catalogFromSql(`CREATE TYPE "E" AS ENUM ('A', 'B');`);
     assert.match(
       validate(`${enumRemoveContract(ENUM_HEADER)}\n`, { image }).finding,
@@ -710,7 +710,7 @@ describe("validateContract", () => {
     );
   });
 
-  test("7c-5: a live default that still names the removed label", () => {
+  test("a live default that still names the removed label", () => {
     const live = catalogFromSql(`CREATE TYPE "E" AS ENUM ('A', 'B');
 CREATE TABLE "t" ("c" "E" NOT NULL DEFAULT 'B');`);
     assert.match(
@@ -966,7 +966,7 @@ describe("applyContract", () => {
     assert.deepEqual([t.db.row.contract_attempts, t.db.row.contract_applied_at], [0, null]);
   });
 
-  describe("repeated shortened 57014 (R5-5, R6-2)", () => {
+  describe("repeated shortened 57014", () => {
     test("1st and 2nd at one level are undone with 1/3, 2/3; the 3rd needs a person", async () => {
       // Each run starts with exactly the minimum budget; the re-plan uses 15 s
       // of it, so the statement runs with a shortened 5 s timeout and hits it.

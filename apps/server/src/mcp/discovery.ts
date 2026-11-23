@@ -18,7 +18,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { BearerAdmission } from "./context";
 
 /**
- * Scoped discovery (`tools/list` and server instructions, tool-scoping plan §4).
+ * Scoped discovery (`tools/list` and server instructions).
  *
  * Discovery only shapes what an agent sees. Whether a call is allowed is
  * decided by dispatch from the connection's live groups and KB bits, never by

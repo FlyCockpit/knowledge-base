@@ -1,5 +1,5 @@
 /**
- * The server opens SQLite index files only read-only, through one helper (decisions 5 + 21).
+ * The server opens SQLite index files only read-only, through one helper.
  *
  * No data-flow tracking: outside the two allowlisted modules, any server-reachable file that so
  * much as *names* the native loader module, `better-sqlite3`, `sqlite-vec` or `loadSqlite` is a

@@ -1,4 +1,4 @@
-//! R3-L4 (TS twin `packages/api/src/lib/kb/embed-breaker.ts`): one query
+//! TS twin `packages/api/src/lib/kb/embed-breaker.ts`: one query
 //! embedding waits at most [`QUERY_EMBEDDING_DEADLINE`], and a target
 //! (provider revision or built-in model of one store) whose query embedding
 //! timed out is skipped for a cooldown (a failure is fast, and a too-long

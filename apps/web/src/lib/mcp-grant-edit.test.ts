@@ -81,7 +81,7 @@ describe("grant edit plan", () => {
         { type: "toggleBit", kbId: KB_B, bit: "read" },
       ),
     );
-    // Direct edits (R3-W8: with pull_requests) caps at write, which no stored entry exceeds.
+    // Direct edits (with pull_requests) caps at write, which no stored entry exceeds.
     expect(result.input).toEqual({
       scopes: ["mcp:read", "mcp:write"],
       toolGroups: ["read", "edit", "assets", "pull_requests"],

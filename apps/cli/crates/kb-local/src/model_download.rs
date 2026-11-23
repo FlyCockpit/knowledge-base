@@ -340,7 +340,7 @@ pub struct Removal {
     /// Model files `kb` left in place, each with the reason.
     pub kept: Vec<Kept>,
 }
-/// A model file `kb model remove` left in place, and why (review #1).
+/// A model file `kb model remove` left in place, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Kept {
     pub path: PathBuf,
@@ -614,7 +614,7 @@ impl ModelCache {
         }
         // A copy already there failed its mark (or is the source itself): it
         // is replaced by the fresh inode filled from the stream just hashed.
-        // Only in `kb`'s own, proven `verified/` (review r2 #1/#3).
+        // Only in `kb`'s own, proven `verified/`.
         self.delete_in_copies(m)?;
         finish_at(&private, m, &temp, &dest, &|| self.mismatch(m, &dest))?;
         // Unlinking the partial changes the copy's link count (and ctime):
@@ -671,7 +671,7 @@ impl ModelCache {
     /// before any deletion: a load can neither start nor finish until
     /// deletion is done, and a failed `quiesce` deletes nothing.
     ///
-    /// R3-L9: only files `kb` created are deleted: the private copy in
+    /// Only files `kb` created are deleted: the private copy in
     /// `verified/`, and a file in the configured directory whose inode `kb`
     /// created there (even if it changed since). Another program's file in
     /// `models_dir` is left in place and reported as kept.
@@ -695,7 +695,7 @@ impl ModelCache {
         if let Some(path) = self.delete_in_copies(m)? {
             removal.removed.push(path);
         }
-        // Review #1: `models_dir` is only a source; whatever is there stays.
+        // `models_dir` is only a source; whatever is there stays.
         let source = self.file(m)?;
         if source != self.private_copy(m)? && fs::symlink_metadata(&source).is_ok() {
             removal.kept.push(Kept {
@@ -810,7 +810,7 @@ impl ModelCache {
         self.open_copies_dir()?.ok_or_else(unavailable)?;
         Ok(copies)
     }
-    /// Review r2 #1/#3: `kb`'s private `verified/`, opened once without
+    /// `kb`'s private `verified/`, opened once without
     /// following links, its whole chain changeable by nobody but this user,
     /// and proven to be the directory `kb` created (its identity equals the
     /// recorded one), so it was never redirected or swapped. Everything in
@@ -847,7 +847,7 @@ impl ModelCache {
         }
         Ok(Some((dir, real)))
     }
-    /// Review r2 #1/#3: delete `kb`'s copy of `m` by name in its own private
+    /// Delete `kb`'s copy of `m` by name in its own private
     /// `verified/` (the only place `kb` ever deletes a model file from;
     /// `models_dir` is only read). The directory is the provenance proof
     /// ([`ModelCache::open_copies_dir`]); the per-file creation mark only
@@ -917,7 +917,7 @@ impl ModelCache {
     /// Where publications (downloads, adoptions) create our own inode:
     /// always the private `verified/` directory. A configured `models_dir`
     /// is only ever read: a source that is copied in, never written to or
-    /// deleted from (review #1).
+    /// deleted from.
     pub fn publish_dir(&self) -> Result<PathBuf, StoreError> {
         self.ensure_copies_dir()
     }
@@ -1125,7 +1125,7 @@ impl ModelCache {
         // A load checks the private copy first. One of ours that fails its
         // checksum (same size, damaged bytes) would keep shadowing a fresh
         // download, so download and load disagree on the file: it goes now,
-        // with the same provenance proof as `kb model remove` (review #1).
+        // with the same provenance proof as `kb model remove`.
         let copy = self.private_copy(m)?;
         if let Ok(meta) = fs::symlink_metadata(&copy)
             && !is_link(&meta)

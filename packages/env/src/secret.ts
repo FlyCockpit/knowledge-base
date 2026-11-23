@@ -1,5 +1,5 @@
 /**
- * A secret value that cannot render (R3-W3). String conversion, JSON,
+ * A secret value that cannot render. String conversion, JSON,
  * `util.inspect` (and so console formatting) and template strings all yield
  * "[redacted]"; only an explicit `.reveal()` at the point of use — the mailer
  * transport, the HMAC, the database driver — returns the value. Every

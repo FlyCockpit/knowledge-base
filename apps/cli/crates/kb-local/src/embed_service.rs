@@ -60,7 +60,7 @@ pub struct ModelHost {
     idle: Duration,
     /// How long `unload` waits for a confirmed release.
     unload_wait: Duration,
-    /// R3-L7: why the worker could not be started or reached, and whether
+    /// Why the worker could not be started or reached, and whether
     /// the host was told (shared by this host's clones).
     start_failure: Arc<Mutex<Option<(String, bool)>>>,
 }
@@ -390,7 +390,7 @@ impl ModelHost {
     pub fn remove_model(&self, m: &ModelDescriptor) -> Result<bool, StoreError> {
         Ok(!self.remove_model_report(m)?.removed.is_empty())
     }
-    /// [`ModelHost::remove_model`] with what was deleted and kept (R3-L9).
+    /// [`ModelHost::remove_model`] with what was deleted and kept.
     pub fn remove_model_report(
         &self,
         m: &ModelDescriptor,
@@ -447,7 +447,7 @@ impl ModelHost {
             Self::remember_start_failure(&mut failure, why);
         }
     }
-    /// R3-L7: why the worker last failed to start or answer, once per
+    /// Why the worker last failed to start or answer, once per
     /// distinct reason (`kb mcp` reports it on stderr; searches meanwhile
     /// fall back to lexical with their notice).
     pub fn unreported_start_failure(&self) -> Option<String> {
@@ -460,7 +460,7 @@ impl ModelHost {
             _ => None,
         }
     }
-    /// R3-L7: why a worker could not be started from here now (a runtime
+    /// Why a worker could not be started from here now (a runtime
     /// directory problem such as a socket path too long), without starting one.
     pub fn startability(&self) -> Result<(), StoreError> {
         self.ensure_runtime_dir()?;

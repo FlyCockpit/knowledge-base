@@ -4,7 +4,7 @@ import { danglingAssetLinks, walkGitTreeAtCommit } from "./changes-plan";
 const files = (entries: Record<string, string>) =>
   new Map(Object.entries(entries).map(([path, text]) => [path, Buffer.from(text, "utf8")]));
 
-describe("L-22 asset removal warnings", () => {
+describe("asset removal warnings", () => {
   it("lists the documents that still link to a removed asset", () => {
     expect(
       danglingAssetLinks(

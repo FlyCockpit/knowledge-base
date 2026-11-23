@@ -137,7 +137,7 @@ fn run_local(
     } else {
         store.owner()
     };
-    // L-24: a well-formed but unknown `--kb` would silently expose nothing.
+    // A well-formed but unknown `--kb` would silently expose nothing.
     // A deleted one stays selectable so its delete receipt can be replayed.
     for kb in &args.kbs {
         match store.kb(kb)? {
@@ -164,7 +164,7 @@ fn run_local(
         &store,
         crate::paths::model_host(config)?,
     )?);
-    // R3-L7: record preflight through the same once-per-reason diagnostic
+    // Record preflight through the same once-per-reason diagnostic
     // state as a later connection failure.
     if store.model_state().is_ok_and(|m| m.enabled)
         && let Err(e) = model.host().startability()
@@ -256,7 +256,7 @@ fn run_local(
                     // `serve_until` has already admitted the call against `scope`,
                     // including the staged-upload kind, before this handler.
                     let result = session.call(name, input, control, scope.kb_set().as_ref());
-                    // R3-L7: a worker that cannot start is said once per reason;
+                    // A worker that cannot start is said once per reason;
                     // searches meanwhile serve keywords with their notice.
                     if let Some(why) = session.model().host().unreported_start_failure() {
                         tracing::warn!("embedding worker unavailable, searching by keyword only: {why}");
@@ -450,7 +450,7 @@ impl RuntimeReembed {
     }
 }
 
-/// Start the session's `INDEX_BUILDERS` builders (R3-L5). Each opens the
+/// Start the session's `INDEX_BUILDERS` builders. Each opens the
 /// store itself inside the one builder loop, so a store that is briefly
 /// absent, replaced or locked is a state the loop waits out, never one that
 /// ends the session. `finished` fires once every builder has stopped.
@@ -650,7 +650,7 @@ impl Sweep {
         }
     }
 
-    /// One retention pass when due (L-21/L-22: dead build scratch and
+    /// One retention pass when due (dead build scratch and
     /// tombstoned KB data, then expired generations page by page).
     fn run(&mut self, s: &Store, diagnostics: &mut usize) -> anyhow::Result<()> {
         if std::time::Instant::now() < self.at {
@@ -775,7 +775,7 @@ fn run_builder(slot: usize, b: &Builders) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Index builders per `kb mcp` (R3-L5): a small incremental build of one KB
+/// Index builders per `kb mcp`: a small incremental build of one KB
 /// runs beside another KB's long build; the store's build slots and the
 /// one shared embedding worker bound the work.
 const INDEX_BUILDERS: usize = 2;
@@ -803,7 +803,7 @@ fn build_next<'a>(
     };
     *after = pending.clone();
     if let Some(id) = pending {
-        // (L-2): a no-progress window, extended by every batch;
+        // A no-progress window, extended by every batch;
         // an interrupted build resumes from its checkpoint.
         let a = match s.claim_generation(&id, BUILD_PROGRESS_WINDOW) {
             Ok(a) => a,

@@ -69,7 +69,7 @@ export async function runDurableDispatcherCycle(deps: DurableDispatcherDeps): Pr
 export type DispatchWakeListener = { close(): Promise<void> };
 
 /**
- * R3-W4: LISTEN on the durable enqueue channel and call `onWake` for every notification, and once
+ * LISTEN on the durable enqueue channel and call `onWake` for every notification, and once
  * after each (re)connect so nothing committed while disconnected waits for the poll. Connecting
  * and LISTEN together are bounded by `setupMs` (a stalled server or handshake ends that client and
  * retries); a lost connection retries after `retryMs`. The dispatcher's poll keeps working

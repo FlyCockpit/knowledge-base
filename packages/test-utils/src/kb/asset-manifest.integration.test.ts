@@ -1417,7 +1417,7 @@ describe("a document and an asset at one path are two writes", () => {
     });
 });
 
-// P3 runs actual SDK HTTP, Postgres intents, cache accounting, Git refs and
+// This suite runs actual SDK HTTP, Postgres intents, cache accounting, Git refs and
 // staged-upload settlement together. Production still constructs disk only.
 describe("S3 publication before ref/catalog", () => {
   async function remote() {

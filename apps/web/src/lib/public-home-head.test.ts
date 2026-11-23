@@ -8,7 +8,7 @@ import {
 
 const base = { origin: "https://kb.example", appName: "KnowledgeBase" };
 
-describe("publicHomeHead (F17)", () => {
+describe("publicHomeHead", () => {
   it("emits translated og metadata, canonical and hreflang alternates for en-US", () => {
     const head = publicHomeHead({ ...base, lang: "en-US", description: "Self-hosted." });
     expect(head.meta).toEqual([

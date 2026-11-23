@@ -72,7 +72,7 @@ fn model_list_is_bounded_machine_readable_and_optional_by_default() {
     assert_eq!(json_stdout(cmd)["enabled"], false);
 }
 
-/// R3-L7: a worker that cannot start here is reported, not "starts on demand".
+/// A worker that cannot start here is reported, not "starts on demand".
 #[cfg(unix)]
 #[test]
 fn model_status_reports_why_the_worker_cannot_start() {
@@ -103,7 +103,7 @@ fn model_status_reports_why_the_worker_cannot_start() {
         .stdout(predicate::str::contains("embedding worker: cannot start:"));
 }
 
-/// R3-L9 (review #2): `kb model remove` needs confirmation (`--yes` without
+/// `kb model remove` needs confirmation (`--yes` without
 /// a terminal) and is never refused because a store has the model enabled:
 /// that store searches by keyword until the model is downloaded again.
 #[cfg(unix)]
@@ -571,7 +571,7 @@ fn provider_input_policy_accepts_contract_keys_and_rejects_overflow_controls_and
     }
 }
 
-/// R3-L12: `kb config` repairs invalid settings one at a time, even while
+/// `kb config` repairs invalid settings one at a time, even while
 /// another setting is still invalid; `show` names the repair command.
 #[test]
 fn config_set_commands_repair_invalid_settings() {

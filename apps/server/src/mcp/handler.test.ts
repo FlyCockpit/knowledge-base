@@ -88,7 +88,7 @@ const inputs = vi.fn(
 const discover = <T>(actor: BearerAdmission, publish: (d: Discovery) => Promise<T>) =>
   decideDiscovery({ load: () => inputs(), publish, recheck: () => actor.recheck() });
 describe("stateless SDK endpoint", () => {
-  it("judges every case of the stdio envelope table exactly as `kb mcp` does (R3-L11 parity)", async () => {
+  it("judges every case of the stdio envelope table exactly as `kb mcp` does", async () => {
     // apps/cli validates stdio `_meta` envelopes against this same table.
     const table = JSON.parse(
       readFileSync(
@@ -235,7 +235,7 @@ describe("stateless SDK endpoint", () => {
     expect(admit).toHaveBeenCalledTimes(2);
     await endpoint.close();
   });
-  it("logs admission storage failures by code, never denials (R3-W3)", async () => {
+  it("logs admission storage failures by code, never denials", async () => {
     const admit = vi.fn(async () => actor());
     const endpoint = createMcpEndpoint({
       admit,

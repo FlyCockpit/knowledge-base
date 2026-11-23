@@ -725,7 +725,7 @@ describe("built-in embedder runtime config change", () => {
     expect((await search(a)).result.results.every((hit) => hit.mode === "hybrid")).toBe(true);
   });
 
-  it("R46r5 F1: ordinary builds and replacement workers wait for cancelled migration execution to drain", {
+  it("ordinary builds and replacement workers wait for cancelled migration execution to drain", {
     timeout: 180_000,
   }, async () => {
     if (!(await prisma.localModel.findUnique({ where: { id: QWEN_MODEL_ID } }))) await readyModel();
@@ -821,7 +821,7 @@ describe("built-in embedder runtime config change", () => {
     expect(await advance()).toEqual({ state: "idle" });
   });
 
-  // P4 step 9 cancel-lock matrix for the built-in cancellers: retarget (a committed config change,
+  // Cancel-lock matrix for the built-in cancellers: retarget (a committed config change,
   // retargetSystemBuiltinKbs) and settleLease (advance() over an off-target leased build). Same
   // cases as the generations suite: (i) queued on AUTH behind a fenced reserve, (i') AUTH budget
   // exceeded then a successful retry, (ii) cancelled before the fenced reserve.
@@ -974,7 +974,7 @@ describe("built-in embedder runtime config change", () => {
     expect(await advance()).toEqual({ state: "idle" });
   });
 
-  it("R46r5 F3/F4: queryless pages warn, update recency, and drive stable rebuild priority; rejected reads do not", {
+  it("queryless pages warn, update recency, and drive stable rebuild priority; rejected reads do not", {
     timeout: 180_000,
   }, async () => {
     if (!(await prisma.localModel.findUnique({ where: { id: QWEN_MODEL_ID } }))) await readyModel();
@@ -1145,7 +1145,7 @@ describe("built-in embedder runtime config change", () => {
       expect(found.indexNotices).toEqual([]);
     }
     // Builds keep working on the old config: a rebuild activates on the good fingerprint.
-    // (Re-attaching the serving profile would start nothing, R3-L12.)
+    // (Re-attaching the serving profile would start nothing.)
     const rebuilt = await requestIndexBuild(runtime, d.actor, {
       kbId: d.kbId,
       idempotencyKey: key(),
@@ -1462,7 +1462,7 @@ describe("built-in embedder runtime config change", () => {
         const embeddingOwners = await capacityOwners();
         expect(embeddingOwners).toHaveLength(1);
         // Spend over half the original budget before the worker fails the admitted embedding,
-        // but stay inside the query embedding's own bound (R3-L4): a later failure would be a
+        // but stay inside the query embedding's own bound: a later failure would be a
         // timeout instead.
         await new Promise((r) =>
           setTimeout(
@@ -1505,7 +1505,7 @@ describe("built-in embedder runtime config change", () => {
               ).rows[0]?.pid;
               if (readPid === undefined) await new Promise((r) => setTimeout(r, 10));
             }
-            // F1 inverse: fallback must retain the original owner, not release
+            // Inverse: fallback must retain the original owner, not release
             // and reacquire a slot while the same operation is still in flight.
             expect(await capacityOwners()).toEqual(embeddingOwners);
             // Keep SQL blocked beyond the ORIGINAL deadline, then allow an incorrectly reset timer to finish.
@@ -1520,7 +1520,7 @@ describe("built-in embedder runtime config change", () => {
         expect(readPid).toBeDefined();
         const outcome = await pending;
         console.info(
-          `R46r8 deadline ${mode} budget=${budgetMs} elapsed=${settledAt! - startedAt} code=${outcome instanceof Error && "code" in outcome ? outcome.code : "SUCCESS"}`,
+          `deadline ${mode} budget=${budgetMs} elapsed=${settledAt! - startedAt} code=${outcome instanceof Error && "code" in outcome ? outcome.code : "SUCCESS"}`,
         );
         expect(outcome).toMatchObject({ code: "DEADLINE_EXCEEDED" });
         expect(await capacityOwners()).toEqual([]);
@@ -1686,7 +1686,7 @@ describe("built-in embedder runtime config change", () => {
       expect((await active(f.kbId))?.fingerprint).toBe(oldFingerprint);
     }
     // Re-enter the production driver after a simulated process restart. The queue includes
-    // earlier fixtures (including P4's cancel-lock matrix), not just the two upgrade KBs.
+    // earlier fixtures (including the cancel-lock matrix), not just the two upgrade KBs.
     // One tick per queued build plus one to settle the final lease must drain it.
     const queuedBuilds = await prisma.qwenReembed.count({ where: { state: "QUEUED" } });
     for (let i = 0; i <= queuedBuilds; i++) {
@@ -1811,7 +1811,7 @@ describe("built-in embedder runtime config change", () => {
   });
 });
 
-// 46r10: model identity, dimensions and the sequential slot change together.
+// Model identity, dimensions and the sequential slot change together.
 it("Qwen to Gemma probes before switching, rebuilds attached KBs sequentially, and serves lexical notices meanwhile", {
   timeout: 180_000,
 }, async () => {

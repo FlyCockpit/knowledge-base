@@ -140,7 +140,7 @@ function observeGrace(hook: (update: () => Promise<number>) => Promise<number>):
 
 describe("exports real Git/CAS/SQL", () => {
   for (const kind of ["signal", "shutdown"] as const) {
-    preparedCase(`R46r1 F2: ${kind} joins actual row/file cleanup before failure`, async () => {
+    preparedCase(`${kind} joins actual row/file cleanup before failure`, async () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
@@ -222,7 +222,7 @@ describe("exports real Git/CAS/SQL", () => {
       };
     });
   }
-  preparedCase("R46r1 F2: shutdown owns pending admission before body creation", async () => {
+  preparedCase("shutdown owns pending admission before body creation", async () => {
     const base = await fixture();
     return async () => {
       const lifecycle = await startExportLifecycle(runtime);
@@ -276,7 +276,7 @@ describe("exports real Git/CAS/SQL", () => {
     };
   });
   for (const kind of ["revoke", "signal", "successful-sibling"] as const) {
-    preparedCase(`R46r1 F3: first EOF ${kind} owns only its completed delivery`, async () => {
+    preparedCase(`first EOF ${kind} owns only its completed delivery`, async () => {
       const base = await fixture();
       const member = await user();
       await prisma.kbShare.create({ data: { kbId: base.kbId, userId: member.id, bits: ["read"] } });
@@ -385,7 +385,7 @@ describe("exports real Git/CAS/SQL", () => {
     });
   }
   preparedCase(
-    "F1: a stale wall-clock sweep cannot reclaim EOF grace committed after row contention",
+    "a stale wall-clock sweep cannot reclaim EOF grace committed after row contention",
     async () => {
       const base = await fixture();
       const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
@@ -502,7 +502,7 @@ describe("exports real Git/CAS/SQL", () => {
     },
   );
   preparedCase(
-    "F1 inverse: reclamation commits before unlink; a later EOF cannot resurrect the artifact",
+    "inverse: reclamation commits before unlink; a later EOF cannot resurrect the artifact",
     async () => {
       const base = await fixture();
       const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
@@ -1179,114 +1179,108 @@ describe("exports real Git/CAS/SQL", () => {
       };
     },
   );
-  preparedCase(
-    "R46r1 F2: shutdown retains preparation ownership through final reclamation",
-    async () => {
-      const base = await fixture();
-      return async () => {
-        const lifecycle = await startExportLifecycle(runtime);
-        const entered = barrier();
-        const resume = barrier();
-        let id: string | undefined;
-        const controlled: KbRuntimeConfig = {
-          ...runtime,
-          prisma: new Proxy(prisma, {
-            get(target, key, receiver) {
-              if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
-              return new Proxy(target.exportArtifact, {
-                get(model, method, modelReceiver) {
-                  if (method === "findUniqueOrThrow")
-                    return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
-                      const row = await model.findUniqueOrThrow(args);
-                      id = row.id;
-                      throw new Error("Injected final receipt read failure");
-                    };
-                  if (method === "findMany")
-                    return async (args: Prisma.ExportArtifactFindManyArgs) => {
-                      const rows = await model.findMany(args);
-                      if (rows.some((row) => row.id === id)) {
-                        entered.release();
-                        await resume.wait;
-                      }
-                      return rows;
-                    };
-                  return Reflect.get(model, method, modelReceiver);
-                },
-              });
-            },
-          }),
-        };
-        const preparing = prepareExport(controlled, base.actor, request(base, "assets"));
-        const rejected = expect(preparing).rejects.toBeDefined();
-        await entered.wait;
-        let stopped = false;
-        const stopping = lifecycle.stop().then(() => {
-          stopped = true;
-        });
-        try {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          expect(stopped).toBe(false);
-          resume.release();
-          await Promise.all([rejected, stopping]);
-          if (!id) throw new Error("Missing real preparation receipt");
-          await clean(id);
-        } finally {
-          resume.release();
-          await Promise.allSettled([rejected, stopping]);
-        }
-      };
-    },
-  );
-  preparedCase(
-    "R46r1 F3: failed producer final return preserves a replay's delivered EOF",
-    async () => {
-      const base = await fixture();
-      return async () => {
-        let id: string | undefined;
-        let delivered: Awaited<ReturnType<typeof readTransfer>> | undefined;
-        const controlled: KbRuntimeConfig = {
-          ...runtime,
-          prisma: new Proxy(prisma, {
-            get(target, key, receiver) {
-              if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
-              return new Proxy(target.exportArtifact, {
-                get(model, method, modelReceiver) {
-                  if (method !== "findUniqueOrThrow")
-                    return Reflect.get(model, method, modelReceiver);
+  preparedCase("shutdown retains preparation ownership through final reclamation", async () => {
+    const base = await fixture();
+    return async () => {
+      const lifecycle = await startExportLifecycle(runtime);
+      const entered = barrier();
+      const resume = barrier();
+      let id: string | undefined;
+      const controlled: KbRuntimeConfig = {
+        ...runtime,
+        prisma: new Proxy(prisma, {
+          get(target, key, receiver) {
+            if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
+            return new Proxy(target.exportArtifact, {
+              get(model, method, modelReceiver) {
+                if (method === "findUniqueOrThrow")
                   return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
                     const row = await model.findUniqueOrThrow(args);
                     id = row.id;
-                    delivered = await readTransfer(runtime, base.actor, {
-                      kbId: base.kbId,
-                      transferId: row.id,
-                      offset: 0,
-                    });
-                    throw new Error("Injected original producer return failure");
+                    throw new Error("Injected final receipt read failure");
                   };
-                },
-              });
-            },
-          }),
-        };
-        await expect(
-          prepareExport(controlled, base.actor, request(base, "assets")),
-        ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
-        if (!id || !delivered) throw new Error("Missing delivered replay frame");
-        expect(delivered.eof).toBe(true);
-        const completed = await prisma.exportArtifact.findUniqueOrThrow({ where: { id } });
-        expect(completed.state).toBe("READY");
-        expect(completed.downloadCompletedAt).not.toBeNull();
-        expect(existsSync(artifactPath(id))).toBe(true);
-        expect(
-          await readTransfer(runtime, base.actor, { kbId: base.kbId, transferId: id, offset: 0 }),
-        ).toEqual(delivered);
-        await completeExport(runtime, base.actor, { kbId: base.kbId, transferId: id });
-        await released(id, "DOWNLOADED");
+                if (method === "findMany")
+                  return async (args: Prisma.ExportArtifactFindManyArgs) => {
+                    const rows = await model.findMany(args);
+                    if (rows.some((row) => row.id === id)) {
+                      entered.release();
+                      await resume.wait;
+                    }
+                    return rows;
+                  };
+                return Reflect.get(model, method, modelReceiver);
+              },
+            });
+          },
+        }),
       };
-    },
-  );
+      const preparing = prepareExport(controlled, base.actor, request(base, "assets"));
+      const rejected = expect(preparing).rejects.toBeDefined();
+      await entered.wait;
+      let stopped = false;
+      const stopping = lifecycle.stop().then(() => {
+        stopped = true;
+      });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(stopped).toBe(false);
+        resume.release();
+        await Promise.all([rejected, stopping]);
+        if (!id) throw new Error("Missing real preparation receipt");
+        await clean(id);
+      } finally {
+        resume.release();
+        await Promise.allSettled([rejected, stopping]);
+      }
+    };
+  });
+  preparedCase("failed producer final return preserves a replay's delivered EOF", async () => {
+    const base = await fixture();
+    return async () => {
+      let id: string | undefined;
+      let delivered: Awaited<ReturnType<typeof readTransfer>> | undefined;
+      const controlled: KbRuntimeConfig = {
+        ...runtime,
+        prisma: new Proxy(prisma, {
+          get(target, key, receiver) {
+            if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
+            return new Proxy(target.exportArtifact, {
+              get(model, method, modelReceiver) {
+                if (method !== "findUniqueOrThrow")
+                  return Reflect.get(model, method, modelReceiver);
+                return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
+                  const row = await model.findUniqueOrThrow(args);
+                  id = row.id;
+                  delivered = await readTransfer(runtime, base.actor, {
+                    kbId: base.kbId,
+                    transferId: row.id,
+                    offset: 0,
+                  });
+                  throw new Error("Injected original producer return failure");
+                };
+              },
+            });
+          },
+        }),
+      };
+      await expect(
+        prepareExport(controlled, base.actor, request(base, "assets")),
+      ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+      if (!id || !delivered) throw new Error("Missing delivered replay frame");
+      expect(delivered.eof).toBe(true);
+      const completed = await prisma.exportArtifact.findUniqueOrThrow({ where: { id } });
+      expect(completed.state).toBe("READY");
+      expect(completed.downloadCompletedAt).not.toBeNull();
+      expect(existsSync(artifactPath(id))).toBe(true);
+      expect(
+        await readTransfer(runtime, base.actor, { kbId: base.kbId, transferId: id, offset: 0 }),
+      ).toEqual(delivered);
+      await completeExport(runtime, base.actor, { kbId: base.kbId, transferId: id });
+      await released(id, "DOWNLOADED");
+    };
+  });
   preparedCase(
-    "R46r1 F2: replay cancellation joins its still-returning producer before cleanup",
+    "replay cancellation joins its still-returning producer before cleanup",
     async () => {
       const base = await fixture();
       return async () => {
@@ -1347,7 +1341,7 @@ describe("exports real Git/CAS/SQL", () => {
     },
   );
   preparedCase(
-    "R46r1 F2: a failed discard does not let shutdown abandon another pending reader",
+    "a failed discard does not let shutdown abandon another pending reader",
     async () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);

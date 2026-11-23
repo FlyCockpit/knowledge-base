@@ -188,7 +188,7 @@ export const SUITES = {
     ],
     services: ["postgres", "redis"],
   },
-  // R3-W3: the built server/worker entrypoints never print a credential on an
+  // The built server/worker entrypoints never print a credential on an
   // import-time failure (malformed or unreachable credential-bearing URLs).
   "entry-canary": {
     include: ["packages/test-utils/src/kb/entry-canary.integration.test.ts"],
@@ -523,7 +523,7 @@ export const SUITES = {
     ],
     services: ["postgres"],
   },
-  // flk8: real-daemon build-supervisor proof. Its duration follows the Docker
+  // Real-daemon build-supervisor proof. Its duration follows the Docker
   // daemon, so it runs under build-only bounds in its own suite (`test:kb all`,
   // and merges touching build-* sources), not in every harness run.
   build: {
@@ -654,7 +654,7 @@ export function buildPrerequisites(name, suite = SUITES[name], project) {
     gcc("fork-ignore-child", buildArtifactPath("fork-ignore.c", project), []);
   }
   // Any suite whose tests call ownProcess() needs the owner binary; derived from the
-  // sources so a new caller (R45's qwen-process tests) cannot miss it.
+  // sources so a new caller (such as the qwen-process tests) cannot miss it.
   if (usesSource(suite, "ownProcess("))
     gcc("process-owner", join(ROOT, "packages/test-utils/src/kb/process-fixture.c"), []);
   if (
@@ -1205,7 +1205,7 @@ function removeRunImages(images, project) {
 const TEST_PROJECT_LABEL = "io.knowledge-base.test-project";
 
 /**
- * R3-W1: the git-heavy suites (PR merge, change sets, push, smart HTTP) run
+ * The git-heavy suites (PR merge, change sets, push, smart HTTP) run
  * against the git the shipped images contain, not only the host's newer one.
  * Builds Dockerfile's `base` stage (the runner is FROM base, so this is the
  * runtime git layer) and copies its git binary, exec path and templates out.
@@ -1340,7 +1340,7 @@ async function removeOwnedDocker(run, env, secrets, project, args, kind) {
   }
 }
 
-/** The suite's server, backend and hook really ran the copied git (R3-W1 review). */
+/** The suite's server, backend and hook really ran the copied git. */
 export function assertImageGitReached(binDir, required) {
   const logPath = join(dirname(binDir), "invocations.log");
   const lines = existsSync(logPath) ? readFileSync(logPath, "utf8").split("\n") : [];

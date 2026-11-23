@@ -82,29 +82,21 @@ describe("committed migration lifecycle", () => {
     }
   }, 180_000);
 
-  it("upgrades a populated 0_init database: SQL protections hold and write grants backfill to BOTH", async () => {
+  it("migrates a populated 0_init database: SQL protections and the write-mode CHECK hold", async () => {
     const db = await cluster.createDatabase();
     const atInit = migrationPrefix(1);
     try {
       // Stop at 0_init and load its committed data fixture there, the way
-      // db:check-migrations replays it, then upgrade over that data.
+      // db:check-migrations replays it, then apply any later migrations over
+      // that data.
       db.applyPrismaSchema({ migrationsDir: atInit.dir });
       expect(
         (await db.query("applier", "SELECT migration_name FROM _prisma_migrations")).rows,
       ).toEqual([{ migration_name: "0_init" }]);
       await db.query("applier", fixture("0_init.sql"));
-      // The committed assertion fixtures exercise every former SQL-owned
-      // check, partial index, FK and authority/generation trigger.
+      // The committed assertion fixtures exercise every SQL-owned check,
+      // partial index, FK and authority/generation trigger.
       expect(resultRows(await db.query("applier", fixture("0_init.check.sql")))).toEqual([]);
-      // Before the write-mode migration these grants carry no mode at all.
-      expect(
-        (
-          await db.query(
-            "applier",
-            `SELECT column_name FROM information_schema.columns WHERE table_name='mcp_grant' AND column_name='authoringMode'`,
-          )
-        ).rows,
-      ).toEqual([]);
       db.applyPrismaSchema();
       expect((await state(db.urls.applier)).state).toBe("up-to-date");
       expect(
@@ -112,14 +104,14 @@ describe("committed migration lifecycle", () => {
           await db.query("applier", "SELECT migration_name FROM _prisma_migrations ORDER BY 1")
         ).rows.map((row) => row.migration_name),
       ).toEqual(migrationFolders);
-      // Every fixture assertion file holds after the upgrade (each later
-      // migration's own checks included).
+      // Every fixture assertion file holds after the later migrations (their
+      // own checks included).
       for (const file of readdirSync(fixturesDir)
         .filter((name) => name.endsWith(".check.sql"))
         .sort())
         expect(resultRows(await db.query("applier", fixture(file))), file).toEqual([]);
-      // Write grants, live and revoked, PAT and OAuth, keep exactly their old
-      // authority (BOTH); the read grant stays without a mode.
+      // Write grants, live and revoked, PAT and OAuth, keep their mode (BOTH);
+      // the read grant stays without one.
       expect(
         (
           await db.query(
@@ -134,9 +126,8 @@ describe("committed migration lifecycle", () => {
         { id: "00000000-0000-4000-8000-0000000000a3", mode: null, revoked: false },
         { id: "00000000-0000-4000-8000-0000000000a4", mode: "BOTH", revoked: false },
       ]);
-      // Approved consent selections are left exactly as written: refresh reads
-      // only their approved scopes, so a selection from before write modes
-      // (no `authoringMode`) keeps refreshing without a rewrite.
+      // Approved consent selections are left exactly as written; a selection
+      // without an `authoringMode` refreshes through its grant's mode.
       const consent = await db.query(
         "applier",
         `SELECT id, selection::jsonb AS selection FROM consent_intent WHERE id IN ('fx_consent_write','fx_consent_read') ORDER BY id`,
@@ -176,7 +167,7 @@ describe("committed migration lifecycle", () => {
       await expect(insert("{mcp:read}", "EDIT")).rejects.toMatchObject({ code: "23514" });
       await expect(insert("{mcp:write}", "DREAM")).resolves.toBeDefined();
       await expect(insert("{mcp:read}", "")).resolves.toBeDefined();
-      // Re-entering the upgraded database changes nothing.
+      // Re-entering the migrated database changes nothing.
       const before = await db.query(
         "applier",
         `SELECT id::text, "authoringMode"::text FROM mcp_grant ORDER BY id`,

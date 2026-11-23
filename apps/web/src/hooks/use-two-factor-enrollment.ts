@@ -19,7 +19,7 @@ export type TwoFactorEnrollmentStep = "start" | "password" | "secret" | "code";
 
 export type TwoFactorEnrollmentEvent = "begin" | "enrolled" | "saved" | "cancel";
 
-/** The step machine above. Every event is valid from any step (as before). */
+/** The step machine above. Every event is valid from any step. */
 export function nextTwoFactorStep(
   _step: TwoFactorEnrollmentStep,
   event: TwoFactorEnrollmentEvent,

@@ -38,7 +38,7 @@ fn client(resource: &McpResource, name: &str) -> McpClient {
 static NEXT_KEY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 fn key() -> IdempotencyKey {
     IdempotencyKey::parse(&format!(
-        "r50-production-{:016}",
+        "production-key-{:016}",
         NEXT_KEY.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ))
     .expect("fixture key")
@@ -50,15 +50,16 @@ fn ctl() -> CallControl {
 #[tokio::test]
 #[ignore = "driven by pnpm test:kb -- sealed with a real production handler"]
 async fn real_proposal_noop_merge_and_sealed_host_projection() {
-    let fixture: Fixture = serde_json::from_str(&std::env::var("KB_R50_FIXTURE").expect("fixture"))
-        .expect("fixture shape");
+    let fixture: Fixture =
+        serde_json::from_str(&std::env::var("KB_PRODUCTION_ADAPTER_FIXTURE").expect("fixture"))
+            .expect("fixture shape");
     let resource = McpResource::parse(
-        &std::env::var("KB_R50_RESOURCE").expect("fixture resource"),
+        &std::env::var("KB_PRODUCTION_ADAPTER_RESOURCE").expect("fixture resource"),
         TransportPolicy::AllowLoopbackHttp,
     )
     .expect("fixture origin");
-    let proposer = client(&resource, "KB_R50_PAT");
-    let owner = client(&resource, "KB_R50_OWNER_PAT");
+    let proposer = client(&resource, "KB_PRODUCTION_ADAPTER_PAT");
+    let owner = client(&resource, "KB_PRODUCTION_ADAPTER_OWNER_PAT");
     let locator = KbLocator::parse(
         &format!("{}#kb={}", resource.as_string(), fixture.kb_id),
         TransportPolicy::AllowLoopbackHttp,
