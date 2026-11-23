@@ -1044,15 +1044,159 @@ export function bodyByteOffsetAfterFrontMatter(bytes: Buffer): number {
   return bytes.byteLength - body.byteLength;
 }
 
-export type DocumentProvenance = "dream" | "human" | "absent";
+/**
+ * Who wrote a document, from its front matter: `dream` (a dream), `agent`
+ * (a credential's direct edit) or `human` (a person in the web app). The
+ * server stamps `agent` and `human` on every write (`stampProvenance`), so a
+ * client's own value never survives a write.
+ */
+export type DocumentProvenance = "dream" | "agent" | "human" | "absent";
 
-/** Conservative default: absent provenance is treated as human-authored for dream guards. */
+/** Conservative default: absent or unknown provenance is treated as human-authored for dream guards. */
 export function readDocumentProvenance(frontMatter: Record<string, unknown>): DocumentProvenance {
   const value = frontMatter.provenance;
   if (value === "dream") return "dream";
+  if (value === "agent") return "agent";
   if (value === "human") return "human";
   if (value === undefined || value === null) return "absent";
   return "human";
+}
+
+/** Dreams may update what dreams or agents wrote, never what a person wrote (or anything unlabelled). */
+export function isDreamOverwritable(provenance: DocumentProvenance): boolean {
+  return provenance === "dream" || provenance === "agent";
+}
+
+/** How protected a label is from dreams: what a merge of two labels keeps (the higher). */
+export function provenanceProtection(provenance: DocumentProvenance): 0 | 1 | 2 {
+  return provenance === "dream" ? 0 : provenance === "agent" ? 1 : 2;
+}
+
+export type ProvenanceStampResult = { ok: true; bytes: Buffer } | { ok: false; message: string };
+
+const STAMPABLE_PROVENANCE_LINE = /^provenance:[ \t]+[^\r\n]*$/;
+
+function stableFrontMatterJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableFrontMatterJson).join(",")}]`;
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${stableFrontMatterJson((value as Record<string, unknown>)[key])}`,
+    );
+  return `{${entries.join(",")}}`;
+}
+
+/**
+ * Server-side provenance stamp (strip-and-stamp: a client never chooses its
+ * own label). The result says exactly `provenance: <value>` and is otherwise
+ * the same document:
+ * - already `value`: the bytes, untouched;
+ * - no front matter: `---\nprovenance: <value>\n---\n` is prepended;
+ * - no provenance key: the line is appended as the last front-matter line;
+ * - one simple column-0 `provenance: <scalar>` line: it is replaced in place.
+ * Anything else (a quoted or escaped key, a block, flow or multi-line value)
+ * is refused, never guessed at. The result is re-parsed: every other key and
+ * the body must be unchanged. Shared corpus: fixtures/provenance-stamp-cases.json
+ * (the `kb` CLI's local store runs the same cases).
+ */
+export function stampProvenance(bytes: Buffer, value: "agent" | "human"): ProvenanceStampResult {
+  const refused = (): ProvenanceStampResult => ({
+    ok: false,
+    message: "front matter provenance must be a single `provenance: <value>` line",
+  });
+  const before = parseMarkdownDocument(bytes);
+  if ("code" in before) return { ok: false, message: before.message };
+  if (before.frontMatter.provenance === value) return { ok: true, bytes };
+  const { yaml, body } = splitFrontMatter(bytes);
+  let stamped: Buffer;
+  if (!yaml) {
+    stamped = Buffer.concat([Buffer.from(`---\nprovenance: ${value}\n---\n`, "utf8"), bytes]);
+  } else {
+    const eol = bytes[3] === 0x0d ? "\r\n" : "\n";
+    const yamlStart = yaml.byteOffset - bytes.byteOffset;
+    const yamlEnd = yamlStart + yaml.byteLength;
+    const lines = yaml.toString("utf8").split("\n");
+    // `split` leaves one trailing empty element after the final line ending.
+    if (lines.at(-1) === "") lines.pop();
+    const keyed = lines
+      .map((line, index) => ({ line: line.replace(/\r$/, ""), index }))
+      .filter(({ line }) => /^["']?provenance["']?[ \t]*:/.test(line));
+    let nextYaml: string;
+    if (!Object.hasOwn(before.frontMatter, "provenance") && keyed.length === 0) {
+      nextYaml = `${yaml.toString("utf8")}provenance: ${value}${eol}`;
+    } else if (keyed.length === 1 && STAMPABLE_PROVENANCE_LINE.test(keyed[0]!.line)) {
+      const index = keyed[0]!.index;
+      const ending = lines[index]!.endsWith("\r") ? "\r" : "";
+      lines[index] = `provenance: ${value}${ending}`;
+      nextYaml = `${lines.join("\n")}\n`;
+    } else {
+      return refused();
+    }
+    stamped = Buffer.concat([
+      bytes.subarray(0, yamlStart),
+      Buffer.from(nextYaml, "utf8"),
+      bytes.subarray(yamlEnd),
+    ]);
+  }
+  const after = parseMarkdownDocument(stamped);
+  if ("code" in after || after.frontMatter.provenance !== value) return refused();
+  const { provenance: _was, ...restBefore } = before.frontMatter;
+  const { provenance: _now, ...restAfter } = after.frontMatter;
+  if (
+    stableFrontMatterJson(restBefore) !== stableFrontMatterJson(restAfter) ||
+    !splitFrontMatter(stamped).body.equals(body)
+  )
+    return refused();
+  return { ok: true, bytes: stamped };
+}
+
+/**
+ * Whether one front-matter line (its ending included) is a provenance line:
+ * it starts in column 0 and, parsed on its own as a one-line front matter
+ * (`---\n<line>\n---\n`, line ending removed), yields exactly one key and
+ * that key is `provenance` — plain, quoted or escaped alike.
+ */
+function isProvenanceLine(line: string): boolean {
+  const content = line.replace(/\n$/, "").replace(/\r$/, "");
+  if (content === "" || content.startsWith(" ") || content.startsWith("\t")) return false;
+  const parsed = parseMarkdownDocument(Buffer.from(`---\n${content}\n---\n`, "utf8"));
+  if ("code" in parsed) return false;
+  const keys = Object.keys(parsed.frontMatter);
+  return keys.length === 1 && keys[0] === "provenance";
+}
+
+/**
+ * Whether `next` is `prior` up to its provenance line (the provenance-only
+ * noop rule, identical in the Rust `same_except_provenance_line`): both
+ * parse, their bodies are byte-equal, and their front-matter texts (absent =
+ * empty) are byte-equal once every provenance line is removed, the remaining
+ * lines compared with their line endings. A comment or spelling change
+ * elsewhere is therefore a change; a requoted label or an escaped key is not,
+ * and neither is a block-scalar header alone — but a block scalar's
+ * (indented) value lines stay and are compared.
+ */
+export function sameExceptProvenanceLine(prior: Buffer, next: Buffer): boolean {
+  const before = parseMarkdownDocument(prior);
+  const after = parseMarkdownDocument(next);
+  if ("code" in before || "code" in after) return false;
+  const left = splitFrontMatter(prior);
+  const right = splitFrontMatter(next);
+  if (!left.body.equals(right.body)) return false;
+  // The parsed metadata must agree too, apart from the real `provenance` key:
+  // a line that only looks like a provenance line on its own (e.g. a key
+  // starting with U+FEFF, which only the stream start strips) is other metadata.
+  const { provenance: _before, ...restBefore } = before.frontMatter;
+  const { provenance: _after, ...restAfter } = after.frontMatter;
+  if (stableFrontMatterJson(restBefore) !== stableFrontMatterJson(restAfter)) return false;
+  // Both parsed, so both front-matter texts are UTF-8.
+  const kept = (yaml: Buffer | null) =>
+    (yaml?.toString("utf8") ?? "")
+      .split(/(?<=\n)/)
+      .filter((line) => !isProvenanceLine(line))
+      .join("");
+  return kept(left.yaml) === kept(right.yaml);
 }
 
 export type DreamDocumentFields = {

@@ -49,7 +49,10 @@ export function fromAdmissionError(error: unknown): KbDomainError | null {
   if (!error || typeof error !== "object" || !("code" in error)) return null;
   const code = (error as { code: string }).code;
   if (code === "NOT_FOUND") return new KbDomainError("NOT_FOUND", "Knowledge base not found");
-  if (code === "FORBIDDEN") return new KbDomainError("FORBIDDEN", "Forbidden");
+  if (code === "FORBIDDEN") {
+    const details = (error as { details?: unknown }).details;
+    return new KbDomainError("FORBIDDEN", "Forbidden", undefined, details ?? {});
+  }
   if (code === "UNAUTHORIZED") return new KbDomainError("FORBIDDEN", "Forbidden");
   if (code === "RATE_LIMITED") {
     const retry = (error as { retryAfterSeconds?: number }).retryAfterSeconds;

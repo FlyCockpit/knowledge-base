@@ -245,6 +245,8 @@ describe("changes publication receipts and rollback cleanup", () => {
         expired: false,
         banned: false,
         twoFactorSatisfied: true,
+        // An edit-capable write mode: these are direct (edit-mode) writes.
+        authoringMode: "both",
       }),
     };
     const store = mockDeep<LiveAuthorityStore>();

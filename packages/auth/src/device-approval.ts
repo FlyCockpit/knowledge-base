@@ -6,6 +6,12 @@ import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { deviceAuthorization } from "better-auth/plugins";
 import { z } from "zod";
+import {
+  authoringModeWithin,
+  DEVICE_WRITE_MODE_SCOPE_PREFIX,
+  deviceWriteModeCeiling,
+  MCP_AUTHORING_MODES,
+} from "./mcp-authoring-mode";
 import { canonicalMcpResource, patDisplayName, resolvePatExpiry } from "./mcp-config";
 import {
   assertConsentIdentity,
@@ -240,6 +246,8 @@ export function createDeviceApprovalService(options: {
           user_code: code.userCode,
           client_id: code.clientId,
           scope: code.scope,
+          // The write modes this login may be approved for (null: any).
+          requested_write_mode: deviceWriteModeCeiling(code.scope),
           status: code.status,
           nonce: intent.nonce,
           recipient_key: code.recipientKey ? recipientKey.parse(code.recipientKey) : null,
@@ -255,7 +263,9 @@ export function createDeviceApprovalService(options: {
         });
         if (
           intent.selection ||
-          !input.selection.scopes.every((s) => (code.scope ?? "").split(" ").includes(s))
+          !input.selection.scopes.every((s) => (code.scope ?? "").split(" ").includes(s)) ||
+          (input.selection.authoringMode !== null &&
+            !authoringModeWithin(input.selection.authoringMode, deviceWriteModeCeiling(code.scope)))
         )
           return reject();
         await assertLiveConsentSelection(tx, actor.userId, input.selection, now());
@@ -376,6 +386,8 @@ export function createDeviceApprovalService(options: {
           secret: minted.secret,
           expiresAt: minted.expiresAt.toISOString(),
           resource,
+          // The approved write mode (null: read-only), for the CLI's local narrowing.
+          authoringMode: selected.authoringMode,
         };
       });
       if ("error" in result) throw new DeviceApprovalError(result.error);
@@ -440,15 +452,25 @@ export function resolveDevicePlugins(options: {
                 .strictObject({
                   client_id: z.literal("kb-cli"),
                   scope: z.string().default("mcp:read"),
+                  // `kb login --write-mode`: the most this login may be approved for.
+                  kb_write_mode: z.enum(MCP_AUTHORING_MODES).optional(),
                 })
                 .safeParse(ctx.body);
               if (
                 !start.success ||
                 !/^(mcp:read|mcp:write)( (mcp:read|mcp:write))?$/.test(start.data.scope) ||
-                new Set(start.data.scope.split(" ")).size !== start.data.scope.split(" ").length
+                new Set(start.data.scope.split(" ")).size !== start.data.scope.split(" ").length ||
+                (start.data.kb_write_mode !== undefined &&
+                  !start.data.scope.split(" ").includes("mcp:write"))
               )
                 throw new APIError("BAD_REQUEST");
-              return { context: { body: start.data } };
+              // The plugin stores the scope string verbatim: the requested write
+              // mode rides along as one extra token (deviceWriteModeCeiling).
+              const scope =
+                start.data.kb_write_mode === undefined
+                  ? start.data.scope
+                  : `${start.data.scope} ${DEVICE_WRITE_MODE_SCOPE_PREFIX}${start.data.kb_write_mode}`;
+              return { context: { body: { client_id: start.data.client_id, scope } } };
             }
             const headers = new Headers(ctx.headers);
             headers.delete("authorization");

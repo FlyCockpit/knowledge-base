@@ -61,6 +61,10 @@ enum Sub {
         /// `kb mcp` serves only this server's read tools.
         #[arg(long)]
         read_only: bool,
+        /// `kb mcp` holds this server's writes to this write mode: `dream`
+        /// (only dreams), `edit` (only direct edits) or `both`.
+        #[arg(long, value_name = "MODE", value_parser = crate::auth::write_mode_parser())]
+        write_mode: Option<kb_client::authoring::AuthoringMode>,
     },
     /// Remove a named server (and its place in `mcp_servers`). Its stored
     /// credential is kept; `kb logout --server <name>` first revokes it.
@@ -141,6 +145,7 @@ pub fn run(args: &Args) -> Result<()> {
             url,
             allow_loopback_http,
             read_only,
+            write_mode,
         } => {
             if !crate::config::is_server_name(name) {
                 anyhow::bail!("a server name is 1-32 of a-z, 0-9 and -, not starting with -");
@@ -156,6 +161,7 @@ pub fn run(args: &Args) -> Result<()> {
                 allow_loopback_http: *allow_loopback_http
                     && selected.resource.origin().starts_with("http://"),
                 read_only: *read_only,
+                write_mode: *write_mode,
             };
             let config = Config::update(|config| {
                 config.servers.insert(name.clone(), entry.clone());

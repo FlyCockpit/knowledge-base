@@ -77,7 +77,8 @@ export function mergeabilityKey(
   pr?: Pick<PullRequestRow, "headSha" | "version">,
   canonicalOrigin?: string,
 ): string {
-  const prefix = `v1:${snapshot.mainHead}:${snapshot.policyGeneration}:${JSON.stringify(canonicalOrigin ?? "")}`;
+  // v2: dreams may overwrite `agent` documents (write modes); v1 verdicts are stale.
+  const prefix = `v2:${snapshot.mainHead}:${snapshot.policyGeneration}:${JSON.stringify(canonicalOrigin ?? "")}`;
   return pr ? `${prefix}:${pr.headSha}:${pr.version}` : prefix;
 }
 

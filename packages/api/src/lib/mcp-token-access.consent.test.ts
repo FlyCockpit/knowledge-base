@@ -147,6 +147,13 @@ describe("live consent sealed-record batching", () => {
   });
 });
 
+/**
+ * A plain stored row: a deep mock would answer every key refresh reads that
+ * the row lacks (such as `selection.authoringMode`) with a mock function.
+ */
+const storedIntent = (row: Record<string, unknown>) =>
+  row as unknown as Prisma.ConsentIntentGetPayload<{ include: { grant: true } }>;
+
 describe("OAuth claims require current-format stored consent", () => {
   const input = {
     referenceId: "a".repeat(64),
@@ -164,7 +171,7 @@ describe("OAuth claims require current-format stored consent", () => {
     "%s accepts kb_admin-bound creation and rejects unbound creation without changing grants",
     async (grantType) => {
       for (const toolGroups of [["read", "kb_admin"], ["read"]]) {
-        const intent = mockDeep<Prisma.ConsentIntentGetPayload<{ include: { grant: true } }>>({
+        const intent = storedIntent({
           userId: input.userId,
           clientId: input.clientId,
           resource: input.resource,
@@ -185,6 +192,7 @@ describe("OAuth claims require current-format stored consent", () => {
             clientId: input.clientId,
             revokedAt: null,
             scopes: ["mcp:read", "mcp:write", "offline_access"],
+            authoringMode: "BOTH",
           },
         });
         tx.consentIntent.findUnique.mockResolvedValue(intent);
@@ -200,6 +208,71 @@ describe("OAuth claims require current-format stored consent", () => {
       expect(tx.consentIntent.update).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("OAuth refresh of consent approved before write modes", () => {
+  const input = {
+    referenceId: "a".repeat(64),
+    grantId: "11111111-1111-4111-8111-111111111111",
+    userId: "user",
+    clientId: "client",
+    resource: "https://kb.example.invalid/mcp",
+    scopes: ["mcp:read", "mcp:write"],
+    grantType: "refresh_token",
+    tokenScopes: ["mcp:read", "mcp:write", "offline_access"],
+    tokenExpiresAt: new Date(now.getTime() + 600_000),
+  };
+  const refresh = (selection: Record<string, unknown>, authoringMode: string | null) => {
+    tx.consentIntent.findUnique.mockResolvedValue(
+      storedIntent({
+        userId: input.userId,
+        clientId: input.clientId,
+        resource: input.resource,
+        approvedAt: now,
+        expiresAt: input.tokenExpiresAt,
+        scopes: ["mcp:read", "mcp:write", "offline_access"],
+        selection,
+        grant: {
+          id: input.grantId,
+          kind: "OAUTH",
+          userId: input.userId,
+          clientId: input.clientId,
+          revokedAt: null,
+          scopes: ["mcp:read", "mcp:write", "offline_access"],
+          authoringMode: authoringMode as "BOTH" | null,
+        },
+      }),
+    );
+    return issueMcpGenerationClaims(db, input, () => now);
+  };
+  // As stored before write modes: no `authoringMode` key at all.
+  const legacy = {
+    scopes: ["mcp:read", "mcp:write", "offline_access"],
+    toolGroups: ["read", "edit"],
+    acl: [],
+    allowCreate: false,
+    createdKbBits: [],
+  };
+
+  it("keeps refreshing a legacy write selection through its grant's write mode", async () => {
+    await expect(refresh(legacy, "BOTH")).resolves.toEqual({ mcp_grant_id: input.grantId });
+    // Keys a later release adds are ignored, and a stored mode is still read.
+    await expect(
+      refresh({ ...legacy, authoringMode: "edit", laterKey: 1 }, "EDIT"),
+    ).resolves.toEqual({ mcp_grant_id: input.grantId });
+  });
+
+  it("still refuses an invalid stored ceiling or unknown scopes", async () => {
+    // A write selection with no mode anywhere is no valid ceiling.
+    await expect(refresh(legacy, null)).rejects.toThrow(McpConsentError);
+    await expect(refresh({ ...legacy, scopes: ["mcp:admin"] }, "BOTH")).rejects.toThrow(
+      McpConsentError,
+    );
+    await expect(
+      refresh({ ...legacy, allowCreate: true, createdKbBits: ["read"] }, "BOTH"),
+    ).rejects.toThrow(McpConsentError);
+    expect(tx.mcpGrant.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("grant edits and elevations require kb_admin for creation", () => {
@@ -224,6 +297,7 @@ describe("grant edits and elevations require kb_admin for creation", () => {
                   toolGroups,
                   allowCreate: true,
                   createdKbBits: ["read"],
+                  authoringMode: "BOTH",
                   revokedAt: null,
                   tokenId: null,
                   tokenRevokedAt: null,

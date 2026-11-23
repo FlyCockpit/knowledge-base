@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import conformance from "./fixtures/yaml-conformance.json";
 import {
   bodyByteOffsetAfterFrontMatter,
   decodeUtf8Fatal,
+  isDreamOverwritable,
   KB_MARKDOWN_LIMITS,
   parseMarkdownDocument,
+  readDocumentProvenance,
+  sameExceptProvenanceLine,
   splitFrontMatter,
+  stampProvenance,
 } from "./parse-markdown";
 import { frontMatterSchema } from "./protocol/common";
 
@@ -483,4 +488,83 @@ it("charges canonical JSON decimal number spelling at the exact byte boundary", 
       }
     }
   }
+});
+
+describe("provenance", () => {
+  const corpus = JSON.parse(
+    readFileSync(new URL("./fixtures/provenance-stamp-cases.json", import.meta.url), "utf8"),
+  ) as {
+    version: 1;
+    cases: { name: string; input: string; stamp: "agent" | "human"; expect: string | null }[];
+  };
+
+  it("reads dream, agent and human labels; anything else is human, nothing is absent", () => {
+    expect(readDocumentProvenance({ provenance: "dream" })).toBe("dream");
+    expect(readDocumentProvenance({ provenance: "agent" })).toBe("agent");
+    expect(readDocumentProvenance({ provenance: "human" })).toBe("human");
+    expect(readDocumentProvenance({ provenance: "robot" })).toBe("human");
+    expect(readDocumentProvenance({ provenance: ["agent"] })).toBe("human");
+    expect(readDocumentProvenance({})).toBe("absent");
+    expect(
+      ["dream", "agent", "human", "absent"].map((p) => isDreamOverwritable(p as never)),
+    ).toEqual([true, true, false, false]);
+  });
+
+  it("stamps the shared corpus byte for byte (the kb CLI's local store runs the same cases)", () => {
+    expect(corpus.cases.length).toBeGreaterThan(20);
+    for (const entry of corpus.cases) {
+      const result = stampProvenance(Buffer.from(entry.input, "utf8"), entry.stamp);
+      if (entry.expect === null) expect(result.ok, entry.name).toBe(false);
+      else {
+        expect(result.ok, entry.name).toBe(true);
+        if (result.ok) expect(result.bytes.toString("utf8"), entry.name).toBe(entry.expect);
+      }
+    }
+  });
+
+  it("every stamped result says exactly the stamp and keeps the rest of the document", () => {
+    for (const entry of corpus.cases) {
+      if (entry.expect === null) continue;
+      const before = parseMarkdownDocument(Buffer.from(entry.input, "utf8"));
+      const after = parseMarkdownDocument(Buffer.from(entry.expect, "utf8"));
+      if ("code" in before || "code" in after) throw new Error(entry.name);
+      expect(after.frontMatter.provenance, entry.name).toBe(entry.stamp);
+      const { provenance: _a, ...restBefore } = before.frontMatter;
+      const { provenance: _b, ...restAfter } = after.frontMatter;
+      expect(restAfter, entry.name).toEqual(restBefore);
+      // Stamping is idempotent.
+      const again = stampProvenance(Buffer.from(entry.expect, "utf8"), entry.stamp);
+      expect(again.ok && again.bytes.toString("utf8"), entry.name).toBe(entry.expect);
+    }
+  });
+
+  it("treats only provenance lines as a provenance-only difference", () => {
+    const same = (a: string, b: string) =>
+      sameExceptProvenanceLine(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+    const doc = (front: string) => `---\n${front}---\n# Body\n`;
+    // Requoted label, escaped key, single-quoted key, removed or added label.
+    expect(same(doc("id: a\nprovenance: human\n"), doc('id: a\nprovenance: "agent"\n'))).toBe(true);
+    expect(same(doc("id: a\nprovenance: human\n"), doc('id: a\n"\\x70rovenance": agent\n'))).toBe(
+      true,
+    );
+    expect(same(doc("id: a\nprovenance: human\n"), doc("id: a\n'provenance': agent\n"))).toBe(true);
+    expect(same(doc("id: a\nprovenance: human\n"), doc("id: a\n"))).toBe(true);
+    expect(same("# Body\n", doc("provenance: agent\n"))).toBe(true);
+    // A comment elsewhere, a line ending, or the body is a change.
+    expect(same(doc("title: T # old\nprovenance: human\n"), doc("title: T # new\n"))).toBe(false);
+    expect(same(doc("id: a\n"), "---\r\nid: a\r\n---\r\n# Body\n")).toBe(false);
+    expect(same(doc("id: a\n"), `${doc("id: a\n")}more\n`)).toBe(false);
+    // A U+FEFF-prefixed key is other metadata, even though its line alone parses as provenance.
+    expect(
+      same(
+        doc("title: T\nprovenance: human\n"),
+        doc("title: T\n\uFEFFprovenance: custom\nprovenance: human\n"),
+      ),
+    ).toBe(false);
+    // A block scalar's value lines stay and are compared.
+    expect(same(doc("provenance: |\n  human\n"), doc("provenance: |\n  agent\n"))).toBe(false);
+    // Indented lines are never provenance lines; unparseable input never matches.
+    expect(same(doc("meta:\n  provenance: a\n"), doc("meta:\n  provenance: b\n"))).toBe(false);
+    expect(same(doc("id: [\n"), doc("id: [\n"))).toBe(false);
+  });
 });

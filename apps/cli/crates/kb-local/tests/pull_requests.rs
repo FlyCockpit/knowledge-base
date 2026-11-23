@@ -650,15 +650,20 @@ fn late_human_provenance_conflicts_even_when_git_can_merge_cleanly() {
         )
         .proposal
         .expect("fixture");
-    // Legitimate dream proposals merge; a provenance-only edit is a clean
-    // Git merge but must still fail the domain guard after a reopen.
+    // Legitimate dream proposals merge; a person's edit far from the dream's
+    // lines is a clean Git merge but must still fail the domain guard after
+    // a reopen. (A label-only rewrite would be a noop: re-saving never
+    // relabels a document.)
     let root = k.store.paths().root().to_owned();
     let reopened = Store::open(&root).expect("fixture");
+    // A person's edit (the server stamps web edits `human`).
+    k.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Human));
     let source = k
         .git
         .git(&["show", &format!("{}:concepts/concept.md", k.main)]);
     let main = k.edit(&reopened.owner(), &k.main, "human-after-dream", json!([
-        {"op":"replace","path":"concepts/concept.md","content":{"markdown":format!("{}\n",source.replace("provenance: dream","provenance: human"))}}
+        {"op":"replace","path":"concepts/concept.md","content":{"markdown":format!("{}\n",source.replace("provenance: dream","provenance: human").replacen("context\n","context from a person\n",1))}}
     ])).commit_sha;
     k.git.git(&[
         "merge-tree",
@@ -1883,8 +1888,15 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     assert_eq!(paths, ["proposals/four.md", "proposals/three.md"]);
     let three = &refused.paths[1];
     assert_eq!(three.base, None);
-    assert_eq!(three.theirs.as_deref(), Some("# Three\n\nfrom main\n"));
-    assert_eq!(three.yours.as_deref(), Some("# Three\n\nfrom the PR\n"));
+    // Both writers are local sessions: agents.
+    assert_eq!(
+        three.theirs.as_deref(),
+        Some("---\nprovenance: agent\n---\n# Three\n\nfrom main\n")
+    );
+    assert_eq!(
+        three.yours.as_deref(),
+        Some("---\nprovenance: agent\n---\n# Three\n\nfrom the PR\n")
+    );
     assert_eq!(
         (three.theirs_sha.clone(), three.yours_sha.clone()),
         (main.clone(), pr.head_sha.clone())
@@ -2006,9 +2018,15 @@ fn conflicting_proposal_is_marked_resolved_progressively_moved_onto_main_and_mer
     assert_eq!(merged.pr.status, PrStatus::Merged);
     let head = k.head();
     for (path, body) in [
-        ("proposals/three.md", "# Three\n\nresolved\n"),
-        ("proposals/four.md", "# Four\n\nfrom the PR\n"),
-        ("proposals/free.md", "# Free\n"),
+        (
+            "proposals/three.md",
+            "---\nprovenance: agent\n---\n# Three\n\nresolved\n",
+        ),
+        (
+            "proposals/four.md",
+            "---\nprovenance: agent\n---\n# Four\n\nfrom the PR\n",
+        ),
+        ("proposals/free.md", "---\nprovenance: agent\n---\n# Free\n"),
     ] {
         assert_eq!(
             k.git.git(&["show", &format!("{head}:{path}")]),
@@ -2068,7 +2086,7 @@ fn moving_onto_main_replays_clean_changes_and_line_merges() {
     assert_eq!(
         k.git
             .git(&["show", &format!("{}:shared.md", moved.commit_sha)]),
-        "ONE\ntwo\nthree\nfour\nFIVE"
+        "---\nprovenance: agent\n---\nONE\ntwo\nthree\nfour\nFIVE"
     );
     // Rewriting the PR's own path against main without naming it clashes.
     let refused = proposal_conflict(
@@ -3136,4 +3154,82 @@ fn store_paths_with_newlines_fail_with_a_typed_error() {
         .expect_err("unrepresentable alternates path");
     assert!(matches!(error, StoreError::UnsafePath(_)));
     assert_eq!(error.protocol_code(), ErrorCode::RepairRequired);
+}
+
+/// A dream-only handle refuses PR creation and merges (an edit) before any
+/// effect, with `WRITE_MODE` details, and still closes; a dream proposed
+/// over an agent-written note merges under `both`.
+#[test]
+fn write_modes_gate_pr_creation_and_merge_and_dreams_merge_over_agent_notes() {
+    use kb_client::authoring::{AuthoringMode, WriteKind};
+    let mut k = Kb::new("modes");
+    let author = k.principal(&[Permission::Propose]);
+    let pr = k.propose(&author, "proposed.md");
+    let dreamer = Store::open(k.store.paths().root()).expect("fixture");
+    dreamer.narrow_authoring(AuthoringMode::Dream);
+    let write_mode = |result: Result<PrMutationOutput, StoreError>| {
+        let error = result.expect_err("refused");
+        assert!(
+            matches!(error, StoreError::WriteMode(WriteKind::Edit)),
+            "{error}"
+        );
+        assert_eq!(
+            error.protocol_details(),
+            json!({"reason":"WRITE_MODE","required":"edit"})
+        );
+    };
+    let epoch = k.epoch();
+    write_mode(dreamer.pull_requests_review(
+        &dreamer.owner(),
+        k.review_input(&pr, "merge", "mode-merge-key-0001"),
+    ));
+    let head = k.user_branch(&author, "user/modes", &[("user.md", b"user")]);
+    write_mode(dreamer.pull_requests_create(
+        &author,
+        k.create_input("user/modes", &head, "mode-create-key-001"),
+    ));
+    assert_eq!(k.head(), k.main, "main unchanged");
+    assert_eq!(k.epoch(), epoch);
+    assert_eq!(k.list().len(), 1, "no PR was created");
+    // Closing writes nothing a mode governs.
+    let closed = dreamer
+        .pull_requests_review(
+            &dreamer.owner(),
+            k.review_input(&pr, "close", "mode-close-key-0001"),
+        )
+        .expect("a dream-only handle closes");
+    assert_eq!(closed.pr.status, PrStatus::Closed);
+
+    // An agent-written note (as a local session writes it) may be dreamed
+    // over, and the reviewed merge's guard agrees.
+    k.main = k
+        .edit(
+            &k.store.owner(),
+            &k.main,
+            "agent-note-key-0001",
+            edit(
+                "create",
+                "concepts/concept.md",
+                "---\nid: \"concept\"\ntype: \"concept\"\n---\nAgent note.\n",
+            ),
+        )
+        .commit_sha;
+    assert!(
+        k.git
+            .git(&["show", &format!("{}:concepts/concept.md", k.main)])
+            .contains("provenance: agent")
+    );
+    let dream = k
+        .dream(&author, "agent-dream-key-0001", "Dreamed.\n")
+        .proposal
+        .expect("fixture");
+    let merged = k
+        .review(
+            &k.store.owner(),
+            &k.get(dream.number, None).pr,
+            "merge",
+            "agent-merge-key-0001",
+        )
+        .expect("dream over an agent note merges");
+    assert_eq!(merged.pr.status, PrStatus::Merged);
 }

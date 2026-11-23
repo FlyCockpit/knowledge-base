@@ -117,7 +117,13 @@ kb logout
 
 Login prints a public verification URL/code; open it yourself and compare the
 code before approving. Nothing is preselected: choose KB bits, optional creation
-bits and dated expiry. Pending/slow-down polls do not consume approval. Denied,
+bits, dated expiry and, with write access, the write mode (`dream`, `edit` or
+`both`; see [MCP write modes](./mcp.md#write-modes-and-provenance)).
+`kb login --write-mode dream|edit|both` limits which modes the approval page
+offers; the approved mode is stored with the credential and `kb mcp` enforces
+it locally as well (a login without `--write-mode` offers every mode). Logins
+need this CLI release or later (older CLIs reject the approved mode in the
+exchange reply). Pending/slow-down polls do not consume approval. Denied,
 expired or lost consumed exchange requires new login; no retained server token
 secret can be replayed. PATs are separate from browser sessions.
 Import an existing PAT with `kb login --token-stdin` from a private pipe or
@@ -146,7 +152,13 @@ server's list the same way, on top of the server grant, and checks each call's
 own group (asset changes inside `knowledge_changes_apply`, an upload's kind). An
 upload's write and finish are accepted under a `--tools` without `edit` or
 `assets` only for an upload begun in the same connection with a kind the groups
-allow (a remote upload's kind is not known otherwise). Calls make one attempt; lost mutation replies
+allow (a remote upload's kind is not known otherwise). `--write-mode
+dream|edit|both` narrows writes locally on top of the credential's approved mode
+(and a configured server's `write_mode`): a dream-only connection does not list
+the tools that always edit directly and refuses `knowledge_changes_apply` edits
+and PR merges with the server's `FORBIDDEN` `WRITE_MODE` details; an edit-only
+one refuses dreams. Modes that do not overlap (`dream` against `edit`) are a
+startup error naming the server. Calls make one attempt; lost mutation replies
 have unknown outcomes, so retain arguments/idempotency key for recovery.
 
 ### Several servers on one connection
@@ -202,6 +214,9 @@ servers.
   `read_only = true` (`kb config add-server --read-only`) is always read-only.
   Write tools of a read-only server are not in its `enum` and are refused.
   `--tools` narrows every server. `--principal` and `--kb` stay local-store only.
+- **Write modes.** Each server's writes are held to its stored login's approved
+  mode ∩ `--write-mode` ∩ its `write_mode` (`kb config add-server --write-mode`);
+  the union keeps the pinned descriptions.
 - **Sealed values.** `knowledge_sealed_resolve` is forwarded ciphertext-only to
   the named server; host decryption (`kb-client` `resolve_sealed`) stays bound
   to the attachment's own resource.
@@ -382,6 +397,18 @@ outside `--kb` is NOT_FOUND. The two supporting tools stay callable.
 to the selection), and a KB the connection creates joins its selection.
 `--read-only` intersects with both flags. The store owner holds every permission, so presets select
 groups only: `propose` does not stop the owner's edits from reaching main.
+
+`--write-mode dream|edit|both` (default `both`) is a local connection's write
+mode, as on a server grant: `dream` hides the tools that always edit directly
+and refuses edits, uploads, asset writes, PR creation and merges, and KB
+create/delete; `edit` refuses dreams; both refuse with `FORBIDDEN`
+`{reason: "WRITE_MODE", required}` before any store change. A one-mode
+connection lists `knowledge_changes_apply` with that mode's description.
+Every direct edit through `kb mcp` is labelled `provenance: agent` in the
+document's front matter by the store (a client's own `provenance` value is
+replaced, a quoted or block value refused), and dreams may update only `dream`
+and `agent` documents, exactly as on the server
+([MCP write modes](./mcp.md#write-modes-and-provenance)).
 
 Provider registration uses `kb providers ... register --idempotency-key ...`
 with `--key-stdin` or a private `--key-file`, exact endpoint/model/dimensions

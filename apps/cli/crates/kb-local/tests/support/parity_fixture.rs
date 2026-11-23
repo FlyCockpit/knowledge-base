@@ -225,6 +225,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     egress: &egress,
                     model: &model,
                     kbs: None,
+                    authoring: kb_client::authoring::AuthoringMode::Both,
                 };
                 let response =
                     rt.block_on(dispatch_with_io(&s, &actor, name, input, &control, &io));

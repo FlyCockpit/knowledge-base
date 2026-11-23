@@ -48,6 +48,7 @@ const humanOnly = {
   "pullRequests.conflicts":
     "browser PR conflict list (conflict details travel in PROPOSAL_CONFLICT over MCP)",
   "pullRequests.forDocument": "browser editor lookup of the viewer's own PR",
+  "documents.history": "browser document history view (one path's commits and their attribution)",
   "kbs.shareInvite": "human sharing",
   "kbs.shareAccept": "human sharing",
   "kbs.shareList": "human sharing",

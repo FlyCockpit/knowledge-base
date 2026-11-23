@@ -50,6 +50,20 @@ describe("ToolGroupPicker", () => {
     expect(presetFor([])).toBe("custom");
   });
 
+  it("previews no direct-edit tools under a dream-only write mode", () => {
+    const direct = {
+      groups: ["read", "edit", "assets", "pull_requests"] as const,
+      writeScope: true,
+      kbs: [{ name: "Alpha notes", bits: ["write"] as const }],
+    };
+    const both = html({ ...direct, authoringMode: "both" });
+    const dream = html({ ...direct, authoringMode: "dream" });
+    expect(both).toContain("<li>knowledge_documents_create</li>");
+    expect(dream).not.toContain("<li>knowledge_documents_create</li>");
+    expect(dream).not.toContain("<li>knowledge_assets_put</li>");
+    expect(dream).toContain("<li>knowledge_changes_apply</li>");
+  });
+
   it("offers the three presets and previews the read tools and selected knowledge bases", () => {
     const markup = html({ kbs: [{ name: "Alpha notes", bits: ["read"] }] });
     for (const preset of ["read", "propose", "direct"] as const)

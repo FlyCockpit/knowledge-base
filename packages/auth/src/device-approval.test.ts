@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { deviceSelection, digestDeviceCode, resolveDevicePlugins } from "./device-approval";
+import { authoringModeWithin, deviceWriteModeCeiling } from "./mcp-authoring-mode";
 
 const empty = { scopes: ["mcp:read"], toolGroups: ["read"], acl: [] };
 describe("device approval contract", () => {
@@ -9,8 +10,23 @@ describe("device approval contract", () => {
       ...empty,
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: null,
       recipients: [],
     });
+  });
+  it("requires a write mode with write access, within the CLI's requested ceiling", () => {
+    expect(deviceSelection.safeParse({ ...empty, scopes: ["mcp:write"] }).success).toBe(false);
+    expect(
+      deviceSelection.parse({ ...empty, scopes: ["mcp:write"], authoringMode: "dream" })
+        .authoringMode,
+    ).toBe("dream");
+    expect(deviceWriteModeCeiling("mcp:read mcp:write")).toBeNull();
+    expect(deviceWriteModeCeiling("mcp:read mcp:write kb:write-mode:dream")).toBe("dream");
+    expect(deviceWriteModeCeiling("mcp:write kb:write-mode:bogus")).toBeNull();
+    expect(authoringModeWithin("dream", "both")).toBe(true);
+    expect(authoringModeWithin("both", "dream")).toBe(false);
+    expect(authoringModeWithin("edit", "dream")).toBe(false);
+    expect(authoringModeWithin("edit", null)).toBe(true);
   });
   it("rejects unknown, offline, forged create, duplicate and wildcard authority", () => {
     for (const input of [
@@ -32,6 +48,7 @@ describe("device approval contract", () => {
       deviceSelection.parse({
         ...empty,
         scopes: ["mcp:write"],
+        authoringMode: "edit",
         toolGroups: ["read", "kb_admin"],
         allowCreate: true,
         createdKbBits: ["read"],

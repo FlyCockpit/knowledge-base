@@ -245,7 +245,8 @@
       "showTextDiff": "Show text diff",
       "hideTextDiff": "Hide text diff",
       "showTextDiffNamed": "Show text diff for {{path}}",
-      "hideTextDiffNamed": "Hide text diff for {{path}}"
+      "hideTextDiffNamed": "Hide text diff for {{path}}",
+      "writtenBy": "Written by {{actor}}"
     },
     "status": {
       "open": "Open",
@@ -301,8 +302,9 @@
     "number": "#{{number}}",
     "pageTitle": "Pull request #{{number}}",
     "author": {
-      "token": "Opened by {{name}} via {{via}}",
-      "web": "Opened by {{name}} via web",
+      "token": "Opened by {{name}} via credential “{{via}}”",
+      "web": "Opened by {{name}} in the web app",
+      "tokenUnknown": "Opened by {{name}} via a credential",
       "unknown": "a deleted user"
     },
     "conflicts": {
@@ -620,5 +622,38 @@
     "noticeBody": "This page shows main's version. Edit the pull request's version to continue your pending change.",
     "noticeEditing": "You're editing main's version. To continue your pending change, edit the pull request's version instead.",
     "editInPr": "Edit in pull request #{{number}}"
+  },
+  "provenance": {
+    "prefixed": "{{prefix}}: {{label}}",
+    "human": {
+      "label": "Person",
+      "description": "Written by a person in the web app. Dreams can't change it."
+    },
+    "agent": {
+      "label": "Agent",
+      "description": "Written by an agent's direct edit. Dreams may update it."
+    },
+    "dream": {
+      "label": "Dream",
+      "description": "Written by a dream. Dreams may update it."
+    },
+    "absent": {
+      "label": "Unspecified",
+      "description": "No label. Treated like a person's document: dreams can't change it."
+    }
+  },
+  "history": {
+    "title": "History",
+    "empty": "No history on main yet.",
+    "loadFailed": "Couldn't load the history.",
+    "unattributed": "Unattributed (Git push or earlier)",
+    "unknownPerson": "Unknown person",
+    "viaWeb": "{{name}} in the web app",
+    "viaCredential": "{{name}} via credential “{{via}}”",
+    "viaUnknownCredential": "{{name}} via a credential",
+    "deleted": "Deleted",
+    "noSubject": "(no subject)",
+    "unknownDate": "unknown date",
+    "meta": "{{actor}} · {{date}} · {{sha}}"
   }
 }

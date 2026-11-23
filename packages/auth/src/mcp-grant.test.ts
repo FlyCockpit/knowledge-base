@@ -83,7 +83,22 @@ describe("normalizeGrantCeiling", () => {
       acl: [],
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: null,
     });
+  });
+
+  it("requires a write mode exactly when the grant can write", () => {
+    // Write access always names its write mode (nothing defaulted); read access never has one.
+    expect(() => normalizeGrantCeiling({ ...base, scopes: ["mcp:write"] })).toThrow(/write mode/);
+    expect(() => normalizeGrantCeiling({ ...base, authoringMode: "both" })).toThrow(/mcp:write/);
+    expect(() =>
+      normalizeGrantCeiling({ ...base, scopes: ["mcp:write"], authoringMode: "all" }),
+    ).toThrow(McpGrantSelectionError);
+    for (const mode of ["dream", "edit", "both"] as const)
+      expect(
+        normalizeGrantCeiling({ ...base, scopes: ["mcp:write"], authoringMode: mode })
+          .authoringMode,
+      ).toBe(mode);
   });
 
   it("rejects created bits unless creation was explicitly allowed", () => {
@@ -97,6 +112,7 @@ describe("normalizeGrantCeiling", () => {
       normalizeGrantCeiling({
         ...base,
         scopes: ["mcp:write"],
+        authoringMode: "edit",
         allowCreate: true,
         createdKbBits: [],
       }),
@@ -105,6 +121,7 @@ describe("normalizeGrantCeiling", () => {
       normalizeGrantCeiling({
         ...base,
         scopes: ["mcp:write"],
+        authoringMode: "edit",
         allowCreate: true,
         createdKbBits: ["propose"],
       }),
@@ -116,6 +133,7 @@ describe("normalizeGrantCeiling", () => {
       normalizeGrantCeiling({
         ...base,
         scopes: ["mcp:write", "mcp:read"],
+        authoringMode: "both",
         toolGroups: ["read", "kb_admin"],
         allowCreate: true,
         createdKbBits: ["propose", "read"],
@@ -131,6 +149,7 @@ describe("normalizeGrantCeiling", () => {
     const create = {
       ...base,
       scopes: ["mcp:write"],
+      authoringMode: "edit",
       allowCreate: true,
       createdKbBits: ["read"],
     };

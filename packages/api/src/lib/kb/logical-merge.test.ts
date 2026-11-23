@@ -665,6 +665,29 @@ describe("logical three-way merge", () => {
       { path: "c.md", kind: "document", standing: true },
     ]);
   });
+
+  it("reads an escaped provenance key instead of assuming the label is absent", async () => {
+    // Base and main: a person's document under an escaped key. The proposal
+    // edits another body line and relabels it agent under the escaped key; the
+    // line merge combines both. The merged text must keep the person's label,
+    // which cannot be stamped over an escaped key: a document conflict, never
+    // an agent-labelled combination.
+    const key = String.raw`"\x70rovenance"`;
+    const doc = (label: string, first: string, second: string) =>
+      `---\n${key}: ${label}\n---\n${first}\n\n${second}\n`;
+    const combined = doc("agent", "main one", "proposal two");
+    const result = await mergeLogicalTrees({
+      base: await tree({ docs: { "e.md": doc("human", "one", "two") } }),
+      main: await tree({ docs: { "e.md": doc("human", "main one", "two") } }),
+      proposal: await tree({ docs: { "e.md": doc("agent", "one", "proposal two") } }),
+      mergeText: async () => Buffer.from(combined),
+      read,
+    });
+    expect(result.conflicts).toEqual([{ path: "e.md", kind: "document" }]);
+    const kept = result.tree.documents.get("e.md");
+    const bytes = kept?.bytes ?? (kept ? await read(kept.sha) : null);
+    expect(bytes?.toString("utf8")).not.toBe(combined);
+  });
 });
 
 /**

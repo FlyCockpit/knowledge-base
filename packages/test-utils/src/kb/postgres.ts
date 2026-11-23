@@ -23,7 +23,12 @@ export type KbPostgresDatabase = {
   database: string;
   urls: Record<KbRoleName, string>;
   query(role: KbRoleName, text: string, values?: unknown[]): Promise<QueryResult>;
-  applyPrismaSchema(): void;
+  /**
+   * Runs the committed migration history through the image runner. A
+   * `migrationsDir` (a copy holding a prefix of the folders) stops the database
+   * at that point, so an upgrade over fixture data can be exercised.
+   */
+  applyPrismaSchema(options?: { migrationsDir?: string }): void;
   createPrismaClient(role?: KbRoleName): PrismaClient;
   close(): Promise<void>;
 };
@@ -284,7 +289,7 @@ async function provisionDatabase(
         await client.end().catch(() => {});
       }
     },
-    applyPrismaSchema() {
+    applyPrismaSchema(options: { migrationsDir?: string } = {}) {
       if (closed) throw new Error(`Fixture ${id} is closed.`);
       assertTestDatabaseUrl(urls.applier, id);
       // Run the committed history with the same owned Prisma engine as images.
@@ -293,9 +298,10 @@ async function provisionDatabase(
         import { prisma, tempConfig } from ${JSON.stringify(PRISMA_OWNER)};
         import { unlinkSync, rmdirSync } from 'node:fs';
         import { dirname } from 'node:path';
-        const config = tempConfig({ url: process.env.DATABASE_URL });
+        const migrationsDir = ${JSON.stringify(options.migrationsDir ?? null)} ?? undefined;
+        const config = tempConfig({ url: process.env.DATABASE_URL, migrations: migrationsDir });
         try {
-          process.exitCode = await run({ env: process.env, connectRetryMs: 0,
+          process.exitCode = await run({ env: process.env, connectRetryMs: 0, migrationsDir,
             runPrisma: (args, options) => prisma([...args, '--config', config], { ...options, guardPath: ${JSON.stringify(buildArtifactPath("child-guard"))} }) });
         } finally { unlinkSync(config); rmdirSync(dirname(config)); }`;
       const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {

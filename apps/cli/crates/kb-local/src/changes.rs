@@ -66,7 +66,9 @@ use crate::journal::{
 use crate::locks::WriteGuard;
 use crate::logical_merge::Kind;
 use crate::manifest::{self, Policy};
-use crate::markdown::{MarkdownIssueCode, parse_markdown};
+use crate::markdown::{
+    MarkdownIssueCode, parse_markdown, same_except_provenance_line, stamp_provenance,
+};
 use crate::pr_merge::ConflictItem;
 use crate::proposals::{PrRow, ProposalDelta, proposal_ref};
 use crate::state::{LocalPrincipal, new_uuid_v4, now_utc};
@@ -172,6 +174,14 @@ fn check_markdown(bytes: &[u8], field: Option<String>) -> Result<(), StoreError>
     parse_markdown(bytes)
         .map(|_| ())
         .map_err(|issue| StoreError::invalid(markdown_reason(issue.code), field, issue.message))
+}
+
+/// The request pointer of an edit's content (`/changes/<i>/content`, or
+/// `/content` for the single-document tools), from its path pointer.
+fn content_field(edit: &Edit) -> Option<String> {
+    edit.field
+        .as_deref()
+        .map(|f| format!("{}/content", f.trim_end_matches("/path")))
 }
 
 /// Reason of a Markdown rejection.
@@ -407,6 +417,11 @@ impl Store {
         observer: Observer<'_>,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<ChangesApply>(&input)?;
+        // The session's write mode, before anything else is read or written.
+        self.demand_authoring(match input.mode {
+            ChangesMode::Dream => kb_client::authoring::WriteKind::Dream,
+            _ => kb_client::authoring::WriteKind::Edit,
+        })?;
         let dream = match (input.mode, input.dream.clone()) {
             (ChangesMode::Edit, None) => None,
             (ChangesMode::Dream, Some(dream)) => Some(dream),
@@ -450,6 +465,7 @@ impl Store {
         input: DocumentWriteInput,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<DocumentsCreate>(&input)?;
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         self.document_write(principal, input, OP_DOC_CREATE)
     }
 
@@ -460,6 +476,7 @@ impl Store {
         input: DocumentWriteInput,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<DocumentsUpdate>(&input)?;
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         self.document_write(principal, input, OP_DOC_UPDATE)
     }
 
@@ -470,6 +487,7 @@ impl Store {
         input: DocumentsDeleteInput,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<DocumentsDelete>(&input)?;
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let hash = hash_of(
             OP_DOC_DELETE,
             serde_json::to_value(&input).map_err(json_err)?,
@@ -535,6 +553,13 @@ impl Store {
         set: ChangeSet,
         observer: Observer<'_>,
     ) -> Result<ApplyResult, StoreError> {
+        // Every wrapper (documents, assets, dreams) converges here: the
+        // write mode is checked again before any lock, read or staging.
+        self.demand_authoring(if set.dream.is_some() {
+            kb_client::authoring::WriteKind::Dream
+        } else {
+            kb_client::authoring::WriteKind::Edit
+        })?;
         let _deadline = crate::git_read::OperationDeadline::start();
         let key = parse_key(&set.key)?;
         let (mut edits, assets) = validate_edits(&set)?;
@@ -631,6 +656,25 @@ impl Store {
                 "staged markdown exceeds 16 MiB".into(),
             ));
         }
+        // A local MCP session is an agent: every document it writes directly
+        // (inline or uploaded, a wrapper's or a conflict resolution) is
+        // stamped `provenance: agent`, whatever label it carried (server
+        // strip-and-stamp). Dreams serialize their own `dream` label. The
+        // stamp is computed here (for disk admission) but applied, and an
+        // unstampable label refused, only after the prior comparison below:
+        // re-saving an unchanged document is a noop whatever its label.
+        let edit_stamp = self.edit_stamp.get().filter(|_| set.dream.is_none());
+        let stamps: Vec<Option<Result<Vec<u8>, String>>> = edits
+            .iter()
+            .map(|edit| {
+                let stamp = edit_stamp?;
+                let bytes = edit
+                    .bytes
+                    .as_ref()
+                    .filter(|_| edit.kind != EditKind::Delete)?;
+                Some(stamp_provenance(bytes, stamp))
+            })
+            .collect();
         // The tree this edit applies to (main for a move onto main, the
         // PR head for a resolution or an edit on it), the PR's conflicts
         // after it, and which of them this request resolves.
@@ -822,7 +866,11 @@ impl Store {
         self.check_disk_admission(
             edits
                 .iter()
-                .filter_map(|e| e.bytes.as_ref())
+                .zip(&stamps)
+                .filter_map(|(e, stamped)| match stamped {
+                    Some(Ok(stamped)) => Some(stamped),
+                    _ => e.bytes.as_ref(),
+                })
                 .map(|b| b.len() as u64)
                 .sum::<u64>()
                 + asset_delta
@@ -840,7 +888,8 @@ impl Store {
         };
         let validation_base = tree.original_blobs().clone();
         let mut changed = asset_paths;
-        for edit in &edits {
+        let mut prior_reader = None;
+        for (edit, stamped) in edits.iter_mut().zip(stamps) {
             let current = tree.lookup(&edit.path);
             let exists = matches!(current, Some(Ok(_)));
             // Every resolution is valid on a conflicted path whatever the
@@ -863,8 +912,40 @@ impl Store {
                 }
                 _ => {}
             }
-            let identical = edit.kind == EditKind::Replace
-                && matches!((current, &edit.bytes), (Some(Ok(sha)), Some(bytes)) if sha == blob_sha(bytes));
+            // A write over an existing document: a replace, or a create
+            // resolving a recorded conflict on an existing path.
+            let prior_sha = match (edit.kind, current) {
+                (EditKind::Replace | EditKind::Create, Some(Ok(sha))) => Some(sha),
+                _ => None,
+            };
+            // Compared before stamping, as the server does: the given bytes
+            // equal to the stored document, or differing from it only by
+            // provenance lines (`same_except_provenance_line`), are no change
+            // and the prior bytes stay. Re-saving never relabels or
+            // unprotects a document, through a requoted label or an escaped
+            // key alike; a resolution still counts as resolved below.
+            let mut identical = matches!((prior_sha, &edit.bytes), (Some(sha), Some(bytes)) if sha == blob_sha(bytes));
+            if !identical
+                && edit_stamp.is_some()
+                && let (Some(sha), Some(given)) = (prior_sha, &edit.bytes)
+            {
+                let reader = match &mut prior_reader {
+                    Some(reader) => reader,
+                    None => prior_reader.insert(staged.object_reader()?),
+                };
+                let prior = crate::dream::read_blob(reader, sha)?;
+                if same_except_provenance_line(&prior, given) {
+                    edit.bytes = Some(prior);
+                    identical = true;
+                }
+            }
+            if !identical && let Some(stamped) = stamped {
+                let stamped = stamped.map_err(|why| {
+                    StoreError::invalid(InvalidReason::Schema, content_field(edit), why)
+                })?;
+                identical = prior_sha.is_some_and(|sha| sha == blob_sha(&stamped));
+                edit.bytes = Some(stamped);
+            }
             if !identical {
                 changed.push(edit.path.clone());
             }

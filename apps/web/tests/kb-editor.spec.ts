@@ -17,6 +17,15 @@ let actors: {
   managerEmail?: string;
 } = s;
 const docPath = "notes/edit.md";
+/**
+ * A browser write stores the server's `provenance: human` stamp: front matter
+ * is prepended to a document that has none. These specs write plain Markdown,
+ * so this is exactly what main or a proposal then holds and serves.
+ */
+const human = (body: string) => {
+  if (body.startsWith("---")) throw new Error("human() stamps plain Markdown only");
+  return `---\nprovenance: human\n---\n${body}`;
+};
 const pendingHolds = new Set<() => Promise<void>>();
 test.afterEach(async () => {
   await Promise.all([...pendingHolds].map((release) => release()));
@@ -222,7 +231,7 @@ test("R5 offline save explains its pause and resumes the same draft", async ({ p
   await boot(page);
   const kb = await createKb(page, "Before offline");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue("Before offline");
+  await expect(markdown(page)).toHaveValue(human("Before offline"));
   await markdown(page).fill("Saved after reconnecting");
   await page.context().setOffline(true);
   try {
@@ -234,7 +243,7 @@ test("R5 offline save explains its pause and resumes the same draft", async ({ p
   }
   await expect(page.getByText(enKb.outcome.appliedTitle, { exact: true })).toBeVisible();
   await expect(page.getByText(enKb.editor.offline, { exact: true })).toHaveCount(0);
-  expect((await read(page, kb.id)).markdown).toBe("Saved after reconnecting");
+  expect((await read(page, kb.id)).markdown).toBe(human("Saved after reconnecting"));
 });
 
 test("R5 returning to a head document refreshes its cached revision", async ({ page }) => {
@@ -325,7 +334,7 @@ test("R5 resolving the last PR conflict retires its comparisons and staged image
   await expect(page.getByText(enKb.prMode.base, { exact: true })).toHaveCount(0);
   await expect(page.getByText(enKb.prMode.theirs, { exact: true })).toHaveCount(0);
   await expect(page.getByText(/resolved.png is uploaded and linked/)).toHaveCount(0);
-  expect((await read(page, kb.id)).markdown).toBe("Changed on main");
+  expect((await read(page, kb.id)).markdown).toBe(human("Changed on main"));
 });
 
 // Independently fresh kbs.get must never bless cached document bytes.
@@ -335,7 +344,7 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
   await boot(page);
   const kb = await createKb(page, "Snapshot A");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue("Snapshot A");
+  await expect(markdown(page)).toHaveValue(human("Snapshot A"));
   await go(page, at(kb.id));
   const remote = await page.evaluate(
     async ({ kbId, baseRevision, path }) => {
@@ -356,12 +365,12 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
     { kbId: kb.id, baseRevision: kb.headSha!, path: docPath },
   );
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue("Snapshot A");
+  await expect(markdown(page)).toHaveValue(human("Snapshot A"));
   await markdown(page).fill("Local draft C");
   await save(page).click();
   await expect(page.getByText(enKb.outcome.conflictTitle, { exact: true })).toBeVisible();
   await expect(markdown(page)).toHaveValue("Local draft C");
-  expect((await read(page, kb.id)).markdown).toBe("Remote B");
+  expect((await read(page, kb.id)).markdown).toBe(human("Remote B"));
   // The version that saving would replace is read and shown before adopting.
   await expect(page.getByTestId("revision-preview")).toContainText("Remote B");
   await page.getByRole("button", { name: enKb.outcome.adoptHead }).click();
@@ -373,7 +382,7 @@ test("F1 cached document pins its own commit, preserves conflict draft and advan
   await markdown(page).fill("Next draft D");
   await save(page).click();
   await expect(save(page)).toBeEnabled();
-  expect((await read(page, kb.id)).markdown).toBe("Next draft D");
+  expect((await read(page, kb.id)).markdown).toBe(human("Next draft D"));
 });
 
 test("F1 metadata pins opening fields/version across dirty refetch; reopen uses fresh snapshot", async ({
@@ -444,7 +453,7 @@ for (const existing of [false, true])
     }, a.id);
     await expect(markdown(page)).toHaveValue("A unsaved private draft");
     await go(page, at(b.id, existing ? docPath : ""));
-    await expect(markdown(page)).toHaveValue(existing ? "Private B" : "");
+    await expect(markdown(page)).toHaveValue(existing ? human("Private B") : "");
     if (!existing)
       await expect(page.getByLabel(enKb.editor.pathLabel, { exact: true })).toHaveValue("");
   });
@@ -516,7 +525,7 @@ test("a recovered create leaves New document with the live draft; its path stays
   await expect(page.getByRole("heading", { name: enKb.detail.newDocument })).toHaveCount(0);
   await expect(markdown(page)).toHaveValue("Second draft");
   await mutationsSettled(page);
-  expect((await read(page, kb.id, path)).markdown).toBe("Second draft");
+  expect((await read(page, kb.id, path)).markdown).toBe(human("Second draft"));
 });
 
 const readAt = (kbId: string, path = docPath) =>
@@ -616,7 +625,7 @@ test("P3 header delete after a proposed edit targets the proposal head", async (
   await page.getByRole("button", { name: enKb.document.openMain, exact: true }).click();
   await expect(page.getByTestId("kb-rendered-document")).toContainText("Main text");
   // Main is untouched until a reviewer merges.
-  expect((await read(page, kb.id)).markdown).toBe("Main text");
+  expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
 });
 
 for (const existing of [false, true])
@@ -710,18 +719,18 @@ for (const existing of [false, true])
     // switched in place (the route stays mounted) and through history.
     if (existing) {
       await go(page, at(kb.id, docPath));
-      await expect(markdown(page)).toHaveValue("Main text");
+      await expect(markdown(page)).toHaveValue(human("Main text"));
       await page.goBack();
-      await expect(markdown(page)).toHaveValue("Four");
+      await expect(markdown(page)).toHaveValue(human("Four"));
       await page.goForward();
-      await expect(markdown(page)).toHaveValue("Main text");
+      await expect(markdown(page)).toHaveValue(human("Main text"));
       await page.goBack();
-      await expect(markdown(page)).toHaveValue("Four");
+      await expect(markdown(page)).toHaveValue(human("Four"));
     }
     // Leave and return: still the same proposal.
     await go(page, at(kb.id));
     await go(page, proposalHref.pathname + proposalHref.search);
-    await expect(markdown(page)).toHaveValue("Four");
+    await expect(markdown(page)).toHaveValue(human("Four"));
     await save("Five", 6);
     // A failed proposal lookup never falls back to main; its retry recovers it.
     await go(page, at(kb.id));
@@ -730,10 +739,10 @@ for (const existing of [false, true])
     await expect(page.getByText(`Couldn't load pull request #${number}.`)).toBeVisible();
     await expect(markdown(page)).toHaveCount(0);
     await page.getByRole("button", { name: enCommon.actions.tryAgain, exact: true }).click();
-    await expect(markdown(page)).toHaveValue("Five");
+    await expect(markdown(page)).toHaveValue(human("Five"));
     await save("Six", 7);
     // Main never changed.
-    if (existing) expect((await read(page, kb.id)).markdown).toBe("Main text");
+    if (existing) expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
   });
 
 test("P3 a reopened page's delete updates the open proposal and shows its numbered toast", async ({
@@ -790,7 +799,7 @@ test("P3 a reopened page's delete updates the open proposal and shows its number
   expect(bases[1]).toBe(before?.headSha);
   await expect.poll(async () => (await proposal())?.version).toBe((before?.version ?? 0) + 1);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  expect((await read(page, kb.id)).markdown).toBe("Main text");
+  expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
 });
 
 test("P3 delete after a concurrent edit re-reads, asks again and deletes the latest", async ({
@@ -823,7 +832,7 @@ test("P3 delete after a concurrent edit re-reads, asks again and deletes the lat
   const preview = dialog.getByTestId("revision-preview");
   await expect(preview).toHaveAttribute("data-rev", remote.commitSha);
   await expect(preview).toContainText("Version B");
-  expect((await read(page, kb.id)).markdown).toBe("Version B");
+  expect((await read(page, kb.id)).markdown).toBe(human("Version B"));
   await confirmDelete(page);
   await expect(page).toHaveURL(new RegExp(`/kbs/${kb.id}$`));
   expect(bases).toEqual([kb.headSha, remote.commitSha]);
@@ -917,7 +926,7 @@ for (const sibling of [true, false])
         kb.id,
       ),
     ).toBe(before);
-    if (sibling) expect((await read(page, kb.id, plain)).markdown).toBe("Unchanged sibling");
+    if (sibling) expect((await read(page, kb.id, plain)).markdown).toBe(human("Unchanged sibling"));
     else await expect(read(page, kb.id, plain)).rejects.toThrow();
   });
 
@@ -1076,7 +1085,7 @@ for (const [root, operation] of [
     await save(page).click();
     await expect(page.getByText(enKb.editor.retryable, { exact: true })).toBeVisible();
     if (root === "documents") {
-      expect((await read(page, kb.id)).markdown).toBe(big);
+      expect((await read(page, kb.id)).markdown).toBe(human(big));
       // Receipt lookup must also precede expiry checks on consumed uploads.
       expect(
         (await page.request.post(`${fx.origin}/fixture/editor/expire-upload?kbId=${kb.id}`)).ok(),
@@ -1084,13 +1093,15 @@ for (const [root, operation] of [
     }
     await save(page).click();
     await expect(page.getByText(enKb.outcome.appliedTitle, { exact: true })).toBeVisible();
-    expect((await read(page, kb.id)).markdown).toBe(big);
+    expect((await read(page, kb.id)).markdown).toBe(human(big));
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(calls[0]).toBe(calls[1]);
     await markdown(page).fill("A new operation after receipt");
     await save(page).click();
     await expect(save(page)).toBeEnabled();
-    expect((await read(page, kb.id)).markdown === "A new operation after receipt").toBe(true);
+    expect((await read(page, kb.id)).markdown === human("A new operation after receipt")).toBe(
+      true,
+    );
   });
 }
 
@@ -1108,10 +1119,10 @@ test("F5 expired preparation is rejected and a fresh attempt stages anew", async
   ).toBe(true);
   await save(page).click();
   await expect(page.getByText(enKb.editor.rejected, { exact: true })).toBeVisible();
-  expect((await read(page, kb.id)).markdown).toBe("Original");
+  expect((await read(page, kb.id)).markdown).toBe(human("Original"));
   await save(page).click();
   await expect(page.getByText(enKb.outcome.appliedTitle, { exact: true })).toBeVisible();
-  expect((await read(page, kb.id)).markdown).toBe(big);
+  expect((await read(page, kb.id)).markdown).toBe(human(big));
 });
 
 for (const structured of [false, true])
@@ -1278,7 +1289,7 @@ test("F3 index unavailable retains readable private cache", async ({ page }) => 
       },
       { kbId: kb.id, path: docPath },
     ),
-  ).toBe("Keep cached document");
+  ).toBe(human("Keep cached document"));
 });
 
 test("F6/F7 scalar validation permits complete astral filters and rejects invalid fields before RPC", async ({
@@ -1370,7 +1381,7 @@ test("F5 staged receipt replay rechecks live authority after revocation", async 
   const calls = await dropOnce(page, "documents", "update");
   await save(page).click();
   await expect(page.getByText(enKb.editor.retryable, { exact: true })).toBeVisible();
-  expect((await read(page, kb.id)).markdown).toBe(big);
+  expect((await read(page, kb.id)).markdown).toBe(human(big));
   await as(page, "owner");
   await page.evaluate(
     ({ kbId, shareUserId }) => window.__r38.orpc.kbs.shareRevoke.call({ kbId, shareUserId }),
@@ -1714,7 +1725,7 @@ test("R4 receipt advances a live session without discarding typing during a held
   ).toBe(true);
   await as(page, "manager");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue("Main text");
+  await expect(markdown(page)).toHaveValue(human("Main text"));
   const held = await holdOnce(page, "documents", "update");
   await markdown(page).fill("Saved One");
   await page.getByTestId("editor-save").click();
@@ -1729,7 +1740,7 @@ test("R4 receipt advances a live session without discarding typing during a held
   await mutationsSettled(page);
   await page.getByRole("link", { name: enKb.document.doneEditing, exact: true }).click();
   await expect(page.getByTestId("kb-rendered-document")).toContainText("Unsaved Two");
-  expect((await read(page, kb.id)).markdown).toBe("Main text");
+  expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
 });
 
 test("R4 a new session cannot use cached proposal bytes after New document and failed resolution", async ({
@@ -1771,7 +1782,7 @@ test("R4 a new session cannot use cached proposal bytes after New document and f
   await expect(page.getByText(`Couldn't load pull request #${number}.`)).toBeVisible();
   await expect(markdown(page)).toHaveCount(0);
   await page.getByRole("button", { name: enCommon.actions.tryAgain, exact: true }).click();
-  await expect(markdown(page)).toHaveValue("Advanced elsewhere");
+  await expect(markdown(page)).toHaveValue(human("Advanced elsewhere"));
 });
 
 for (const write of ["text", "image"] as const)
@@ -1790,7 +1801,7 @@ for (const write of ["text", "image"] as const)
         await as(page, "manager");
       }
       await go(page, at(kb.id, docPath));
-      await expect(markdown(page)).toHaveValue("ORIGINAL MAIN");
+      await expect(markdown(page)).toHaveValue(human("ORIGINAL MAIN"));
       // Document failures on a later proposal head also must not expose a
       // previous proposal revision as a fallback.
       if (refresh === "document") {
@@ -1885,7 +1896,7 @@ test("R4 a held proposal receipt preserves Done editing selected while saving", 
   ).toBe(true);
   await as(page, "manager");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue("ORIGINAL MAIN");
+  await expect(markdown(page)).toHaveValue(human("ORIGINAL MAIN"));
   const held = await holdOnce(page, "documents", "update");
   await markdown(page).fill("SAVED PROPOSAL");
   await page.getByTestId("editor-save").click();
@@ -1921,7 +1932,7 @@ for (const write of ["update", "image", "create"] as const)
       await page.getByLabel(enKb.editor.pathLabel).fill(path);
     } else {
       await go(page, at(kbA.id, docPath));
-      await expect(markdown(page)).toHaveValue("MAIN A");
+      await expect(markdown(page)).toHaveValue(human("MAIN A"));
     }
     // An image is staged and then committed by the held save (R3-W7).
     const held = await holdOnce(page, "documents", write === "create" ? "create" : "update");
@@ -1971,7 +1982,7 @@ for (const write of ["update", "image", "create"] as const)
     const url = new URL(page.url());
     expect(url.pathname).toContain(kbB.id);
     expect(url.searchParams.has("proposal")).toBe(false);
-    await expect(markdown(page)).toHaveValue("MAIN B");
+    await expect(markdown(page)).toHaveValue(human("MAIN B"));
     // The receipt itself was real: A has the writer's proposal.
     const open = await page.evaluate(
       ({ kbId }) =>

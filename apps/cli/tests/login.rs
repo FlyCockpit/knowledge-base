@@ -313,3 +313,84 @@ fn stalled_exchange_is_cancelled_at_device_deadline_without_retry_or_state() {
     assert_eq!(server.seen.lock().unwrap().len(), 2);
     assert!(!dir.path().join("data/credentials").exists());
 }
+
+fn success_with_mode(origin: &str, mode: Value) -> String {
+    serde_json::json!({"json":{"credentialId":"id", "userId":"user",
+        "secret":"disposable-pat-canary", "expiresAt":"2027-01-01T00:00:00Z",
+        "resource":format!("{origin}/mcp"), "authoringMode": mode}})
+    .to_string()
+}
+
+/// `kb login --write-mode` asks for at most that mode (`kb_write_mode` in the
+/// start body, only when given) and stores the approved `authoringMode`
+/// with the credential; an approval outside the request is refused unsaved.
+#[test]
+fn write_mode_is_requested_and_the_approved_mode_is_stored() {
+    use kb_client::authoring::AuthoringMode;
+    for (requested, approved, stored) in [
+        (
+            Some("dream"),
+            serde_json::json!("dream"),
+            Ok(Some(AuthoringMode::Dream)),
+        ),
+        (
+            Some("both"),
+            serde_json::json!("edit"),
+            Ok(Some(AuthoringMode::Edit)),
+        ),
+        (
+            None,
+            serde_json::json!("both"),
+            Ok(Some(AuthoringMode::Both)),
+        ),
+        (None, Value::Null, Ok(None)),
+        (
+            Some("dream"),
+            serde_json::json!("both"),
+            Err("outside the requested"),
+        ),
+    ] {
+        let reply = approved.clone();
+        let server = Server::new(move |i, _, origin| {
+            (
+                200,
+                String::new(),
+                if i == 0 {
+                    start(origin, 1, 600)
+                } else {
+                    success_with_mode(origin, reply.clone())
+                },
+            )
+        });
+        let dir = support::canonical_tempdir();
+        let resource =
+            McpResource::parse(&server.origin, TransportPolicy::AllowLoopbackHttp).unwrap();
+        let store = empty_credential_store(dir.path(), &resource);
+        let mut command = remote(dir.path(), "login", &server.origin);
+        if let Some(mode) = requested {
+            command.args(["--write-mode", mode]);
+        }
+        let out = command.output().unwrap();
+        let seen = server.seen.lock().unwrap();
+        let body: Value =
+            serde_json::from_str(seen[0].wire.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        let mut expected = serde_json::json!({"client_id":"kb-cli", "scope":"mcp:read mcp:write"});
+        if let Some(mode) = requested {
+            expected["kb_write_mode"] = serde_json::json!(mode);
+        }
+        assert_eq!(body, expected);
+        match stored {
+            Ok(mode) => {
+                assert!(out.status.success(), "{out:?}");
+                let (token, kept) = store.load_entry(&resource).unwrap().unwrap();
+                assert_eq!(token.expose_secret(), "disposable-pat-canary");
+                assert_eq!(kept, mode, "{requested:?} {approved}");
+            }
+            Err(why) => {
+                assert!(!out.status.success());
+                assert!(String::from_utf8_lossy(&out.stderr).contains(why));
+                assert!(store.load(&resource).unwrap().is_none());
+            }
+        }
+    }
+}

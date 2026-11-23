@@ -6,6 +6,7 @@ use crate::{
     state::CredentialStore,
 };
 use anyhow::{Result, bail};
+use kb_client::authoring::AuthoringMode;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -27,6 +28,13 @@ pub struct Args {
     /// The private key remains in that file for host-side sealed decryption.
     #[arg(long, conflicts_with_all = ["token_stdin", "token_file"])]
     recipient_key_file: Option<PathBuf>,
+    /// The most this login may be approved for: `dream` (only dreams),
+    /// `edit` (only direct edits) or `both`. Device approval offers only
+    /// modes within it, and the approved mode is stored with the credential
+    /// so `kb mcp` narrows to it too. With an imported token it is stored as
+    /// this credential's local narrowing (the server's grant still decides).
+    #[arg(long, value_name = "MODE", value_parser = crate::auth::write_mode_parser())]
+    write_mode: Option<AuthoringMode>,
     /// Emit JSON status records; secrets are never included.
     #[arg(long)]
     json: bool,
@@ -35,8 +43,11 @@ pub fn run(args: &Args) -> Result<()> {
     let config = Config::load()?;
     let (resource, policy) = args.server.resolve_with_policy(&config)?;
     let store = CredentialStore::new(crate::paths::credentials_dir()?);
-    let token = if args.token_stdin || args.token_file.is_some() {
-        auth::import_token(args.token_file.as_ref())?
+    let (token, authoring_mode) = if args.token_stdin || args.token_file.is_some() {
+        (
+            auth::import_token(args.token_file.as_ref())?,
+            args.write_mode,
+        )
     } else {
         if args.name.is_empty()
             || args.name.chars().count() > 120
@@ -51,7 +62,7 @@ pub fn run(args: &Args) -> Result<()> {
             .map(auth::recipient_key)
             .transpose()?;
         crate::runtime()?.block_on(async {
-            let start = remote.start(policy).await?;
+            let start = remote.start(policy, args.write_mode).await?;
             if let Some(key) = &recipient {
                 remote.register_recipient(&start.device_code, key).await?;
                 output::diagnostic(format!(
@@ -65,20 +76,34 @@ pub fn run(args: &Args) -> Result<()> {
                 start.verification_uri_complete,
                 display_user_code(&start.user_code)
             ))?;
-            poll_device(start.expires_in, start.interval, || {
+            let (token, approved) = poll_device(start.expires_in, start.interval, || {
                 remote.exchange(&start.device_code, &args.name)
             })
-            .await
+            .await?;
+            // The server never approves more than was asked for; refuse a
+            // reply that says otherwise rather than store a wider mode.
+            if let (Some(requested), Some(mode)) = (args.write_mode, approved)
+                && !mode.within(requested)
+            {
+                bail!(
+                    "the server approved write mode `{mode}`, outside the requested `{requested}`; start a new login"
+                );
+            }
+            Ok::<_, anyhow::Error>((token, approved))
         })?
     };
-    store.save(&resource, &token)?;
+    store.save_with_mode(&resource, &token, authoring_mode)?;
     if args.json {
         output::json(&LoginOutput {
             resource: resource.as_string(),
             logged_in: true,
+            write_mode: authoring_mode,
         })
     } else {
-        output::line(format!("logged in to {resource}"))
+        match authoring_mode {
+            Some(mode) => output::line(format!("logged in to {resource} (write mode `{mode}`)")),
+            None => output::line(format!("logged in to {resource}")),
+        }
     }
 }
 
@@ -97,7 +122,7 @@ async fn poll_device<F, E>(
     expires_in: u64,
     interval: u64,
     mut exchange: E,
-) -> Result<kb_client::types::SecretToken>
+) -> Result<(kb_client::types::SecretToken, Option<AuthoringMode>)>
 where
     F: std::future::Future<Output = Result<Poll>>,
     E: FnMut() -> F,
@@ -126,7 +151,7 @@ where
             anyhow::anyhow!("device exchange outcome is unknown; start a new login")
         })??;
         match poll {
-            Poll::Authorized(token) => return Ok(token),
+            Poll::Authorized(token, mode) => return Ok((token, mode)),
             Poll::Pending => tracing::debug!("device authorization pending"),
             Poll::SlowDown => {
                 interval += Duration::from_secs(5);
@@ -140,6 +165,9 @@ where
 struct LoginOutput {
     resource: String,
     logged_in: bool,
+    /// The stored write mode; omitted when none is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    write_mode: Option<AuthoringMode>,
 }
 
 #[cfg(test)]
@@ -181,7 +209,10 @@ mod tests {
                 std::future::ready(Ok(if n == 0 {
                     Poll::SlowDown
                 } else {
-                    Poll::Authorized(kb_client::types::SecretToken::new("disposable-test".into()))
+                    Poll::Authorized(
+                        kb_client::types::SecretToken::new("disposable-test".into()),
+                        None,
+                    )
                 }))
             });
             tokio::pin!(future);
@@ -196,7 +227,7 @@ mod tests {
             assert!(poll_once(future.as_mut()).await.is_pending());
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             tokio::time::advance(Duration::from_millis(2)).await;
-            let TaskPoll::Ready(Ok(token)) = poll_once(future.as_mut()).await else {
+            let TaskPoll::Ready(Ok((token, _))) = poll_once(future.as_mut()).await else {
                 panic!("slow-down authorization did not finish");
             };
             assert_eq!(token.expose_secret(), "disposable-test");
@@ -210,9 +241,10 @@ mod tests {
             tokio::time::pause();
             let future = poll_device(3, 1, || async {
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                Ok(Poll::Authorized(kb_client::types::SecretToken::new(
-                    "disposable-late".into(),
-                )))
+                Ok(Poll::Authorized(
+                    kb_client::types::SecretToken::new("disposable-late".into()),
+                    None,
+                ))
             });
             tokio::pin!(future);
             assert!(poll_once(future.as_mut()).await.is_pending());
@@ -307,9 +339,10 @@ mod tests {
                     let n = calls.fetch_add(1, Ordering::SeqCst);
                     std::future::ready(Ok(match n {
                         0 | 1 => Poll::SlowDown,
-                        _ => Poll::Authorized(kb_client::types::SecretToken::new(
-                            "disposable-test".into(),
-                        )),
+                        _ => Poll::Authorized(
+                            kb_client::types::SecretToken::new("disposable-test".into()),
+                            None,
+                        ),
                     }))
                 }));
                 assert!(poll_once(login.as_mut()).await.is_pending());
@@ -325,7 +358,7 @@ mod tests {
                     if n < 2 {
                         assert!(outcome.is_pending());
                     } else {
-                        let TaskPoll::Ready(Ok(token)) = outcome else {
+                        let TaskPoll::Ready(Ok((token, _))) = outcome else {
                             panic!("authorized exchange must finish at its interval");
                         };
                         assert_eq!(token.expose_secret(), "disposable-test");
@@ -345,9 +378,10 @@ mod tests {
                 std::future::ready(Ok(match n {
                     0 => Poll::Pending,
                     1 => Poll::SlowDown,
-                    _ => Poll::Authorized(kb_client::types::SecretToken::new(
-                        "disposable-test".into(),
-                    )),
+                    _ => Poll::Authorized(
+                        kb_client::types::SecretToken::new("disposable-test".into()),
+                        None,
+                    ),
                 }))
             }));
             assert!(poll_once(login.as_mut()).await.is_pending());
@@ -357,7 +391,7 @@ mod tests {
                 assert_eq!(calls.load(Ordering::SeqCst), count);
             }
             tokio::time::advance(Duration::from_millis(1001)).await;
-            let TaskPoll::Ready(Ok(token)) = poll_once(login.as_mut()).await else {
+            let TaskPoll::Ready(Ok((token, _))) = poll_once(login.as_mut()).await else {
                 panic!("authorized exchange must finish");
             };
             assert_eq!(token.expose_secret(), "disposable-test");

@@ -1,3 +1,4 @@
+import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
 import {
   MCP_TOOL_GROUPS,
   MCP_TOOL_PRESETS,
@@ -27,6 +28,8 @@ type ToolGroupPickerProps = {
   onChange: (action: SelectionAction) => void;
   /** Whether the credential carries `mcp:write` (tools that change data need it). */
   writeScope: boolean;
+  /** The write mode (null or omitted: none chosen); `dream` previews no direct-edit tools. */
+  authoringMode?: McpAuthoringMode | null;
   allowCreate: boolean;
   /** OAuth connections never resolve sealed values, so they are never offered `sealed`. */
   offerSealed: boolean;
@@ -47,6 +50,7 @@ export function ToolGroupPicker({
   groups,
   onChange,
   writeScope,
+  authoringMode,
   allowCreate,
   offerSealed,
   kbs,
@@ -60,6 +64,7 @@ export function ToolGroupPicker({
   const preview = previewTools({
     groups,
     writeScope,
+    authoringMode,
     allowCreate,
     kbBits: kbs.map((kb) => kb.bits),
     createdKbBits,

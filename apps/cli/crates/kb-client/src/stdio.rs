@@ -3,7 +3,7 @@
 //! owns domain IO and must join it before returning from its blocking handler.
 use crate::{
     ErrorCode, MCP_PROFILE, ToolName, schema,
-    scope::{LiveAuthority, LiveSource, ToolScope},
+    scope::{LiveAuthority, LiveSource, Refusal, ToolScope},
 };
 use serde_json::{Value, json};
 use std::{
@@ -77,11 +77,7 @@ impl CallControl {
     }
 }
 pub fn tool_error(code: ErrorCode, details: Value) -> Value {
-    let message = if code == ErrorCode::InvalidArgument && details["reason"] == "TOO_MANY_CHANGES" {
-        crate::error::TOO_MANY_CHANGES_MESSAGE
-    } else {
-        code.message()
-    };
+    let message = crate::error::message_for(code, &details);
     let envelope = json!({"schemaVersion":"kb/1","error":{"code":code.as_str(),"message":message,"retryable":code.retryable(),"details":details}});
     json!({"isError":true,"structuredContent":envelope,"content":[{"type":"text","text":envelope.to_string()}]})
 }
@@ -126,6 +122,11 @@ pub struct Advertised {
     scope: Option<ToolScope>,
     source: Option<Arc<dyn LiveSource>>,
     routing: Option<Routing>,
+    /// A forwarder's tools the server listed but a local write mode hides:
+    /// not listed, yet callable, so the handler's admission answers them
+    /// with the write mode's refusal (as the server would) rather than as
+    /// unknown tools. Catalog order.
+    hidden: Vec<ToolName>,
 }
 /// A connection over several servers: every listed tool takes a required
 /// `server` argument naming one of the servers that listed it. The argument
@@ -137,6 +138,8 @@ struct Routing {
     labels: Vec<String>,
     /// Per advertised tool (aligned with `names`): the labels listing it.
     tools: Vec<Vec<String>>,
+    /// Per tool some server hides by its write mode: those servers' labels.
+    hidden: Vec<(ToolName, Vec<String>)>,
 }
 /// The argument a multi-server connection adds to every tool.
 pub const SERVER_ARGUMENT: &str = "server";
@@ -148,6 +151,7 @@ impl std::fmt::Debug for Advertised {
             .field("scope", &self.scope)
             .field("live", &self.source.is_some())
             .field("routing", &self.routing)
+            .field("hidden", &self.hidden)
             .finish_non_exhaustive()
     }
 }
@@ -159,6 +163,7 @@ impl PartialEq for Advertised {
             && self.instructions == other.instructions
             && self.scope == other.scope
             && self.routing == other.routing
+            && self.hidden == other.hidden
     }
 }
 impl Advertised {
@@ -180,6 +185,7 @@ impl Advertised {
             scope: Some(scope),
             source: None,
             routing: None,
+            hidden: Vec::new(),
         })
     }
     /// A local session whose list is rebuilt from `source` on every
@@ -213,6 +219,7 @@ impl Advertised {
             scope: None,
             source: None,
             routing: None,
+            hidden: Vec::new(),
         }
     }
     /// Keep only read-only tools (R2-27, `kb mcp --server --read-only`):
@@ -232,6 +239,35 @@ impl Advertised {
         self.tools = tools;
         self
     }
+    /// Stop listing the listed tools `keep` rejects but keep them callable
+    /// (a forwarder's write mode): a call reaches the handler, whose own
+    /// admission refuses it with the mode's details, as the server does for
+    /// a tool its grant's write mode hides. Tools the server never listed
+    /// stay unknown.
+    pub fn hide(mut self, keep: impl Fn(ToolName) -> bool) -> Self {
+        let mut names = Vec::new();
+        let mut tools = Vec::new();
+        for (name, tool) in std::mem::take(&mut self.names)
+            .into_iter()
+            .zip(std::mem::take(&mut self.tools))
+        {
+            if keep(name) {
+                names.push(name);
+                tools.push(tool);
+            } else if !self.hidden.contains(&name) {
+                self.hidden.push(name);
+            }
+        }
+        self.names = names;
+        self.tools = tools;
+        self.hidden
+            .sort_by_key(|name| ToolName::ALL.iter().position(|n| n == name));
+        self
+    }
+    /// Whether a listed tool is hidden but callable (see [`Self::hide`]).
+    pub fn hides(&self, name: ToolName) -> bool {
+        self.hidden.contains(&name)
+    }
     /// One advertised list over several servers' verified lists, each
     /// `(label, list)`: every tool any of them lists, once, in catalog order,
     /// with the pinned description and input schema (a server's `kbId`
@@ -244,12 +280,25 @@ impl Advertised {
         let labels: Vec<String> = parts.iter().map(|(label, _)| (*label).to_owned()).collect();
         let mut rows = Vec::new();
         let mut routes = Vec::new();
+        let mut hidden_routes = Vec::new();
+        let mut hidden = Vec::new();
         for name in ToolName::ALL.iter().copied() {
+            let hiding: Vec<String> = parts
+                .iter()
+                .filter(|(_, list)| list.hides(name))
+                .map(|(label, _)| (*label).to_owned())
+                .collect();
             let listing: Vec<String> = parts
                 .iter()
                 .filter(|(_, list)| list.advertises(name))
                 .map(|(label, _)| (*label).to_owned())
                 .collect();
+            if !hiding.is_empty() {
+                if listing.is_empty() {
+                    hidden.push(name);
+                }
+                hidden_routes.push((name, hiding));
+            }
             if listing.is_empty() {
                 continue;
             }
@@ -276,7 +325,9 @@ impl Advertised {
         advertised.routing = Some(Routing {
             labels,
             tools: routes,
+            hidden: hidden_routes,
         });
+        advertised.hidden = hidden;
         Ok(advertised)
     }
     /// The server labels of a multi-server list; `None` for one server.
@@ -303,13 +354,21 @@ impl Advertised {
             .iter()
             .position(|listed| *listed == name)
             .map(|at| &routing.tools[at]);
+        let hiding = routing
+            .hidden
+            .iter()
+            .find(|(hid, _)| *hid == name)
+            .map(|(_, labels)| labels);
         let field = format!("/{SERVER_ARGUMENT}");
         let Some(object) = arguments.as_object_mut() else {
             return Err(Some(json!({"reason":"SCHEMA"})));
         };
         match object.remove(SERVER_ARGUMENT) {
             None => Err(Some(json!({"reason":"MISSING_ARGUMENT","field":field}))),
-            Some(Value::String(label)) if listing.is_some_and(|l| l.contains(&label)) => {
+            Some(Value::String(label))
+                if listing.is_some_and(|l| l.contains(&label))
+                    || hiding.is_some_and(|l| l.contains(&label)) =>
+            {
                 Ok(Some(label))
             }
             Some(Value::String(label)) if routing.labels.contains(&label) => Err(None),
@@ -321,12 +380,13 @@ impl Advertised {
         self.scope.as_ref()
     }
     /// Whether `tools/call` may go on to schema checks: any catalog tool
-    /// under a local scope (which then decides), else only listed tools.
+    /// under a local scope (which then decides), else only listed tools and
+    /// those a write mode hides (the handler refuses them).
     fn callable(&self, name: ToolName) -> bool {
-        self.scope.is_some() || self.advertises(name)
+        self.scope.is_some() || self.advertises(name) || self.hides(name)
     }
     /// A local scope's decision on schema-checked arguments.
-    fn admit(&self, name: ToolName, arguments: &Value) -> Result<(), ErrorCode> {
+    fn admit(&self, name: ToolName, arguments: &Value) -> Result<(), Refusal> {
         self.scope
             .as_ref()
             .map_or(Ok(()), |scope| scope.admit(name, arguments))
@@ -374,7 +434,7 @@ fn scoped_rows(
         .filter(|name| scope.lists(*name, authority))
     {
         let (input, _) = schema::tool_schemas(name.as_str())?;
-        let description = schema::tool_description(name.as_str())?;
+        let description = scope.description(name)?;
         names.push(name);
         tools.push(tool_row(
             name,
@@ -739,10 +799,10 @@ where
                                 let route=match advertised.take_route(name,&mut args){Ok(route)=>route,Err(None)=>{queue(&mut output,rpc_error(id,-32602,"Unknown tool"))?;continue},Err(Some(details))=>{queue(&mut output,result(id,tool_error(ErrorCode::InvalidArgument,details)))?;continue}};
                                 let args=match name.check_input(args.clone()){Ok(args)=>args,Err(error)=>{queue(&mut output,result(id,labelled(tool_error(ErrorCode::InvalidArgument,crate::error::invalid_input_details_value(&error,&args)),route.as_deref())))?;continue}};
                                 // A local scope decides before any handler runs.
-                                if let Err(code)=advertised.admit(name,&args){queue(&mut output,result(id,labelled(tool_error(code,json!({})),route.as_deref())))?;continue}
+                                if let Err(refusal)=advertised.admit(name,&args){queue(&mut output,result(id,labelled(refusal.tool_error(),route.as_deref())))?;continue}
                                 let control=CallControl::default();active.insert(key.clone(),(id,control.clone()));if let Some(label)=&route{routes.insert(key.clone(),label.clone());}let h=handler.clone();let gate=advertised.stored_gate();
                                 // Stored-metadata checks (staged upload kind) also precede the handler.
-                                jobs.spawn_blocking(move||{let label=route.clone();let value=match gate.map_or(Ok(()),|(scope,source)|scope.admit_stored(source.as_ref(),name,&args)){Ok(())=>h(name,route,args,control),Err(code)=>tool_error(code,json!({}))};(key,Ok(labelled(value,label.as_deref())))});continue
+                                jobs.spawn_blocking(move||{let label=route.clone();let value=match gate.map_or(Ok(()),|(scope,source)|scope.admit_stored(source.as_ref(),name,&args)){Ok(())=>h(name,route,args,control),Err(refusal)=>refusal.tool_error()};(key,Ok(labelled(value,label.as_deref())))});continue
                             }
                         }else{rpc_error(id,-32602,"Unknown tool")}
                     }

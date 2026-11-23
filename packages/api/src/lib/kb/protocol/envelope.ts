@@ -44,6 +44,13 @@ export const KB_RETRYABLE_ERROR_CODES = new Set<KbProtocolErrorCode>([
 export const TOO_MANY_CHANGES_MESSAGE =
   "At most 32 changes per call. Each call commits on success: apply the first 32 now, then send the rest in another call using the returned commit as baseRevision.";
 
+/** FORBIDDEN by the credential's write mode, by what the call needed. */
+export const WRITE_MODE_MESSAGES = {
+  dream:
+    'This credential\'s write mode does not allow dreams. Write the change directly with mode "edit", or ask the owner for a credential that may dream.',
+  edit: 'This credential\'s write mode allows only dreams. Use knowledge_changes_apply with mode "dream", or ask the owner for a credential that may edit.',
+} as const;
+
 export const KB_ERROR_MESSAGES: Record<KbProtocolErrorCode, string> = {
   INVALID_ARGUMENT: "Invalid argument",
   INVALID_CURSOR: "Invalid cursor",
@@ -193,6 +200,16 @@ const pathNotFoundDetailsSchema = closed({
   field: fieldPointerSchema.optional(),
 });
 
+/**
+ * A mutation the credential's write mode does not allow: a dream from an
+ * edit-only grant (`required: "dream"`) or a direct edit from a dream-only
+ * grant (`required: "edit"`).
+ */
+const writeModeDetailsSchema = closed({
+  reason: z.literal("WRITE_MODE"),
+  required: z.enum(["dream", "edit"]),
+});
+
 export const kbErrorDetailsSchema = z.union([
   emptyErrorDetailsSchema,
   conflictDetailsSchema,
@@ -202,6 +219,7 @@ export const kbErrorDetailsSchema = z.union([
   reasonedConflictDetailsSchema,
   proposalConflictDetailsSchema,
   pathNotFoundDetailsSchema,
+  writeModeDetailsSchema,
 ]);
 
 function errorDetailsSchemaForCode(code: KbProtocolErrorCode): z.ZodTypeAny {
@@ -221,6 +239,8 @@ function errorDetailsSchemaForCode(code: KbProtocolErrorCode): z.ZodTypeAny {
       return z.union([emptyErrorDetailsSchema, rateLimitDetailsSchema]);
     case "NOT_FOUND":
       return z.union([emptyErrorDetailsSchema, pathNotFoundDetailsSchema]);
+    case "FORBIDDEN":
+      return z.union([emptyErrorDetailsSchema, writeModeDetailsSchema]);
     default:
       return emptyErrorDetailsSchema;
   }
@@ -295,6 +315,16 @@ export function kbProtocolMessageForCode(code: KbProtocolErrorCode, details?: un
     details.reason === "TOO_MANY_CHANGES"
   )
     return TOO_MANY_CHANGES_MESSAGE;
+  if (
+    code === "FORBIDDEN" &&
+    details !== null &&
+    typeof details === "object" &&
+    "reason" in details &&
+    details.reason === "WRITE_MODE" &&
+    "required" in details &&
+    (details.required === "dream" || details.required === "edit")
+  )
+    return WRITE_MODE_MESSAGES[details.required];
   return KB_ERROR_MESSAGES[code];
 }
 

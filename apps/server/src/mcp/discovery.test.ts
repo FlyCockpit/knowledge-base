@@ -467,3 +467,57 @@ describe("discovery decision under expiring temporary access", () => {
     expect(recheck).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("write modes in tools/list", () => {
+  const full = (authoringMode: "dream" | "edit" | "both" | null) =>
+    inputs({
+      toolGroups: [...KB_TOOL_GROUPS].filter((group) => group !== "sealed"),
+      scopes: ["mcp:read", "mcp:write"],
+      aclBits: ["manage"],
+      allowCreate: true,
+      createdKbBits: ["read", "manage"],
+      kbs: [kb(1, ["read", "propose", "write", "review", "manage"], true)],
+      authoringMode,
+    });
+  const description = (input: DiscoveryInputs, name: KbToolName) =>
+    buildDiscovery(input).tools.find((tool) => tool.name === name)?.description;
+
+  it("a dream-only grant keeps changes_apply (and PR review, to close) but no edit-only tool", () => {
+    const listed = names(full("dream"));
+    expect(listed).toContain("knowledge_changes_apply");
+    expect(listed).toContain("knowledge_pull_requests_review");
+    for (const name of KB_TOOL_NAMES)
+      if (KB_TOOL_CATALOG[name].authoring === "edit") expect(listed, name).not.toContain(name);
+    // Reads stay.
+    for (const name of READ_TOOLS) expect(listed).toContain(name);
+  });
+
+  it("edit-only and both grants see every tool; only one-mode grants get a narrowed description", () => {
+    expect(names(full("edit"))).toEqual(names(full("both")));
+    const entry = KB_TOOL_CATALOG.knowledge_changes_apply;
+    expect(description(full("both"), "knowledge_changes_apply")).toContain(entry.description);
+    expect(description(full("dream"), "knowledge_changes_apply")).toContain(
+      entry.writeModeDescriptions!.dream,
+    );
+    expect(description(full("edit"), "knowledge_changes_apply")).toContain(
+      entry.writeModeDescriptions!.edit,
+    );
+  });
+
+  it("never varies an input schema by write mode", () => {
+    for (const mode of ["dream", "edit", "both"] as const) {
+      const tools = buildDiscovery(full(mode)).tools;
+      const reference = buildDiscovery(full("both")).tools;
+      for (const tool of tools)
+        expect(tool.inputSchema, `${mode} ${tool.name}`).toEqual(
+          reference.find((other) => other.name === tool.name)?.inputSchema,
+        );
+    }
+  });
+
+  it("ignores a write mode on a read-only credential", () => {
+    expect(names({ ...full("dream"), scopes: ["mcp:read"] })).toEqual(
+      names({ ...full(null), scopes: ["mcp:read"] }),
+    );
+  });
+});

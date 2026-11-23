@@ -359,6 +359,7 @@ describe("sealed real authority, PostgreSQL and Git", () => {
         mintPersonalToken(runtime, f.owner.id, {
           name: "Rust production fixture",
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups: [...MCP_TOOL_GROUPS],
           acl: [{ kbId: f.kbId, bits }],
         });
@@ -584,7 +585,10 @@ describe("sealed real authority, PostgreSQL and Git", () => {
       target = await setup(),
       created = await f.enroll();
     const direct = await apply(f.kbId, f.owner.id, f.base, created.reference);
-    expect((await readSource(f, direct.commitSha)).markdown).toBe(created.reference);
+    // The symbol is published unchanged under the human label a web edit gets.
+    expect((await readSource(f, direct.commitSha)).markdown).toBe(
+      `---\nprovenance: human\n---\n${created.reference}`,
+    );
     await prisma.kbShare.create({
       data: { kbId: target.kbId, userId: target.other.id, bits: ["propose"] },
     });
@@ -643,7 +647,10 @@ describe("sealed real authority, PostgreSQL and Git", () => {
     expect(await prisma.pullRequest.findFirst({ where: { kbId: f.kbId } })).toMatchObject({
       status: "CONFLICT",
     });
-    expect((await readSource(f, proposal.commitSha)).markdown).toBe(created.reference);
+    // The symbol is published unchanged under the human label a web edit gets.
+    expect((await readSource(f, proposal.commitSha)).markdown).toBe(
+      `---\nprovenance: human\n---\n${created.reference}`,
+    );
   });
   it("the conflicts endpoint retries when sealed policy changes after refresh with unchanged heads", async () => {
     const f = await setup(),

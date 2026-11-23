@@ -397,14 +397,19 @@ test("editor: typing updates the safe live preview; saving sends exactly the typ
   const saveResponse = await savedResponse;
   expect(saveResponse.ok(), `${saveResponse.status()}: ${await saveResponse.text()}`).toBe(true);
   await expect(page.getByRole("status").filter({ hasText: "Saved to main" })).toBeVisible();
-  // The write carried exactly the typed text, and the stored document is byte-identical.
+  // The write carried exactly the typed text, and the stored document is
+  // byte-identical to it under the server's `provenance: human` stamp.
   expect(writes.some((body) => body.includes(JSON.stringify(final).slice(1, -1)))).toBe(true);
   const saved = (await (await page.request.get(docUrl)).json()) as {
     markdown: string;
     commitSha: string;
   };
   expect(saved.commitSha).not.toBe(before.commitSha);
-  expect(Buffer.from(saved.markdown, "utf8").equals(Buffer.from(final, "utf8"))).toBe(true);
+  expect(
+    Buffer.from(saved.markdown, "utf8").equals(
+      Buffer.from(`---\nprovenance: human\n---\n${final}`, "utf8"),
+    ),
+  ).toBe(true);
 
   // Rendering never fetched remote content.
   expect(attackerRequests).toEqual([]);

@@ -113,8 +113,10 @@ beforeAll(async () => {
       kind: "PAT",
       clientId: `pat:${tokenId}`,
       referenceId: "pat",
-      scopes: ["mcp:read"],
-      // `edit` lets receive-pack reach its "push not configured" boundary.
+      scopes: ["mcp:read", "mcp:write"],
+      // `edit` and an edit-capable write mode let receive-pack reach its
+      // "push not configured" boundary.
+      authoringMode: "BOTH",
       toolGroups: ["read", "edit"],
       createdKbBits: [],
       acl: { create: { kbId: id, bits: ["read"] } },
@@ -131,7 +133,7 @@ beforeAll(async () => {
       lookupPrefix: token.lookupPrefix,
       secretDigest: digestPatSecret(token.secret),
       grantId,
-      scopes: ["mcp:read"],
+      scopes: ["mcp:read", "mcp:write"],
       resource: `${origin}/mcp`,
       expiresAt: new Date(Date.now() + 3600000),
     },

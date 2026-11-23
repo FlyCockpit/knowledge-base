@@ -1,3 +1,8 @@
+import {
+  authoringCapabilities,
+  type McpAuthoringMode,
+  type McpAuthoringNeed,
+} from "@knowledge-base/auth/mcp-authoring-mode";
 import { MCP_TOOL_GROUPS, type McpToolGroup } from "@knowledge-base/auth/mcp-tool-groups";
 
 import {
@@ -28,6 +33,8 @@ export type GrantCeiling = {
   acl: readonly { kbId: string; bits: readonly string[] }[];
   allowCreate: boolean;
   createdKbBits: readonly string[];
+  /** The stored write mode; null when read-only. */
+  authoringMode: McpAuthoringMode | null;
 };
 
 /** The editable selection of a grant: exactly its stored ceiling, nothing added. */
@@ -43,6 +50,7 @@ export function selectionFromGrant(grant: GrantCeiling): CredentialSelection {
     acl,
     allowCreate: grant.allowCreate,
     createdKbBits: grant.allowCreate ? expandKbBits(grant.createdKbBits) : [],
+    authoringMode: grant.scopes.includes("mcp:write") ? grant.authoringMode : null,
   };
 }
 
@@ -55,6 +63,8 @@ type GrantEditInput = {
   aclCap?: KbBit[];
   allowCreate?: boolean;
   createdKbBits?: KbBit[];
+  /** A new write mode; omitted keeps the stored one (or drops it with mcp:write). */
+  authoringMode?: McpAuthoringMode;
   /** Temporary access: absent for a permanent edit. */
   duration?: ElevationDuration;
 };
@@ -67,6 +77,8 @@ export type GrantEditChanges = {
   cap: { bits: KbBit[]; count: number } | null;
   allowCreate: boolean;
   createdKbBits: KbBit[];
+  /** What the write mode lets the credential author: dream <-> edit both adds and removes. */
+  authoringMode: McpAuthoringNeed[];
 };
 
 export type GrantEditPlan = {
@@ -87,6 +99,7 @@ const noChanges = (): GrantEditChanges => ({
   cap: null,
   allowCreate: false,
   createdKbBits: [],
+  authoringMode: [],
 });
 
 /**
@@ -161,13 +174,27 @@ export function grantEditPlan(
     if (lost.length) removed.kbs.push({ kbId, bits: lost });
   }
   if (patch.length) input.acl = patch;
+  // The write mode exists only with mcp:write. Compared as capability sets, so
+  // dream <-> edit is both an addition and a removal; a mode-only edit is a change.
+  const scopesAfter = options.scopesEditable ? next.scopes : baseline.scopes;
+  const modeBefore = baseline.scopes.includes("mcp:write") ? baseline.authoringMode : null;
+  const modeAfter = scopesAfter.includes("mcp:write") ? next.authoringMode : null;
+  if (modeBefore !== modeAfter) {
+    // Dropping write drops the mode on the server; nothing to send for it.
+    if (modeAfter !== null) input.authoringMode = modeAfter;
+    const before = authoringCapabilities(modeBefore);
+    const after = authoringCapabilities(modeAfter);
+    added.authoringMode = without(after, before);
+    removed.authoringMode = without(before, after);
+  }
 
   const widens =
     added.scopes.length > 0 ||
     added.toolGroups.length > 0 ||
     added.kbs.length > 0 ||
     added.allowCreate ||
-    added.createdKbBits.length > 0;
+    added.createdKbBits.length > 0 ||
+    added.authoringMode.length > 0;
   return { input, added, removed, empty: Object.keys(input).length === 0, widens };
 }
 
@@ -185,7 +212,7 @@ const WRITE_ONLY_GROUPS = MCP_TOOL_GROUPS.filter((group) => {
   return tools.length > 0 && tools.every((tool) => !tool.readOnly);
 });
 
-export type TemporaryIssue = "limit" | "removes" | "needsWrite";
+export type TemporaryIssue = "limit" | "removes" | "needsWrite" | "writeMode";
 
 /**
  * Whether an edit removes anything. On the server a permanent narrowing also
@@ -199,13 +226,14 @@ export function planNarrows(plan: GrantEditPlan): boolean {
     removed.kbs.length > 0 ||
     removed.cap !== null ||
     removed.allowCreate ||
-    removed.createdKbBits.length > 0
+    removed.createdKbBits.length > 0 ||
+    removed.authoringMode.length > 0
   );
 }
 
 /**
  * Why an edit cannot be made temporary, or null. Temporary access only adds
- * (it never removes or changes scopes), at most MAX_ACTIVE_ELEVATIONS are in
+ * (it never removes or changes scopes or the write mode), at most MAX_ACTIVE_ELEVATIONS are in
  * force at once, and it cannot add `mcp:write`, so groups that only change
  * data are refused without it. The server enforces the same rules.
  */
@@ -214,6 +242,8 @@ export function temporaryIssue(
   options: { writeScope: boolean; activeElevations: number },
 ): TemporaryIssue | null {
   if (options.activeElevations >= MAX_ACTIVE_ELEVATIONS) return "limit";
+  // Temporary access never changes the write mode (it would add or remove a capability).
+  if (plan.input.authoringMode !== undefined) return "writeMode";
   if (planNarrows(plan)) return "removes";
   if (
     !options.writeScope &&
@@ -229,6 +259,11 @@ export function temporaryIssue(
  * removal, refused by `temporaryIssue`).
  */
 export function temporaryInput(plan: GrantEditPlan, duration: ElevationDuration): GrantEditInput {
-  const { scopes: _scopes, aclCap: _aclCap, ...additions } = plan.input;
+  const {
+    scopes: _scopes,
+    aclCap: _aclCap,
+    authoringMode: _authoringMode,
+    ...additions
+  } = plan.input;
   return { ...additions, duration };
 }

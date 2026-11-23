@@ -64,6 +64,9 @@ struct Artifact {
     groups: BTreeMap<String, Vec<&'static str>>,
     presets: BTreeMap<String, Vec<&'static str>>,
     access: BTreeMap<String, MinimumAccess>,
+    authoring: BTreeMap<String, crate::authoring::ToolAuthoring>,
+    /// `catalog.writeModeDescriptions`: (dream, edit).
+    write_mode_descriptions: BTreeMap<String, (String, String)>,
 }
 
 /// A tool's minimum KB access (`catalog.minimumAccess`), which discovery
@@ -152,6 +155,8 @@ fn load_artifact() -> Result<Artifact, SchemaViolation> {
     let mut descriptions = BTreeMap::new();
     let mut groups = BTreeMap::new();
     let mut access = BTreeMap::new();
+    let mut authoring = BTreeMap::new();
+    let mut write_mode_descriptions = BTreeMap::new();
     for (name, row) in tools {
         let input = row.get("input").cloned().ok_or(artifact_error("input"))?;
         let output = row.get("output").cloned().ok_or(artifact_error("output"))?;
@@ -170,6 +175,28 @@ fn load_artifact() -> Result<Artifact, SchemaViolation> {
                     .ok_or(artifact_error("minimumAccess"))?,
             )?,
         );
+        // An unknown authoring kind fails closed, like an unknown group.
+        if let Some(kind) = row.pointer("/catalog/authoring") {
+            let kind = kind
+                .as_str()
+                .and_then(crate::authoring::ToolAuthoring::parse)
+                .ok_or(artifact_error("authoring"))?;
+            authoring.insert(name.clone(), kind);
+        }
+        if let Some(texts) = row.pointer("/catalog/writeModeDescriptions") {
+            let text = |key: &str| {
+                texts
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+                    .ok_or(artifact_error("writeModeDescriptions"))
+            };
+            if texts.as_object().is_none_or(|texts| texts.len() != 2) {
+                return Err(artifact_error("writeModeDescriptions"));
+            }
+            write_mode_descriptions.insert(name.clone(), (text("dream")?, text("edit")?));
+        }
         out.insert(name.clone(), (input, output));
     }
     let builtin_id = root
@@ -198,6 +225,8 @@ fn load_artifact() -> Result<Artifact, SchemaViolation> {
         groups,
         presets,
         access,
+        authoring,
+        write_mode_descriptions,
     })
 }
 
@@ -314,6 +343,38 @@ pub fn tool_groups(tool: &str) -> Result<&'static [&'static str], SchemaViolatio
         .get(tool)
         .map(Vec::as_slice)
         .ok_or_else(|| artifact_error("unknown-tool"))
+}
+
+/// How `tool` uses the write mode (`catalog.authoring`); `None` when it is
+/// not an authoring tool.
+pub fn tool_authoring(
+    tool: &str,
+) -> Result<Option<crate::authoring::ToolAuthoring>, SchemaViolation> {
+    let artifact = artifact()?;
+    if !artifact.tools.contains_key(tool) {
+        return Err(artifact_error("unknown-tool"));
+    }
+    Ok(artifact.authoring.get(tool).copied())
+}
+
+/// The fixed description advertised for `tool` to a connection whose write
+/// mode allows only `kind` writes (`catalog.writeModeDescriptions`); `None`
+/// when the tool has none.
+pub fn tool_write_mode_description(
+    tool: &str,
+    kind: crate::authoring::WriteKind,
+) -> Result<Option<&'static str>, SchemaViolation> {
+    let artifact = artifact()?;
+    if !artifact.tools.contains_key(tool) {
+        return Err(artifact_error("unknown-tool"));
+    }
+    Ok(artifact
+        .write_mode_descriptions
+        .get(tool)
+        .map(|(dream, edit)| match kind {
+            crate::authoring::WriteKind::Dream => dream.as_str(),
+            crate::authoring::WriteKind::Edit => edit.as_str(),
+        }))
 }
 
 /// The catalog's minimum KB access for `tool`.

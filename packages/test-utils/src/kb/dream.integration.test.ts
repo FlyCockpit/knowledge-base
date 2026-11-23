@@ -1,5 +1,5 @@
 // @ts-nocheck — PG/Git integration harness.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -27,6 +27,7 @@ vi.mock("../../../../apps/server/src/kb-process.js", async (importOriginal) => (
   assertProcessFence() {},
 }));
 
+import { fixtureGitEnv } from "./git.js";
 import { openKbPostgresClusterFromEnv } from "./index.js";
 
 const ROOT = resolve(import.meta.dirname, "../../../..");
@@ -199,6 +200,82 @@ async function counts(kbId: string) {
   };
 }
 
+/** A both-mode PAT of `userId` writing `kbId`, admitted by its live grant row. */
+async function tokenWriter(userId: string, kbId: string) {
+  const grantId = crypto.randomUUID();
+  await prisma.mcpGrant.create({
+    data: {
+      id: grantId,
+      actorUserIdSnapshot: userId,
+      userId,
+      kind: "PAT",
+      clientId: "pat",
+      referenceId: crypto.randomUUID(),
+      scopes: ["mcp:read", "mcp:write"],
+      toolGroups: ["read", "edit"],
+      authoringMode: "BOTH",
+    },
+  });
+  return {
+    principal: {
+      kind: "token" as const,
+      userId,
+      grantId,
+      grantGeneration: "1",
+      scopes: ["mcp:read", "mcp:write"],
+      expiresAt: null,
+      storedAcl: new Map([[kbId, ["read", "write"]]]),
+    },
+    verifier: {
+      inspect: async () => ({
+        generationActive: true,
+        instanceEnabled: true,
+        expired: false,
+        banned: false,
+        twoFactorSatisfied: true,
+        toolGroups: ["read", "edit"],
+        authoringMode: "both" as const,
+      }),
+      grantBits: async () => ["read", "write"],
+    },
+  };
+}
+
+/** A document committed the way pre-provenance history has it (no label at all). */
+function commitLegacyDocument(kbId: string, path: string, content: string): string {
+  const repo = kbBareRepoPath(reposDir, kbId);
+  const git = (args: string[], input?: string) =>
+    execFileSync("git", ["--git-dir", repo, ...args], {
+      env: fixtureGitEnv(),
+      encoding: "utf8",
+      input,
+    }).trim();
+  const parent = git(["rev-parse", "refs/heads/main"]);
+  const [dir, name] = path.split("/") as [string, string];
+  const blob = git(["hash-object", "-w", "--stdin"], content);
+  const entries = (tree: string) => git(["ls-tree", tree]).split("\n").filter(Boolean);
+  const rootEntries = entries(parent);
+  const existing = rootEntries.some((line) => line.endsWith(`\t${dir}`))
+    ? entries(`${parent}:${dir}`)
+    : [];
+  const subtree = git(["mktree"], `${[...existing, `100644 blob ${blob}\t${name}`].join("\n")}\n`);
+  const root = git(
+    ["mktree"],
+    `${[...rootEntries.filter((line) => !line.endsWith(`\t${dir}`)), `040000 tree ${subtree}\t${dir}`].join("\n")}\n`,
+  );
+  const commit = git(["commit-tree", root, "-p", parent, "-m", "legacy document"]);
+  git(["update-ref", "refs/heads/main", commit, parent]);
+  return commit;
+}
+
+const DREAM_OVER = (id: string) => ({
+  model: DREAM_FIXTURE.model,
+  redactionApplied: true,
+  upserts: [
+    { id, type: "concept", title: "Dream", body: "dreamt", citations: [], provenance: "dream" },
+  ],
+});
+
 describe("dream integration", () => {
   it("applies fixture dream as a proposal with persisted metadata", async () => {
     const ownerUser = await owner();
@@ -286,6 +363,77 @@ describe("dream integration", () => {
     const after = await counts(kb.id);
     expect(after.headSha).toBe(headAfterSeed);
     expect(after.prs).toBe(before.prs);
+  });
+
+  it("a dream overwrites an agent's document; a person's (stamped human) and an unlabelled one stay protected", async () => {
+    const user = await owner();
+    const kb = await activeKb(user.id);
+    const writer = await tokenWriter(user.id, kb.id);
+    const repoPath = kbBareRepoPath(reposDir, kb.id);
+    const show = (rev: string, path: string) =>
+      execFileSync("git", ["--git-dir", repoPath, "show", `${rev}:${path}`], {
+        env: fixtureGitEnv(),
+        encoding: "utf8",
+      });
+    // An edit-mode credential's document: the server stamps it agent.
+    const agent = await runChangesApply(coordinator, {
+      store: prismaAuthorityStore(prisma),
+      principal: writer.principal,
+      verifier: writer.verifier,
+      reposDir,
+      kbId: kb.id,
+      idempotencyKey: "agent-seed",
+      request: {
+        mode: "edit",
+        baseRevision: kb.headSha!,
+        title: "agent seed",
+        changes: [
+          {
+            op: "create",
+            path: "concepts/agent-note.md",
+            content: { markdown: "---\nid: agent-note\ntype: concept\n---\nagent body\n" },
+          },
+        ],
+        sourceSessionIds: [],
+      },
+      ratePort: createMemoryRatePort(),
+    });
+    expect(show(agent.commitSha, "concepts/agent-note.md")).toContain("provenance: agent");
+    const dreamt = await applyDream(
+      kb.id,
+      user.id,
+      agent.commitSha,
+      "dream-over-agent",
+      DREAM_OVER("agent-note"),
+      [crypto.randomUUID()],
+    );
+    expect(dreamt.kind).toBe("applied");
+    expect(show(dreamt.commitSha, "concepts/agent-note.md")).toContain("provenance: dream");
+    // A person's edit in the web app (no label given) is stamped human.
+    const person = await applyEdit(kb.id, user.id, dreamt.commitSha, "person-seed", [
+      {
+        op: "create",
+        path: "concepts/person-note.md",
+        content: { markdown: "---\nid: person-note\ntype: concept\n---\nperson body\n" },
+      },
+    ]);
+    expect(show(person.commitSha, "concepts/person-note.md")).toContain("provenance: human");
+    const refused = async (id: string, base: string) => {
+      const before = await counts(kb.id);
+      await expect(
+        applyDream(kb.id, user.id, base, `dream-over-${id}`, DREAM_OVER(id), [crypto.randomUUID()]),
+      ).rejects.toThrow(/human or unspecified provenance/u);
+      expect(await counts(kb.id)).toEqual(before);
+    };
+    await refused("person-note", person.commitSha);
+    // Legacy history without any label is protected like a person's.
+    const legacy = commitLegacyDocument(
+      kb.id,
+      "concepts/legacy-note.md",
+      "---\nid: legacy-note\ntype: concept\n---\nlegacy body\n",
+    );
+    await prisma.knowledgeBase.update({ where: { id: kb.id }, data: { headSha: legacy } });
+    await refused("legacy-note", legacy);
   });
 
   it("rejects duplicate upsert ids and duplicate source sessions without effects", async () => {

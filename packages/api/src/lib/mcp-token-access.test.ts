@@ -7,6 +7,8 @@ import {
   createGrantCredentialVerifier,
   digestPatSecret,
   generatePatSecret,
+  listGrants,
+  listPersonalTokens,
   patLookupPrefix,
   updateGrant,
   validateAclAgainstLive,
@@ -321,5 +323,51 @@ describe("updateGrant input", () => {
     await expect(
       updateGrant(runtime, "u1", input as Parameters<typeof updateGrant>[2]),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
+});
+
+describe("credential lists carry the write mode", () => {
+  const grantId = "11111111-1111-4111-8111-111111111111";
+  const runtimeWith = (query: LockQuery) =>
+    ({
+      coordinator: {
+        run: ({ run }: { run: (ctx: unknown) => unknown }) =>
+          run({ lease: { transaction: (work: (q: LockQuery) => unknown) => work(query) } }),
+      },
+    }) as unknown as Parameters<typeof listGrants>[0];
+  const identity = {
+    banned: false,
+    banExpires: null,
+    twoFactorEnabled: true,
+    role: "user",
+    createdAt: new Date(),
+    twoFactorGraceStartedAt: null,
+    forcePublic: null,
+    forceInternal: null,
+  };
+
+  it("selects the stored mode and returns it in lowercase (null when read-only)", async () => {
+    const tokens = fakeQuery({
+      "FOR UPDATE": [{ id: "u1" }],
+      "u.banned": [identity],
+      "FROM mcp_personal_token t JOIN": [
+        { id: "t1", grantId, authoringMode: "DREAM", elevations: [] },
+        { id: "t2", grantId, authoringMode: null, elevations: [] },
+      ],
+    });
+    const page = await listPersonalTokens(runtimeWith(tokens), "u1", { limit: 5 });
+    expect(page.items.map((item) => item.authoringMode)).toEqual(["dream", null]);
+    expect(tokens.calls.find((sql) => sql.includes("mcp_personal_token t JOIN"))).toContain(
+      'g."authoringMode"::text AS "authoringMode"',
+    );
+    const grants = fakeQuery({
+      "FOR UPDATE": [{ id: "u1" }],
+      "u.banned": [identity],
+      "FROM mcp_grant g WHERE": [
+        { id: grantId, kind: "OAUTH", authoringMode: "BOTH", acl: [], elevations: [] },
+      ],
+    });
+    const listed = await listGrants(runtimeWith(grants), "u1", { limit: 5 });
+    expect(listed.items[0]?.authoringMode).toBe("both");
   });
 });

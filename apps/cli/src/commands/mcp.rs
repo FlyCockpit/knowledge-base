@@ -54,6 +54,15 @@ pub struct Args {
         value_parser = kb_client::scope::parse_tool_selector
     )]
     pub tools: Vec<Vec<&'static str>>,
+    /// The writes this connection may make: `dream` (only dreams: direct
+    /// edits, uploads, assets, pull request creation and merges, KB creation
+    /// and deletion are neither listed nor callable), `edit` (only direct
+    /// edits: no dreams) or `both`. A remote server's writes are also held to
+    /// the mode its login was approved for and its configured `write_mode`;
+    /// a server where they share no mode is a startup error. Default: `both`
+    /// locally; remotely, what the login and config allow.
+    #[arg(long, value_name = "MODE", value_parser = crate::auth::write_mode_parser())]
+    pub write_mode: Option<kb_client::authoring::AuthoringMode>,
     /// Local store only: the knowledge base IDs this connection may use.
     /// Default: every knowledge base.
     #[arg(long = "kb", value_name = "KB_ID", value_delimiter = ',', value_parser = crate::local::parse_kb_id)]
@@ -101,7 +110,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
             .map(|input| crate::auth::select(input, args.allow_loopback_http, &config))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let groups: Vec<&'static str> = args.tools.iter().flatten().copied().collect();
-        crate::remote::run(selected, &config, args.read_only, &groups)
+        crate::remote::run(selected, &config, args.read_only, &groups, args.write_mode)
     }
 }
 fn run_local(
@@ -143,11 +152,14 @@ fn run_local(
         }
     }
     let groups: Vec<&'static str> = args.tools.iter().flatten().copied().collect();
+    // The local principal is an agent: `--write-mode` holds its writes
+    // (discovery, admission and, inside the store, every mutation).
     let scope = ToolScope::new(
         &groups,
         args.read_only,
         (!args.kbs.is_empty()).then_some(args.kbs.as_slice()),
-    );
+    )
+    .with_authoring(args.write_mode);
     let model = Arc::new(ModelRuntime::new(
         &store,
         crate::paths::model_host(config)?,
@@ -205,6 +217,10 @@ fn run_local(
             dns: Box::new(NativeDns),
             http: Box::new(NativeHttp),
         },
+    )
+    .with_authoring(
+        args.write_mode
+            .unwrap_or(kb_client::authoring::AuthoringMode::Both),
     );
     let (finished, completion) = tokio::sync::oneshot::channel();
     // `store` stays open for the session: the launching writer whose WAL

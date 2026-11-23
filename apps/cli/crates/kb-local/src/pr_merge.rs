@@ -277,6 +277,15 @@ impl MergeSource for GitSource<'_> {
     fn read(&mut self, sha: &str) -> Result<Vec<u8>, StoreError> {
         self.read_blob(sha)
     }
+    fn write(&mut self, bytes: &[u8]) -> Result<String, StoreError> {
+        // Into the same (staged) store as the line merges' own results.
+        let mut writer = ObjectWriter::new(
+            self.repo,
+            self.guard,
+            Scratch::new(self.paths, &new_uuid_v4()?)?,
+        );
+        writer.blob(bytes)
+    }
 
     fn merge_texts(
         &mut self,

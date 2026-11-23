@@ -44,6 +44,7 @@ import {
   reconcileKbIntents,
 } from "@knowledge-base/api/lib/kb/operation-intent";
 import { prismaAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
+import { PrConflictError } from "@knowledge-base/api/lib/kb/pr-conflict";
 import type { CredentialVerifier, Principal } from "@knowledge-base/api/lib/kb/principal";
 import {
   createPullRequestPublication,
@@ -136,6 +137,8 @@ async function setup() {
     repo: kbBareRepoPath(reposDir, row.id),
   };
 }
+/** A document as a person's web edit publishes it: the server stamps it human. */
+const human = (body: string) => `---\nprovenance: human\n---\n${body}`;
 const edit = (
   baseRevision: string,
   path = "proposal.md",
@@ -404,7 +407,7 @@ describe("PR publication boundary", () => {
         `${mergeSha} ${f.base} ${proposed.commitSha}`,
       );
       expect(commitMessage(f.repo, mergeSha)).toBe(
-        "Merge #1: proposal\n\nActed-by: PR fixture via web",
+        `Merge #1: proposal\n\nActed-by: PR fixture via web\nKb-Actor-Key: user:${f.reviewer}`,
       );
       const state = await effects(f.id);
       expect(state.audit).toBe(1);
@@ -530,6 +533,88 @@ describe("PR publication boundary", () => {
       },
     );
   }
+  prFixtureTest(
+    "a dream PR is refused at merge once a person edits its document on main, even when the lines merge",
+    async (f) => {
+      const path = "concepts/shared.md";
+      const show = (rev: string) => runGit(f.repo, ["show", `${rev}:${path}`]);
+      const dream = (baseRevision: string, body: string): ChangesApplyRequest => ({
+        mode: "dream",
+        baseRevision,
+        title: "dream",
+        changes: [],
+        sourceSessionIds: [randomUUID()],
+        dream: {
+          model: { provider: "fixture", model: "fixture" },
+          redactionApplied: true,
+          upserts: [
+            {
+              id: "shared",
+              type: "concept",
+              title: null,
+              body,
+              citations: [],
+              provenance: "dream",
+            },
+          ],
+        },
+      });
+      const lines = (first: string, last: string) =>
+        `# Shared\n\n${first}\n\nmiddle\n\nmore\n\n${last}\n`;
+      // A dream's document on main: dreams may update it.
+      const seeded = await apply(f.id, f.owner, dream(f.base, lines("first", "last")));
+      expect(seeded.kind).toBe("applied");
+      expect(show(seeded.commitSha)).toContain("provenance: dream");
+      // The PR's dream changes the last line only.
+      const p = await apply(f.id, f.author, dream(seeded.commitSha, lines("first", "dreamt")));
+      expect(p.kind).toBe("proposed");
+      expect(show(p.commitSha)).toContain("provenance: dream");
+      // Then a person edits the first line in the web app: stamped human.
+      const main = await webUpdate(
+        f.owner,
+        f.id,
+        seeded.commitSha,
+        path,
+        // `show` trims the final newline; keep it so only the first line changes.
+        `${show(seeded.commitSha).replace("\nfirst\n", "\nperson\n")}\n`,
+      );
+      expect(show(main.commitSha)).toContain("provenance: human");
+      // The two sides change different lines: a line merge is clean, so only
+      // the dream guard can refuse this merge.
+      const texts = mkdtempSync(join(tmpdir(), "kb-pr-guard-"));
+      try {
+        for (const [name, rev] of [
+          ["base", seeded.commitSha],
+          ["main", main.commitSha],
+          ["proposal", p.commitSha],
+        ] as const)
+          await writeFile(join(texts, name), `${show(rev)}\n`);
+        const merged = runGit(texts, ["merge-file", "-p", "main", "base", "proposal"]);
+        expect(merged).toContain("person");
+        expect(merged).toContain("dreamt");
+      } finally {
+        rmSync(texts, { recursive: true, force: true });
+      }
+      return { p, main, before: await effects(f.id) };
+    },
+    async (f, { p, main, before }) => {
+      const refused = await mutate(f.reviewer, review(f.id, 1, p.commitSha, main.commitSha)).catch(
+        (error: unknown) => error,
+      );
+      // The dream guard's refusal: a content conflict naming no conflicted
+      // paths (a line clash would list them for the author to resolve).
+      expect(refused).toBeInstanceOf(PrConflictError);
+      expect(refused).toMatchObject({ code: "CONFLICT", conflict: { kind: "content_conflict" } });
+      expect((refused as Error).message).toMatch(/^This pull request conflicts with main\./);
+      expect((refused as PrConflictError).details).toEqual({});
+      expect(await effects(f.id)).toEqual(before);
+      expect(readHeadSha(f.repo)).toBe(main.commitSha);
+      expect(runGit(f.repo, ["show", `${main.commitSha}:concepts/shared.md`])).toContain(
+        "provenance: human",
+      );
+      expect((await prRow(f.id)).status).not.toBe("MERGED");
+    },
+  );
   prFixtureTest(
     "source advance journals version, clears CONFLICT, and rejects the old head",
     async (f) => {
@@ -770,7 +855,12 @@ describe("PR conflicts, updates and ownership", () => {
           proposalHeadSha: proposed.commitSha,
           contentIncluded: true,
           paths: [
-            { path: "rate.md", base: "limit 100\n", theirs: "limit 50\n", yours: "limit 200\n" },
+            {
+              path: "rate.md",
+              base: human("limit 100\n"),
+              theirs: human("limit 50\n"),
+              yours: human("limit 200\n"),
+            },
           ],
         },
       });
@@ -819,14 +909,14 @@ describe("PR conflicts, updates and ownership", () => {
         code: "CONFLICT",
         details: {
           reason: "PROPOSAL_CONFLICT",
-          paths: [{ path: "a.md", base: null, theirs: null, yours: "a" }],
+          paths: [{ path: "a.md", base: null, theirs: null, yours: human("a") }],
         },
       });
       expect(readRefSha(f.repo, "refs/heads/pr/1")).toBe(first.commitSha);
       const moved = await apply(f.id, f.author, edit(main.commitSha, "c.md", "c"));
       expect(moved.proposal?.number).toBe(1);
       expect(runGit(f.repo, ["rev-parse", `${moved.commitSha}^`])).toBe(main.commitSha);
-      expect(runGit(f.repo, ["show", `${moved.commitSha}:a.md`])).toBe("a");
+      expect(runGit(f.repo, ["show", `${moved.commitSha}:a.md`])).toBe(human("a"));
       expect((await prRow(f.id)).baseSha).toBe(main.commitSha);
       const detail = await getPullRequest(prRead(f.reviewer), { kbId: f.id, number: 1 });
       expect(detail.files.map((file) => file.path)).toEqual(["a.md", "c.md"]);
@@ -841,7 +931,7 @@ describe("PR conflicts, updates and ownership", () => {
       const next = await apply(f.id, f.author, edit(f.base, "b.md", "b"));
       expect(next.proposal).toMatchObject({ number: 1, version: 2, baseSha: f.base });
       expect(runGit(f.repo, ["rev-parse", `${next.commitSha}^`])).toBe(p.commitSha);
-      expect(runGit(f.repo, ["show", `${next.commitSha}:a.md`])).toBe("a");
+      expect(runGit(f.repo, ["show", `${next.commitSha}:a.md`])).toBe(human("a"));
       // R3-W5: the PR keeps the title it was opened with.
       expect(next.proposal?.title).toBe("proposal");
       // Rewriting the PR's own path against main needs its number.
@@ -853,7 +943,7 @@ describe("PR conflicts, updates and ownership", () => {
           reason: "PROPOSAL_CONFLICT",
           proposalNumber: 1,
           proposalHeadSha: next.commitSha,
-          paths: [{ path: "a.md", kind: "document", theirs: null, yours: "a" }],
+          paths: [{ path: "a.md", kind: "document", theirs: null, yours: human("a") }],
         },
       });
       // Naming the PR against main needs the PR head the choice was made
@@ -884,8 +974,8 @@ describe("PR conflicts, updates and ownership", () => {
         proposalHeadSha: next.commitSha,
       });
       expect(named.proposal).toMatchObject({ number: 1, version: 3, title: "proposal" });
-      expect(runGit(f.repo, ["show", `${named.commitSha}:a.md`])).toBe("chosen");
-      expect(runGit(f.repo, ["show", `${named.commitSha}:b.md`])).toBe("b");
+      expect(runGit(f.repo, ["show", `${named.commitSha}:a.md`])).toBe(human("chosen"));
+      expect(runGit(f.repo, ["show", `${named.commitSha}:b.md`])).toBe(human("b"));
       // A no-op on a path the PR did not change names the revision it was
       // evaluated on: the PR head, not main.
       const noop = await apply(
@@ -964,7 +1054,7 @@ describe("PR conflicts, updates and ownership", () => {
           proposalNumber: 1,
           baseSha: doc.commitSha,
           proposalHeadSha: proposed.commitSha,
-          paths: [{ path: "rate.md", theirs: "limit 50\n", yours: "limit 200\n" }],
+          paths: [{ path: "rate.md", theirs: human("limit 50\n"), yours: human("limit 200\n") }],
         },
       });
       const { getPullRequestConflicts } = await import("@knowledge-base/api/lib/kb/pull-requests");
@@ -1203,6 +1293,7 @@ describe("PR conflicts, updates and ownership", () => {
           clientId: "pat",
           referenceId: randomUUID(),
           scopes: ["mcp:read", "mcp:write"],
+          authoringMode: "BOTH",
           toolGroups: ["read", "edit", "pull_requests"],
         },
       });
@@ -1247,6 +1338,7 @@ describe("PR conflicts, updates and ownership", () => {
           clientId: "pat",
           referenceId: randomUUID(),
           scopes: ["mcp:read", "mcp:write"],
+          authoringMode: "BOTH",
           toolGroups: ["read", "edit"],
         },
       });
@@ -1300,11 +1392,13 @@ describe("PR conflicts, updates and ownership", () => {
     async (f, { p }) => {
       const proposal = runGit(f.repo, ["cat-file", "commit", p.commitSha]);
       expect(proposal).toContain("author knowledge-base <kb@example.invalid>");
-      expect(commitMessage(f.repo, p.commitSha)).toBe("proposal\n\nActed-by: PR fixture via web");
+      expect(commitMessage(f.repo, p.commitSha)).toBe(
+        `proposal\n\nActed-by: PR fixture via web\nKb-Actor-Key: user:${f.author}\nKb-Provenance: human`,
+      );
       const main = await apply(f.id, f.owner, edit(f.base, "main.md", "main"));
       const merged = await mutate(f.reviewer, review(f.id, 1, p.commitSha, main.commitSha));
       expect(commitMessage(f.repo, merged.pr.mergeCommitSha!)).toBe(
-        "Merge #1: proposal\n\nActed-by: PR fixture via web",
+        `Merge #1: proposal\n\nActed-by: PR fixture via web\nKb-Actor-Key: user:${f.reviewer}`,
       );
       expect(proposal).not.toMatch(/@example\.invalid>.*\n\n.*@/s);
     },
@@ -1328,6 +1422,7 @@ async function tokenOf(
       clientId: kind === "PAT" ? "pat" : "fixture-agent",
       referenceId: randomUUID(),
       scopes: ["mcp:read", "mcp:write"],
+      authoringMode: "BOTH",
       toolGroups: ["read", "edit", "pull_requests"],
     },
   });
@@ -1339,6 +1434,7 @@ async function tokenOf(
       banned: false,
       twoFactorSatisfied: true,
       toolGroups: ["read", "edit", "pull_requests"],
+      authoringMode: "both",
     }),
     grantBits: async () => bits,
   };
@@ -1461,7 +1557,8 @@ describe("every actor path selects the person's proposal", () => {
           headSha: f.base,
           proposalHeadSha: opened.commitSha,
           proposalNumber: 1,
-          paths: [{ path: "doc.md", yours: "token text\n" }],
+          // The token's version, as the server stamped it (an agent's).
+          paths: [{ path: "doc.md", yours: "---\nprovenance: agent\n---\ntoken text\n" }],
         },
       });
       // ...and explicitly choosing its observed head updates that PR.
@@ -1806,7 +1903,7 @@ describe("every resolution is valid on a conflicted path", () => {
           if (op === "delete") expect(files.split("\n")).not.toContain(scenario.path);
           else
             expect(runGit(f.repo, ["show", `${resolved.commitSha}:${scenario.path}`])).toBe(
-              "chosen",
+              human("chosen"),
             );
         },
       );
@@ -1887,7 +1984,7 @@ describe("progressive, typed conflict resolution", () => {
       // No merge marker anywhere on the published branch.
       for (const n of nine)
         expect(runGit(f.repo, ["show", `${first.commitSha}:${doc(n)}`])).not.toContain("<<<<<<<");
-      expect(runGit(f.repo, ["show", `${first.commitSha}:${doc(9)}`])).toBe("proposal 9");
+      expect(runGit(f.repo, ["show", `${first.commitSha}:${doc(9)}`])).toBe(human("proposal 9"));
       await expect(
         mutate(f.reviewer, review(f.id, 1, first.commitSha, main)),
       ).rejects.toMatchObject({ code: "CONFLICT", conflict: { kind: "content_conflict" } });
@@ -1895,13 +1992,13 @@ describe("progressive, typed conflict resolution", () => {
       const moved = await apply(f.id, f.owner, replace(main, doc(1), "main again\n"));
       const second = await apply(f.id, f.author, resolve(moved.commitSha, [9]));
       expect(second.proposal).toMatchObject({ status: "CONFLICT", baseSha: moved.commitSha });
-      expect(runGit(f.repo, ["show", `${second.commitSha}:${doc(1)}`])).toBe("chosen 1");
+      expect(runGit(f.repo, ["show", `${second.commitSha}:${doc(1)}`])).toBe(human("chosen 1"));
       // Keeping the version the PR already holds is a resolution too.
       const done = await apply(f.id, f.author, resolve(moved.commitSha, [1]));
       expect(done.kind).toBe("proposed");
       expect(done.proposal).toMatchObject({ status: "OPEN", targetSha: moved.commitSha });
       for (const n of nine)
-        expect(runGit(f.repo, ["show", `${done.commitSha}:${doc(n)}`])).toBe(`chosen ${n}`);
+        expect(runGit(f.repo, ["show", `${done.commitSha}:${doc(n)}`])).toBe(human(`chosen ${n}`));
       const merged = await mutate(f.reviewer, review(f.id, 1, done.commitSha, moved.commitSha));
       expect(merged.pr.status).toBe("MERGED");
     },
@@ -2049,7 +2146,7 @@ describe("structural conflicts on real logical paths", () => {
           details: {
             // Both sides of the clash; main's side stands in the way.
             paths: ["foo.md", "foo.md/bar.md"].map((path) =>
-              expect.objectContaining(path === prPath ? { path, yours: "pr\n" } : { path }),
+              expect.objectContaining(path === prPath ? { path, yours: human("pr\n") } : { path }),
             ),
           },
         });
@@ -2129,7 +2226,10 @@ describe("recorded conflict versions stay reachable and readable", () => {
           commitSha: entry.yoursSha as string,
           path: entry.path as string,
         });
-        expect(doc.markdown).toBe(big(n + 1));
+        // As the person wrote it, with the human label the server stamped.
+        expect(doc.markdown).toBe(
+          big(n + 1).replace(`id: big-${n + 1}\n---`, `id: big-${n + 1}\nprovenance: human\n---`),
+        );
       }
       // The PR view still reads, with the recorded state.
       expect((await getPullRequest(prRead(f.reviewer), { kbId: f.id, number: 1 })).pr.status).toBe(
@@ -2312,7 +2412,7 @@ describe("near-limit KBs with distinct subtrees stay within the deadlines", () =
       );
       expect(moved.proposal?.number).toBe(1);
       expect(runGit(f.repo, ["rev-parse", `${moved.commitSha}^`])).toBe(main.commitSha);
-      expect(runGit(f.repo, ["show", `${moved.commitSha}:g7/d3/n.md`])).toBe("# edited");
+      expect(runGit(f.repo, ["show", `${moved.commitSha}:g7/d3/n.md`])).toBe(human("# edited"));
       // The reviewed merge plans and publishes inside its mutation deadline.
       const merged = await timed(
         () => mutate(f.reviewer, review(f.id, 1, moved.commitSha, main.commitSha)),

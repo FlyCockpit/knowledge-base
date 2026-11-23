@@ -23,6 +23,7 @@ import {
   KbProposalDocumentEditor,
   KbSessionEditor,
 } from "@/components/kb/document-editor";
+import { DocumentHistory, ProvenanceBadge } from "@/components/kb/document-history";
 import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument } from "@/components/kb/markdown-view";
 import { StatusPill } from "@/components/status-pill";
@@ -533,6 +534,7 @@ function DocumentView({
                 {t("document.revision", { sha: short(document?.commitSha ?? editor.baseRevision) })}
               </StatusPill>
               {pinned && <StatusPill tone="busy">{t("document.olderRevision")}</StatusPill>}
+              {document && <ProvenanceBadge provenance={document.provenance} />}
               {proposal && (
                 <Link
                   to="/$lang/kbs/$kbId/prs/$number"
@@ -630,6 +632,9 @@ function DocumentView({
         // Rendered at the commit the document was read at, so media stay pinned to it.
         <KbRenderedDocument lang={lang} kbId={kbId} document={document} showRevision={false} />
       ) : null}
+      {!draft && !editing && !proposal && (
+        <DocumentHistory lang={lang} kbId={kbId} path={target.path} />
+      )}
     </div>
   );
 }

@@ -208,7 +208,8 @@
         "scopeRequired": "Choose at least one access type.",
         "toolGroupRequired": "Choose at least one tool group.",
         "createNeedsRead": "Knowledge bases it creates must include Read.",
-        "createNeedsWriteScope": "Creating knowledge bases requires the read-and-change access type."
+        "createNeedsWriteScope": "Creating knowledge bases requires the read-and-change access type.",
+        "writeModeRequired": "Choose a write mode."
       },
       "previewNoUsableTools": "The agent can't use any of the selected tools yet. The notes below say what's missing.",
       "kbBitName": "{{kb}}: {{bit}}"
@@ -255,7 +256,8 @@
       "temporaryIssues": {
         "limit": "This connection already has {{max}} temporary grants active. End one first.",
         "removes": "Temporary access can only add. Undo the removals, or choose Permanent to remove access.",
-        "needsWrite": "These tools change data, which needs the Read and change access type. Temporary access can't add it."
+        "needsWrite": "These tools change data, which needs the Read and change access type. Temporary access can't add it.",
+        "writeMode": "Temporary access can't change the write mode. Choose Permanent to change it."
       },
       "temporaryConfirm": "This access ends on its own after {{duration}}. You can end it earlier from the connection list.",
       "temporaryCreatedKbs": "Knowledge bases the agent creates during this time stay accessible to it after the temporary access ends.",
@@ -263,7 +265,12 @@
       "confirmChangesTitle": "Confirm changes",
       "endsTemporary": "This also ends temporary access on this connection.",
       "review": "Review changes",
-      "confirmStep": "Step 2 of 2 · Not saved yet"
+      "confirmStep": "Step 2 of 2 · Not saved yet",
+      "temporaryWriteMode": "Temporary access keeps the current write mode.",
+      "changeWriteMode": {
+        "dream": "Write mode: dreams",
+        "edit": "Write mode: direct edits"
+      }
     },
     "temporary": {
       "title": "Temporary access",
@@ -300,7 +307,27 @@
     "revokeAllConfirmToken": "revoke all",
     "revokeAllSuccess": "All tokens and connected apps were revoked.",
     "revokeAllError": "Some credentials were not revoked. Review the list and try again.",
-    "revokeAllCopyConfirm": "Copy confirmation text"
+    "revokeAllCopyConfirm": "Copy confirmation text",
+    "writeMode": {
+      "legend": "Write mode",
+      "hint": "How this credential may change knowledge bases. Choose one; the server checks it on every write.",
+      "limited": "The command-line login asked for a narrower write mode, so only these are offered.",
+      "summary": "Write mode: {{mode}}",
+      "modes": {
+        "dream": {
+          "label": "Dreams only",
+          "description": "Consolidates notes through dreams. Dreams only update documents written by dreams or agents, never a person's."
+        },
+        "edit": {
+          "label": "Direct edits only",
+          "description": "Creates, edits and deletes documents, uploads and pull requests. Its changes are labelled Agent."
+        },
+        "both": {
+          "label": "Dreams and direct edits",
+          "description": "Both: dreams, and direct edits labelled Agent."
+        }
+      }
+    }
   },
   "providers": {
     "title": "Embedding providers",

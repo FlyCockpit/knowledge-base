@@ -27,6 +27,7 @@ import { useTranslation } from "react-i18next";
 import z from "zod";
 import { InlineRetry } from "@/components/inline-retry";
 import { AclPicker } from "@/components/kb/acl-picker";
+import { AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
 import type { GrantEditTarget } from "@/components/kb/grant-edit-sheet";
 import { presetFor } from "@/components/kb/tool-group-picker";
 import { LoadMore } from "@/components/load-more";
@@ -120,6 +121,7 @@ export function editTargetFromToken(token: TokenRow): GrantEditTarget {
     toolGroups: token.toolGroups,
     allowCreate: token.allowCreate,
     createdKbBits: token.createdKbBits,
+    authoringMode: token.authoringMode,
     neverExpires: token.expiresAt === null,
     activeElevations: token.elevations.length,
   };
@@ -135,6 +137,7 @@ export function editTargetFromGrant(grant: GrantRow): GrantEditTarget {
     toolGroups: grant.toolGroups,
     allowCreate: grant.allowCreate,
     createdKbBits: grant.createdKbBits,
+    authoringMode: grant.authoringMode,
     neverExpires: false,
     activeElevations: grant.elevations.length,
   };
@@ -222,6 +225,7 @@ export function CredentialList({
                         : t("credentials.expires", { date: date(token.expiresAt) })}
                   </p>
                   <ToolGroupsSummary groups={token.toolGroups} />
+                  <AuthoringModeSummary mode={token.authoringMode} />
                   <WidenedOn date={token.widenedAt} format={date} />
                   {!token.revokedAt && !expired(token.expiresAt) && (
                     <TemporaryAccess elevations={token.elevations} lang={lang} />
@@ -281,6 +285,7 @@ export function CredentialList({
                       : t("credentials.approved", { date: date(grant.createdAt) })}
                   </p>
                   <ToolGroupsSummary groups={grant.toolGroups} />
+                  <AuthoringModeSummary mode={grant.authoringMode} />
                   <WidenedOn date={grant.widenedAt} format={date} />
                   {!grant.revokedAt && (
                     <TemporaryAccess elevations={grant.elevations} lang={lang} />
@@ -598,6 +603,7 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
         acl: grant.acl,
         allowCreate: grant.allowCreate,
         createdKbBits: grant.createdKbBits,
+        authoringMode: grant.authoringMode,
         expiresAt: expiry.expiresAt,
       });
     },

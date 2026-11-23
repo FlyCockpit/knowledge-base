@@ -25,6 +25,7 @@ const stored = {
   ],
   allowCreate: false,
   createdKbBits: [],
+  authoringMode: null,
 };
 type Action = Parameters<typeof selectionReducer>[1];
 /** The Sheet's dispatch: applies actions and records toggled KBs. */
@@ -58,6 +59,7 @@ describe("grant edit plan", () => {
       acl: { [KB_A]: ["read", "propose", "write"], [KB_GONE]: ["read"] },
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: null,
     });
     expect(plan(baseline, edit(baseline))).toMatchObject({ empty: true, widens: false, input: {} });
     // Unchecking an implied bit changes nothing that would be stored.
@@ -72,6 +74,7 @@ describe("grant edit plan", () => {
       edit(
         baseline,
         { type: "toggleScope", scope: "mcp:write" },
+        { type: "setAuthoringMode", mode: "edit" },
         { type: "toggleToolGroup", group: "assets" },
         { type: "toggleToolGroup", group: "pull_requests" },
         { type: "toggleBit", kbId: KB_A, bit: "write" },
@@ -87,6 +90,7 @@ describe("grant edit plan", () => {
         { kbId: KB_A, bits: ["read", "propose"] },
         { kbId: KB_B, bits: ["read"] },
       ],
+      authoringMode: "edit",
     });
     expect(JSON.stringify(result.input)).not.toContain(KB_GONE);
     expect(result.widens).toBe(true);
@@ -97,6 +101,7 @@ describe("grant edit plan", () => {
       cap: null,
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: ["edit"],
     });
     expect(result.removed.kbs).toEqual([{ kbId: KB_A, bits: ["write"] }]);
     expect(result.removed.cap).toBeNull();
@@ -143,7 +148,11 @@ describe("grant edit plan", () => {
   });
 
   it("never sends scopes for an app, and swapping write for read only narrows", () => {
-    const baseline = selectionFromGrant({ ...stored, scopes: ["mcp:write"] });
+    const baseline = selectionFromGrant({
+      ...stored,
+      scopes: ["mcp:write"],
+      authoringMode: "both",
+    });
     const swapped = edit(
       baseline,
       { type: "toggleScope", scope: "mcp:write" },
@@ -153,11 +162,18 @@ describe("grant edit plan", () => {
     const result = plan(baseline, swapped);
     expect(result.input.scopes).toEqual(["mcp:read"]);
     expect(result.added.scopes).toEqual([]);
+    // Dropping write drops the write mode with it: listed, never sent.
+    expect(result.removed.authoringMode).toEqual(["dream", "edit"]);
+    expect(result.input).not.toHaveProperty("authoringMode");
     expect(result.widens).toBe(false);
   });
 
   it("turning creation on sends the created bits; turning it off clears them on the server", () => {
-    const baseline = selectionFromGrant({ ...stored, scopes: ["mcp:write"] });
+    const baseline = selectionFromGrant({
+      ...stored,
+      scopes: ["mcp:write"],
+      authoringMode: "both",
+    });
     const on = plan(
       baseline,
       edit(
@@ -175,6 +191,7 @@ describe("grant edit plan", () => {
       scopes: ["mcp:write"],
       allowCreate: true,
       createdKbBits: ["read"],
+      authoringMode: "both",
     });
     const off = plan(creating, edit(creating, { type: "setAllowCreate", value: false }));
     expect(off.input).toEqual({ allowCreate: false });
@@ -190,6 +207,7 @@ describe("temporary access edits", () => {
     acl: [{ kbId: KB_A, bits: ["read"] }],
     allowCreate: false,
     createdKbBits: [],
+    authoringMode: "dream",
   });
   const options = { writeScope: true, activeElevations: 0 };
 
@@ -250,5 +268,56 @@ describe("temporary access edits", () => {
     expect(planNarrows(widens)).toBe(false);
     const swaps = plan(base, edit(base, { type: "setToolGroups", groups: ["export"] }));
     expect(planNarrows(swaps)).toBe(true);
+  });
+});
+
+describe("write mode edits", () => {
+  const writer = selectionFromGrant({ ...stored, scopes: ["mcp:write"], authoringMode: "dream" });
+
+  it("a mode-only edit is a real change", () => {
+    const result = plan(writer, edit(writer, { type: "setAuthoringMode", mode: "both" }));
+    expect(result.empty).toBe(false);
+    expect(result.input).toEqual({ authoringMode: "both" });
+    expect(result.added.authoringMode).toEqual(["edit"]);
+    expect(result.removed.authoringMode).toEqual([]);
+    expect(result.widens).toBe(true);
+    expect(planNarrows(result)).toBe(false);
+  });
+
+  it("dream <-> edit both widens and narrows", () => {
+    const result = plan(writer, edit(writer, { type: "setAuthoringMode", mode: "edit" }));
+    expect(result.input).toEqual({ authoringMode: "edit" });
+    expect(result.added.authoringMode).toEqual(["edit"]);
+    expect(result.removed.authoringMode).toEqual(["dream"]);
+    expect(result.widens).toBe(true);
+    expect(planNarrows(result)).toBe(true);
+  });
+
+  it("both -> dream only narrows", () => {
+    const both = selectionFromGrant({ ...stored, scopes: ["mcp:write"], authoringMode: "both" });
+    const result = plan(both, edit(both, { type: "setAuthoringMode", mode: "dream" }));
+    expect(result.removed.authoringMode).toEqual(["edit"]);
+    expect(result.widens).toBe(false);
+    expect(planNarrows(result)).toBe(true);
+  });
+
+  it("choosing the stored mode again is no change", () => {
+    const result = plan(writer, edit(writer, { type: "setAuthoringMode", mode: "dream" }));
+    expect(result.empty).toBe(true);
+  });
+
+  it("an app's mode is editable even though its scopes are fixed", () => {
+    const result = plan(writer, edit(writer, { type: "setAuthoringMode", mode: "edit" }), false);
+    expect(result.input).toEqual({ authoringMode: "edit" });
+  });
+
+  it("a read-only grant never carries a mode", () => {
+    expect(selectionFromGrant({ ...stored, authoringMode: "both" }).authoringMode).toBeNull();
+  });
+
+  it("temporary access cannot change the mode, and never sends it", () => {
+    const result = plan(writer, edit(writer, { type: "setAuthoringMode", mode: "both" }), false);
+    expect(temporaryIssue(result, { writeScope: true, activeElevations: 0 })).toBe("writeMode");
+    expect(temporaryInput(result, "1h")).not.toHaveProperty("authoringMode");
   });
 });

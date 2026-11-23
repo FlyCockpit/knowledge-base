@@ -7,6 +7,7 @@ import {
   type DeviceDeps,
   type DeviceProgress,
   deviceGrant,
+  deviceWriteModes,
   initialProgress,
   normalizeUserCode,
   runDeviceDecision,
@@ -22,6 +23,7 @@ const claim: DeviceClaim = {
   clientId: "kb-cli",
   scopes: ["mcp:read"],
   nonce: NONCE,
+  requestedWriteMode: null,
 };
 
 type Call = { op: string; input?: unknown };
@@ -100,9 +102,28 @@ describe("GET claim", () => {
         clientId: "kb-cli",
         scopes: ["mcp:read", "mcp:write"],
         nonce: NONCE,
+        requestedWriteMode: null,
       },
     });
     expect(calls).toEqual([{ op: "GET claim", input: CODE }]);
+  });
+
+  it("reads the CLI's requested write mode, refusing an unknown one", async () => {
+    const data = (requested: unknown) => ({
+      user_code: CODE,
+      client_id: "kb-cli",
+      scope: "mcp:read mcp:write kb:write-mode:dream",
+      status: "pending",
+      nonce: NONCE,
+      requested_write_mode: requested,
+    });
+    const ok = recorder({ claim: () => ({ ok: true, data: data("dream") }) });
+    await expect(claimDevice(ok.deps, CODE)).resolves.toMatchObject({
+      kind: "claimed",
+      claim: { requestedWriteMode: "dream", scopes: ["mcp:read", "mcp:write"] },
+    });
+    const bad = recorder({ claim: () => ({ ok: true, data: data("everything") }) });
+    await expect(claimDevice(bad.deps, CODE)).resolves.toEqual({ kind: "unavailable" });
   });
 
   it("a wrong, expired or already-used code (server refusal) is an explicit unavailable state", async () => {
@@ -163,6 +184,7 @@ describe("decision flow and request order", () => {
         acl: [{ kbId: KB_A, bits: ["read"] }],
         allowCreate: false,
         createdKbBits: [],
+        authoringMode: null,
       },
     });
     expect(calls[2]?.input).toEqual({ userCode: CODE, nonce: NONCE });
@@ -198,6 +220,33 @@ describe("decision flow and request order", () => {
   it("selection scopes are exactly the claimed scopes; offline_access never travels", () => {
     const grant = deviceGrant(emptySelection(), live, ["mcp:read", "offline_access", "mcp:write"]);
     expect(grant.scopes).toEqual(["mcp:read", "mcp:write"]);
+  });
+
+  it("offers only write modes within the CLI's ceiling and never sends one beyond it", () => {
+    expect(deviceWriteModes(null)).toEqual(["dream", "edit", "both"]);
+    expect(deviceWriteModes("dream")).toEqual(["dream"]);
+    expect(deviceWriteModes("both")).toEqual(["dream", "edit", "both"]);
+    const both = selectionReducer(emptySelection(), { type: "setAuthoringMode", mode: "both" });
+    const scopes = ["mcp:read", "mcp:write"];
+    expect(deviceGrant(both, live, scopes, [], null).authoringMode).toBe("both");
+    const beyond = deviceGrant(both, live, scopes, [], "edit");
+    expect(beyond.authoringMode).toBeNull();
+    const edit = selectionReducer(emptySelection(), { type: "setAuthoringMode", mode: "edit" });
+    expect(deviceGrant(edit, live, scopes, [], "edit").authoringMode).toBe("edit");
+    // Read-only logins never carry a mode.
+    expect(deviceGrant(edit, live, ["mcp:read"]).authoringMode).toBeNull();
+  });
+
+  it("a write login cannot be approved until a write mode is chosen", async () => {
+    const { calls, deps } = recorder();
+    const result = await runDeviceDecision(deps, {
+      claim: { ...claim, scopes: ["mcp:read", "mcp:write"] },
+      progress: initialProgress(),
+      selection: deviceGrant(emptySelection(), live, ["mcp:read", "mcp:write"]),
+      decision: "approve",
+    });
+    expect(result.phase).toEqual({ kind: "review" });
+    expect(calls).toEqual([]);
   });
 
   it("an unresolved selection issue sends nothing", async () => {

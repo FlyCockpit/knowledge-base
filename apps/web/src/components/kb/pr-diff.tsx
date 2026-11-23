@@ -5,6 +5,7 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { InlineRetry } from "@/components/inline-retry";
+import { actorLine, ProvenanceBadge } from "@/components/kb/document-history";
 import { KbRenderedDocument, type KbViewerDocument } from "@/components/kb/markdown-view";
 import { isRenderableMime, kbAssetUrl, MediaEmbed } from "@/components/kb/media";
 import { LoadMore } from "@/components/load-more";
@@ -171,6 +172,26 @@ export function PrRenderedPair({
   );
 }
 
+/** Each side's label and who wrote the newest change in the PR, when the server knows. */
+function PrFileProvenance({ file }: { file: FileDelta }) {
+  const { t } = useTranslation("kb");
+  const before = file.beforeProvenance ?? null;
+  const after = file.afterProvenance ?? null;
+  const writtenBy = file.writtenBy ?? null;
+  if (!before && !after && !writtenBy) return null;
+  return (
+    <div data-testid="pr-file-provenance" className="flex min-w-0 flex-wrap items-center gap-2">
+      {before && <ProvenanceBadge provenance={before} prefix={t("pr.before")} />}
+      {after && <ProvenanceBadge provenance={after} prefix={t("pr.after")} />}
+      {writtenBy && (
+        <span data-testid="pr-file-written-by" className="text-xs text-muted-foreground">
+          {t("pr.files.writtenBy", { actor: actorLine(t, writtenBy) })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Same key shape as `orpc.documents.get.queryOptions`, so access loss clears it. */
 const documentKey = (input: { kbId: string; path: string; rev: string }) =>
   [["documents", "get"], { input, type: "query" }] as const;
@@ -220,6 +241,7 @@ function PrFileCard({
         <span className="rounded border px-1.5 text-xs">{t(`pr.files.${file.status}`)}</span>
         <span className="break-all font-mono">{file.path}</span>
       </p>
+      {markdown && <PrFileProvenance file={file} />}
       {!markdown ? (
         <p className="text-xs text-muted-foreground">{t("pr.files.notMarkdown")}</p>
       ) : !open ? (

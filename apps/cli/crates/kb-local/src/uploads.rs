@@ -176,6 +176,8 @@ impl Store {
         input: UploadBeginInput,
         observe: &mut dyn FnMut(UploadStage),
     ) -> Result<UploadBeginOutput, StoreError> {
+        // Uploads (Markdown or asset) only feed direct edits.
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         // The server's order and reasons: size, MIME, then the size limit.
         let (mime_ok, max) = match input.kind {
             UploadKind::Markdown => (input.mime == Mime::TextMarkdown, MARKDOWN_MAX_BYTES),
@@ -303,6 +305,7 @@ impl Store {
         input: UploadWriteInput,
         observe: &mut dyn FnMut(UploadStage),
     ) -> Result<UploadWriteOutput, StoreError> {
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let frame = |reason: InvalidReason| {
             StoreError::invalid(reason, Some("/bytesBase64".into()), "upload frame")
         };
@@ -402,6 +405,7 @@ impl Store {
         who: &LocalPrincipal,
         input: UploadRef,
     ) -> Result<UploadFinishOutput, StoreError> {
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let _guard = self.lock_write(std::slice::from_ref(&input.kb_id))?;
         let r = self.upload_row(who, &input.kb_id, &input.upload_id)?;
         if r.offset != r.size || r.pending_size.is_some() {

@@ -23,6 +23,18 @@
 //! Only `Applied` and `Noop` report
 //! [`DreamOutcome::advances_consumer_ledger`]. Stale bases, failures and
 //! inconsistent server answers are errors, never a success value.
+//!
+//! # What a dream may overwrite, and the credential for it
+//!
+//! A dream may update documents whose front-matter provenance is `dream` or
+//! `agent` (notes an agent wrote directly with an edit-mode credential are
+//! stamped `agent` by the server), never one a person wrote (`human`) or one
+//! without a label: that is `FORBIDDEN`. The expected credential for this
+//! seam is a **dream-only** token (write mode `dream`): it can dream but
+//! never edit, so a compromised host cannot rewrite notes directly. A token
+//! whose write mode does not allow dreams is refused `FORBIDDEN` with
+//! `{reason: "WRITE_MODE", required: "dream"}`
+//! ([`crate::error::ErrorDetails::WriteMode`]).
 
 use std::collections::HashSet;
 use std::fmt;

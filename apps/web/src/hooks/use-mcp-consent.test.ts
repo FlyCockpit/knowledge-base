@@ -15,6 +15,7 @@ import {
   selectionKey,
   selectionReducer,
   toGrantSelection,
+  withScopes,
 } from "./use-mcp-consent";
 
 const KB_A = "a".repeat(24);
@@ -40,6 +41,7 @@ describe("credential selection model", () => {
       acl: [],
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: null,
     });
   });
 
@@ -47,6 +49,7 @@ describe("credential selection model", () => {
     const state = apply(
       { type: "setToolGroups", groups: [...MCP_TOOL_PRESETS.direct] },
       { type: "toggleScope", scope: "mcp:write" },
+      { type: "setAuthoringMode", mode: "edit" },
       { type: "toggleBit", kbId: KB_A, bit: "propose" },
       { type: "toggleBit", kbId: KB_B, bit: "read" },
       { type: "setAllowCreate", value: true },
@@ -63,6 +66,7 @@ describe("credential selection model", () => {
       ],
       allowCreate: true,
       createdKbBits: ["read", "propose", "write"],
+      authoringMode: "edit",
     });
   });
 
@@ -199,6 +203,7 @@ describe("credential selection model", () => {
     const selection = apply(
       { type: "setToolGroups", groups: ["read", "edit", "kb_admin"] },
       { type: "toggleScope", scope: "mcp:write" },
+      { type: "setAuthoringMode", mode: "both" },
       { type: "setAllowCreate", value: true },
       { type: "toggleCreatedBit", bit: "manage" },
     );
@@ -206,6 +211,34 @@ describe("credential selection model", () => {
     expect(grant.createdKbBits).toEqual(KB_BITS);
     expect(selectionIssues(grant)).toEqual([]);
   });
+  it("never preselects a write mode, and write access cannot submit without one", () => {
+    expect(emptySelection().authoringMode).toBeNull();
+    const write = apply({ type: "toggleScope", scope: "mcp:write" });
+    expect(selectionIssues(toGrantSelection(write, live))).toEqual(["writeModeRequired"]);
+    const chosen = selectionReducer(write, { type: "setAuthoringMode", mode: "dream" });
+    expect(toGrantSelection(chosen, live).authoringMode).toBe("dream");
+    expect(selectionIssues(toGrantSelection(chosen, live))).toEqual([]);
+  });
+
+  it("sends a write mode only alongside mcp:write, including with fixed scopes", () => {
+    const picked = apply(
+      { type: "toggleScope", scope: "mcp:write" },
+      { type: "setAuthoringMode", mode: "both" },
+      { type: "toggleScope", scope: "mcp:write" },
+      { type: "toggleScope", scope: "mcp:read" },
+    );
+    // Write was dropped again: the remembered mode is never sent.
+    expect(toGrantSelection(picked, live).authoringMode).toBeNull();
+    // Consent/device scopes come from the signed request.
+    const fixed = apply({ type: "setAuthoringMode", mode: "edit" });
+    expect(toGrantSelection(fixed, live, ["mcp:read", "mcp:write"]).authoringMode).toBe("edit");
+    expect(toGrantSelection(fixed, live, ["mcp:read"]).authoringMode).toBeNull();
+    expect(withScopes(toGrantSelection(fixed, live, ["mcp:write"]), ["mcp:read"])).toMatchObject({
+      scopes: ["mcp:read"],
+      authoringMode: null,
+    });
+  });
+
   it("reports blocking issues instead of broadening", () => {
     expect(selectionIssues(toGrantSelection(emptySelection(), live))).toContain("scopeRequired");
     const createNoRead = apply(
@@ -299,6 +332,7 @@ describe("consent submission", () => {
         acl: [{ kbId: KB_A, bits: ["read"] }],
         allowCreate: false,
         createdKbBits: [],
+        authoringMode: null,
       },
       explicitConsent: true,
     });

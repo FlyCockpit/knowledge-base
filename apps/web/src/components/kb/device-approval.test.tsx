@@ -44,7 +44,13 @@ describe("DeviceApproval", () => {
       <I18nextProvider i18n={i18n}>
         <DeviceApproval
           phase={phase}
-          claim={{ userCode: "ABCD2345", clientId: "kb-cli", scopes: ["mcp:read"], nonce: "n" }}
+          claim={{
+            userCode: "ABCD2345",
+            clientId: "kb-cli",
+            scopes: ["mcp:read"],
+            nonce: "n",
+            requestedWriteMode: null,
+          }}
           live={live}
           kbs={{
             isError: false,
@@ -105,6 +111,7 @@ describe("DeviceApproval", () => {
           clientId: "kb-cli",
           scopes: ["mcp:read"],
           nonce: "n",
+          requestedWriteMode: null,
           recipientKey: {
             recipientKeyId: "00000000-0000-4000-8000-000000000001",
             recipientPublicKey: `${"A".repeat(43)}=`,

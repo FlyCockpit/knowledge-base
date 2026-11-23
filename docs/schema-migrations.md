@@ -1,6 +1,6 @@
 # Schema migrations
 
-Knowledge Base uses Prisma Migrate with committed SQL. `packages/db/prisma/schema/` describes the desired schema; `packages/db/prisma/migrations/0_init/migration.sql` creates the current baseline, including KB constraints, triggers and indexes. Later timestamped folders contain `migration.sql` and, for scheduled deletions, `contract.sql`. Merged folders are immutable. Ship schema and SQL together.
+Knowledge Base uses Prisma Migrate with committed SQL. `packages/db/prisma/schema/` describes the desired schema; `packages/db/prisma/migrations/0_init/migration.sql` creates the current baseline, including KB constraints, triggers and indexes. Later timestamped folders contain `migration.sql` and, for scheduled deletions, `contract.sql`. Merged folders are immutable. Ship schema and SQL together. `20261123010000_add_grant_authoring_mode` adds `McpGrant.authoringMode` (the MCP write mode) and backfills every grant holding `mcp:write`, live or revoked, to `BOTH` (exactly the authority it already had, and no sealed approval bound to a grant id is stranded); a CHECK then requires the mode exactly with write. Approved OAuth consent selections are not rewritten: refresh accepts a selection without a write mode and takes the mode from its grant, so selections written before write modes keep working. The CHECK deliberately makes this migration rollback-unsafe (fail-closed): the runner does not admit a release from before write modes against this schema, since that release would mint write grants without a mode.
 
 ## Local commands
 

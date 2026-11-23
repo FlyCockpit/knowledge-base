@@ -1024,12 +1024,14 @@ describe("push sealed validation uses validated parent trees", () => {
     const assets = mktree(repo, [
       `100644 blob ${blob('{"version":1,"entries":[]}\n')}\tmanifest.json`,
     ]);
+    // Pushed Markdown is a credential's: it says `provenance: agent`.
+    const agent = (text: string) => `---\nprovenance: agent\n---\n${text}`;
     const tree = (index: string, secret: string | null) =>
       mktree(repo, [
         `040000 tree ${assets}\t.assets`,
         `100644 blob ${blob("# kb managed\n")}\t.gitignore`,
-        `100644 blob ${blob(index)}\tindex.md`,
-        ...(secret === null ? [] : [`100644 blob ${blob(secret)}\tdb.md`]),
+        `100644 blob ${blob(agent(index))}\tindex.md`,
+        ...(secret === null ? [] : [`100644 blob ${blob(agent(secret))}\tdb.md`]),
       ]);
     const commit = (treeSha: string, parents: string[] = [], time = 1700000000) =>
       runGit(

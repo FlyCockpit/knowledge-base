@@ -1,3 +1,4 @@
+import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
 import {
   MCP_DEFAULT_TOOL_PRESET,
   MCP_TOOL_GROUPS,
@@ -20,7 +21,8 @@ import { orpc } from "@/utils/orpc";
  * Invariants (CONTRACT human credential input):
  * - Nothing is ever preselected: no scope, KB, bit or create capability
  *   starts checked, and there is no "all KBs" shortcut. Tool groups start on
- *   the narrowest preset, Read; a grant always names its groups.
+ *   the narrowest preset, Read; a grant always names its groups. No write
+ *   mode is preselected either: with write access the user must pick one.
  * - OAuth never carries sealed recipients. Device approval extends this
  *   ceiling with exact records and a CLI-registered recipient key.
  * - Only KBs/bits the server reports as held live can be submitted; anything
@@ -67,6 +69,8 @@ export type CredentialSelection = {
   acl: Readonly<Record<string, readonly KbBit[]>>;
   allowCreate: boolean;
   createdKbBits: readonly KbBit[];
+  /** The write mode; only sent while the credential has write access. */
+  authoringMode: McpAuthoringMode | null;
 };
 
 export type SelectionAction =
@@ -76,6 +80,7 @@ export type SelectionAction =
   | { type: "toggleCreatedBit"; bit: KbBit }
   | { type: "setToolGroups"; groups: readonly McpToolGroup[] }
   | { type: "toggleToolGroup"; group: McpToolGroup }
+  | { type: "setAuthoringMode"; mode: McpAuthoringMode }
   | { type: "reset" };
 
 export type GrantSelection = {
@@ -84,6 +89,8 @@ export type GrantSelection = {
   acl: { kbId: string; bits: KbBit[] }[];
   allowCreate: boolean;
   createdKbBits: KbBit[];
+  /** Required with mcp:write, null without it (the server refuses either mismatch). */
+  authoringMode: McpAuthoringMode | null;
 };
 
 export function emptySelection(): CredentialSelection {
@@ -93,6 +100,7 @@ export function emptySelection(): CredentialSelection {
     acl: {},
     allowCreate: false,
     createdKbBits: [],
+    authoringMode: null,
   };
 }
 
@@ -138,6 +146,8 @@ export function selectionReducer(
         ...state,
         toolGroups: canonicalGroups(toggle(state.toolGroups, action.group)),
       });
+    case "setAuthoringMode":
+      return { ...state, authoringMode: action.mode };
     case "reset":
       return emptySelection();
   }
@@ -180,22 +190,40 @@ export function effectiveSelection(selection: CredentialSelection): CredentialSe
   return { ...selection, acl, createdKbBits: canonicalBits(selection.createdKbBits, allowed) };
 }
 
-/** Exact wire selection: only live KBs/bits within the preset's ceiling survive. */
+/**
+ * Exact wire selection: only live KBs/bits within the preset's ceiling survive.
+ * `scopes` replaces the selection's own when they are fixed by a signed request
+ * (OAuth consent, device login); the write mode is kept only with mcp:write.
+ */
 export function toGrantSelection(
   raw: CredentialSelection,
   live: readonly LiveKbOption[],
+  scopes?: readonly McpScope[],
 ): GrantSelection {
   const selection = effectiveSelection(raw);
   const acl = live.flatMap((kb) => {
     const bits = canonicalBits(selection.acl[kb.kbId] ?? [], kb.bits);
     return bits.length ? [{ kbId: kb.kbId, bits }] : [];
   });
+  return withScopes(
+    {
+      scopes: [],
+      toolGroups: canonicalGroups(selection.toolGroups),
+      acl,
+      allowCreate: selection.allowCreate,
+      createdKbBits: selection.allowCreate ? expandKbBits(selection.createdKbBits) : [],
+      authoringMode: selection.authoringMode,
+    },
+    scopes ?? SELECTABLE_SCOPES.filter((scope) => selection.scopes.includes(scope)),
+  );
+}
+
+/** A grant with these scopes: the write mode survives only alongside mcp:write. */
+export function withScopes(grant: GrantSelection, scopes: readonly McpScope[]): GrantSelection {
   return {
-    scopes: SELECTABLE_SCOPES.filter((scope) => selection.scopes.includes(scope)),
-    toolGroups: canonicalGroups(selection.toolGroups),
-    acl,
-    allowCreate: selection.allowCreate,
-    createdKbBits: selection.allowCreate ? expandKbBits(selection.createdKbBits) : [],
+    ...grant,
+    scopes: [...scopes],
+    authoringMode: scopes.includes("mcp:write") ? grant.authoringMode : null,
   };
 }
 
@@ -203,7 +231,8 @@ export type SelectionIssue =
   | "scopeRequired"
   | "toolGroupRequired"
   | "createNeedsRead"
-  | "createNeedsWriteScope";
+  | "createNeedsWriteScope"
+  | "writeModeRequired";
 
 export function selectionIssues(grant: GrantSelection): SelectionIssue[] {
   const issues: SelectionIssue[] = [];
@@ -214,6 +243,9 @@ export function selectionIssues(grant: GrantSelection): SelectionIssue[] {
   if (grant.allowCreate && !grant.createdKbBits.includes("read")) issues.push("createNeedsRead");
   if (grant.allowCreate && !grant.scopes.includes("mcp:write")) {
     issues.push("createNeedsWriteScope");
+  }
+  if (grant.scopes.includes("mcp:write") && grant.authoringMode === null) {
+    issues.push("writeModeRequired");
   }
   return issues;
 }
@@ -363,7 +395,7 @@ export async function runConsentSubmit(
       return { phase: { kind: "error" }, approvedKey };
     }
   }
-  const selection = { ...input.selection, scopes: input.requestedScopes.filter(isMcpScope) };
+  const selection = withScopes(input.selection, input.requestedScopes.filter(isMcpScope));
   const key = selectionKey(selection);
   // A submit token that already approved one selection can never approve another.
   if (approvedKey !== null && approvedKey !== key)
@@ -473,10 +505,7 @@ export function useMcpConsent(rawSearch: string, enabled: boolean) {
   );
   const { data } = review;
   const grant = useMemo(
-    () => ({
-      ...toGrantSelection(selection, kbs.live),
-      scopes: (data?.scopes ?? []).filter(isMcpScope),
-    }),
+    () => toGrantSelection(selection, kbs.live, (data?.scopes ?? []).filter(isMcpScope)),
     [selection, kbs.live, data?.scopes],
   );
 

@@ -64,6 +64,11 @@ pub struct NamedServer {
     /// `kb mcp` serves only this server's read tools.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
+    /// `kb mcp` holds this server's writes to this write mode (`dream`,
+    /// `edit` or `both`), within the stored login's approved mode and
+    /// `--write-mode`; absent narrows nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<kb_client::authoring::AuthoringMode>,
 }
 
 /// A server name (and the `server` argument value a multi-server `kb mcp`
@@ -441,6 +446,7 @@ pub const TEMPLATE: &str = r#"# kb configuration. Every setting is optional; unc
 # [servers.work]
 # url = "https://kb.example.com"
 # read_only = false
+# write_mode = "dream"   # dream | edit | both: narrows `kb mcp` writes
 "#;
 
 /// Flush the directory entry created by the rename, so the config file itself

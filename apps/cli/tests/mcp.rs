@@ -1116,7 +1116,11 @@ fn cli_principal_proposes_and_the_owner_merges_its_pull_request() {
         "knowledge_documents_get",
         json!({"kbId":kb_id,"path":"idea.md"}),
     );
-    assert_eq!(doc["data"]["markdown"], "# Idea");
+    // Every agent write is stamped `provenance: agent`.
+    assert_eq!(
+        doc["data"]["markdown"],
+        "---\nprovenance: agent\n---\n# Idea"
+    );
     owner.close();
     // Removing the principal revokes it.
     let removed = Command::new(assert_cmd::cargo::cargo_bin!("kb"))
@@ -1280,5 +1284,163 @@ fn enveloped_requests_see_the_scoped_read_only_catalog_without_a_handshake() {
     assert_eq!(
         reply(2)["result"]["structuredContent"]["error"]["code"],
         "FORBIDDEN"
+    );
+}
+
+/// `kb mcp --root --write-mode`: a dream-only session lists no always-edit
+/// tool, describes `changes_apply` for dreams, and refuses edits with the
+/// server's `WRITE_MODE` details before any effect; an edit-only session
+/// refuses dreams. The default (no flag) is `both`.
+#[test]
+fn write_mode_shapes_local_discovery_and_refuses_with_details() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let root = temp.path().join("store");
+    let session = |mode: Option<&str>, requests: &[Value]| -> Vec<Value> {
+        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("kb"));
+        command.arg("mcp");
+        if let Some(mode) = mode {
+            command.args(["--write-mode", mode]);
+        }
+        let mut child = ChildGuard::spawn_capture(
+            command
+                .arg("--root")
+                .arg(&root)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("CLI");
+        let mut writer = child.stdin.take().expect("stdin");
+        let meta = json!({"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}});
+        for (id, request) in requests.iter().enumerate() {
+            let mut request = request.clone();
+            request["jsonrpc"] = json!("2.0");
+            request["id"] = json!(id + 1);
+            request["params"]["_meta"] = meta.clone();
+            writeln!(writer, "{request}").expect("request");
+        }
+        let mut reader = BufReader::new(child.stdout.take().expect("stdout"));
+        let mut replies: Vec<Value> = (0..requests.len())
+            .map(|_| {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("reply");
+                serde_json::from_str(&line).expect("JSON")
+            })
+            .collect();
+        drop(writer);
+        assert!(child.wait().expect("CLI").success());
+        replies.sort_by_key(|reply| reply["id"].as_u64());
+        replies
+    };
+    let list = json!({"method":"tools/list","params":{}});
+    let create = json!({"method":"tools/call","params":{"name":"knowledge_bases_create","arguments":{"name":"Modes","slug":"modes","description":"Write mode fixture","idempotencyKey":"mode-create-key-01"}}});
+    let names = |reply: &Value| -> Vec<String> {
+        reply["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("name").to_owned())
+            .collect()
+    };
+    let apply_description = |reply: &Value| {
+        reply["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .find(|tool| tool["name"] == "knowledge_changes_apply")
+            .expect("changes_apply")["description"]
+            .as_str()
+            .expect("text")
+            .to_owned()
+    };
+    let canonical = kb_client::schema::tool_description("knowledge_changes_apply").expect("text");
+    let dream_text = kb_client::schema::tool_write_mode_description(
+        "knowledge_changes_apply",
+        kb_client::authoring::WriteKind::Dream,
+    )
+    .expect("catalog")
+    .expect("text");
+
+    // Dream-only: no always-edit tool, the dream description, and a KB
+    // creation (an edit) refused with details and no KB created.
+    // A hidden tool called anyway (`documents_create`) gets the same refusal,
+    // never an unknown tool.
+    let document = json!({"method":"tools/call","params":{"name":"knowledge_documents_create","arguments":{
+        "kbId":"abcdefghijklmnopqrstuvwx","baseRevision":"0".repeat(40),"path":"new.md",
+        "content":{"markdown":"# New\n"},"idempotencyKey":"mode-document-key-01"}}});
+    let replies = session(Some("dream"), &[list.clone(), create.clone(), document]);
+    let error = &replies[2]["result"]["structuredContent"]["error"];
+    assert_eq!(error["code"], "FORBIDDEN", "{}", replies[2]);
+    assert_eq!(
+        error["details"],
+        json!({"reason":"WRITE_MODE","required":"edit"})
+    );
+    let listed = names(&replies[0]);
+    assert!(listed.contains(&"knowledge_changes_apply".to_owned()));
+    for hidden in [
+        "knowledge_bases_create",
+        "knowledge_documents_create",
+        "knowledge_upload_begin",
+        "knowledge_assets_put",
+        "knowledge_pull_requests_create",
+    ] {
+        assert!(!listed.contains(&hidden.to_owned()), "{hidden}");
+    }
+    assert!(apply_description(&replies[0]).starts_with(dream_text));
+    let error = &replies[1]["result"]["structuredContent"]["error"];
+    assert_eq!(error["code"], "FORBIDDEN");
+    assert_eq!(
+        error["details"],
+        json!({"reason":"WRITE_MODE","required":"edit"})
+    );
+    assert_eq!(error["message"], kb_client::error::WRITE_MODE_EDIT_MESSAGE);
+
+    // The default is both: everything listed, canonical text, the create runs.
+    let replies = session(None, &[list.clone(), create.clone()]);
+    assert!(names(&replies[0]).contains(&"knowledge_bases_create".to_owned()));
+    assert!(apply_description(&replies[0]).starts_with(canonical));
+    let kb = replies[1]["result"]["structuredContent"]["data"]["kb"].clone();
+    assert!(kb["id"].is_string(), "{}", replies[1]);
+
+    // Edit-only: a dream is refused with `required: "dream"`.
+    let dream = json!({"method":"tools/call","params":{"name":"knowledge_changes_apply","arguments":{
+        "kbId": kb["id"], "baseRevision": kb["headSha"], "idempotencyKey": "mode-dream-key-0001",
+        "mode": "dream", "title": "Dream", "changes": [],
+        "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+        "dream": {"model": {"model": "fixture-model", "provider": "fixture"}, "redactionApplied": true,
+            "upserts": [{"id": "n1", "type": "concept", "title": null, "body": "B", "citations": [], "provenance": "dream"}]}}}});
+    let replies = session(Some("edit"), &[list, dream]);
+    assert!(
+        apply_description(&replies[0]).starts_with(
+            kb_client::schema::tool_write_mode_description(
+                "knowledge_changes_apply",
+                kb_client::authoring::WriteKind::Edit,
+            )
+            .expect("catalog")
+            .expect("text")
+        )
+    );
+    let error = &replies[1]["result"]["structuredContent"]["error"];
+    assert_eq!(error["code"], "FORBIDDEN", "{}", replies[1]);
+    assert_eq!(
+        error["details"],
+        json!({"reason":"WRITE_MODE","required":"dream"})
+    );
+}
+
+#[test]
+fn write_mode_values_are_validated() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("kb"))
+        .args(["mcp", "--write-mode", "all", "--root"])
+        .arg(temp.path().join("store"))
+        .stdin(Stdio::null())
+        .output()
+        .expect("CLI");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dream") && stderr.contains("both"),
+        "{stderr}"
     );
 }

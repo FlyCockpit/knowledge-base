@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
-import { actedByTrailer, sameActorPerson, withTrailer } from "./actors";
+import { attributionTrailers, commitSubject, sameActorPerson, withTrailer } from "./actors";
 import { invalidArgument, pathExists, treeFailureDetails } from "./argument-reasons";
 import { assetValidationContext, authorizeAssetImport, manifestAtCommitAsync } from "./asset-authz";
 import {
@@ -69,6 +69,7 @@ import {
 import {
   actorKeyFor,
   type CredentialVerifier,
+  demandAuthoring,
   demandToolGroups,
   KbAdmissionError,
   type Principal,
@@ -626,6 +627,8 @@ async function planPublication(input: {
   /** The person behind `actorKey` (they own the proposals any of their credentials opened). */
   actorUserId: string;
   fieldFor?: ChangeFieldPointer;
+  /** The provenance the server stamps on every document this edit writes. */
+  stamp?: "agent" | "human";
 }): Promise<PublicationPlan> {
   const repoPath = kbBareRepoPath(input.reposDir, input.kbId);
   const fieldFor = input.fieldFor ?? defaultChangeField;
@@ -940,6 +943,7 @@ async function planPublication(input: {
     assetEntries: assetPlan.assetEntries,
     baseFiles,
     resolving,
+    stamp: input.stamp,
   });
   if (!planned.ok) {
     const original =
@@ -1025,11 +1029,16 @@ async function planPublication(input: {
       // so every recorded conflict's versions stay reachable and readable.
       extraParents: step?.step === "onto-main" ? [step.pr.headSha] : [],
       // Git keeps the system author; the trailer names who acted and how.
+      // Caller text is one subject line; the server's block is the last paragraph.
       message: withTrailer(
         step?.step === "onto-main"
-          ? `Move proposal #${step.pr.number} onto main: ${step.pr.title}`
-          : (input.commitMessage ?? input.request.title),
-        await actedByTrailer(input.query, input.actorKey),
+          ? commitSubject(`Move proposal #${step.pr.number} onto main: ${step.pr.title}`)
+          : (input.commitMessage ?? commitSubject(input.request.title)),
+        await attributionTrailers(
+          input.query,
+          input.actorKey,
+          input.dreamMetadata ? "dream" : input.stamp,
+        ),
       ),
       files: planned.files,
     });
@@ -1388,6 +1397,14 @@ async function prepareChangesPublication(
         gitOptions: { signal: lease.scope.signal, deadlineAt: lease.scope.deadlineAt },
         actorUserId: input.principal.userId,
         fieldFor: input.fieldFor,
+        // Never trusted from the client: a credential's edit is an agent's, a
+        // person's (web app) edit is human. Dreams serialize `dream` themselves.
+        stamp:
+          validatedRequest.mode === "edit"
+            ? input.principal.kind === "token"
+              ? "agent"
+              : "human"
+            : undefined,
         prepareAssets: () =>
           prepareAssetChanges(
             query,
@@ -1525,9 +1542,15 @@ export function createChangesPublication(raw: ChangesPublicationInput): {
   // Carried by every authorization of this publication, including the
   // lock-held reauthorization and reservation, so a group removed while the
   // publication waits on a lock denies it.
-  const input: ChangesPublicationInput = writesAssets(raw.request)
-    ? { ...raw, principal: demandToolGroups(raw.principal, ["assets"]) }
-    : raw;
+  // The write mode rides the same way: a dream needs a dream-capable mode,
+  // every other request (edit, import) an edit-capable one.
+  const grouped = writesAssets(raw.request)
+    ? demandToolGroups(raw.principal, ["assets"])
+    : raw.principal;
+  const input: ChangesPublicationInput = {
+    ...raw,
+    principal: demandAuthoring(grouped, raw.request.mode === "dream" ? "dream" : "edit"),
+  };
   let prepared:
     | { intent: IntentRow; fresh: boolean; plan?: PublicationPlan; lease: HeldLockLease }
     | undefined;

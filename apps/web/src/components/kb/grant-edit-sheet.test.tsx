@@ -34,9 +34,11 @@ describe("Edit access confirmation", () => {
       acl: [{ kbId: KB_A, bits: ["read"] }],
       allowCreate: false,
       createdKbBits: [],
+      authoringMode: null,
     });
     const draft = [
       { type: "toggleScope", scope: "mcp:write" },
+      { type: "setAuthoringMode", mode: "edit" },
       { type: "setToolGroups", groups: [...MCP_TOOL_PRESETS.direct] },
       { type: "toggleBit", kbId: KB_A, bit: "write" },
       { type: "toggleBit", kbId: KB_B, bit: "read" },
@@ -66,6 +68,7 @@ describe("Edit access confirmation", () => {
     const bits = enSettings.credentials.picker.bits;
     expect(markup).toContain(edit.added);
     expect(markup).toContain(enSettings.credentials.picker.scopes.write);
+    expect(markup).toContain(edit.changeWriteMode.edit);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.edit.label} tools`);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.assets.label} tools`);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.pull_requests.label} tools`);
@@ -74,9 +77,10 @@ describe("Edit access confirmation", () => {
     expect(markup).toContain(edit.changeCreate);
     expect(markup).toContain(bits.read.label);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.kb_admin.label} tools`);
-    // Nothing already held is listed: scope, four groups (Direct's edit, assets
-    // and pull_requests; kb_admin comes with create), two KBs, create, created bits.
-    expect(markup.match(/<li>/g)).toHaveLength(9);
+    // Nothing already held is listed: scope, write mode, four groups (Direct's
+    // edit, assets and pull_requests; kb_admin comes with create), two KBs,
+    // create, created bits.
+    expect(markup.match(/<li>/g)).toHaveLength(10);
   });
 
   it("renders nothing when a direction has no changes", () => {
@@ -96,6 +100,7 @@ describe("Edit access confirmation", () => {
           cap: { bits: ["read"], count: 257 },
           allowCreate: false,
           createdKbBits: [],
+          authoringMode: [],
         }}
         names={new Map()}
       />,
@@ -129,6 +134,7 @@ describe("Edit access: stored permissions without live authority", () => {
     ],
     allowCreate: false,
     createdKbBits: [],
+    authoringMode: "both",
   });
   // The share on KB_DOWN was downgraded to read; KB_REVOKED is no longer shared at all.
   const live: LiveKbOption[] = [{ kbId: KB_DOWN, name: "Downgraded notes", bits: ["read"] }];

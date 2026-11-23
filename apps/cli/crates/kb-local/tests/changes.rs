@@ -366,7 +366,7 @@ fn invalid_32nd_change_has_zero_effects() {
     );
     assert_eq!(
         kb.get(&result.commit_sha, "notes/n8.md").expect("n8"),
-        "# Note 8\n"
+        "---\nprovenance: agent\n---\n# Note 8\n"
     );
 }
 
@@ -735,7 +735,10 @@ fn competing_base_revisions_conflict_without_effects() {
         ),
         pr.commit_sha.as_str()
     );
-    assert_eq!(kb.get(&on_head.commit_sha, "p.md").expect("kept"), "# p\n");
+    assert_eq!(
+        kb.get(&on_head.commit_sha, "p.md").expect("kept"),
+        "---\nprovenance: agent\n---\n# p\n"
+    );
     let before = effects(&kb);
     let err = kb
         .apply(
@@ -753,7 +756,10 @@ fn competing_base_revisions_conflict_without_effects() {
             assert_eq!(conflict.proposal_head_sha, on_head.commit_sha);
             assert_eq!(conflict.paths.len(), 1);
             assert_eq!(conflict.paths[0].path, "p.md");
-            assert_eq!(conflict.paths[0].yours.as_deref(), Some("# p\n"));
+            assert_eq!(
+                conflict.paths[0].yours.as_deref(),
+                Some("---\nprovenance: agent\n---\n# p\n")
+            );
             assert_eq!(conflict.paths[0].theirs, None);
         }
         other => panic!("expected PROPOSAL_CONFLICT, got {other:?}"),
@@ -811,9 +817,12 @@ fn competing_base_revisions_conflict_without_effects() {
     assert_eq!(named.proposal.as_ref().map(|p| p.version), Some(3));
     assert_eq!(
         kb.get(&named.commit_sha, "p.md").expect("chosen"),
-        "# p chosen\n"
+        "---\nprovenance: agent\n---\n# p chosen\n"
     );
-    assert_eq!(kb.get(&named.commit_sha, "q.md").expect("kept"), "# q\n");
+    assert_eq!(
+        kb.get(&named.commit_sha, "q.md").expect("kept"),
+        "---\nprovenance: agent\n---\n# q\n"
+    );
 }
 
 // ── Proposals ──────────────────────────────────────────────────────────────
@@ -856,7 +865,7 @@ fn propose_only_principal_gets_one_auto_proposal_and_main_never_changes() {
     assert_eq!(kb.epoch(), epoch);
     assert_eq!(
         kb.get(&first.commit_sha, "a.md").expect("reachable"),
-        "# a\n"
+        "---\nprovenance: agent\n---\n# a\n"
     );
     // Second edit on the proposal HEAD reuses #1.
     let second = kb
@@ -1624,7 +1633,10 @@ fn encoded_frontmatter_rejection_has_zero_effects_and_valid_boundary_is_readable
         numeric_yaml.push_str(&format!("n{i}: 1e-6\n"));
         numeric_json.push_str(&format!("\"n{i}\":0.000001,"));
     }
-    numeric_json.push_str("\"padding\":\"\"}");
+    // Boundary documents already carry the agent label every local write
+    // is stamped with, so the stored bytes (and the cap) are exactly these.
+    numeric_yaml.push_str("provenance: agent\n");
+    numeric_json.push_str("\"provenance\":\"agent\",\"padding\":\"\"}");
     let numeric_padding = 64 * 1024 - numeric_json.len();
     let oversized_numeric = format!(
         "---\n{numeric_yaml}padding: '{}'\n---\nbody\n",
@@ -1658,7 +1670,11 @@ fn encoded_frontmatter_rejection_has_zero_effects_and_valid_boundary_is_readable
             assert_eq!(next_pr(), counter);
         }
     }
-    let valid = format!("---\nk: '{}'\n---\nbody\n", "\t".repeat(32764));
+    // `{"k":"<tabs>a","provenance":"agent"}` is exactly 64 KiB.
+    let valid = format!(
+        "---\nk: '{}a'\nprovenance: agent\n---\nbody\n",
+        "\t".repeat(32753)
+    );
     let result = kb
         .apply(
             &kb.store.owner(),
@@ -2750,4 +2766,496 @@ fn crash_helper_unwind_drains_before_directory_removal() {
     }));
     assert!(result.is_err());
     assert!(removed.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+// ── Write modes and agent provenance ───────────────────────────────────────
+
+/// Every direct write of a local MCP session is labelled `provenance: agent`,
+/// whatever the caller wrote (a spoofed `dream` or `human` included); a
+/// rewrite that differs only by the label is a noop that keeps the stored
+/// bytes; an unstampable label is refused at `/changes/<i>/content`.
+#[test]
+fn direct_writes_are_stamped_agent_and_label_only_rewrites_are_noops() {
+    let kb = new_kb("stamp");
+    let owner = kb.store.owner();
+    let applied = kb
+        .apply(
+            &owner,
+            &kb.main,
+            "stamp-key-00000001",
+            json!([
+                create("plain.md", "# Plain\n"),
+                create(
+                    "dream.md",
+                    "---\nid: \"d1\"\nprovenance: dream\n---\n# Spoofed dream\n"
+                ),
+                create(
+                    "human.md",
+                    "---\nprovenance: human\ntitle: T\n---\n# Spoofed human\n"
+                ),
+            ]),
+            None,
+        )
+        .expect("apply");
+    let head = applied.commit_sha.clone();
+    assert_eq!(
+        kb.get(&head, "plain.md").unwrap(),
+        "---\nprovenance: agent\n---\n# Plain\n"
+    );
+    assert_eq!(
+        kb.get(&head, "dream.md").unwrap(),
+        "---\nid: \"d1\"\nprovenance: agent\n---\n# Spoofed dream\n"
+    );
+    assert_eq!(
+        kb.get(&head, "human.md").unwrap(),
+        "---\nprovenance: agent\ntitle: T\n---\n# Spoofed human\n"
+    );
+    // The wrappers stamp too.
+    let wrapped = kb
+        .store
+        .documents_create(
+            &owner,
+            input::<DocumentsCreate>(json!({
+                "kbId": kb.kb.as_str(), "baseRevision": head.as_str(),
+                "idempotencyKey": "stamp-key-00000002", "path": "wrapped.md",
+                "content": {"markdown": "---\nprovenance: human\n---\nW\n"},
+            })),
+        )
+        .expect("wrapper");
+    let head = wrapped.commit_sha.clone();
+    assert_eq!(
+        kb.get(&head, "wrapped.md").unwrap(),
+        "---\nprovenance: agent\n---\nW\n"
+    );
+    // Rewriting without the label (or with another one) is no change.
+    for (key, text) in [
+        ("stamp-key-00000003", "# Plain\n"),
+        (
+            "stamp-key-00000004",
+            "---\nprovenance: human\n---\n# Plain\n",
+        ),
+    ] {
+        let noop = kb
+            .apply(&owner, &head, key, json!([replace("plain.md", text)]), None)
+            .expect("label-only rewrite");
+        assert_eq!(noop.kind, ApplyKind::Noop, "{text:?}");
+        assert_eq!(kb.head(), head);
+    }
+    // An unstampable label: SCHEMA at the change's content, no effects.
+    let before = effects(&kb);
+    let err = kb
+        .apply(
+            &owner,
+            &head,
+            "stamp-key-00000005",
+            json!([
+                create("ok.md", "# ok\n"),
+                create("bad.md", "---\n\"provenance\": dream\n---\nB\n"),
+            ]),
+            None,
+        )
+        .expect_err("quoted key");
+    assert_eq!(
+        err.protocol_details(),
+        json!({"reason": "SCHEMA", "field": "/changes/1/content"})
+    );
+    assert_eq!(effects(&kb), before);
+}
+
+/// The label-only noop removes provenance lines before comparing: over a
+/// person's document, a quoted `provenance: "agent"` or an escaped or quoted
+/// key saying `agent` (each left untouched by the stamp, as it already reads
+/// `agent`) is no change and keeps the stored bytes; a real body change is
+/// stamped `agent`.
+#[test]
+fn quoted_or_escaped_label_changes_cannot_relabel_a_human_document() {
+    let kb = new_kb("relabel");
+    let owner = kb.store.owner();
+    kb.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Human));
+    let human = "---\nprovenance: human\ntitle: T\n---\n# Person\n";
+    let applied = kb
+        .apply(
+            &owner,
+            &kb.main,
+            "relabel-key-000001",
+            json!([create("person.md", human)]),
+            None,
+        )
+        .expect("human write");
+    kb.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Agent));
+    let head = applied.commit_sha.clone();
+    assert_eq!(kb.get(&head, "person.md").unwrap(), human);
+    for (key, text) in [
+        (
+            "relabel-key-000002",
+            "---\nprovenance: \"agent\"\ntitle: T\n---\n# Person\n",
+        ),
+        (
+            "relabel-key-000003",
+            "---\n\"\\u0070rovenance\": agent\ntitle: T\n---\n# Person\n",
+        ),
+        (
+            "relabel-key-000004",
+            "---\n'provenance': 'agent'\ntitle: T\n---\n# Person\n",
+        ),
+    ] {
+        let noop = kb
+            .apply(
+                &owner,
+                &head,
+                key,
+                json!([replace("person.md", text)]),
+                None,
+            )
+            .expect("label-only rewrite");
+        assert_eq!(noop.kind, ApplyKind::Noop, "{text:?}");
+        assert_eq!(kb.head(), head);
+        assert_eq!(kb.get(&head, "person.md").unwrap(), human);
+    }
+    // A body change is a change, stamped `agent`.
+    let changed = kb
+        .apply(
+            &owner,
+            &head,
+            "relabel-key-000005",
+            json!([replace(
+                "person.md",
+                "---\nprovenance: human\ntitle: T\n---\n# Edited\n"
+            )]),
+            None,
+        )
+        .expect("body change");
+    assert_ne!(changed.kind, ApplyKind::Noop);
+    assert_eq!(
+        kb.get(&changed.commit_sha, "person.md").unwrap(),
+        "---\nprovenance: agent\ntitle: T\n---\n# Edited\n"
+    );
+}
+
+/// The provenance-only noop is line-based (identical on the server): any
+/// other front-matter byte, a comment or a requoted value included, is a
+/// change and is stamped `agent`; a block-scalar label keeps its indented
+/// value lines in the comparison, so changing that value is a change too.
+#[test]
+fn only_provenance_lines_are_ignored_by_the_noop_rule() {
+    let kb = new_kb("noop-lines");
+    let owner = kb.store.owner();
+    kb.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Human));
+    let human = "---\nprovenance: human\ntitle: T # old\n---\n# Person\n";
+    let block = "---\nprovenance: |\n  human\ntitle: T\n---\n# Block\n";
+    let applied = kb
+        .apply(
+            &owner,
+            &kb.main,
+            "lines-key-00000001",
+            json!([create("person.md", human)]),
+            None,
+        )
+        .expect("human write");
+    let head = applied.commit_sha.clone();
+    // A legacy block-scalar label (stamping cannot write one).
+    kb.store.set_edit_stamp_for_tests(None);
+    let head = kb
+        .apply(
+            &owner,
+            &head,
+            "lines-key-00000002",
+            json!([create("block.md", block)]),
+            None,
+        )
+        .expect("legacy write")
+        .commit_sha;
+    kb.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Agent));
+    assert_eq!(kb.get(&head, "person.md").unwrap(), human);
+    assert_eq!(kb.get(&head, "block.md").unwrap(), block);
+    // A comment-only edit is published, stamped `agent`.
+    let changed = kb
+        .apply(
+            &owner,
+            &head,
+            "lines-key-00000003",
+            json!([replace(
+                "person.md",
+                "---\nprovenance: human\ntitle: T # new\n---\n# Person\n"
+            )]),
+            None,
+        )
+        .expect("comment edit");
+    assert_ne!(changed.kind, ApplyKind::Noop);
+    let head = changed.commit_sha.clone();
+    assert_eq!(
+        kb.get(&head, "person.md").unwrap(),
+        "---\nprovenance: agent\ntitle: T # new\n---\n# Person\n"
+    );
+    // A block-scalar provenance value change is a change too; its label is
+    // unstampable, so it is refused rather than silently kept.
+    let err = kb
+        .apply(
+            &owner,
+            &head,
+            "lines-key-00000004",
+            json!([replace(
+                "block.md",
+                "---\nprovenance: |\n  agent\ntitle: T\n---\n# Block\n"
+            )]),
+            None,
+        )
+        .expect_err("block value change");
+    assert_eq!(
+        err.protocol_details(),
+        json!({"reason": "SCHEMA", "field": "/changes/0/content"})
+    );
+    // Re-saving the unchanged block-scalar document is a noop: the prior
+    // comparison runs before the (refusing) stamp.
+    let noop = kb
+        .apply(
+            &owner,
+            &head,
+            "lines-key-00000005",
+            json!([replace("block.md", block)]),
+            None,
+        )
+        .expect("unchanged legacy re-save");
+    assert_eq!(noop.kind, ApplyKind::Noop);
+    assert_eq!(kb.head(), head);
+}
+
+/// Re-saving an unchanged legacy document whose label is unstampable (a
+/// quoted or escaped key) is a noop, not INVALID_ARGUMENT: the prior
+/// comparison runs before the stamp, as on the server.
+#[test]
+fn unchanged_legacy_label_with_an_escaped_key_resaves_as_a_noop() {
+    let kb = new_kb("legacy-key");
+    let owner = kb.store.owner();
+    let legacy = "---\n\"\\u0070rovenance\": human\ntitle: T\n---\n# Legacy\n";
+    kb.store.set_edit_stamp_for_tests(None);
+    let head = kb
+        .apply(
+            &owner,
+            &kb.main,
+            "legacy-key-0000001",
+            json!([create("legacy.md", legacy)]),
+            None,
+        )
+        .expect("legacy write")
+        .commit_sha;
+    kb.store
+        .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Agent));
+    for (key, text) in [
+        ("legacy-key-0000002", legacy),
+        // The same with only the label requoted: still no change.
+        (
+            "legacy-key-0000003",
+            "---\n\"\\u0070rovenance\": 'agent'\ntitle: T\n---\n# Legacy\n",
+        ),
+    ] {
+        let noop = kb
+            .apply(
+                &owner,
+                &head,
+                key,
+                json!([replace("legacy.md", text)]),
+                None,
+            )
+            .expect("unchanged re-save");
+        assert_eq!(noop.kind, ApplyKind::Noop, "{text:?}");
+        assert_eq!(kb.head(), head);
+        assert_eq!(kb.get(&head, "legacy.md").unwrap(), legacy);
+    }
+    // A real change to it is refused at its content: the key is unstampable.
+    let err = kb
+        .apply(
+            &owner,
+            &head,
+            "legacy-key-0000004",
+            json!([replace(
+                "legacy.md",
+                "---\n\"\\u0070rovenance\": human\ntitle: T\n---\n# Edited\n"
+            )]),
+            None,
+        )
+        .expect_err("unstampable change");
+    assert_eq!(
+        err.protocol_details(),
+        json!({"reason": "SCHEMA", "field": "/changes/0/content"})
+    );
+}
+
+/// A `create` resolving a recorded conflict over an existing path goes
+/// through the same provenance-only noop as a replace: an agent choosing the
+/// PR's version there (a person's document, unchanged or relabelled only)
+/// keeps it `human` (prior bytes), and the conflict still counts as resolved.
+#[test]
+fn create_resolving_a_conflict_with_the_unchanged_human_document_stays_human() {
+    let human = "---\nprovenance: human\n---\n# Doc\n\nfrom the PR\n";
+    for (tag, text) in [
+        ("resolve-same", human),
+        (
+            "resolve-label",
+            "---\nprovenance: agent\n---\n# Doc\n\nfrom the PR\n",
+        ),
+    ] {
+        let kb = new_kb(tag);
+        let owner = kb.store.owner();
+        let proposer = kb.principal(&[Permission::Propose]);
+        let base = kb.head();
+        // A person's proposal...
+        kb.store
+            .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Human));
+        let pr = kb
+            .apply(
+                &proposer,
+                &base,
+                "resolve-key-000001",
+                json!([create("doc.md", "# Doc\n\nfrom the PR\n")]),
+                None,
+            )
+            .expect("proposal");
+        let number = pr.proposal.as_ref().expect("proposal").number;
+        assert_eq!(kb.get(&pr.commit_sha, "doc.md").unwrap(), human);
+        // ...clashing with an agent's document on main.
+        kb.store
+            .set_edit_stamp_for_tests(Some(kb_local::markdown::ProvenanceStamp::Agent));
+        let main = kb
+            .apply(
+                &owner,
+                &base,
+                "resolve-key-000002",
+                json!([create("doc.md", "# Doc\n\nfrom main\n")]),
+                None,
+            )
+            .expect("agent on main")
+            .commit_sha;
+        // An agent resolves by creating the person's version.
+        let resolved = kb
+            .apply_pr(
+                &proposer,
+                &main,
+                "resolve-key-000003",
+                json!([create("doc.md", text)]),
+                number,
+                &pr.commit_sha,
+            )
+            .expect("resolution");
+        assert_ne!(resolved.kind, ApplyKind::Noop, "{text:?}");
+        let open = resolved.proposal.clone().expect("proposal");
+        assert_eq!(open.status, PrStatus::Open, "{text:?}");
+        assert_eq!(
+            kb.get(&resolved.commit_sha, "doc.md").unwrap(),
+            human,
+            "{text:?}"
+        );
+    }
+}
+
+/// A store held to a write mode refuses what the mode does not allow before
+/// any lock, journal row, ref, proposal or upload: FORBIDDEN with
+/// `{reason: "WRITE_MODE", required}`.
+#[test]
+fn write_modes_refuse_store_mutations_without_effects() {
+    use kb_client::authoring::{AuthoringMode, WriteKind};
+    let kb = new_kb("modes");
+    let owner = kb.store.owner();
+    kb.store.narrow_authoring(AuthoringMode::Dream);
+    let before = effects(&kb);
+    let refused = |result: Result<(), StoreError>, need: WriteKind| {
+        let err = result.expect_err("refused");
+        assert!(
+            matches!(err, StoreError::WriteMode(kind) if kind == need),
+            "{err}"
+        );
+        assert_eq!(code(&err), ErrorCode::Forbidden);
+        assert_eq!(
+            err.protocol_details(),
+            json!({"reason": "WRITE_MODE", "required": need.as_str()})
+        );
+    };
+    refused(
+        kb.apply(
+            &owner,
+            &kb.main,
+            "mode-key-000000001",
+            json!([create("a.md", "# a\n")]),
+            None,
+        )
+        .map(|_| ()),
+        WriteKind::Edit,
+    );
+    refused(
+        kb.store
+            .documents_update(
+                &owner,
+                input::<DocumentsUpdate>(json!({
+                    "kbId": kb.kb.as_str(), "baseRevision": kb.main.as_str(),
+                    "idempotencyKey": "mode-key-000000002", "path": "index.md",
+                    "content": {"markdown": "# x\n"},
+                })),
+            )
+            .map(|_| ()),
+        WriteKind::Edit,
+    );
+    refused(
+        kb.store
+            .documents_delete(
+                &owner,
+                input::<DocumentsDelete>(json!({
+                    "kbId": kb.kb.as_str(), "baseRevision": kb.main.as_str(),
+                    "idempotencyKey": "mode-key-000000003", "path": "index.md",
+                    "confirm": "DELETE",
+                })),
+            )
+            .map(|_| ()),
+        WriteKind::Edit,
+    );
+    refused(
+        kb.store
+            .bases_create(
+                &owner,
+                input::<BasesCreate>(json!({
+                    "name": "Other", "slug": "other", "description": "Refused by the write mode",
+                    "idempotencyKey": "mode-key-000000004",
+                })),
+            )
+            .map(|_| ()),
+        WriteKind::Edit,
+    );
+    assert_eq!(effects(&kb), before);
+    assert_eq!(kb.store.authoring(), AuthoringMode::Dream);
+    // Narrowing never widens: `both` keeps dream-only.
+    kb.store.narrow_authoring(AuthoringMode::Both);
+    assert_eq!(kb.store.authoring(), AuthoringMode::Dream);
+
+    // Edit-only refuses a dream.
+    let edits = new_kb("modes-edit");
+    edits.store.narrow_authoring(AuthoringMode::Edit);
+    let before = effects(&edits);
+    let dream = json!({
+        "kbId": edits.kb.as_str(), "baseRevision": edits.main.as_str(),
+        "idempotencyKey": "mode-key-000000005", "mode": "dream", "title": "Dream",
+        "changes": [], "sourceSessionIds": ["00000000-0000-4000-8000-000000000001"],
+        "dream": {"model": {"model": "fixture-model", "provider": "fixture"},
+                  "redactionApplied": true,
+                  "upserts": [{"id": "n1", "type": "concept", "title": null, "body": "B",
+                               "citations": [], "provenance": "dream"}]},
+    });
+    let edit_owner = edits.store.owner();
+    refused(
+        edits.apply_body(&edit_owner, dream).map(|_| ()),
+        WriteKind::Dream,
+    );
+    assert_eq!(effects(&edits), before);
+    // ...and still edits.
+    edits
+        .apply(
+            &edit_owner,
+            &edits.main,
+            "mode-key-000000006",
+            json!([create("a.md", "# a\n")]),
+            None,
+        )
+        .expect("edit-only edits");
 }

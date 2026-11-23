@@ -19,9 +19,11 @@ import {
   readBlobContentAsync,
   readBlobsAsync,
   readCommitBlobs,
+  readCommitMetadata,
   readCommitParents,
   readCommitTreeSha,
   readCommitTreeShaAsync,
+  readMergeBases,
   readObjectSizeBytes,
   readObjectSizeBytesAsync,
   readObjectsSync,
@@ -39,6 +41,7 @@ import {
   decodeUtf8Fatal,
   findSealedReferences,
   parseMarkdownDocument,
+  readDocumentProvenance,
   sealedReferenceScanSource,
   validateMarkdownBytes,
 } from "./parse-markdown";
@@ -69,7 +72,9 @@ export type TreeValidationErrorCode =
   | "TREE_MARKDOWN"
   | "TREE_DOCUMENT_ID"
   | "TREE_SEALED"
-  | "TREE_BINDING";
+  | "TREE_BINDING"
+  | "TREE_PROVENANCE"
+  | "TREE_TRAILER";
 
 export type TreeValidationFailure = {
   ok: false;
@@ -109,7 +114,21 @@ export type TreeValidationOptions = {
    * reference live records. Absent: every reference is validated.
    */
   baseBlobs?: ReadonlyMap<string, string>;
+  /**
+   * Git pushes only (always a token's). Commits in `freshCommits` are new to
+   * the repository (reachable from the pushed tip and from no existing ref):
+   * their messages may not carry the server's attribution trailers, and each
+   * Markdown blob that is not byte-identical to that path's blob in one of the
+   * commit's parents must say `provenance: agent`, the label the server would
+   * stamp. Byte-identical reuse keeps its truthful label (unchanged, or one
+   * side's version of a merge). Older commits (e.g. main's, merged in) are
+   * trusted parents.
+   */
+  pushAuthorship?: { freshCommits: ReadonlySet<string> };
 };
+
+/** A commit-message line the server reserves for its own attribution block. */
+export const RESERVED_TRAILER_LINE = /^[ \t]*(acted-by|kb-[a-z0-9-]+)[ \t]*:/im;
 
 type TreeBudget = {
   files: number;
@@ -654,6 +673,15 @@ export async function validateNewlyReachableCommits(
       };
       const result = validateGitCommit(context, commitSha, budget);
       if (!result.ok) return result;
+      if (options.pushAuthorship?.freshCommits.has(commitSha)) {
+        const authorship = validatePushedAuthorship(
+          options.repoPath,
+          commitSha,
+          parents,
+          branchParents,
+        );
+        if (authorship) return authorship;
+      }
       validated.add(commitSha);
       if (branchParents.length > 0) connectedToOld.add(commitSha);
       if (commitSha === input.newSha) tip = result;
@@ -679,6 +707,97 @@ export async function validateNewlyReachableCommits(
     }
     throw error;
   }
+}
+
+/**
+ * One pushed commit's authorship (`pushAuthorship`): no reserved trailer, and
+ * every new or changed Markdown blob labelled `provenance: agent`.
+ *
+ * "Unchanged" is three-way against a baseline the pusher cannot choose by
+ * parent order: the FIRST parent connected to the pre-push tip
+ * (`branchParents`, as the sealed check uses). A Markdown blob is exempt when
+ * it equals the baseline's blob at its path, or when it equals another parent
+ * P's blob there AND the baseline's blob at that path equals the blob in every
+ * merge base of (baseline, P) — i.e. only P's side changed it, the way a clean
+ * merge takes it. Absence is a value (both absent are equal). So a merge
+ * cannot restore an obsolete `human`/`dream` version by naming an older
+ * ancestor as a parent, in either order. A commit with no connected parent
+ * (side history) is exempt only for a blob equal at its path in EVERY parent;
+ * a root commit has no baseline: all of its Markdown must say `agent`.
+ */
+function validatePushedAuthorship(
+  repoPath: string,
+  commitSha: string,
+  parents: readonly string[],
+  branchParents: readonly string[],
+): TreeValidationFailure | null {
+  const message = readCommitMetadata(repoPath, commitSha).message.replace(/\r\n?/g, "\n");
+  if (RESERVED_TRAILER_LINE.test(message))
+    return fail("TREE_TRAILER", "commit message carries a reserved attribution trailer");
+  const baseline = branchParents[0];
+  const exempt = baseline
+    ? branchExemption(repoPath, baseline, parents)
+    : sideHistoryExemption(repoPath, parents);
+  for (const [path, blob] of readCommitBlobs(repoPath, commitSha)) {
+    if (!isMarkdownPath(path)) continue;
+    if (exempt(path, blob)) continue;
+    const parsed = parseMarkdownDocument(
+      readBlobContent(repoPath, blob, { maxBytes: KB_TREE_LIMITS.maxMarkdownBytes }),
+    );
+    // Unparseable Markdown was already refused by the content checks.
+    if ("code" in parsed || readDocumentProvenance(parsed.frontMatter) !== "agent")
+      return fail("TREE_PROVENANCE", "pushed Markdown must say provenance: agent", path);
+  }
+  return null;
+}
+
+/** Exemption for a commit with a parent connected to the pre-push tip. */
+function branchExemption(
+  repoPath: string,
+  baseline: string,
+  parents: readonly string[],
+): (path: string, blob: string) => boolean {
+  const baselineBlobs = readCommitBlobs(repoPath, baseline);
+  // Per other parent: its tree, plus the trees of every merge base with the
+  // baseline (read lazily: most merges change no Markdown on that side).
+  const sides = parents
+    .filter((parent) => parent !== baseline)
+    .map((parent) => ({
+      blobs: readCommitBlobs(repoPath, parent),
+      bases: null as Map<string, string>[] | null,
+      parent,
+    }));
+  const basesOf = (side: (typeof sides)[number]) => {
+    if (!side.bases) {
+      side.bases = readMergeBases(
+        repoPath,
+        baseline,
+        side.parent,
+        KB_TREE_LIMITS.maxNewCommitsPerPush,
+      ).map((base) => readCommitBlobs(repoPath, base));
+    }
+    return side.bases;
+  };
+  return (path, blob) => {
+    const baselineBlob = baselineBlobs.get(path);
+    if (baselineBlob === blob) return true;
+    return sides.some((side) => {
+      if (side.blobs.get(path) !== blob) return false;
+      const bases = basesOf(side);
+      // Unrelated histories: the empty tree is the base.
+      if (bases.length === 0) return baselineBlob === undefined;
+      return bases.every((base) => base.get(path) === baselineBlob);
+    });
+  };
+}
+
+/** Exemption for side history: equal at its path in every parent (roots: none). */
+function sideHistoryExemption(
+  repoPath: string,
+  parents: readonly string[],
+): (path: string, blob: string) => boolean {
+  const trees = parents.map((parent) => readCommitBlobs(repoPath, parent));
+  return (path, blob) => trees.length > 0 && trees.every((tree) => tree.get(path) === blob);
 }
 
 export type PublicationTreeBinding = {

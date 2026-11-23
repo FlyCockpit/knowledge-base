@@ -5,11 +5,19 @@
 //! served as one list ([`Advertised::union`]): every tool takes a `server`
 //! argument, each server keeps its own credential and client, and a call only
 //! ever reaches the server it names.
+//!
+//! Write modes: each server's writes are held to the intersection of the
+//! mode its stored login was approved for (none: `both`), `--write-mode` and
+//! its configured `write_mode` ([`effective_mode`]); with none of the three
+//! nothing is narrowed (and one server's bytes are exactly as before). A
+//! dream-only server lists no always-edit tool, and a call the mode does not
+//! allow is refused locally with the server's `WRITE_MODE` details.
 use crate::{auth::Selected, config::Config, state::CredentialStore};
 use kb_client::{
     CallControl, ClientError, ClientOptions, Credential, Deadline, ErrorCode, McpClient,
     McpResource, ToolName,
-    scope::ToolScope,
+    authoring::AuthoringMode,
+    scope::{Refusal, ToolScope},
     stdio::{Advertised, serve_routed_until, serve_until, tool_error},
 };
 use serde_json::{Value, json};
@@ -40,13 +48,92 @@ pub fn run(
     config: &Config,
     read_only: bool,
     groups: &[&'static str],
+    write_mode: Option<AuthoringMode>,
 ) -> anyhow::Result<()> {
     // `--tools` narrows what the servers list; absent, nothing changes.
     let scope = (!groups.is_empty()).then(|| ToolScope::new(groups, false, None));
-    if let [one] = selected.as_slice() {
-        return run_one(one, config, read_only || one.read_only, scope);
+    // A flag and a configured mode that share nothing fail before any
+    // network (the stored login's mode is checked once it is loaded).
+    for one in &selected {
+        effective_mode(&server_label(one), None, write_mode, one.write_mode)?;
     }
-    run_many(selected, config, read_only, scope)
+    if let [one] = selected.as_slice() {
+        return run_one(one, config, read_only || one.read_only, scope, write_mode);
+    }
+    run_many(selected, config, read_only, scope, write_mode)
+}
+
+/// How a server is named in diagnostics: its name, else its origin.
+fn server_label(one: &Selected) -> String {
+    one.name
+        .clone()
+        .unwrap_or_else(|| one.resource.origin().to_owned())
+}
+
+/// One server's write mode: the stored login's approved mode (none: `both`)
+/// ∩ `--write-mode` ∩ its configured `write_mode`. `None` when none of them
+/// is set (nothing is narrowed); an empty intersection is a startup error
+/// naming the server.
+pub fn effective_mode(
+    label: &str,
+    stored: Option<AuthoringMode>,
+    flag: Option<AuthoringMode>,
+    configured: Option<AuthoringMode>,
+) -> anyhow::Result<Option<AuthoringMode>> {
+    let mut effective: Option<AuthoringMode> = None;
+    for mode in [stored, flag, configured].into_iter().flatten() {
+        let next = match effective {
+            None => Some(mode),
+            Some(current) => current.intersect(mode),
+        };
+        let Some(next) = next else {
+            let shown =
+                |mode: Option<AuthoringMode>| mode.map_or("-".to_owned(), |m| format!("`{m}`"));
+            anyhow::bail!(
+                "server `{label}` has no write mode left: its login allows {}, `--write-mode` {} and its config `write_mode` {}, and `dream` and `edit` share no writes",
+                shown(stored),
+                shown(flag),
+                shown(configured)
+            );
+        };
+        effective = Some(next);
+    }
+    Ok(effective)
+}
+
+/// A server's local narrowing: the `--tools` groups (if any) and its write
+/// mode (if any); `None` when neither narrows.
+fn upstream_scope(scope: Option<&ToolScope>, mode: Option<AuthoringMode>) -> Option<ToolScope> {
+    match (scope, mode) {
+        (None, None) => None,
+        (Some(scope), mode) => Some(scope.clone().with_authoring(mode)),
+        (None, Some(mode)) => Some(ToolScope::full().with_authoring(Some(mode))),
+    }
+}
+
+/// A server's verified list under its local narrowing: tools outside the
+/// `--tools` groups are neither listed nor callable; tools only the write
+/// mode excludes are not listed but stay callable, so a call gets the mode's
+/// `WRITE_MODE` refusal (as the server answers it) instead of an unknown tool.
+fn narrow(advertised: Advertised, scope: Option<&ToolScope>) -> Advertised {
+    match scope {
+        Some(scope) => advertised
+            .retain(|name| scope.permits_ignoring_mode(name))
+            .hide(|name| scope.permits(name)),
+        None => advertised,
+    }
+}
+
+/// The local refusal of one call under `scope`: groups, write mode and the
+/// operation's own group (asset changes, an upload's kind).
+fn admit(
+    scope: &ToolScope,
+    uploads: &Uploads,
+    name: ToolName,
+    input: &Value,
+) -> Result<(), Refusal> {
+    scope.admit(name, input)?;
+    Ok(uploads.admit(scope, name, input)?)
 }
 
 /// No stored credential for the selected server.
@@ -59,17 +146,21 @@ impl std::fmt::Display for NoCredential {
 }
 impl std::error::Error for NoCredential {}
 
-/// The origin-bound client for one server, with only its own credential.
-fn client(resource: &McpResource, config: &Config) -> anyhow::Result<Arc<McpClient>> {
-    let token = CredentialStore::new(crate::paths::credentials_dir()?)
-        .load(resource)?
+/// The origin-bound client for one server, with only its own credential,
+/// and the write mode that credential's login was approved for.
+fn client(
+    resource: &McpResource,
+    config: &Config,
+) -> anyhow::Result<(Arc<McpClient>, Option<AuthoringMode>)> {
+    let (token, stored) = CredentialStore::new(crate::paths::credentials_dir()?)
+        .load_entry(resource)?
         .ok_or(NoCredential)?;
     let credential = Credential::new(resource.clone(), token);
     let options = ClientOptions {
         name: "kb-cli".into(),
         ..ClientOptions::default()
     };
-    Ok(Arc::new(if let Some(proxy) = config.proxy.as_deref() {
+    let client = Arc::new(if let Some(proxy) = config.proxy.as_deref() {
         crate::auth::validate_proxy(proxy)?;
         McpClient::new_with_proxy(
             resource.clone(),
@@ -79,7 +170,8 @@ fn client(resource: &McpResource, config: &Config) -> anyhow::Result<Arc<McpClie
         )?
     } else {
         McpClient::new(resource.clone(), credential, options)?
-    }))
+    });
+    Ok((client, stored))
 }
 
 fn shutdown() -> anyhow::Result<impl std::future::Future<Output = ()>> {
@@ -98,8 +190,16 @@ fn run_one(
     config: &Config,
     read_only: bool,
     scope: Option<ToolScope>,
+    write_mode: Option<AuthoringMode>,
 ) -> anyhow::Result<()> {
-    let client = client(&selected.resource, config)?;
+    let (client, stored) = client(&selected.resource, config)?;
+    let mode = effective_mode(
+        &server_label(selected),
+        stored,
+        write_mode,
+        selected.write_mode,
+    )?;
+    let scope = upstream_scope(scope.as_ref(), mode);
     let runtime = crate::runtime()?;
     let handle = runtime.handle().clone();
     let result = runtime.block_on(async {
@@ -117,21 +217,15 @@ fn run_one(
         } else {
             advertised
         };
-        let advertised = match &scope {
-            Some(scope) => advertised.retain(|name| scope.permits(name)),
-            None => advertised,
-        };
+        let advertised = narrow(advertised, scope.as_ref());
         let shutdown = shutdown()?;
         let uploads = Uploads::default();
         serve_until(tokio::io::stdin(), tokio::io::stdout(), advertised, move |name, input, control| {
             if read_only && !name.read_only() {
                 return tool_error(ErrorCode::Forbidden, serde_json::json!({}));
             }
-            if let Some(Err(code)) = scope.as_ref().map(|scope| {
-                scope.admit(name, &input)?;
-                uploads.admit(scope, name, &input)
-            }) {
-                return tool_error(code, serde_json::json!({}));
+            if let Some(Err(refusal)) = scope.as_ref().map(|scope| admit(scope, &uploads, name, &input)) {
+                return refusal.tool_error();
             }
             let kind = uploads.kind_of(name, &input);
             let call = CallControl::new(Deadline::at(control.until()), control.work_token());
@@ -161,9 +255,12 @@ fn run_one(
 struct Upstream {
     label: String,
     client: Arc<McpClient>,
-    /// The server's own verified list (narrowed by read-only and `--tools`).
+    /// The server's own verified list (narrowed by read-only and `--tools`;
+    /// tools only its write mode excludes are hidden but callable).
     advertised: Advertised,
     read_only: bool,
+    /// Its local narrowing: `--tools` and its write mode.
+    scope: Option<ToolScope>,
     /// KB IDs this server has shown: its list narrowing and the KBs its
     /// results named. A KB ID only another server has shown is refused here.
     known: Mutex<HashSet<String>>,
@@ -250,14 +347,16 @@ fn left_out_reason(error: &anyhow::Error) -> &'static str {
     }
 }
 
-/// A server's client and its verified list, after startup.
-type Verified = (Arc<McpClient>, Advertised);
+/// A server's client, its verified list and its stored login's write mode,
+/// after startup.
+type Verified = (Arc<McpClient>, Advertised, Option<AuthoringMode>);
 
 fn run_many(
     selected: Vec<Selected>,
     config: &Config,
     read_only: bool,
     scope: Option<ToolScope>,
+    write_mode: Option<AuthoringMode>,
 ) -> anyhow::Result<()> {
     if selected.len() > MAX_SERVERS {
         anyhow::bail!("one `kb mcp` serves at most {MAX_SERVERS} servers");
@@ -304,7 +403,7 @@ fn run_many(
                 let verified = async {
                     // The credential store's file lock blocks: load off the
                     // runtime, within the same deadline as verification.
-                    let client = tokio::time::timeout_at(
+                    let (client, stored) = tokio::time::timeout_at(
                         until,
                         tokio::task::spawn_blocking(move || client(&resource, &config)),
                     )
@@ -313,7 +412,7 @@ fn run_many(
                     .map_err(|_| anyhow::anyhow!("server startup failed"))??;
                     let discovery = client.discover(&startup).await?;
                     let advertised = client.verify_catalog(&startup).await?;
-                    Ok::<_, anyhow::Error>((client, advertised.with_instructions(discovery.instructions)))
+                    Ok::<_, anyhow::Error>((client, advertised.with_instructions(discovery.instructions), stored))
                 }
                 .await;
                 (at, verified)
@@ -329,17 +428,18 @@ fn run_many(
         let mut first_error = None;
         for ((one, label), outcome) in selected.iter().zip(&labels).zip(outcomes) {
             match outcome.unwrap_or_else(|| Err(anyhow::anyhow!("server startup failed"))) {
-                Ok((client, advertised)) => {
+                Ok((client, advertised, stored)) => {
+                    // A login whose approved mode shares nothing with the
+                    // flag or config is a startup error, not a left-out server.
+                    let mode = effective_mode(label, stored, write_mode, one.write_mode)?;
+                    let scope = upstream_scope(scope.as_ref(), mode);
                     let server_read_only = read_only || one.read_only;
                     let advertised = if server_read_only {
                         advertised.retain_read_only()
                     } else {
                         advertised
                     };
-                    let advertised = match &scope {
-                        Some(scope) => advertised.retain(|name| scope.permits(name)),
-                        None => advertised,
-                    };
+                    let advertised = narrow(advertised, scope.as_ref());
                     if advertised.names().is_empty() {
                         notices.push(format!(
                             "Server `{label}` ({}) lists no tool this connection may use and is left out.",
@@ -355,6 +455,7 @@ fn run_many(
                         client,
                         advertised,
                         read_only: server_read_only,
+                        scope,
                         known: Mutex::new(known),
                         uploads: Uploads::default(),
                         in_flight: AtomicUsize::new(0),
@@ -383,9 +484,8 @@ fn run_many(
             .with_instructions(Some(combined_instructions(&labels, &selected, &notices, &instructions)));
         let shutdown = shutdown()?;
         let upstreams = Arc::new(upstreams);
-        let scope = Arc::new(scope);
         serve_routed_until(tokio::io::stdin(), tokio::io::stdout(), advertised, move |name, label, input, control| {
-            route(&upstreams, &handle, scope.as_ref().as_ref(), name, label, input, control)
+            route(&upstreams, &handle, name, label, input, control)
         }, shutdown).await?;
         Ok::<_, anyhow::Error>(())
     })
@@ -396,7 +496,6 @@ fn run_many(
 fn route(
     upstreams: &[Arc<Upstream>],
     handle: &tokio::runtime::Handle,
-    scope: Option<&ToolScope>,
     name: ToolName,
     label: &str,
     input: Value,
@@ -408,16 +507,19 @@ fn route(
             json!({"reason":"SCHEMA","field":"/server"}),
         );
     };
-    if !up.advertised.advertises(name) || (up.read_only && !name.read_only()) {
+    let callable = up.advertised.advertises(name) || up.advertised.hides(name);
+    if !callable || (up.read_only && !name.read_only()) {
         return tool_error(ErrorCode::Forbidden, json!({}));
     }
-    // `--tools`, as with one server: the operation's own group (asset
-    // changes inside `knowledge_changes_apply`, an upload's kind) too.
-    if let Some(Err(code)) = scope.map(|scope| {
-        scope.admit(name, &input)?;
-        up.uploads.admit(scope, name, &input)
-    }) {
-        return tool_error(code, json!({}));
+    // `--tools` and the write mode, as with one server: the operation's own
+    // group (asset changes inside `knowledge_changes_apply`, an upload's
+    // kind) and need (a dream, a merge) too.
+    if let Some(Err(refusal)) = up
+        .scope
+        .as_ref()
+        .map(|scope| admit(scope, &up.uploads, name, &input))
+    {
+        return refusal.tool_error();
     }
     // A server's `kbId` enum is its startup snapshot: as with one server, the
     // server's live grant (a KB created since, a revoked share) decides, so
@@ -636,7 +738,46 @@ mod tests {
             resource: McpResource::parse(origin, TransportPolicy::HttpsOnly).expect("origin"),
             policy: TransportPolicy::HttpsOnly,
             read_only: false,
+            write_mode: None,
         }
+    }
+
+    #[test]
+    fn a_servers_write_mode_is_the_intersection_of_login_flag_and_config() {
+        use AuthoringMode::*;
+        assert_eq!(effective_mode("a", None, None, None).unwrap(), None);
+        assert_eq!(
+            effective_mode("a", Some(Both), None, None).unwrap(),
+            Some(Both)
+        );
+        assert_eq!(
+            effective_mode("a", Some(Both), Some(Dream), None).unwrap(),
+            Some(Dream)
+        );
+        assert_eq!(
+            effective_mode("a", None, Some(Both), Some(Edit)).unwrap(),
+            Some(Edit)
+        );
+        assert_eq!(
+            effective_mode("a", Some(Dream), Some(Both), Some(Dream)).unwrap(),
+            Some(Dream)
+        );
+        let error = effective_mode("work", Some(Dream), None, Some(Edit))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("server `work`") && error.contains("`dream`"),
+            "{error}"
+        );
+        assert!(effective_mode("a", None, Some(Edit), Some(Dream)).is_err());
+        // No narrowing without a mode; a mode narrows the `--tools` scope.
+        assert!(upstream_scope(None, None).is_none());
+        let scope = upstream_scope(None, Some(Dream)).unwrap();
+        assert!(!scope.permits(ToolName::KnowledgeDocumentsCreate));
+        assert!(scope.permits(ToolName::KnowledgeChangesApply));
+        let groups = ToolScope::new(&["read"], false, None);
+        let both = upstream_scope(Some(&groups), Some(Both)).unwrap();
+        assert!(!both.permits(ToolName::KnowledgeChangesApply));
     }
 
     #[test]

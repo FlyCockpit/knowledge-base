@@ -16,16 +16,18 @@
 //!   in the serialized document (never resolved — sealed values stay
 //!   symbolic), a known credential pattern in the title, model metadata or
 //!   any upsert field ([`crate::sensitive_text`], a conservative floor),
-//!   and overwriting a document whose provenance is not `dream` (human, or
-//!   absent = conservative human default) -> FORBIDDEN. Error texts are
-//!   fixed and never echo the offending bytes.
+//!   and overwriting a document whose provenance is not `dream` or `agent`
+//!   (human, unknown, or absent = conservative human default) -> FORBIDDEN.
+//!   A local MCP session's direct edits are stamped `agent`, so a dream may
+//!   update them. Error texts are fixed and never echo the offending bytes.
 //! * Git trailers carry `Kb-Op-Digest` / `Kb-Source-Digest` only, never raw
 //!   source session IDs or model text. The receipt keeps the informational
 //!   model and source metadata (`operation_intents.dream_json`).
 //! * A proposed dream persists its metadata plus the merge-guard input
 //!   (`guardTouchedPaths`, cumulative per ID, `existedAtBase` sticky) on the
 //!   proposal row; [`crate::Store::dream_merge_guard`] re-checks provenance
-//!   against current main at merge (the reviewed merge calls it): a later human edit,
+//!   against current main at merge (the reviewed merge calls it): a later human
+//!   (non-`dream`/`agent`) edit,
 //!   or the deletion of a path that existed at the proposal's base,
 //!   conflicts instead of being overwritten by review.
 //!
@@ -43,7 +45,7 @@ use crate::git_read::{
     DOCUMENT_MAX_BYTES, EntryKind, GitError, GitRepo, IncomingBudget, ObjectKind, WalkBudget,
     walk_tree,
 };
-use crate::markdown::{YamlValue, find_sealed_references, parse_markdown};
+use crate::markdown::{find_sealed_references, parse_markdown};
 use crate::sensitive_text::contains_known_credential_patterns;
 use crate::store::{Store, StoreError};
 use crate::tree::TREE_LIMITS;
@@ -281,7 +283,10 @@ fn commit_docs(repo: &GitRepo, commit: &Sha) -> Result<CommitDocs, StoreError> {
     Ok(CommitDocs { blobs, ids, reader })
 }
 
-fn read_blob(reader: &mut crate::git_read::ObjectReader, sha: &str) -> Result<Vec<u8>, StoreError> {
+pub(crate) fn read_blob(
+    reader: &mut crate::git_read::ObjectReader,
+    sha: &str,
+) -> Result<Vec<u8>, StoreError> {
     let (kind, bytes) = reader.read_checked(sha, DOCUMENT_MAX_BYTES, &mut |_, _| Ok(()))?;
     if kind != ObjectKind::Blob {
         return Err(GitError::Structure("tree entry is not a blob".into()).into());
@@ -319,14 +324,13 @@ fn resolve_path(
     }
 }
 
-/// Only an explicit `provenance: dream` may be overwritten by a dream.
-fn is_dream_provenance(bytes: &[u8]) -> Result<bool, StoreError> {
+/// Whether a dream may overwrite the document: its provenance is `dream` or
+/// `agent` (the server's `isDreamOverwritable`), never `human`, absent or
+/// unknown.
+fn is_dream_overwritable(bytes: &[u8]) -> Result<bool, StoreError> {
     let parsed = parse_markdown(bytes)
         .map_err(|_| StoreError::InvalidArgument("document is not valid Markdown".into()))?;
-    Ok(matches!(
-        parsed.front_matter.get("provenance"),
-        Some(YamlValue::String(value)) if value == "dream"
-    ))
+    Ok(crate::markdown::document_provenance(&parsed.front_matter).is_dream_overwritable())
 }
 
 /// One planned upsert: create (new ID) or replace (existing ID's path).
@@ -393,7 +397,8 @@ pub(crate) fn plan_upserts(
         let exists = docs.ids.contains_key(upsert.id.as_str());
         if exists && let Some(blob) = docs.blobs.get(&path).cloned() {
             let bytes = read_blob(&mut docs.reader, &blob)?;
-            if !is_dream_provenance(&bytes)? {
+            // Dreams update what dreams or agents wrote, never a person's.
+            if !is_dream_overwritable(&bytes)? {
                 return Err(StoreError::Forbidden);
             }
         }
@@ -540,7 +545,7 @@ fn guard_check(docs: &mut CommitDocs, path: &str, existed: bool) -> Result<(), S
         None => Ok(()),
         Some(blob) => {
             let bytes = read_blob(&mut docs.reader, &blob)?;
-            if is_dream_provenance(&bytes)? {
+            if is_dream_overwritable(&bytes)? {
                 Ok(())
             } else {
                 Err(violation(format!(

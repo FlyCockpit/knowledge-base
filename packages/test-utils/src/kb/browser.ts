@@ -1267,6 +1267,7 @@ export async function createKbBrowserFixture(options: {
           clientId,
           referenceId: randomUUID(),
           scopes: ["mcp:read", "mcp:write"],
+          authoringMode: "BOTH",
           toolGroups: ["read", "kb_admin"],
           allowCreate: true,
           createdKbBits: ["read"],
@@ -1320,6 +1321,7 @@ export async function createKbBrowserFixture(options: {
           clientId,
           referenceId: randomUUID(),
           scopes: ["mcp:read", "mcp:write"],
+          authoringMode: "BOTH",
           toolGroups: ["read", "edit"],
           createdKbBits: [],
           acl: {

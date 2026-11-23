@@ -7,6 +7,7 @@ use crate::{
     index::IndexEmbedder,
     qwen::ModelRuntime,
 };
+use kb_client::authoring::AuthoringMode;
 use kb_client::{
     ErrorCode, ToolName,
     stdio::{CallControl, tool_error},
@@ -21,6 +22,9 @@ pub struct DispatchIo<'a> {
     /// A session's KB selection (`kb mcp --kb`): `knowledge_bases_list`
     /// pages over it. `None` lists every KB the principal can read.
     pub kbs: Option<&'a BTreeSet<String>>,
+    /// The session's write mode (`kb mcp --write-mode`); the store holds
+    /// every mutation of this call to it (`both`: unchanged).
+    pub authoring: AuthoringMode,
 }
 impl DispatchIo<'_> {
     fn embedder(&self) -> IndexEmbedder<'_> {
@@ -50,6 +54,7 @@ pub struct Session {
     principal: LocalPrincipal,
     model: Arc<ModelRuntime>,
     io: SessionIo,
+    authoring: AuthoringMode,
 }
 impl Session {
     /// `runtime` must stay driven (a thread inside its `block_on`) while
@@ -68,7 +73,13 @@ impl Session {
             principal,
             model,
             io,
+            authoring: AuthoringMode::Both,
         }
+    }
+    /// Hold every call's mutations to `mode` (default `both`).
+    pub fn with_authoring(mut self, mode: AuthoringMode) -> Self {
+        self.authoring = mode;
+        self
     }
     pub fn model(&self) -> &ModelRuntime {
         &self.model
@@ -102,6 +113,7 @@ impl Session {
                 egress: &egress,
                 model: &self.model,
                 kbs,
+                authoring: self.authoring,
             },
         ))
     }
@@ -151,6 +163,7 @@ pub async fn dispatch_observed(
             egress: &egress,
             model: &model,
             kbs: None,
+            authoring: AuthoringMode::Both,
         },
         before_refusal,
     )
@@ -195,6 +208,9 @@ async fn dispatch_with_io_observed(
                 ToolName::KnowledgeBasesDelete | ToolName::KnowledgeSealedResolve
             )
         });
+    // Defence in depth behind the session's scope admission: the store
+    // refuses every write the mode does not allow before any side effect.
+    s.narrow_authoring(io.authoring);
     let _scope = crate::git_read::OperationDeadline::transport(c.clone());
     if let Err(e) = crate::git_read::OperationDeadline::check() {
         return failure(e);

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { countMergeabilityFailure, logInternalError } from "@knowledge-base/env/log";
 import type { z } from "zod";
-import { actedByTrailer, sameActorPerson, withTrailer } from "./actors";
+import { attributionTrailers, commitSubject, sameActorPerson, withTrailer } from "./actors";
 import { assetValidationContext, manifestAtCommitAsync } from "./asset-authz";
 import { recordAuditEvent } from "./audit";
 import { type AuthorityBarrier, assertAuthorityReservation } from "./authority-lock";
@@ -52,6 +52,7 @@ import { type ConflictItem, mergeProposalOntoMain, planReviewedMerge } from "./p
 import {
   actorKeyFor,
   type CredentialVerifier,
+  demandAuthoring,
   type Principal,
   tokenHasOauthScope,
 } from "./principal";
@@ -682,7 +683,7 @@ export async function applyPrMergeDelta(query: LockQuery, intent: IntentRow) {
 
 /** Shared browser/domain publication entry. Authority -> KB -> quota locks; Git CAS
  * occurs only after durable COMMITTING and authority release, retaining the KB lease. */
-export function createPullRequestPublication(input: {
+export function createPullRequestPublication(raw: {
   canonicalOrigin?: string;
   store: LiveAuthorityStore;
   principal: Principal;
@@ -697,11 +698,19 @@ export function createPullRequestPublication(input: {
   barrier: AuthorityBarrier;
   publish(lease: HeldLockLease, executor: GitMutatingExecutor): Promise<PrResult>;
 } {
-  const { kind, ...body } = input.request;
+  const { kind, ...body } = raw.request;
   const request: PrMutationRequest =
     kind === "create"
       ? { kind, ...kbWriteToolSchemas.knowledge_pull_requests_create.input.parse(body) }
       : { kind, ...kbWriteToolSchemas.knowledge_pull_requests_review.input.parse(body) };
+  // Opening a PR and merging one publish edits: both need an edit-capable write
+  // mode, on every admission of this publication. Closing needs none. A PR's
+  // kind does not bound its content (an actor's edits and dreams can share its
+  // automatic PR), so a dream PR's merge needs edit too.
+  const input =
+    request.kind === "create" || request.decision === "merge"
+      ? { ...raw, principal: demandAuthoring(raw.principal, "edit") }
+      : raw;
   const kbId = request.kbId;
   const actorKey = actorKeyFor(input.principal);
   const operation =
@@ -904,8 +913,8 @@ export function createPullRequestPublication(input: {
             validation,
             // A readable merge commit naming the PR, plus who merged it.
             message: withTrailer(
-              `Merge #${row!.number}: ${row!.title}`,
-              await actedByTrailer(lease.query, actorKey),
+              commitSubject(`Merge #${row!.number}: ${row!.title}`),
+              await attributionTrailers(lease.query, actorKey),
             ),
           });
           if (plan.commitSha !== request.expectedTargetSha) {

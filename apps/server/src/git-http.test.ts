@@ -43,6 +43,7 @@ function fixture(options: { push?: boolean } = {}) {
       banned: false,
       twoFactorSatisfied: true,
       toolGroups: ["read", "edit"],
+      authoringMode: "both" as "dream" | "edit" | "both",
     })),
   };
   const store = {
@@ -111,6 +112,7 @@ describe("Git HTTP permission refusals", () => {
       banned: false,
       twoFactorSatisfied: true,
       toolGroups: ["read"],
+      authoringMode: "both",
     });
     const response = await app.request(`/git/${id}.git/info/refs?service=git-receive-pack`, {
       headers: { authorization: basic() },
@@ -421,6 +423,7 @@ describe("Git HTTP admission", () => {
         banned: false,
         twoFactorSatisfied: true,
         toolGroups,
+        authoringMode: "both",
       });
     const discover = async (service: string) =>
       (
@@ -437,7 +440,25 @@ describe("Git HTTP admission", () => {
     expect(await discover("git-receive-pack")).toBe(403);
     groups(["read", "edit"]);
     expect(await discover("git-receive-pack")).toBe(501);
-    expect(backend).toHaveBeenCalledTimes(1);
+    // A dream-only write mode cannot push either (a push is a direct edit),
+    // and Git prints why; fetching is unaffected.
+    verifier.inspect.mockResolvedValue({
+      generationActive: true,
+      instanceEnabled: true,
+      expired: false,
+      banned: false,
+      twoFactorSatisfied: true,
+      toolGroups: ["read", "edit"],
+      authoringMode: "dream",
+    });
+    const dreamOnly = await app.request(`/git/${id}.git/info/refs?service=git-receive-pack`, {
+      headers: { authorization: basic() },
+    });
+    expect(dreamOnly.status).toBe(403);
+    expect(await dreamOnly.text()).toMatch(/write mode allows only dreams/);
+    expect(await discover("git-upload-pack")).toBe(200);
+    // Only the two permitted fetch discoveries reached the Git backend.
+    expect(backend).toHaveBeenCalledTimes(2);
   });
   it("serves digit-leading generated KB ids (any protocol kbId)", async () => {
     const { app, store } = fixture();

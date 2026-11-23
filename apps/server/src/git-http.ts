@@ -103,7 +103,9 @@ export function createGitHttp(options: {
       const pushing =
         (discovery ? url.searchParams.get("service") : match[2]) === "git-receive-pack";
       gitService = pushing ? "push" : "fetch";
-      const actor = admitted.demandToolGroups([pushing ? "edit" : "read"]);
+      // A push writes raw commits: it also needs an edit-capable write mode.
+      const grouped = admitted.demandToolGroups([pushing ? "edit" : "read"]);
+      const actor = pushing ? grouped.demandAuthoring("edit") : grouped;
       // Capture the authenticated actor before live read/propose checks can reject.
       // Discovery/fetch and unauthenticated traffic are outside this push event.
       if (match[2] === "git-receive-pack" && c.req.method === "POST") pushActor = actor.principal;
@@ -301,6 +303,9 @@ function refusalReason(service: "fetch" | "push", error: unknown, refName?: stri
     return service === "push"
       ? "This token cannot push: it does not include the edit tool group. Create a token with edit access."
       : "This token cannot fetch: it does not include the read tool group.";
+  }
+  if (error instanceof KbAdmissionError && error.details?.reason === "WRITE_MODE") {
+    return "This token cannot push: its write mode allows only dreams. Create a token whose write mode allows edits.";
   }
   if (service === "fetch") return "This token is not allowed to read this knowledge base.";
   if (refName === "refs/heads/main") {

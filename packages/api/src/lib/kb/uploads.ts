@@ -33,6 +33,7 @@ import { authorize, sqlAuthorityStore } from "./permissions";
 import {
   actorKeyFor,
   type CredentialVerifier,
+  demandAuthoring,
   demandToolGroups,
   KbAdmissionError,
   type Principal,
@@ -112,7 +113,12 @@ type StagedRow = {
 
 type UploadActor = { principal: Principal; verifier?: CredentialVerifier; signal?: AbortSignal };
 function uploadActor(actor: string | UploadActor): UploadActor {
-  return typeof actor === "string" ? { principal: { kind: "browser", userId: actor } } : actor;
+  // Uploads only feed direct edits and assets (a dream carries no changes), so
+  // every upload call of a token needs an edit-capable write mode; it rides on
+  // every admission of the call, the lock-held ones included.
+  const resolved: UploadActor =
+    typeof actor === "string" ? { principal: { kind: "browser", userId: actor } } : actor;
+  return { ...resolved, principal: demandAuthoring(resolved.principal, "edit") };
 }
 
 /** Markdown uploads belong to the `edit` tool group, asset uploads to `assets`. */

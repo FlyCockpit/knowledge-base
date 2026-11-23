@@ -423,11 +423,16 @@ export async function initBareKbRepo(options: GitRunOptions): Promise<string> {
 }
 
 /** The canonical initial `main` tree; exported so git fixtures build on the real layout. */
-export function initialMainTreeFiles(description: string): TreeFileInput[] {
+export function initialMainTreeFiles(
+  description: string,
+  /** The server-stamped front-matter provenance of index.md (fixtures may omit it). */
+  provenance?: "agent" | "human",
+): TreeFileInput[] {
+  const front = provenance ? `---\nprovenance: ${provenance}\n---\n` : "";
   return [
     {
       segments: ["index.md"],
-      content: Buffer.from(`# Knowledge base\n\n${description}\n`, "utf8"),
+      content: Buffer.from(`${front}# Knowledge base\n\n${description}\n`, "utf8"),
     },
     { segments: [".gitignore"], content: Buffer.from(KB_MANAGED_GITIGNORE, "utf8") },
     {
@@ -440,10 +445,10 @@ export function initialMainTreeFiles(description: string): TreeFileInput[] {
 /** Durable loose objects only — repo must already be a bare git directory; no ref movement. */
 export async function writeInitialMainCommitLoose(
   repo: string,
-  input: { message: string; description: string },
+  input: { message: string; description: string; provenance?: "agent" | "human" },
   options: GitReadOptions = {},
 ): Promise<{ headSha: string; binding: PublicationTreeBinding }> {
-  const staged = stageTreeForFiles(initialMainTreeFiles(input.description));
+  const staged = stageTreeForFiles(initialMainTreeFiles(input.description, input.provenance));
   const timestamp = Math.floor(Date.now() / 1000);
   const identity = `${GIT_IDENTITY_NAME} <${GIT_IDENTITY_EMAIL}> ${timestamp} +0000`;
   const message = input.message.endsWith("\n") ? input.message : `${input.message}\n`;

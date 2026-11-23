@@ -245,7 +245,8 @@
       "showTextDiff": "Mostrar diferencias de texto",
       "hideTextDiff": "Ocultar diferencias de texto",
       "showTextDiffNamed": "Mostrar diferencias de texto de {{path}}",
-      "hideTextDiffNamed": "Ocultar diferencias de texto de {{path}}"
+      "hideTextDiffNamed": "Ocultar diferencias de texto de {{path}}",
+      "writtenBy": "Escrito por {{actor}}"
     },
     "status": {
       "open": "Abierta",
@@ -301,8 +302,9 @@
     "number": "#{{number}}",
     "pageTitle": "Solicitud de cambios #{{number}}",
     "author": {
-      "token": "Abierta por {{name}} vía {{via}}",
-      "web": "Abierta por {{name}} vía web",
+      "token": "Abierta por {{name}} mediante la credencial “{{via}}”",
+      "web": "Abierta por {{name}} en la aplicación web",
+      "tokenUnknown": "Abierta por {{name}} mediante una credencial",
       "unknown": "un usuario eliminado"
     },
     "conflicts": {
@@ -620,5 +622,38 @@
     "noticeBody": "Esta página muestra la versión de main. Edita la versión de la solicitud de cambios para continuar tu cambio pendiente.",
     "noticeEditing": "Estás editando la versión de main. Para continuar tu cambio pendiente, edita la versión de la solicitud de cambios.",
     "editInPr": "Editar en la solicitud de cambios #{{number}}"
+  },
+  "provenance": {
+    "prefixed": "{{prefix}}: {{label}}",
+    "human": {
+      "label": "Persona",
+      "description": "Escrito por una persona en la aplicación web. Los dreams no pueden cambiarlo."
+    },
+    "agent": {
+      "label": "Agente",
+      "description": "Escrito por la edición directa de un agente. Los dreams pueden actualizarlo."
+    },
+    "dream": {
+      "label": "Dream",
+      "description": "Escrito por un dream. Los dreams pueden actualizarlo."
+    },
+    "absent": {
+      "label": "Sin especificar",
+      "description": "Sin etiqueta. Se trata como el documento de una persona: los dreams no pueden cambiarlo."
+    }
+  },
+  "history": {
+    "title": "Historial",
+    "empty": "Aún no hay historial en main.",
+    "loadFailed": "No se pudo cargar el historial.",
+    "unattributed": "Sin atribuir (Git push o anterior)",
+    "unknownPerson": "Persona desconocida",
+    "viaWeb": "{{name}} en la aplicación web",
+    "viaCredential": "{{name}} mediante la credencial “{{via}}”",
+    "viaUnknownCredential": "{{name}} mediante una credencial",
+    "deleted": "Eliminado",
+    "unknownDate": "fecha desconocida",
+    "noSubject": "(sin asunto)",
+    "meta": "{{actor}} · {{date}} · {{sha}}"
   }
 }

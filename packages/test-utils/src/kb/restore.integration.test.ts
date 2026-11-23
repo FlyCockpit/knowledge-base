@@ -298,6 +298,7 @@ async function seedFixture() {
       clientId: "fixture",
       referenceId: randomUUID(),
       scopes: ["mcp:write"],
+      authoringMode: "BOTH",
       toolGroups: ["read", "edit"],
       createdKbBits: [],
     },

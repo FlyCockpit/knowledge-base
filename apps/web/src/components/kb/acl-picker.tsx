@@ -1,6 +1,8 @@
+import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthoringModePicker } from "@/components/kb/authoring-mode-picker";
 import { CheckRow } from "@/components/kb/check-row";
 import { ToolGroupPicker } from "@/components/kb/tool-group-picker";
 import {
@@ -33,6 +35,10 @@ type AclPickerProps = {
    * show checked and can be removed, but never added back.
    */
   removalOnly?: Readonly<Record<string, readonly KbBit[]>>;
+  /** The write modes on offer while `mcp:write` is part of the credential (a device ceiling). */
+  authoringModes?: readonly McpAuthoringMode[];
+  /** Set when the write mode cannot change here (temporary access); the picker is shown disabled. */
+  authoringModeLockedReason?: string;
 };
 
 const SCOPE_KEY: Record<string, "read" | "write" | "offline"> = {
@@ -44,7 +50,8 @@ const SCOPE_KEY: Record<string, "read" | "write" | "offline"> = {
 /**
  * Shared credential ceiling picker for OAuth consent, CLI device approval and
  * PAT creation. Every scope, KB and bit checkbox starts unchecked; there is
- * deliberately no "select all". Tool groups start on the Read preset.
+ * deliberately no "select all". Tool groups start on the Read preset. With
+ * write access a write mode must be chosen; none is preselected.
  * Each KB is its own fieldset listing only the bits the user holds live.
  */
 export function AclPicker({
@@ -57,6 +64,8 @@ export function AclPicker({
   offerSealed = false,
   disabled = false,
   removalOnly = {},
+  authoringModes,
+  authoringModeLockedReason,
 }: AclPickerProps) {
   const { t } = useTranslation("settings");
   const base = useId();
@@ -95,10 +104,21 @@ export function AclPicker({
         )}
       </fieldset>
 
+      {writeScopeSelected && (
+        <AuthoringModePicker
+          value={selection.authoringMode}
+          onChange={(mode) => onChange({ type: "setAuthoringMode", mode })}
+          allowed={authoringModes}
+          disabled={disabled || authoringModeLockedReason !== undefined}
+          lockedReason={authoringModeLockedReason}
+        />
+      )}
+
       <ToolGroupPicker
         groups={selection.toolGroups}
         onChange={onChange}
         writeScope={writeScopeSelected}
+        authoringMode={selection.authoringMode}
         allowCreate={selection.allowCreate}
         offerSealed={offerSealed}
         kbs={live.flatMap((kb) => {

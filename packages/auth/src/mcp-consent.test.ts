@@ -87,6 +87,7 @@ describe("consent signed provider transaction", () => {
 describe("consent ceilings", () => {
   const base = consentSelection.parse({
     scopes: ["mcp:read", "mcp:write", "offline_access"],
+    authoringMode: "both",
     toolGroups: ["read", "edit", "kb_admin"],
     acl: [{ kbId: "a".repeat(24), bits: ["read", "propose"] }],
     allowCreate: true,
@@ -115,6 +116,25 @@ describe("consent ceilings", () => {
       ),
     ).toBe(true);
   });
+  it("compares write modes as capability sets", () => {
+    const write = (authoringMode: "dream" | "edit" | "both") =>
+      consentSelection.parse({
+        scopes: ["mcp:write"],
+        authoringMode,
+        toolGroups: ["read", "edit"],
+        acl: [],
+      });
+    expect(isConsentSubset(write("dream"), write("both"))).toBe(true);
+    expect(isConsentSubset(write("edit"), write("both"))).toBe(true);
+    // dream <-> edit both adds and removes: never silent reuse.
+    expect(isConsentSubset(write("edit"), write("dream"))).toBe(false);
+    expect(isConsentSubset(write("dream"), write("edit"))).toBe(false);
+    expect(isConsentSubset(write("both"), write("edit"))).toBe(false);
+    // Write without a mode is not a selection at all.
+    expect(
+      consentSelection.safeParse({ scopes: ["mcp:write"], toolGroups: ["read"], acl: [] }).success,
+    ).toBe(false);
+  });
   it("permits narrowing, rejects each kind of expansion", () => {
     const narrow = consentSelection.parse({
       scopes: ["mcp:read"],
@@ -123,7 +143,7 @@ describe("consent ceilings", () => {
     });
     expect(isConsentSubset(narrow, base)).toBe(true);
     for (const selection of [
-      { ...narrow, scopes: ["mcp:write"] },
+      { ...narrow, scopes: ["mcp:write"], authoringMode: "dream" as const },
       { ...narrow, toolGroups: ["read", "assets"] },
       { ...narrow, toolGroups: [] },
       { ...narrow, acl: [...narrow.acl, { kbId: "b".repeat(24), bits: ["read"] }] },
@@ -141,6 +161,7 @@ describe("consent ceilings", () => {
   it("requires kb_admin for creation in every credential and consent selection", async () => {
     const selection: ConsentSelection = {
       scopes: ["mcp:read", "mcp:write"],
+      authoringMode: "edit",
       toolGroups: ["read"],
       acl: [],
       allowCreate: true,

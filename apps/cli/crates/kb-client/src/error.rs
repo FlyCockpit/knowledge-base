@@ -12,10 +12,43 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
+use crate::authoring::WriteKind;
 use crate::schema::{MAX_SAFE_INTEGER, SchemaViolation, safe_integer};
 use crate::types::{IndexState, KbId, Sha};
 
 pub(crate) const TOO_MANY_CHANGES_MESSAGE: &str = "At most 32 changes per call. Each call commits on success: apply the first 32 now, then send the rest in another call using the returned commit as baseRevision.";
+
+/// `FORBIDDEN` by the credential's write mode, by what the call needed (the
+/// server's `WRITE_MODE_MESSAGES`, `protocol/envelope.ts`).
+pub const WRITE_MODE_DREAM_MESSAGE: &str = "This credential's write mode does not allow dreams. Write the change directly with mode \"edit\", or ask the owner for a credential that may dream.";
+pub const WRITE_MODE_EDIT_MESSAGE: &str = "This credential's write mode allows only dreams. Use knowledge_changes_apply with mode \"dream\", or ask the owner for a credential that may edit.";
+/// Wire reason of [`ErrorDetails::WriteMode`].
+pub const WRITE_MODE_REASON: &str = "WRITE_MODE";
+
+/// The message of a `WRITE_MODE` refusal for a call that needed `required`.
+pub fn write_mode_message(required: WriteKind) -> &'static str {
+    match required {
+        WriteKind::Dream => WRITE_MODE_DREAM_MESSAGE,
+        WriteKind::Edit => WRITE_MODE_EDIT_MESSAGE,
+    }
+}
+
+/// The fixed message of an error with `code` and wire `details` (the
+/// server's `kbProtocolMessageForCode`): the code's message, or the
+/// too-many-changes and write-mode texts their details select.
+pub fn message_for(code: ErrorCode, details: &Value) -> &'static str {
+    if code == ErrorCode::InvalidArgument && details["reason"] == "TOO_MANY_CHANGES" {
+        return TOO_MANY_CHANGES_MESSAGE;
+    }
+    if code == ErrorCode::Forbidden && details["reason"] == WRITE_MODE_REASON {
+        match details["required"].as_str() {
+            Some("dream") => return WRITE_MODE_DREAM_MESSAGE,
+            Some("edit") => return WRITE_MODE_EDIT_MESSAGE,
+            _ => {}
+        }
+    }
+    code.message()
+}
 
 macro_rules! error_codes {
     ($( $variant:ident => $wire:literal, $message:literal, $retryable:literal; )*) => {
@@ -124,6 +157,12 @@ pub enum ErrorDetails {
     /// main revision to propose against; `base_sha`/`proposal_head_sha` and
     /// the per-path versions are what a resolver needs.
     ProposalConflict(Box<ProposalConflict>),
+    /// `FORBIDDEN` by the credential's write mode: the call needed a
+    /// `required` write the mode does not allow (`{reason: "WRITE_MODE",
+    /// required}`).
+    WriteMode {
+        required: WriteKind,
+    },
 }
 
 /// Payload of [`ErrorDetails::ProposalConflict`] (boxed: errors stay small).
@@ -346,6 +385,18 @@ impl ErrorDetails {
                     field: parse_field(object.get("field"))?,
                 })
             }
+            ErrorCode::Forbidden
+                if closed(&["reason", "required"])
+                    && object["reason"].as_str() == Some(WRITE_MODE_REASON) =>
+            {
+                Ok(ErrorDetails::WriteMode {
+                    required: match object["required"].as_str() {
+                        Some("dream") => WriteKind::Dream,
+                        Some("edit") => WriteKind::Edit,
+                        _ => return Err(bad()),
+                    },
+                })
+            }
             ErrorCode::Conflict if closed(&["reason"]) || closed(&["reason", "field"]) => {
                 Ok(ErrorDetails::ConflictReason {
                     reason: object["reason"].as_str().ok_or_else(bad)?.parse()?,
@@ -422,6 +473,10 @@ impl ErrorDetails {
                 if let Some(field) = field {
                     map.insert("field".into(), Value::from(field.as_str()));
                 }
+            }
+            ErrorDetails::WriteMode { required } => {
+                map.insert("reason".into(), Value::from(WRITE_MODE_REASON));
+                map.insert("required".into(), Value::from(required.as_str()));
             }
             ErrorDetails::ProposalConflict(conflict) => {
                 let ProposalConflict {
@@ -674,6 +729,7 @@ impl ToolError {
             ErrorDetails::NotFoundReason { field, .. } => {
                 code == ErrorCode::NotFound && field.as_deref().is_none_or(is_field_pointer)
             }
+            ErrorDetails::WriteMode { .. } => code == ErrorCode::Forbidden,
             ErrorDetails::ProposalConflict(conflict) => {
                 let ProposalConflict {
                     proposal_number,
@@ -703,16 +759,13 @@ impl ToolError {
     }
 
     pub fn message(&self) -> &'static str {
-        if matches!(
-            self.details,
+        match self.details {
             ErrorDetails::InvalidArgument {
                 reason: InvalidReason::TooManyChanges,
                 ..
-            }
-        ) {
-            TOO_MANY_CHANGES_MESSAGE
-        } else {
-            self.code.message()
+            } => TOO_MANY_CHANGES_MESSAGE,
+            ErrorDetails::WriteMode { required } => write_mode_message(required),
+            _ => self.code.message(),
         }
     }
 

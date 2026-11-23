@@ -11,6 +11,7 @@ import {
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import enSettings from "@knowledge-base/locales/src/en-US/settings.json" with { type: "json" };
 import { expect, type Page, test } from "@playwright/test";
 import type { KbBrowserFixtureData } from "../../../packages/test-utils/src/kb/browser";
 
@@ -36,9 +37,21 @@ async function start(page: Page) {
     verification_uri_complete: string;
   }>;
 }
+const writeModes = (page: Page) =>
+  page.getByRole("radiogroup", { name: enSettings.credentials.writeMode.legend, exact: true });
+// These logins request write access, so Approve waits for a write mode; none
+// of these specs is about the mode itself, so they grant both.
+async function chooseWriteMode(page: Page) {
+  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  await expect(writeModes(page).getByRole("radio", { checked: true })).toHaveCount(0);
+  await writeModes(page)
+    .getByRole("radio", { name: enSettings.credentials.writeMode.modes.both.label })
+    .check();
+  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
+}
 async function review(page: Page, userCode: string) {
   await page.goto(`${fx.origin}/en-US/device?user_code=${userCode}`);
-  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
+  await chooseWriteMode(page);
 }
 async function state(page: Page, userCode: string) {
   const response = await page.request.get(`${fx.origin}/fixture/device/state?userCode=${userCode}`);
@@ -213,7 +226,7 @@ test("R34b F2 actual CLI registers its private-file key, browser selects exact u
         });
     });
     await page.goto(match[1]!);
-    await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
+    await chooseWriteMode(page);
     await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Add sealed record", exact: true }),
@@ -404,7 +417,8 @@ for (const delivery of ["success", "failure"] as const) {
         router.history.push(`/en-US/device?user_code=${code}`);
         await router.load();
       }, b.user_code);
-      await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
+      // The replacement starts with no write mode of its own, then takes one.
+      await chooseWriteMode(page);
       await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "Remove sealed record", exact: true }),
@@ -434,6 +448,11 @@ for (const delivery of ["success", "failure"] as const) {
         .toBe(delivery === "success" ? "approved" : "pending");
       expect((await state(page, b.user_code)).intent?.selection).toBeNull();
       await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+      await expect(
+        writeModes(page).getByRole("radio", {
+          name: enSettings.credentials.writeMode.modes.both.label,
+        }),
+      ).toBeChecked();
       await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
       await expect(
         page.getByRole("button", { name: "Remove sealed record", exact: true }),

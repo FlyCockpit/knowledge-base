@@ -2,7 +2,9 @@ import { createRouterClient } from "@orpc/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { mockDeep } from "vitest-mock-extended";
 import type { Context } from "../context";
-import { listPullRequests, mutatePullRequest } from "../lib/kb/pull-requests";
+import { prFileAttribution } from "../lib/kb/document-history";
+import { authorizeDocumentRead } from "../lib/kb/documents-read";
+import { getPullRequest, listPullRequests, mutatePullRequest } from "../lib/kb/pull-requests";
 import { pullRequestsRouter } from "./pull-requests";
 
 vi.mock("@knowledge-base/db", async () => ({
@@ -13,8 +15,11 @@ vi.mock("../lib/kb/pull-requests", () => ({
   getPullRequest: vi.fn(),
   mutatePullRequest: vi.fn(),
 }));
-vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({ prisma: {} }) }));
+vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({ prisma: {}, reposDir: "/repos" }) }));
+vi.mock("../lib/kb/document-history", () => ({ prFileAttribution: vi.fn() }));
+vi.mock("../lib/kb/actors", () => ({ resolveActors: vi.fn(async () => new Map()) }));
 vi.mock("../lib/procedure-budget", () => ({ createProcedureBudget: () => async () => {} }));
+vi.mock("../lib/kb/documents-read", () => ({ authorizeDocumentRead: vi.fn(async () => {}) }));
 const kbId = "a".repeat(24);
 function client(loggedIn = true) {
   const session = mockDeep<NonNullable<Context["session"]>>();
@@ -109,4 +114,79 @@ it("a review CONFLICT carries structured details; other errors carry only the co
       .catch((e: unknown) => e);
     expect((error as { data?: unknown }).data).toEqual(data);
   }
+});
+it("adds each Markdown file's labels and writer to the browser's PR page only", async () => {
+  const sha = (c: string) => c.repeat(40);
+  const files = [
+    { path: "a.md", status: "modified", beforeBlobSha: sha("1"), afterBlobSha: sha("2") },
+    { path: "x.png", status: "added", beforeBlobSha: null, afterBlobSha: sha("3") },
+  ];
+  vi.mocked(getPullRequest).mockResolvedValue({
+    pr: { number: 1, authorActorKey: "user:reader", baseSha: sha("a"), headSha: sha("b") },
+    files,
+    touchedAssets: [],
+    nextCursor: null,
+  } as unknown as Awaited<ReturnType<typeof getPullRequest>>);
+  vi.mocked(prFileAttribution).mockResolvedValue(
+    new Map([
+      [
+        "a.md",
+        {
+          beforeProvenance: "human",
+          afterProvenance: "agent",
+          writtenBy: { kind: "unattributed", name: null, via: null },
+        },
+      ],
+    ]),
+  );
+  const page = await client().get({ kbId, number: 1 });
+  expect(vi.mocked(prFileAttribution).mock.calls[0]?.[0]).toMatchObject({
+    repoPath: expect.stringContaining(kbId),
+    baseSha: sha("a"),
+    headSha: sha("b"),
+    files,
+  });
+  expect(page.files).toEqual([
+    {
+      ...files[0],
+      beforeProvenance: "human",
+      afterProvenance: "agent",
+      writtenBy: { kind: "unattributed", name: null, via: null },
+    },
+    { ...files[1], beforeProvenance: null, afterProvenance: null, writtenBy: null },
+  ]);
+});
+it("never reads attribution for a PR the viewer cannot read", async () => {
+  const { KbDomainError } = await import("../lib/kb/errors");
+  vi.mocked(getPullRequest).mockRejectedValue(new KbDomainError("FORBIDDEN", "no"));
+  await expect(client().get({ kbId, number: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(prFileAttribution).not.toHaveBeenCalled();
+});
+it("rechecks live read after the author and attribution reads, before publishing them", async () => {
+  const { KbDomainError } = await import("../lib/kb/errors");
+  const sha = (c: string) => c.repeat(40);
+  vi.mocked(getPullRequest).mockResolvedValue({
+    pr: { number: 1, authorActorKey: "grant:g", baseSha: sha("a"), headSha: sha("b") },
+    files: [],
+    touchedAssets: [],
+    nextCursor: null,
+  } as unknown as Awaited<ReturnType<typeof getPullRequest>>);
+  vi.mocked(prFileAttribution).mockResolvedValue(new Map());
+  // Access revoked while the attribution was read: nothing is published.
+  vi.mocked(authorizeDocumentRead).mockRejectedValueOnce(new KbDomainError("FORBIDDEN", "gone"));
+  await expect(client().get({ kbId, number: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(vi.mocked(authorizeDocumentRead).mock.invocationCallOrder[0]).toBeGreaterThan(
+    vi.mocked(prFileAttribution).mock.invocationCallOrder[0]!,
+  );
+  vi.mocked(listPullRequests).mockResolvedValue({ items: [], nextCursor: null });
+  vi.mocked(authorizeDocumentRead).mockRejectedValueOnce(new KbDomainError("FORBIDDEN", "gone"));
+  await expect(client().list({ kbId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  // A credential author is labelled by its key, whatever its name.
+  vi.mocked(getPullRequest).mockResolvedValue({
+    pr: { number: 1, authorActorKey: "grant:g", baseSha: sha("a"), headSha: sha("b") },
+    files: [],
+    touchedAssets: [],
+    nextCursor: null,
+  } as unknown as Awaited<ReturnType<typeof getPullRequest>>);
+  expect((await client().get({ kbId, number: 1 })).pr.author.kind).toBe("credential");
 });

@@ -11382,6 +11382,175 @@
           "manifestBytes": 280
         }
       }
+    },
+    {
+      "name": "a line merge keeps the person's label over a dream's; an unlabelled one stays unlabelled",
+      "base": {
+        "docs": {
+          "a.md": "one\n",
+          "b.md": "one\n"
+        }
+      },
+      "main": {
+        "docs": {
+          "a.md": "---\nprovenance: human\n---\nmain\n",
+          "b.md": "main\n"
+        }
+      },
+      "proposal": {
+        "docs": {
+          "a.md": "---\nprovenance: dream\n---\npr\n",
+          "b.md": "---\nprovenance: dream\n---\npr\n"
+        }
+      },
+      "lineMerges": {
+        "a.md": "---\nprovenance: dream\n---\nmerged\n",
+        "b.md": "merged\n"
+      },
+      "expect": {
+        "conflicts": [],
+        "documents": {
+          "a.md": "---\nprovenance: human\n---\nmerged\n",
+          "b.md": "merged\n"
+        },
+        "assets": [],
+        "totals": {
+          "entries": 7,
+          "files": 5,
+          "treeBytes": 120,
+          "manifestEntries": 0,
+          "manifestBytes": 27
+        }
+      }
+    },
+    {
+      "name": "a line merge keeps an agent's label over a dream's and two dreams' label as is",
+      "base": {
+        "docs": {
+          "a.md": "one\n",
+          "b.md": "one\n"
+        }
+      },
+      "main": {
+        "docs": {
+          "a.md": "---\nprovenance: agent\n---\nmain\n",
+          "b.md": "---\nprovenance: dream\n---\nmain\n"
+        }
+      },
+      "proposal": {
+        "docs": {
+          "a.md": "---\nprovenance: dream\n---\npr\n",
+          "b.md": "---\nprovenance: dream\n---\npr\n"
+        }
+      },
+      "lineMerges": {
+        "a.md": "---\nprovenance: dream\n---\nmerged\n",
+        "b.md": "---\nprovenance: dream\n---\nmerged\n"
+      },
+      "expect": {
+        "conflicts": [],
+        "documents": {
+          "a.md": "---\nprovenance: agent\n---\nmerged\n",
+          "b.md": "---\nprovenance: dream\n---\nmerged\n"
+        },
+        "assets": [],
+        "totals": {
+          "entries": 7,
+          "files": 5,
+          "treeBytes": 146,
+          "manifestEntries": 0,
+          "manifestBytes": 27
+        }
+      }
+    },
+    {
+      "name": "a merged label above both writers' or one that cannot be stamped is a conflict",
+      "base": {
+        "docs": {
+          "a.md": "one\n",
+          "b.md": "one\n"
+        }
+      },
+      "main": {
+        "docs": {
+          "a.md": "---\nprovenance: dream\n---\nmain\n",
+          "b.md": "---\nprovenance: human\n---\nmain\n"
+        }
+      },
+      "proposal": {
+        "docs": {
+          "a.md": "---\nprovenance: dream\n---\npr\n",
+          "b.md": "---\nprovenance: agent\n---\npr\n"
+        }
+      },
+      "lineMerges": {
+        "a.md": "---\nprovenance: agent\n---\nmerged\n",
+        "b.md": "---\n\"provenance\": agent\n---\nmerged\n"
+      },
+      "expect": {
+        "conflicts": [
+          {
+            "path": "a.md",
+            "kind": "document"
+          },
+          {
+            "path": "b.md",
+            "kind": "document"
+          }
+        ],
+        "documents": {
+          "a.md": "---\nprovenance: dream\n---\npr\n",
+          "b.md": "---\nprovenance: agent\n---\npr\n"
+        },
+        "assets": [],
+        "totals": {
+          "entries": 7,
+          "files": 5,
+          "treeBytes": 138,
+          "manifestEntries": 0,
+          "manifestBytes": 27
+        }
+      }
+    },
+    {
+      "name": "an escaped provenance key is a label: a merged agent label under a person's escaped label cannot be stamped and is a conflict",
+      "base": {
+        "docs": {
+          "a.md": "---\n\"\\u0070rovenance\": human\n---\none\ntwo\n"
+        }
+      },
+      "main": {
+        "docs": {
+          "a.md": "---\n\"\\u0070rovenance\": human\n---\nmain one\ntwo\n"
+        }
+      },
+      "proposal": {
+        "docs": {
+          "a.md": "---\n\"\\u0070rovenance\": agent\n---\none\npr two\n"
+        }
+      },
+      "lineMerges": {
+        "a.md": "---\n\"\\u0070rovenance\": agent\n---\nmain one\npr two\n"
+      },
+      "expect": {
+        "conflicts": [
+          {
+            "path": "a.md",
+            "kind": "document"
+          }
+        ],
+        "documents": {
+          "a.md": "---\n\"\\u0070rovenance\": agent\n---\none\npr two\n"
+        },
+        "assets": [],
+        "totals": {
+          "entries": 6,
+          "files": 4,
+          "treeBytes": 124,
+          "manifestEntries": 0,
+          "manifestBytes": 27
+        }
+      }
     }
   ]
 }

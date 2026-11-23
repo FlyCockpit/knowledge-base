@@ -231,8 +231,15 @@ describe("kb lifecycle integration", () => {
         { env: hardenedGitEnv(), encoding: "utf8" },
       );
       expect(commit.split("\n\n").slice(1).join("\n\n")).toBe(
-        "Initial commit\n\nActed-by: owner via web\n",
+        `Initial commit\n\nActed-by: owner via web\nKb-Actor-Key: user:${user.id}\nKb-Provenance: human\n`,
       );
+      // A person created it: the server stamps the seeded index.md human.
+      expect(
+        execFileSync("git", ["--git-dir", repo, "show", `${first.kb.headSha}:index.md`], {
+          env: hardenedGitEnv(),
+          encoding: "utf8",
+        }),
+      ).toMatch(/^---\nprovenance: human\n---\n# Knowledge base\n/);
       const replay = await createKb(user.id, "notes");
       expect(replay.operationId).toBe(first.operationId);
       await prisma.knowledgeBase.update({

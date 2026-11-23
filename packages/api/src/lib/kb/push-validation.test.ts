@@ -254,14 +254,17 @@ describe("push ancestry (R3-W10)", () => {
         GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z",
       },
     }).trim();
-  const commit = async (path: string, body: string, parent?: string) => {
+  const commit = async (path: string, body: string, parent?: string, message = `edit ${path}`) => {
     if (parent) git("checkout", "--quiet", "--detach", parent);
     await writeFile(join(repo, path), body);
     git("add", path);
-    git("commit", "--quiet", "-m", `edit ${path}`);
+    git("commit", "--quiet", "-m", message);
     return git("rev-parse", "HEAD");
   };
+  /** Markdown a credential pushes says `provenance: agent`. */
+  const agent = (text: string) => `---\nprovenance: agent\n---\n${text}`;
   let oldMain: string, main: string, branch: string, orphan: string;
+  let human: string, dream: string, trailer: string, mergedMain: string;
   beforeAll(async () => {
     repo = await mkdtemp(join(tmpdir(), "kb-push-ancestry-"));
     git("init", "--quiet", "--initial-branch=main");
@@ -277,7 +280,21 @@ describe("push ancestry (R3-W10)", () => {
     oldMain = await commit("a.md", "# A\n");
     main = await commit("b.md", "# B\n");
     // A teammate's commit landed after this branch started from the older main.
-    branch = await commit("c.md", "# C\n", oldMain);
+    branch = await commit("c.md", agent("# C\n"), oldMain);
+    // Pushed Markdown claiming a person's or a dream's label, or no label.
+    human = await commit("h.md", "---\nprovenance: human\n---\n# H\n", oldMain);
+    dream = await commit("d.md", "---\nprovenance: dream\n---\n# D\n", oldMain);
+    // A pushed commit posing as the server's attribution block.
+    trailer = await commit(
+      "t.md",
+      agent("# T\n"),
+      oldMain,
+      "edit t.md\n\nActed-by: Someone via web\nKb-Actor-Key: user:someone",
+    );
+    // Merging current main in: main's own (server) commits stay trusted parents.
+    git("checkout", "--quiet", "--detach", branch);
+    git("merge", "--quiet", "--no-edit", "-m", "merge main", main);
+    mergedMain = git("rev-parse", "HEAD");
     git("checkout", "--quiet", "--orphan", "unrelated");
     git("rm", "-r", "--quiet", "--cached", ".");
     await seed();
@@ -291,6 +308,29 @@ describe("push ancestry (R3-W10)", () => {
 
   it("accepts a new branch started from an older main", async () => {
     await expect(push(ZERO_SHA, branch)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("refuses pushed Markdown not labelled agent, naming the path", async () => {
+    for (const [tip, path] of [
+      [human, "h.md"],
+      [dream, "d.md"],
+    ] as const) {
+      const error = await push(ZERO_SHA, tip).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(PushRefusedError);
+      expect((error as PushRefusedError).refusal).toBe("PROVENANCE");
+      expect((error as PushRefusedError).detail).toEqual({ code: "TREE_PROVENANCE", path });
+    }
+  });
+
+  it("refuses a pushed commit carrying the server's attribution trailers", async () => {
+    const error = await push(ZERO_SHA, trailer).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PushRefusedError);
+    expect((error as PushRefusedError).refusal).toBe("RESERVED_TRAILER");
+  });
+
+  it("trusts commits an existing ref reaches when a branch merges main", async () => {
+    // b.md (unlabelled, from main) is not the pusher's write: only the merge is new.
+    await expect(push(ZERO_SHA, mergedMain)).resolves.toMatchObject({ ok: true });
   });
 
   it("accepts a new branch from the current main", async () => {
@@ -314,6 +354,104 @@ describe("push ancestry (R3-W10)", () => {
     const error = await push(ZERO_SHA, "f".repeat(40)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(PushRefusedError);
+  });
+
+  describe("three-way merge authorship", () => {
+    const humanDoc = (text: string) => `---\nprovenance: human\n---\n${text}`;
+    let humanV1: string, mainV2: string, side: string;
+    beforeAll(async () => {
+      // Trusted history (an existing ref reaches it): a person wrote h2.md,
+      // then edited it again on main.
+      git("checkout", "--quiet", "--force", "--detach", main);
+      humanV1 = await commit("h2.md", humanDoc("# H2 v1\n"), main);
+      mainV2 = await commit("h2.md", humanDoc("# H2 v2\n"), humanV1);
+      git("update-ref", "refs/heads/main-v2", mainV2);
+      // A credential's branch from the older main: an agent document only.
+      side = await commit("s.md", agent("# S\n"), humanV1);
+    });
+    const mergeOf = (parents: string[], tree: string, message: string) =>
+      git("commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-m", message);
+
+    it("refuses restoring an old human version through an obsolete second parent", async () => {
+      // First parent is current main, second an older ancestor; the tree
+      // takes the ancestor's h2.md: equal to a parent, yet a restoration.
+      git("checkout", "--quiet", "--detach", mainV2);
+      await writeFile(join(repo, "h2.md"), humanDoc("# H2 v1\n"));
+      git("add", "h2.md");
+      const restore = mergeOf([mainV2, humanV1], git("write-tree"), "restore");
+      git("checkout", "--quiet", "--force", "--detach", mainV2);
+      const error = await push(ZERO_SHA, restore, mainV2).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(PushRefusedError);
+      expect((error as PushRefusedError).refusal).toBe("PROVENANCE");
+      expect((error as PushRefusedError).detail).toEqual({
+        code: "TREE_PROVENANCE",
+        path: "h2.md",
+      });
+    });
+
+    it("accepts a clean merge of a side branch's agent change into main", async () => {
+      // main first: s.md comes from the side (only it changed s.md) and
+      // h2.md is main's own, unchanged by the side since the merge base.
+      git("checkout", "--quiet", "--detach", mainV2);
+      git("merge", "--quiet", "--no-edit", "-m", "merge side", side);
+      const merged = git("rev-parse", "HEAD");
+      expect(readParents(merged)).toEqual([mainV2, side]);
+      await expect(push(ZERO_SHA, merged, mainV2)).resolves.toMatchObject({ ok: true });
+    });
+
+    it("accepts merging current main into a branch", async () => {
+      // Branch first: h2.md v2 comes from main, which alone changed it.
+      git("checkout", "--quiet", "--detach", side);
+      git("merge", "--quiet", "--no-edit", "-m", "merge main", mainV2);
+      const merged = git("rev-parse", "HEAD");
+      expect(readParents(merged)).toEqual([side, mainV2]);
+      await expect(push(ZERO_SHA, merged, mainV2)).resolves.toMatchObject({ ok: true });
+    });
+
+    it("refuses a reversed-parent merge restoring an older dream version over main", async () => {
+      // Trusted history: p.md was a dream document, then a person edited it
+      // on main. A merge naming the old dream commit FIRST and current main
+      // second, with the dream commit's tree, equals its first parent's
+      // blob, yet it reverts the person's edit: the baseline is the parent
+      // connected to the previous tip, whatever the order.
+      git("checkout", "--quiet", "--force", "--detach", mainV2);
+      const dreamA = await commit("p.md", "---\nprovenance: dream\n---\n# P\n", mainV2);
+      const humanB = await commit("p.md", humanDoc("# P edited\n"), dreamA);
+      git("update-ref", "refs/heads/main-p", humanB);
+      const attack = mergeOf([dreamA, humanB], git("rev-parse", `${dreamA}^{tree}`), "reverse");
+      expect(readParents(attack)).toEqual([dreamA, humanB]);
+      for (const [oldSha, mainSha] of [
+        [humanB, humanB],
+        [ZERO_SHA, humanB],
+      ] as const) {
+        const error = await push(oldSha, attack, mainSha).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(PushRefusedError);
+        expect((error as PushRefusedError).refusal).toBe("PROVENANCE");
+        expect((error as PushRefusedError).detail).toEqual({
+          code: "TREE_PROVENANCE",
+          path: "p.md",
+        });
+      }
+    });
+
+    it("accepts merging main into a branch as an update of that branch", async () => {
+      // The branch's previous tip is the baseline; main alone changed h2.md.
+      git("checkout", "--quiet", "--force", "--detach", side);
+      git("merge", "--quiet", "--no-edit", "-m", "merge main", mainV2);
+      const merged = git("rev-parse", "HEAD");
+      expect(readParents(merged)).toEqual([side, mainV2]);
+      await expect(push(side, merged, mainV2)).resolves.toMatchObject({ ok: true });
+    });
+
+    it("accepts an ordinary fast-forward of agent edits", async () => {
+      git("checkout", "--quiet", "--force", "--detach", side);
+      const next = await commit("s.md", agent("# S v2\n"), side);
+      const after = await commit("f.md", agent("# F\n"), next);
+      await expect(push(side, after, mainV2)).resolves.toMatchObject({ ok: true });
+    });
+
+    const readParents = (sha: string) =>
+      git("rev-list", "--parents", "--max-count=1", sha).split(" ").slice(1);
   });
 
   it("knows exactly its refusal codes", () => {

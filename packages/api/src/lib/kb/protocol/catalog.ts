@@ -53,7 +53,47 @@ export type KbToolCatalogEntry = {
   readOnly: boolean;
   confirm?: KbToolConfirm;
   decisionVariants?: readonly KbToolDecisionVariant[];
+  /**
+   * What the call needs from the credential's write mode (dream / edit /
+   * both): `edit` always; `by_mode` = the request's `mode` (`dream` needs a
+   * dream-capable mode, `edit` and `import` an edit-capable one); `merge` =
+   * `edit` for the merge decision only. Absent: the tool is not authoring
+   * (reads, metadata, index administration). Read-only credentials have no
+   * write mode and are refused by mcp:write first.
+   */
+  authoring?: "edit" | "by_mode" | "merge";
+  /**
+   * Fixed descriptions advertised instead of `description` to a credential
+   * whose write mode allows only one kind of write (input schemas never vary).
+   */
+  writeModeDescriptions?: { dream: string; edit: string };
 };
+
+/** What one call of `entry` needs from the write mode, or null. */
+export function toolAuthoringNeed(
+  entry: KbToolCatalogEntry,
+  input: unknown,
+): "dream" | "edit" | null {
+  const field = (key: string) =>
+    input !== null && typeof input === "object" && key in input
+      ? (input as Record<string, unknown>)[key]
+      : undefined;
+  switch (entry.authoring) {
+    case "edit":
+      return "edit";
+    case "by_mode":
+      return field("mode") === "dream" ? "dream" : "edit";
+    case "merge":
+      return field("decision") === "merge" ? "edit" : null;
+    default:
+      return null;
+  }
+}
+
+/** Whether a credential whose write mode allows only dreams can use the tool at all. */
+export function toolUsableDreamOnly(entry: KbToolCatalogEntry): boolean {
+  return entry.authoring !== "edit";
+}
 
 /** Explicit enumeration — release gate compares this set to CONTRACT rows. */
 export const KB_TOOL_NAMES = [
@@ -121,6 +161,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "global_allow_create" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_bases_update: {
     name: "knowledge_bases_update",
@@ -139,6 +180,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "owner_manage" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
     confirm: "DELETE",
   },
   knowledge_documents_list: {
@@ -185,6 +227,12 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "by_mode",
+    writeModeDescriptions: {
+      dream:
+        'Write a dream: a consolidation of the listed source sessions, as one atomic commit with mode "dream" (empty changes, the source session ids and the dream upserts). This credential may only dream: mode "edit" is refused. A dream may update documents written by dreams or agents, never ones a person wrote. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.',
+      edit: 'Apply up to 32 document and asset changes as one atomic commit with mode "edit" (create, replace, delete, assetPut and assetRemove operations). This credential may not dream: mode "dream" is refused. Each successful call commits: apply the first 32 changes now, then send the rest in another call using the returned commit as baseRevision. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. To update your open pull request, pass its head or current main as baseRevision: against main it moves onto main if main moved, and a CONFLICT lists any paths to write in full (rewriting a path the pull request changed also needs its proposalNumber, with proposalHeadSha set to the head you read). Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.',
+    },
   },
   knowledge_documents_create: {
     name: "knowledge_documents_create",
@@ -194,6 +242,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_documents_update: {
     name: "knowledge_documents_update",
@@ -203,6 +252,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_documents_delete: {
     name: "knowledge_documents_delete",
@@ -212,6 +262,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
     confirm: "DELETE",
   },
   knowledge_upload_begin: {
@@ -222,6 +273,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_upload_write: {
     name: "knowledge_upload_write",
@@ -231,6 +283,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_upload_finish: {
     name: "knowledge_upload_finish",
@@ -240,6 +293,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_assets_put: {
     name: "knowledge_assets_put",
@@ -249,6 +303,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_assets_import: {
     name: "knowledge_assets_import",
@@ -258,6 +313,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "propose_or_write" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_assets_list: {
     name: "knowledge_assets_list",
@@ -357,6 +413,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     minimumAccess: { kind: "permission", bit: "propose" },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "edit",
   },
   knowledge_pull_requests_review: {
     name: "knowledge_pull_requests_review",
@@ -369,6 +426,7 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     },
     requiredMcpScope: "mcp:write",
     readOnly: false,
+    authoring: "merge",
     decisionVariants: [
       {
         decision: "merge",

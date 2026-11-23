@@ -39,6 +39,29 @@ no binaries, symlinks, executable modes, gitlinks or LFS. Push budgets include
 50 MiB encoded request, 512 new commits, 100,000 objects/128 MiB expanded objects,
 120 s upload/10 s inactivity, then 60 s execution and 5 s force-drain.
 
+A push is a credential's write: the PAT needs an edit-capable write mode
+(`edit` or `both`; a dream-only token cannot push), and authorship is checked
+on every commit the repository did not have before (commits main or another
+branch already reaches, such as main merged into your branch, are trusted):
+
+- every Markdown file such a commit adds or changes must say
+  `provenance: agent` in its front matter, the label the server would stamp
+  (refused as `provenance must be agent`, naming the path);
+- no such commit message may carry an `Acted-by:` or `Kb-…:` line (any case);
+  those trailers are the server's own attribution.
+
+A Markdown file counts as unchanged, and keeps its label, only against a
+baseline that parent order cannot choose: the first parent connected to the
+branch's previous tip. Its blob must equal the baseline's blob at that path, or
+equal another parent's blob there while the baseline's blob at that path is the
+same as in every merge base of the baseline and that parent (only that side
+changed it, as in a clean merge; a path missing on both counts as equal). A
+commit with no parent connected to the previous tip (side history) keeps a file
+unchanged only when the blob is the same in every parent. A merge therefore
+cannot bring back an older `human` or `dream` version by naming an obsolete
+ancestor as a parent, in either order, and a root commit has no unchanged files.
+See [MCP write modes and provenance](./mcp.md#write-modes-and-provenance).
+
 ## Reviewed PR merge
 
 Create a PR from your owned USER branch with expected source and main SHAs.
@@ -50,7 +73,11 @@ is an ancestor of the proposal. A clean divergent merge uses the same parent
 order: main first and proposal second. The commit records the PR and reviewer,
 and main advances by fast-forward to it. Read-only mergeability checks do not
 create this commit.
-True content or dream-provenance conflicts require updating the branch. A moved
+A document both sides changed keeps the more protected provenance label of the
+two (a person's over an agent's over a dream's); a label that cannot be
+rewritten becomes a conflict. The merge commit carries the reviewer's
+`Acted-by`/`Kb-Actor-Key` trailers, and the merge needs an edit-capable write
+mode when a credential merges. True content or dream-provenance conflicts require updating the branch. A moved
 source/main conflicts before publication; refresh the diff and confirm again.
 Close needs review or the original author with current propose, confirm CLOSE.
 

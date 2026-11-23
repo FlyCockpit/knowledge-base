@@ -1,6 +1,7 @@
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { PrismaClient } from "@knowledge-base/db/client";
-import { assertConsentIdentity, consentSelection, McpConsentError } from "./mcp-consent";
+import { authoringModeFromDb } from "./mcp-authoring-mode";
+import { approvedConsentScopes, assertConsentIdentity, McpConsentError } from "./mcp-consent";
 
 export const MCP_ACCESS_TOKEN_LIFETIME_SECONDS = 600;
 export const MCP_REFRESH_INACTIVITY_LIFETIME_SECONDS = 72 * 60 * 60;
@@ -69,14 +70,19 @@ export async function issueMcpGenerationClaims(
         )
           return fail();
       } else return fail();
-      const approved = consentSelection.parse(intent.selection);
+      // Selections approved before write modes keep refreshing: the grant row
+      // holds the write mode; unknown keys are ignored.
+      const approvedScopes = approvedConsentScopes(
+        intent.selection,
+        authoringModeFromDb(grant.authoringMode),
+      );
+      if (!approvedScopes) return fail();
       if (
         input.scopes.length === 0 ||
         !input.scopes.some((s) => s === "mcp:read" || s === "mcp:write") ||
         !input.scopes.every(
           (s) =>
-            approved.scopes.some((approvedScope) => approvedScope === s) &&
-            grant.scopes.includes(s),
+            approvedScopes.some((approvedScope) => approvedScope === s) && grant.scopes.includes(s),
         )
       )
         return fail();

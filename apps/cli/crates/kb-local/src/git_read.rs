@@ -2298,9 +2298,9 @@ mod stdio_publication_tests {
                 assert_eq!(
                     document.markdown,
                     if create {
-                        "# Knowledge base\n\nCreated after reservation\n"
+                        "---\nprovenance: agent\n---\n# Knowledge base\n\nCreated after reservation\n"
                     } else {
-                        "# once\n"
+                        "---\nprovenance: agent\n---\n# once\n"
                     }
                 );
             }

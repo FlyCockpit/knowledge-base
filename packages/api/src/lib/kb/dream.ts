@@ -21,6 +21,7 @@ import { KB_TREE_LIMITS } from "./limits";
 import {
   type DreamDocumentFields,
   findSealedReferences,
+  isDreamOverwritable,
   parseMarkdownDocument,
   readDocumentProvenance,
   serializeDreamMarkdown,
@@ -336,7 +337,8 @@ export async function dreamUpsertsToPlannedChanges(
         ),
       );
       if ("code" in parsed) throw new KbDomainError("INVALID_ARGUMENT", parsed.message);
-      if (readDocumentProvenance(parsed.frontMatter) !== "dream") {
+      // Dreams update what dreams or agents wrote, never what a person wrote.
+      if (!isDreamOverwritable(readDocumentProvenance(parsed.frontMatter))) {
         throw new KbDomainError(
           "FORBIDDEN",
           "cannot overwrite document with human or unspecified provenance",
@@ -394,7 +396,8 @@ export type DreamMergeGuardResult = { ok: true } | { ok: false; message: string 
 
 /**
  * Merge-time provenance guard, invoked by reviewed PR merge preparation.
- * Rejects when current main has human or absent provenance at any dream-touched
+ * Rejects when current main has human, absent or unknown provenance (anything
+ * but `dream` or `agent`) at any dream-touched
  * path, at the current main path of a touched id, or removed a path that
  * existed at the proposal's original main base. A path that was brand new when
  * the dream was proposed may legitimately still be absent from main.
@@ -477,7 +480,7 @@ function* dreamGuardSteps(
       }
       return null;
     }
-    if ((yield* gitReadStep(readProvenance(blobSha))) !== "dream") {
+    if (!isDreamOverwritable(yield* gitReadStep(readProvenance(blobSha)))) {
       return {
         ok: false,
         message: `main document at ${path} was modified with human provenance after the dream proposal`,

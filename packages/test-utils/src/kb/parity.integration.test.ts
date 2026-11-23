@@ -286,6 +286,7 @@ beforeAll(async () => {
   const minted = await mintPersonalToken(runtime, owner.id, {
     name: "parity",
     scopes: ["mcp:write"],
+    authoringMode: "both",
     toolGroups: [...MCP_TOOL_GROUPS],
     acl: [],
     allowCreate: true,
@@ -613,6 +614,7 @@ describe("complete rich corpus", () => {
               await mintPersonalToken(runtime, ownerId, {
                 name: "narrowed builtin manager",
                 scopes: ["mcp:write"],
+                authoringMode: "both",
                 toolGroups: [...MCP_TOOL_GROUPS],
                 acl: [{ kbId: String(refs[0]!.kbId), bits: ["manage"] }],
               })
@@ -986,6 +988,7 @@ describe("complete rich corpus", () => {
     const narrowed = await mintPersonalToken(runtime, ownerId, {
       name: "proposal",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [{ kbId: String(refs[0]!.kbId), bits: ["propose"] }],
     });

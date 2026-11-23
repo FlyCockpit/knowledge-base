@@ -1,5 +1,5 @@
 import { ACTIVE_ELEVATION_SQL, createGrantCredentialVerifier } from "../mcp-token-access";
-import { actedByTrailer, withTrailer } from "./actors";
+import { attributionTrailers, withTrailer } from "./actors";
 import { buildKbAttachment } from "./attachment";
 import { recordAuditEvent } from "./audit";
 import { type AuthorityBarrier, type AuthorityBarrierContext } from "./authority-lock";
@@ -35,6 +35,7 @@ import {
   assertLiveIdentity,
   assertTokenAdmissible,
   type BrowserPrincipal,
+  demandAuthoring,
   KbAdmissionError,
   type TokenPrincipal,
   tokenHasOauthScope,
@@ -195,10 +196,16 @@ export type KbCreatePublicationInput = {
   diskMeter?: DiskMeter;
 };
 
-export function createKbCreatePublication(input: KbCreatePublicationInput): {
+export function createKbCreatePublication(raw: KbCreatePublicationInput): {
   barrier: AuthorityBarrier;
   publish(lease: HeldLockLease, gitExecutor: GitMutatingExecutor): Promise<Record<string, unknown>>;
 } {
+  // Creating a KB writes its first document (index.md): a token needs an
+  // edit-capable write mode, on every admission of the create.
+  const input: KbCreatePublicationInput = {
+    ...raw,
+    principal: demandAuthoring(raw.principal, "edit"),
+  };
   let prepared:
     | {
         intent: Awaited<ReturnType<typeof reserveKbCreateIntent>>;
@@ -419,12 +426,21 @@ export function createKbCreatePublication(input: KbCreatePublicationInput): {
       // The system author, and a trailer naming who created it and how.
       const message = withTrailer(
         "Initial commit",
-        await actedByTrailer(lease.query, actorKeyFor(input.principal)),
+        await attributionTrailers(
+          lease.query,
+          actorKeyFor(input.principal),
+          input.principal.kind === "token" ? "agent" : "human",
+        ),
       );
       const readOptions = { signal: lease.scope.signal, deadlineAt: lease.scope.deadlineAt };
       const publication = await writeInitialMainCommitLoose(
         repo,
-        { message, description: input.request.description },
+        {
+          message,
+          description: input.request.description,
+          // Server-stamped: a token's index.md is an agent's, a person's is human.
+          provenance: input.principal.kind === "token" ? "agent" : "human",
+        },
         readOptions,
       );
       await lease.query(

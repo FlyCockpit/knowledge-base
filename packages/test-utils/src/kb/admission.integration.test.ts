@@ -97,6 +97,7 @@ async function fixture() {
   const minted = await mintPersonalToken(runtime, user.id, {
     name: "fixture",
     scopes: ["mcp:write"],
+    authoringMode: "both",
     toolGroups: [...MCP_TOOL_GROUPS],
     acl: [],
     allowCreate: true,

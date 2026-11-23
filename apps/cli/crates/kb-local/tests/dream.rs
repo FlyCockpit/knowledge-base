@@ -93,6 +93,9 @@ struct Kb {
 fn new_kb(tag: &str) -> Kb {
     let root = temp_root(tag);
     let store = Store::open(&root).expect("open");
+    // These fixtures seed labels by hand (a person's `human`, a legacy
+    // unlabelled note): write them as given; agent stamping is tested below.
+    store.set_edit_stamp_for_tests(None);
     let out = store
         .bases_create(
             &store.owner(),
@@ -145,6 +148,7 @@ impl Kb {
         } = self;
         drop(store);
         let store = Store::open(&root).expect("reopen");
+        store.set_edit_stamp_for_tests(None);
         Kb {
             root,
             store,
@@ -1198,4 +1202,134 @@ fn reserved_dream_path_is_a_typed_refusal_at_the_upsert_id() {
         json!({"reason": "RESERVED_PATH", "field": "/dream/upserts/1/id"})
     );
     assert_eq!(effects(&kb), before);
+}
+
+// ── Write modes: dreams may update agent notes ─────────────────────────────
+
+/// A local session's direct edits are stamped `agent`, and a dream may
+/// overwrite them (as it may `dream` notes); a person's (`human`), unknown
+/// or unlabelled note stays FORBIDDEN with no effects.
+#[test]
+fn dreams_overwrite_agent_notes_but_never_human_or_unlabelled_ones() {
+    use kb_local::markdown::ProvenanceStamp;
+    let mut kb = new_kb("agent-overwrite");
+    let owner = kb.store.owner();
+    // As a local MCP session writes it: stamped agent, whatever it said.
+    kb.store
+        .set_edit_stamp_for_tests(Some(ProvenanceStamp::Agent));
+    kb.seed(&[(
+        "notes/agent.md".into(),
+        "---\nid: \"agent\"\ntype: \"concept\"\nprovenance: human\n---\nAgent text.\n".into(),
+    )]);
+    assert!(
+        kb.get(&kb.main, "notes/agent.md")
+            .contains("provenance: agent\n")
+    );
+    kb.store.set_edit_stamp_for_tests(None);
+    kb.seed(&[
+        ("notes/human.md".into(), human_doc("human")),
+        (
+            "notes/robot.md".into(),
+            "---\nid: \"robot\"\nprovenance: robot\n---\nUnknown.\n".into(),
+        ),
+        (
+            "notes/bare.md".into(),
+            "---\nid: \"bare\"\n---\nBare.\n".into(),
+        ),
+    ]);
+    let applied = kb
+        .dream(
+            &owner,
+            &kb.main,
+            "agent-dream-key-0001",
+            &json!([S1]),
+            &dream_of(vec![upsert("agent", "Dreamed.\n")]),
+        )
+        .expect("a dream updates an agent note");
+    assert_eq!(applied.kind, ApplyKind::Applied);
+    let text = kb.get(&applied.commit_sha, "notes/agent.md");
+    assert!(
+        text.contains("provenance: dream\n") && text.ends_with("Dreamed.\n"),
+        "{text}"
+    );
+    kb.main = applied.commit_sha;
+    for (index, id) in ["human", "robot", "bare"].into_iter().enumerate() {
+        let before = effects(&kb);
+        let error = kb
+            .dream(
+                &owner,
+                &kb.main,
+                &format!("agent-dream-key-100{index}"),
+                &json!([S1]),
+                &dream_of(vec![upsert(id, "Takeover.\n")]),
+            )
+            .expect_err("protected");
+        assert_eq!(error.code(), ErrorCode::Forbidden, "{id}");
+        assert_eq!(effects(&kb), before, "{id}");
+    }
+}
+
+/// The merge guard reads the same rule: a dream proposed over an agent note
+/// merges while main still says `agent` (or `dream`), and conflicts once a
+/// person's edit relabels it `human`.
+#[test]
+fn guard_passes_agent_main_and_conflicts_once_a_person_relabels_it() {
+    use kb_local::markdown::ProvenanceStamp;
+    let mut kb = new_kb("agent-guard");
+    kb.store
+        .set_edit_stamp_for_tests(Some(ProvenanceStamp::Agent));
+    kb.seed(&[(
+        "notes/kept.md".into(),
+        "---\nid: \"kept\"\ntype: \"concept\"\ntitle: \"Old\"\n---\nOld.\n".into(),
+    )]);
+    let proposer = kb.proposer();
+    let result = kb
+        .dream(
+            &proposer,
+            &kb.main,
+            "agent-guard-key-0001",
+            &json!([S1]),
+            &dream_of(vec![upsert("kept", "Kept.\n")]),
+        )
+        .expect("proposed over an agent note");
+    assert_eq!(result.kind, ApplyKind::Proposed);
+    let number = result.proposal.expect("pr").number;
+    kb.store
+        .dream_merge_guard(&kb.kb, number)
+        .expect("agent main passes");
+    // Another agent edit on main keeps it overwritable.
+    let owner = kb.store.owner();
+    let edit = |kb: &Kb, key: &str, markdown: &str| {
+        let body = json!({
+            "kbId": kb.kb.as_str(), "baseRevision": kb.head().as_str(),
+            "idempotencyKey": key, "mode": "edit", "title": "Tweak",
+            "changes": [{ "op": "replace", "path": "notes/kept.md", "content": { "markdown": markdown } }],
+            "sourceSessionIds": [],
+        });
+        kb.store
+            .changes_apply(&owner, serde_json::from_value(body).expect("typed"))
+            .expect("edit")
+    };
+    edit(
+        &kb,
+        "agent-guard-key-0002",
+        "---\nid: \"kept\"\ntype: \"concept\"\ntitle: \"Agent\"\n---\nAgent.\n",
+    );
+    kb.store
+        .dream_merge_guard(&kb.kb, number)
+        .expect("agent edit on main still passes");
+    // A person's edit (the server stamps web edits `human`) conflicts.
+    kb.store
+        .set_edit_stamp_for_tests(Some(ProvenanceStamp::Human));
+    edit(
+        &kb,
+        "agent-guard-key-0003",
+        "---\nid: \"kept\"\ntype: \"concept\"\ntitle: \"Person\"\n---\nPerson.\n",
+    );
+    let kb = kb.reopen();
+    let conflict = kb
+        .store
+        .dream_merge_guard(&kb.kb, number)
+        .expect_err("human main conflicts");
+    assert_eq!(conflict.protocol_code(), ErrorCode::Conflict);
 }

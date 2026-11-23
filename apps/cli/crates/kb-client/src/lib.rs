@@ -15,8 +15,10 @@
 //!   adapter seams: attachment identity, verified immutable retrieval, the
 //!   one-call atomic dream apply and host-only sealed resolution.
 //!
-//! * [`scope`] — a local session's tool groups, write mode and KB selection,
-//!   with the server's discovery and authorization rules.
+//! * [`scope`] — a local session's tool groups, read-only flag, write mode
+//!   and KB selection, with the server's discovery and authorization rules.
+//! * [`authoring`] — write modes (`dream` / `edit` / `both`), each tool's
+//!   write-mode need and the document provenance rules dreams follow.
 //!
 //! * [`export`] — bounded verified ZIP retrieval with a receipt bound to the
 //!   preparing client for acknowledgement after durable host-side save.
@@ -25,6 +27,7 @@
 //! build on [`encode_input`] / [`decode_envelope`].
 
 pub mod attachment;
+pub mod authoring;
 pub mod client;
 pub mod dream;
 pub mod envelope;

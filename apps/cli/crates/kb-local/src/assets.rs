@@ -105,6 +105,7 @@ impl Store {
         input: AssetsPutInput,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<AssetsPut>(&input)?;
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let hash = hash_of(
             "ASSET_PUT",
             serde_json::to_value(&input).map_err(|_| manifest::unavailable())?,
@@ -146,6 +147,7 @@ impl Store {
         observer: Observer<'_>,
     ) -> Result<ApplyResult, StoreError> {
         check_input::<AssetsImport>(&input)?;
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let hash = hash_of(
             "ASSET_IMPORT",
             serde_json::to_value(&input).map_err(|_| manifest::unavailable())?,

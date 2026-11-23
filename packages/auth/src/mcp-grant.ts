@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 
+import { isMcpAuthoringMode, type McpAuthoringMode } from "./mcp-authoring-mode";
 import { MCP_PAT_SCOPES } from "./mcp-config";
 import { isMcpToolGroup, MCP_TOOL_GROUPS, type McpToolGroup } from "./mcp-tool-groups";
 
@@ -92,6 +93,8 @@ export type McpGrantSelection = {
   acl: readonly { kbId: string; bits: readonly string[] }[];
   allowCreate?: boolean;
   createdKbBits?: readonly string[];
+  /** Required with mcp:write, refused without it. */
+  authoringMode?: string | null;
 };
 
 export type McpGrantCeiling = {
@@ -100,6 +103,8 @@ export type McpGrantCeiling = {
   acl: { kbId: string; bits: McpKbPermission[] }[];
   allowCreate: boolean;
   createdKbBits: McpKbPermission[];
+  /** Present exactly when scopes hold mcp:write. */
+  authoringMode: McpAuthoringMode | null;
 };
 
 function isPermission(value: string): value is McpKbPermission {
@@ -134,7 +139,8 @@ export function canonicalToolGroups(groups: readonly string[]): McpToolGroup[] {
  * - allowCreate requires literal mcp:write and createdKbBits containing read;
  * - allowCreate requires the kb_admin tool group, which holds knowledge_bases_create
  *   (e2e decision 7);
- * - ACL: unique KB ids, non-empty known bits, bounded entry count.
+ * - ACL: unique KB ids, non-empty known bits, bounded entry count;
+ * - authoringMode (the write mode): required with mcp:write, refused without it.
  */
 export function normalizeGrantCeiling(selection: McpGrantSelection): McpGrantCeiling {
   const scopes = selection.scopes;
@@ -158,6 +164,15 @@ export function normalizeGrantCeiling(selection: McpGrantSelection): McpGrantCei
     if (!toolGroups.includes("kb_admin"))
       throw new McpGrantSelectionError("create needs the kb_admin tool group");
   }
+  const requestedMode = selection.authoringMode ?? null;
+  let authoringMode: McpAuthoringMode | null = null;
+  if (scopes.includes("mcp:write")) {
+    if (!isMcpAuthoringMode(requestedMode))
+      throw new McpGrantSelectionError("write access needs a write mode");
+    authoringMode = requestedMode;
+  } else if (requestedMode !== null) {
+    throw new McpGrantSelectionError("a write mode needs mcp:write");
+  }
   if (selection.acl.length > MCP_GRANT_MAX_ACL_ENTRIES) {
     throw new McpGrantSelectionError("too many ACL entries");
   }
@@ -173,6 +188,7 @@ export function normalizeGrantCeiling(selection: McpGrantSelection): McpGrantCei
     acl,
     allowCreate,
     createdKbBits,
+    authoringMode,
   };
 }
 

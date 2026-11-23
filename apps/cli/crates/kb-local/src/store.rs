@@ -35,6 +35,10 @@ pub enum StoreError {
     LockNotHeld,
     NotFound,
     Forbidden,
+    /// The session's write mode does not allow this write (a dream from an
+    /// edit-only session, or a direct edit from a dream-only one): kb/1
+    /// `FORBIDDEN` with `{reason: "WRITE_MODE", required}`.
+    WriteMode(kb_client::authoring::WriteKind),
     Conflict(String),
     /// `baseRevision` is not the complete HEAD of the target branch (main,
     /// or the named/active proposal). kb/1 `CONFLICT` with details
@@ -134,7 +138,7 @@ impl StoreError {
                 ErrorCode::RepairRequired
             }
             StoreError::NotFound | StoreError::PathNotFound { .. } => ErrorCode::NotFound,
-            StoreError::Forbidden => ErrorCode::Forbidden,
+            StoreError::Forbidden | StoreError::WriteMode(_) => ErrorCode::Forbidden,
             StoreError::Conflict(_)
             | StoreError::StaleBase { .. }
             | StoreError::ProposalConflict(_)
@@ -185,6 +189,9 @@ impl fmt::Display for StoreError {
                 f.write_str("not found: no document at that path in this revision")
             }
             StoreError::Forbidden => f.write_str("forbidden"),
+            StoreError::WriteMode(required) => {
+                f.write_str(kb_client::error::write_mode_message(*required))
+            }
             StoreError::Conflict(why) => write!(f, "conflict: {why}"),
             StoreError::StaleBase { .. } => {
                 f.write_str("conflict: base revision is not the current head of the target")
@@ -332,6 +339,10 @@ impl StoreError {
                 field: field.clone(),
             }
             .to_value(),
+            StoreError::WriteMode(required) => ErrorDetails::WriteMode {
+                required: *required,
+            }
+            .to_value(),
             _ => serde_json::json!({}),
         }
     }
@@ -463,6 +474,12 @@ pub struct Store {
     model_cache: std::cell::RefCell<Option<crate::model_download::ModelCache>>,
     // Owns shutdown/join; expiry never outlives this handle.
     upload_timer: crate::uploads::UploadTimer,
+    /// The write mode this handle's mutations are held to (`kb mcp
+    /// --write-mode`, set per call by the session): `both` unless narrowed.
+    authoring: Cell<kb_client::authoring::AuthoringMode>,
+    /// The label direct writes are stamped with: always `agent` outside
+    /// tests (local MCP callers are agents).
+    pub(crate) edit_stamp: Cell<Option<crate::markdown::ProvenanceStamp>>,
 }
 
 // ── Open / initialize ───────────────────────────────────────────────────────
@@ -884,6 +901,8 @@ impl Store {
             runtime_reconcile: std::cell::RefCell::new(RuntimeReconcile::new(launched)),
             model_cache: std::cell::RefCell::new(None),
             upload_timer,
+            authoring: Cell::new(kb_client::authoring::AuthoringMode::Both),
+            edit_stamp: Cell::new(Some(crate::markdown::ProvenanceStamp::Agent)),
         };
         if let Some(_config) = locks::try_named_model_lock(&store.paths, "model-config.lock")? {
             store.recover_model_probe_locked()?;
@@ -962,6 +981,41 @@ impl Store {
             Some("TEST") => Ok(LocalPrincipal::new(id.to_owned(), PrincipalKind::Test)),
             _ => Err(StoreError::NotFound),
         }
+    }
+
+    /// Hold this handle's mutations to `mode` as well as any mode already
+    /// set (narrow-only: the intersection; two modes sharing no write leave
+    /// `mode`, which the caller chose last).
+    pub fn narrow_authoring(&self, mode: kb_client::authoring::AuthoringMode) {
+        let current = self.authoring.get();
+        self.authoring.set(current.intersect(mode).unwrap_or(mode));
+    }
+
+    /// The write mode this handle's mutations are held to.
+    pub fn authoring(&self) -> kb_client::authoring::AuthoringMode {
+        self.authoring.get()
+    }
+
+    /// Refuse a `need` write the handle's write mode does not allow, before
+    /// any side effect: `FORBIDDEN` with `WRITE_MODE` details.
+    pub(crate) fn demand_authoring(
+        &self,
+        need: kb_client::authoring::WriteKind,
+    ) -> Result<(), StoreError> {
+        if self.authoring.get().allows(need) {
+            Ok(())
+        } else {
+            Err(StoreError::WriteMode(need))
+        }
+    }
+
+    /// Trusted test seam: stamp this handle's direct writes with another
+    /// label (`human`: a person's write, as the server stamps web edits), or
+    /// write them as given (`None`, to seed legacy or hand-made labels).
+    /// Never a tool input; production handles always stamp `agent`.
+    #[doc(hidden)]
+    pub fn set_edit_stamp_for_tests(&self, stamp: Option<crate::markdown::ProvenanceStamp>) {
+        self.edit_stamp.set(stamp);
     }
 
     /// Opt this handle into lower limits (see [`LocalLimits::lowered`]).

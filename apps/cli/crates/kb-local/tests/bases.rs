@@ -260,7 +260,7 @@ fn initial_repo_head_and_layout() {
     assert_eq!(tree, ".assets/manifest.json\n.gitignore\nindex.md");
     assert_eq!(
         git_bytes(&repo, &["cat-file", "blob", "refs/heads/main:index.md"]),
-        b"# Knowledge base\n\nA local knowledge base for lifecycle tests\n"
+        b"---\nprovenance: agent\n---\n# Knowledge base\n\nA local knowledge base for lifecycle tests\n"
     );
     assert_eq!(
         git_bytes(&repo, &["cat-file", "blob", "refs/heads/main:.gitignore"]),
@@ -1485,7 +1485,7 @@ fn check_document_return_authority(list: bool) {
         .expect("test fixture");
     assert_eq!(
         document.markdown,
-        "# Knowledge base\n\nA local knowledge base for lifecycle tests\n"
+        "---\nprovenance: agent\n---\n# Knowledge base\n\nA local knowledge base for lifecycle tests\n"
     );
     let page = store
         .documents_list(
@@ -2071,7 +2071,11 @@ fn r52c_create_disk_floor_error_exact_admission_and_replay() {
         let req = raw_create("disk");
         Ok(FREE_DISK_FLOOR_BYTES
             + WRITE_DISK_RESERVE_BYTES
-            + format!("# Knowledge base\n\n{}\n", req.description).len() as u64)
+            + format!(
+                "---\nprovenance: agent\n---\n# Knowledge base\n\n{}\n",
+                req.description
+            )
+            .len() as u64)
     }
     let root = temp_root("r52c-disk");
     let store = Store::open(&root).expect("open");

@@ -1,5 +1,5 @@
 // @ts-nocheck — PG/Git integration harness.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +29,7 @@ vi.mock("../../../../apps/server/src/kb-process.js", async (importOriginal) => (
   assertProcessFence() {},
 }));
 
+import { fixtureGitEnv } from "./git.js";
 import { openKbPostgresClusterFromEnv } from "./index.js";
 
 const DESCRIPTION = "changes integration knowledge base";
@@ -326,6 +327,50 @@ describe("changes integration", () => {
     expect(Number(history?.committed ?? 0n)).toBeGreaterThan(0);
     expect(history?.reserved).toBe(0n);
     expect(await quotaCommitted(kb.id, "KB_BRANCH")).toBeNull();
+  });
+
+  it("a person's web edit is stamped human, whatever label it carried, and says so in its trailers", async () => {
+    const { user, kb } = prepared;
+    const repo = kbBareRepoPath(reposDir, kb.id);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", repo, ...args], { env: fixtureGitEnv(), encoding: "utf8" });
+    const result = await applyEdit(kb.id, user.id, kb.headSha!, "human-stamp", [
+      { op: "create", path: "people/plain.md", content: { markdown: "# Plain\n" } },
+      {
+        op: "create",
+        path: "people/claimed.md",
+        content: { markdown: "---\ntitle: C\nprovenance: agent\n---\nbody\n" },
+      },
+      {
+        op: "create",
+        path: "people/dreamy.md",
+        content: { markdown: "---\nprovenance: dream\n---\nbody\n" },
+      },
+    ]);
+    expect(result.kind).toBe("applied");
+    expect(git("show", `${result.commitSha}:people/plain.md`)).toBe(
+      "---\nprovenance: human\n---\n# Plain\n",
+    );
+    expect(git("show", `${result.commitSha}:people/claimed.md`)).toBe(
+      "---\ntitle: C\nprovenance: human\n---\nbody\n",
+    );
+    expect(git("show", `${result.commitSha}:people/dreamy.md`)).toBe(
+      "---\nprovenance: human\n---\nbody\n",
+    );
+    expect(git("log", "-1", "--format=%B", result.commitSha).trimEnd()).toBe(
+      `edit\n\nActed-by: changes via web\nKb-Actor-Key: user:${user.id}\nKb-Provenance: human`,
+    );
+    // A quoted key cannot be rewritten as one plain line: refused, nothing published.
+    await expect(
+      applyEdit(kb.id, user.id, result.commitSha, "human-unstampable", [
+        {
+          op: "create",
+          path: "people/quoted.md",
+          content: { markdown: '---\n"provenance": agent\n---\nbody\n' },
+        },
+      ]),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(readHeadSha(repo)).toBe(result.commitSha);
   });
 
   it("commits 32 changes atomically and refuses 33 before any effect", async () => {

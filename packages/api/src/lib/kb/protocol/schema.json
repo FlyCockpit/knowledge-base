@@ -63,6 +63,7 @@
   "tools": {
     "knowledge_assets_import": {
       "catalog": {
+        "authoring": "edit",
         "description": "Copy an existing asset, by sha256 hash at a given revision, from a knowledge base you can read into this one at a path. Same commit rules as knowledge_assets_put.",
         "groups": [
           "assets"
@@ -436,6 +437,7 @@
     },
     "knowledge_assets_put": {
       "catalog": {
+        "authoring": "edit",
         "description": "Add a finished upload as an asset at a path. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.",
         "groups": [
           "assets"
@@ -677,6 +679,7 @@
     },
     "knowledge_bases_create": {
       "catalog": {
+        "authoring": "edit",
         "description": "Create a new knowledge base from a name, URL slug and description. Available only when the credential was approved to create knowledge bases.",
         "groups": [
           "kb_admin"
@@ -837,6 +840,7 @@
     },
     "knowledge_bases_delete": {
       "catalog": {
+        "authoring": "edit",
         "confirm": "DELETE",
         "description": "Tombstone a knowledge base. Owner only; requires the current metadataVersion and confirm \"DELETE\".",
         "groups": [
@@ -1513,6 +1517,7 @@
     },
     "knowledge_changes_apply": {
       "catalog": {
+        "authoring": "by_mode",
         "description": "Apply up to 32 document and asset changes as one atomic commit. Each successful call commits: apply the first 32 changes now, then send the rest in another call using the returned commit as baseRevision. Mode \"edit\" takes create, replace, delete, assetPut and assetRemove operations; mode \"dream\" writes a consolidation of the listed source sessions. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. To update your open pull request, pass its head or current main as baseRevision: against main it moves onto main if main moved, and a CONFLICT lists any paths to write in full (rewriting a path the pull request changed also needs its proposalNumber, with proposalHeadSha set to the head you read). Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
         "groups": [
           "edit"
@@ -1523,7 +1528,11 @@
         },
         "name": "knowledge_changes_apply",
         "readOnly": false,
-        "requiredMcpScope": "mcp:write"
+        "requiredMcpScope": "mcp:write",
+        "writeModeDescriptions": {
+          "dream": "Write a dream: a consolidation of the listed source sessions, as one atomic commit with mode \"dream\" (empty changes, the source session ids and the dream upserts). This credential may only dream: mode \"edit\" is refused. A dream may update documents written by dreams or agents, never ones a person wrote. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.",
+          "edit": "Apply up to 32 document and asset changes as one atomic commit with mode \"edit\" (create, replace, delete, assetPut and assetRemove operations). This credential may not dream: mode \"dream\" is refused. Each successful call commits: apply the first 32 changes now, then send the rest in another call using the returned commit as baseRevision. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. To update your open pull request, pass its head or current main as baseRevision: against main it moves onto main if main moved, and a CONFLICT lists any paths to write in full (rewriting a path the pull request changed also needs its proposalNumber, with proposalHeadSha set to the head you read). Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference."
+        }
       },
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2132,6 +2141,7 @@
     },
     "knowledge_documents_create": {
       "catalog": {
+        "authoring": "edit",
         "description": "Create one Markdown document at a new path. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
         "groups": [
           "edit"
@@ -2401,6 +2411,7 @@
     },
     "knowledge_documents_delete": {
       "catalog": {
+        "authoring": "edit",
         "confirm": "DELETE",
         "description": "Delete one Markdown document. Requires confirm \"DELETE\", the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request.",
         "groups": [
@@ -2953,6 +2964,7 @@
     },
     "knowledge_documents_update": {
       "catalog": {
+        "authoring": "edit",
         "description": "Replace one existing Markdown document's full content. Pass the baseRevision you read and an idempotencyKey. Write access commits to main; propose-only access commits to your automatic pull request. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
         "groups": [
           "edit"
@@ -3984,6 +3996,7 @@
     },
     "knowledge_pull_requests_create": {
       "catalog": {
+        "authoring": "edit",
         "description": "Open a pull request from a branch you own into main. Pass the expected head and main SHAs and a title.",
         "groups": [
           "pull_requests"
@@ -4622,6 +4635,7 @@
     },
     "knowledge_pull_requests_review": {
       "catalog": {
+        "authoring": "merge",
         "decisionVariants": [
           {
             "confirm": "MERGE",
@@ -5970,6 +5984,7 @@
     },
     "knowledge_upload_begin": {
       "catalog": {
+        "authoring": "edit",
         "description": "Start a chunked upload of a Markdown file or asset, declaring its kind, size, sha256 contentHash and MIME type. Returns an uploadId and the maximum chunk size. Continue with knowledge_upload_write, then knowledge_upload_finish. Never write secrets (API keys, tokens, passwords) as plain text: store them as sealed values and write only the sealed reference.",
         "groups": [
           "edit",
@@ -6078,6 +6093,7 @@
     },
     "knowledge_upload_finish": {
       "catalog": {
+        "authoring": "edit",
         "description": "Finish an upload after all bytes are written; the server verifies size and hash. Then reference the uploadId from knowledge_assets_put or an assetPut change.",
         "groups": [
           "edit",
@@ -6170,6 +6186,7 @@
     },
     "knowledge_upload_write": {
       "catalog": {
+        "authoring": "edit",
         "description": "Send the next chunk of an upload as base64 at the current byte offset. Returns the next offset.",
         "groups": [
           "edit",

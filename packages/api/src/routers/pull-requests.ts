@@ -4,6 +4,9 @@ import { protectedProcedure } from "../index";
 import { resolveActors } from "../lib/kb/actors";
 import { prismaAssetQuery } from "../lib/kb/asset-authz";
 import { mapKbDomainError } from "../lib/kb/bases";
+import { prFileAttribution } from "../lib/kb/document-history";
+import { authorizeDocumentRead } from "../lib/kb/documents-read";
+import { kbBareRepoPath } from "../lib/kb/git-read";
 import { prismaAuthorityStore } from "../lib/kb/permissions";
 import { pullRequestErrorData } from "../lib/kb/pr-conflict";
 import { kbReadToolSchemas } from "../lib/kb/protocol/reads";
@@ -81,6 +84,8 @@ async function withAuthors<T extends { authorActorKey: string }>(
     return {
       ...item,
       author: {
+        // From the actor key, never from the credential's (user-chosen) name.
+        kind: item.authorActorKey.startsWith("grant:") ? ("credential" as const) : ("web" as const),
         name: actor?.name ?? null,
         via: actor?.via ?? null,
         isViewer: actor?.userId === userId,
@@ -94,17 +99,43 @@ export const pullRequestsRouter = {
     .input(kbReadToolSchemas.knowledge_pull_requests_list.input)
     .handler(({ context, input, signal }) =>
       safe(context.session.user.id, async () => {
-        const page = await listPullRequests({ ...reads(context.session.user.id), signal }, input);
-        return { ...page, items: await withAuthors(context.session.user.id, page.items) };
+        const runtime = reads(context.session.user.id);
+        const page = await listPullRequests({ ...runtime, signal }, input);
+        const items = await withAuthors(context.session.user.id, page.items);
+        // The author reads ran after the list's own final check: recheck before publishing.
+        await authorizeDocumentRead({ ...runtime, kbId: input.kbId, operation: "read" });
+        return { ...page, items };
       }),
     ),
   get: protectedProcedure
     .input(kbReadToolSchemas.knowledge_pull_requests_get.input)
     .handler(({ context, input, signal }) =>
       safe(context.session.user.id, async () => {
-        const page = await getPullRequest({ ...reads(context.session.user.id), signal }, input);
+        const runtime = reads(context.session.user.id);
+        const page = await getPullRequest({ ...runtime, signal }, input);
         const [pr] = await withAuthors(context.session.user.id, [page.pr]);
-        return { ...page, pr: pr! };
+        // Browser-only: who wrote each Markdown file, before and after (MCP output unchanged).
+        const attribution = await prFileAttribution({
+          signal,
+          repoPath: kbBareRepoPath(runtime.reposDir, input.kbId),
+          baseSha: page.pr.baseSha,
+          headSha: page.pr.headSha,
+          files: page.files,
+          query: runtime.query,
+        });
+        // Author and attribution reads ran after the PR read's final check:
+        // recheck live read access before publishing any of it.
+        await authorizeDocumentRead({ ...runtime, kbId: input.kbId, operation: "read" });
+        return {
+          ...page,
+          pr: pr!,
+          files: page.files.map((file) => ({
+            ...file,
+            beforeProvenance: attribution.get(file.path)?.beforeProvenance ?? null,
+            afterProvenance: attribution.get(file.path)?.afterProvenance ?? null,
+            writtenBy: attribution.get(file.path)?.writtenBy ?? null,
+          })),
+        };
       }),
     ),
   /** R3-W6: the paths an open PR still has to resolve, with their versions' revisions. */

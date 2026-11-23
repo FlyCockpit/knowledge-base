@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { KB_TREE_LIMITS } from "./limits";
 import { type AssetManifestEntry, canonicalManifestBytes, parseAssetManifest } from "./manifest";
-import { parseMarkdownDocument } from "./parse-markdown";
+import {
+  parseMarkdownDocument,
+  provenanceProtection,
+  readDocumentProvenance,
+  splitFrontMatter,
+  stampProvenance,
+} from "./parse-markdown";
 import { casefoldPathKey } from "./paths";
 import type { TreeFileInput } from "./staged-tree";
 import {
@@ -90,6 +96,40 @@ export function gitBlobSha(bytes: Buffer): string {
 }
 
 /** The logical model of a tree; null when its manifest cannot be read. */
+/**
+ * `merged` labelled with the more protected provenance of `main` and
+ * `proposal` (null: unstampable). The sides are read only when the combined
+ * text is less protected than a person's: most merges never read them.
+ */
+async function mergedProvenance(
+  merged: Buffer,
+  main: () => Promise<Buffer> | Buffer,
+  proposal: () => Promise<Buffer> | Buffer,
+): Promise<Buffer | null> {
+  const label = (bytes: Buffer) => {
+    // No label at all is the most protected (absent): no parse needed when
+    // there is no front matter, or its region cannot spell the key (neither
+    // the literal bytes nor a quote that could escape them, as in
+    // `"\x70rovenance": agent`).
+    const { yaml } = splitFrontMatter(bytes);
+    if (!yaml || (!yaml.includes("provenance") && !yaml.includes(0x22) && !yaml.includes(0x27)))
+      return "absent" as const;
+    const parsed = parseMarkdownDocument(bytes);
+    return "code" in parsed ? "absent" : readDocumentProvenance(parsed.frontMatter);
+  };
+  const current = provenanceProtection(label(merged));
+  if (current === 2) return merged;
+  const keep = Math.max(
+    provenanceProtection(label(await main())),
+    provenanceProtection(label(await proposal())),
+  );
+  // Already as protected (e.g. both dreams): untouched.
+  if (current === keep) return merged;
+  if (keep === 0) return null;
+  const stamped = stampProvenance(merged, keep === 2 ? "human" : "agent");
+  return stamped.ok ? stamped.bytes : null;
+}
+
 export async function logicalTreeOf(
   entries: TreeBlobs,
   read: BlobReader,
@@ -290,7 +330,19 @@ export async function mergeLogicalTrees(input: {
     else if (sameBlob(b, m)) value = p;
     else {
       // Both sides changed it. Lines may still combine into a valid document.
-      const merged = m && p ? (lineMerges.get(path) ?? null) : null;
+      const lines = m && p ? (lineMerges.get(path) ?? null) : null;
+      // A combined document is new text from both writers: it keeps the more
+      // protected of their two labels (a person's over an agent's over a
+      // dream's), stamped before the size and parse checks. A label that
+      // cannot be stamped is a conflict for the writer to resolve.
+      const merged =
+        lines && m && p
+          ? await mergedProvenance(
+              lines,
+              () => load(m),
+              () => load(p),
+            )
+          : null;
       if (
         merged &&
         merged.length <= KB_TREE_LIMITS.maxMarkdownBytes &&

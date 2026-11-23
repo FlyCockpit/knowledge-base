@@ -670,7 +670,13 @@ impl Store {
             return Err(StoreError::InvalidArgument("kb metadata".into()));
         }
         // Validate the exact generated source before charging or reserving.
-        let index = format!("# Knowledge base\n\n{}\n", request.description);
+        // The seeded index.md is the creating agent's first document, labelled
+        // like every other direct write (the server's `initialMainTreeFiles`
+        // with `agent` for a token or local MCP create).
+        let index = format!(
+            "---\nprovenance: agent\n---\n# Knowledge base\n\n{}\n",
+            request.description
+        );
         crate::markdown::parse_markdown(index.as_bytes())
             .map_err(|_| StoreError::InvalidArgument("kb initial Markdown".into()))?;
         self.check_create_budgets()?;

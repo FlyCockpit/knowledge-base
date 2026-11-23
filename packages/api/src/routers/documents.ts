@@ -16,6 +16,7 @@ import {
   type DocumentMutationRequest,
 } from "../lib/kb/changes";
 import { cursorExpiry, KB_PAGE_DEFAULT, KB_PAGE_MAX, stableFilterHash } from "../lib/kb/cursor";
+import { DOCUMENT_HISTORY_CURSOR, readDocumentHistory } from "../lib/kb/document-history";
 import {
   authorizeDocumentRead,
   estimateListPageBytes,
@@ -27,9 +28,11 @@ import {
 import { KbDomainError } from "../lib/kb/errors";
 import { gitReadOptions, kbBareRepoPath } from "../lib/kb/git-read";
 import { actorKeyForUser } from "../lib/kb/operation-intent";
+import { readDocumentProvenance } from "../lib/kb/parse-markdown";
 import { prismaAuthorityStore } from "../lib/kb/permissions";
 import { kbContentWriteInputSchema } from "../lib/kb/protocol/common";
 import { getKbRuntime } from "../lib/kb/runtime";
+import { cursorPageInput } from "../lib/pagination";
 import { createProcedureBudget } from "../lib/procedure-budget";
 
 const kbId = z.string().min(1).max(64);
@@ -38,6 +41,11 @@ const sha = z
   .regex(/^[0-9a-f]{40}$/)
   .optional();
 const path = z.string().min(1).max(512);
+/** History pages: an opaque cursor pinning main's head and the rows already returned. */
+const historyPageInput = cursorPageInput.extend({
+  cursor: z.string().max(64).regex(DOCUMENT_HISTORY_CURSOR).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
 const idempotencyKey = z
   .string()
   .min(16)
@@ -236,7 +244,53 @@ export const documentsRouter = {
           query: prismaAssetQuery(runtime.prisma),
         });
         await authorizeDocumentRead(admission);
-        return document;
+        // Browser-only: who wrote the served document (the MCP output is unchanged).
+        return { ...document, provenance: readDocumentProvenance(document.frontMatter) };
+      } catch (error) {
+        toOrpc(error);
+      }
+    }),
+  /**
+   * The document's history on main, newest first: each commit's time,
+   * subject, the path's provenance there and who made it (from the server's
+   * trailer block only; anything else is unattributed). Same read admission
+   * and budget as `get`.
+   */
+  history: protectedProcedure
+    .input(historyPageInput.extend({ kbId, path }))
+    .handler(async ({ context, input, signal }) => {
+      try {
+        const readOptions = gitReadOptions({ signal });
+        const runtime = getKbRuntime();
+        const userId = context.session!.user.id;
+        await consumeDocumentReadBudget(userId);
+        const admission = {
+          store: prismaAuthorityStore(runtime.prisma),
+          principal: { kind: "browser" as const, userId },
+          kbId: input.kbId,
+          operation: "read" as const,
+        };
+        await authorizeDocumentRead(admission);
+        const row = await runtime.prisma.knowledgeBase.findUnique({
+          where: { id: input.kbId },
+          select: { headSha: true, state: true },
+        });
+        if (!row || row.state === "TOMBSTONED") {
+          throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+        }
+        const repoPath = kbBareRepoPath(runtime.reposDir, input.kbId);
+        const headSha = await resolvePinnedRevision(repoPath, undefined, row.headSha, readOptions);
+        const page = await readDocumentHistory({
+          ...readOptions,
+          repoPath,
+          headSha,
+          path: input.path,
+          cursor: input.cursor ?? null,
+          limit: input.limit,
+          query: prismaAssetQuery(runtime.prisma),
+        });
+        await authorizeDocumentRead(admission);
+        return page;
       } catch (error) {
         toOrpc(error);
       }

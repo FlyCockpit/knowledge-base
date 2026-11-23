@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "no front matter",
+      "input": "# Note\n\nBody.\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\n# Note\n\nBody.\n"
+    },
+    {
+      "name": "no front matter, human",
+      "input": "# Note\n",
+      "stamp": "human",
+      "expect": "---\nprovenance: human\n---\n# Note\n"
+    },
+    {
+      "name": "empty document",
+      "input": "",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\n"
+    },
+    {
+      "name": "front matter without provenance",
+      "input": "---\nid: \"n1\"\ntype: concept\n---\n# Note\n",
+      "stamp": "agent",
+      "expect": "---\nid: \"n1\"\ntype: concept\nprovenance: agent\n---\n# Note\n"
+    },
+    {
+      "name": "empty front matter",
+      "input": "---\n---\nBody\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nBody\n"
+    },
+    {
+      "name": "already agent untouched",
+      "input": "---\nprovenance: agent\nid: a\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\nid: a\n---\nB\n"
+    },
+    {
+      "name": "dream replaced in place",
+      "input": "---\nid: \"n1\"\nprovenance: dream\ntitle: T\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nid: \"n1\"\nprovenance: agent\ntitle: T\n---\nB\n"
+    },
+    {
+      "name": "human to agent",
+      "input": "---\nprovenance: human\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "agent to human",
+      "input": "---\nprovenance: agent\n---\nB\n",
+      "stamp": "human",
+      "expect": "---\nprovenance: human\n---\nB\n"
+    },
+    {
+      "name": "double-quoted value",
+      "input": "---\nprovenance: \"dream\"\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "single-quoted value",
+      "input": "---\nprovenance: 'human'\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "value with comment",
+      "input": "---\nprovenance: dream # set by a dream\n---\nB\n",
+      "stamp": "human",
+      "expect": "---\nprovenance: human\n---\nB\n"
+    },
+    {
+      "name": "unknown value",
+      "input": "---\nprovenance: robot\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "CRLF front matter append",
+      "input": "---\r\nid: a\r\n---\r\nBody\r\n",
+      "stamp": "agent",
+      "expect": "---\r\nid: a\r\nprovenance: agent\r\n---\r\nBody\r\n"
+    },
+    {
+      "name": "CRLF front matter replace",
+      "input": "---\r\nprovenance: dream\r\nid: a\r\n---\r\nBody\r\n",
+      "stamp": "human",
+      "expect": "---\r\nprovenance: human\r\nid: a\r\n---\r\nBody\r\n"
+    },
+    {
+      "name": "BOM before dashes is no front matter",
+      "input": "﻿---\nid: a\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\n﻿---\nid: a\n---\nB\n"
+    },
+    {
+      "name": "unclosed dashes are body",
+      "input": "---\nnot front matter\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\n---\nnot front matter\n"
+    },
+    {
+      "name": "block scalar before append",
+      "input": "---\nnotes: |\n  line one\n  line two\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nnotes: |\n  line one\n  line two\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "list before append",
+      "input": "---\ntags:\n  - a\n  - b\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\ntags:\n  - a\n  - b\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "refused: quoted key",
+      "input": "---\n\"provenance\": dream\n---\nB\n",
+      "stamp": "agent",
+      "expect": null
+    },
+    {
+      "name": "refused: escaped key",
+      "input": "---\n\"proven\\u0061nce\": dream\n---\nB\n",
+      "stamp": "agent",
+      "expect": null
+    },
+    {
+      "name": "refused: block value",
+      "input": "---\nprovenance: |\n  dream\n---\nB\n",
+      "stamp": "agent",
+      "expect": null
+    },
+    {
+      "name": "one-line flow value is replaced in place",
+      "input": "---\nprovenance: [dream]\n---\nB\n",
+      "stamp": "agent",
+      "expect": "---\nprovenance: agent\n---\nB\n"
+    },
+    {
+      "name": "refused: indentless sequence",
+      "input": "---\nprovenance:\n- dream\n---\nB\n",
+      "stamp": "agent",
+      "expect": null
+    },
+    {
+      "name": "refused: empty value",
+      "input": "---\nprovenance:\n---\nB\n",
+      "stamp": "agent",
+      "expect": null
+    },
+    {
+      "name": "body dashes kept",
+      "input": "---\nid: a\n---\nB\n---\nnot yaml: here\n",
+      "stamp": "human",
+      "expect": "---\nid: a\nprovenance: human\n---\nB\n---\nnot yaml: here\n"
+    },
+    {
+      "name": "multibyte front matter",
+      "input": "---\ntitle: \"Zoë 😀\"\n---\nB 😀\n",
+      "stamp": "agent",
+      "expect": "---\ntitle: \"Zoë 😀\"\nprovenance: agent\n---\nB 😀\n"
+    },
+    {
+      "name": "no trailing newline body",
+      "input": "---\nid: a\n---\nB",
+      "stamp": "agent",
+      "expect": "---\nid: a\nprovenance: agent\n---\nB"
+    },
+    {
+      "name": "front matter only, no body line",
+      "input": "---\nid: a\n---",
+      "stamp": "agent",
+      "expect": "---\nid: a\nprovenance: agent\n---"
+    }
+  ]
+}

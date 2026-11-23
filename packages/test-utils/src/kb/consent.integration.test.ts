@@ -87,6 +87,7 @@ async function fixture() {
   }
   const selection: Selection = {
     scopes: ["mcp:read", "mcp:write", "offline_access"],
+    authoringMode: "both",
     toolGroups: MCP_TOOL_GROUPS.filter((group) => group !== "sealed"),
     acl: [{ kbId: kb.id, bits: ["read"] }],
   };
@@ -236,10 +237,46 @@ describe("consent durable authority", () => {
       issueMcpGenerationClaims(prisma, claims(f, a, { scopes: ["mcp:write"] })),
     ).rejects.toThrow();
   });
+  it("a write mode comes exactly with mcp:write; reuse may narrow it, never swap or widen it", async () => {
+    const f = await fixture();
+    const mode = async (grantId: string) =>
+      (await prisma.mcpGrant.findUniqueOrThrow({ where: { id: grantId } })).authoringMode;
+    const { authoringMode: _mode, ...withoutMode } = f.selection;
+    await expect(f.approve(withoutMode)).rejects.toThrow();
+    await expect(
+      f.approve({ scopes: ["mcp:read"], toolGroups: ["read"], acl: [], authoringMode: "dream" }),
+    ).rejects.toThrow();
+    expect(await prisma.mcpGrant.count({ where: { userId: f.actor.userId } })).toBe(0);
+    const a = await f.approve();
+    expect(await mode(a.grantId)).toBe("BOTH");
+    // both -> dream only removes: quiet reuse narrows the same generation.
+    const narrowed = await f.approve({ ...f.selection, authoringMode: "dream" }, false, a.grantId);
+    expect(narrowed.grantId).toBe(a.grantId);
+    expect(await mode(a.grantId)).toBe("DREAM");
+    // dream -> edit adds a capability (and removes one): explicit consent, fresh generation.
+    for (const authoringMode of ["edit", "both"] as const) {
+      await expect(
+        f.approve({ ...f.selection, authoringMode }, false, a.grantId),
+      ).rejects.toThrow();
+      expect(await mode(a.grantId)).toBe("DREAM");
+    }
+    const swapped = await f.approve({ ...f.selection, authoringMode: "edit" }, true, a.grantId);
+    expect(swapped.grantId).not.toBe(a.grantId);
+    expect(await mode(swapped.grantId)).toBe("EDIT");
+    // The approved receipt (re-parsed on every refresh) keeps the mode.
+    expect(
+      (
+        await prisma.consentIntent.findUniqueOrThrow({
+          where: { referenceId: swapped.referenceId },
+        })
+      ).selection,
+    ).toMatchObject({ authoringMode: "edit" });
+  });
   it("narrowing consent reuse ends active temporary access; identical reuse keeps it", async () => {
     const f = await fixture();
     const narrowSelection: Selection = {
       scopes: ["mcp:read", "mcp:write", "offline_access"],
+      authoringMode: "both",
       toolGroups: ["read", "edit"],
       acl: [{ kbId: f.kb.id, bits: ["read"] }],
     };
@@ -290,6 +327,7 @@ describe("consent durable authority", () => {
     const f = await fixture();
     const kept: Selection = {
       scopes: ["mcp:read", "mcp:write", "offline_access"],
+      authoringMode: "both",
       toolGroups: ["read", "edit"],
       acl: [{ kbId: f.kb.id, bits: ["read"] }],
     };

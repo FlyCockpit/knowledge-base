@@ -125,6 +125,14 @@ function object(type: string, input: string) {
     encoding: "utf8",
   }).trim();
 }
+/**
+ * Pushed Markdown as a credential writes it: pushes are always a token's, and
+ * the server refuses a new or changed document that does not say
+ * `provenance: agent` (the label it stamps on every other token write). Text
+ * that brings its own front matter is kept verbatim.
+ */
+const agent = (text: string) =>
+  text.startsWith("---\n") ? text : `---\nprovenance: agent\n---\n${text}`;
 function tree(
   body = "# valid\n",
   manifest = '{"version":1,"entries":[]}\n',
@@ -140,10 +148,13 @@ function tree(
   return execFileSync("git", ["mktree"], {
     cwd: clone,
     env: hardenedGitEnv(),
-    input: `040000 tree ${subtree}\t.assets\n100644 blob ${blob("# kb managed\n")}\t.gitignore\n100644 blob ${blob(body)}\tindex.md\n${Object.entries(
+    input: `040000 tree ${subtree}\t.assets\n100644 blob ${blob("# kb managed\n")}\t.gitignore\n100644 blob ${blob(agent(body))}\tindex.md\n${Object.entries(
       documents,
     )
-      .map(([path, text]) => `100644 blob ${blob(text)}\t${path}\n`)
+      .map(
+        ([path, text]) =>
+          `100644 blob ${blob(path.endsWith(".md") ? agent(text) : text)}\t${path}\n`,
+      )
       .join("")}`,
     encoding: "utf8",
   }).trim();
@@ -183,6 +194,7 @@ beforeAll(async () => {
       clientId: `pat:${tokenId}`,
       referenceId: "pat",
       scopes: ["mcp:write"],
+      authoringMode: "BOTH",
       toolGroups: ["read", "edit"],
       createdKbBits: [],
       acl: { create: { kbId: id, bits: ["write"] } },
@@ -447,6 +459,104 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
     });
   });
 
+  it("refuses pushed Markdown not labelled agent, reserved trailers and dream-only credentials", () => {
+    return runOwnedGitPushAction(async () => {
+      const head = current();
+      const refused = async (next: string, reason: RegExp, detail?: string) => {
+        const error = await push(`${next}:refs/heads/main`).then(
+          () => {
+            throw new Error("push was accepted");
+          },
+          (cause: { code?: number; stderr?: string }) => cause,
+        );
+        expect(error.code).toBe(1);
+        expect(error.stderr).toMatch(reason);
+        if (detail) expect(error.stderr).toContain(detail);
+        expect(current()).toBe(head);
+      };
+      const provenance =
+        /! \[remote rejected\] \S+ -> main \(Markdown you push must say `provenance: agent`/;
+      for (const [path, text] of [
+        ["person.md", "---\nprovenance: human\n---\nbody\n"],
+        ["dreamt.md", "---\nprovenance: dream\n---\nbody\n"],
+        ["unlabelled.md", "---\ntitle: Unlabelled\n---\nbody\n"],
+      ] as const)
+        await refused(
+          commit(`push ${path}`, head, tree(undefined, undefined, { [path]: text })),
+          provenance,
+          `TREE_PROVENANCE at "${path}"`,
+        );
+      // A changed index.md counts too, also deeper in the pushed range.
+      const relabelled = commit(
+        "relabel index",
+        head,
+        tree("---\nprovenance: human\n---\n# valid\n"),
+      );
+      await refused(commit("valid tip", relabelled), provenance, 'TREE_PROVENANCE at "index.md"');
+      const trailer =
+        /! \[remote rejected\] \S+ -> main \(A pushed commit message carries an Acted-by: or Kb-\*: trailer line/;
+      for (const message of [
+        "subject\n\nActed-by: someone via web",
+        "subject\n\nKb-Actor-Key: user:spoofed",
+        "subject\n\nbody\n  kb-provenance : human",
+      ])
+        await refused(commit(message, head), trailer);
+      // A dream-only credential cannot push at all (a push is a direct edit).
+      await prisma.mcpGrant.update({ where: { id: grantId }, data: { authoringMode: "DREAM" } });
+      try {
+        await expect(push(`${commit("dream-only push", head)}:refs/heads/main`)).rejects.toThrow();
+        expect(current()).toBe(head);
+      } finally {
+        await prisma.mcpGrant.update({ where: { id: grantId }, data: { authoringMode: "BOTH" } });
+      }
+      // Labelled agent, the same content is accepted.
+      const ok = commit("labelled", head, tree(undefined, undefined, { "person.md": "body\n" }));
+      await push(`${ok}:refs/heads/main`);
+      expect(current()).toBe(ok);
+    });
+  });
+  it("accepts a branch that merges current main, server-written history included", () => {
+    return runOwnedGitPushAction(async () => {
+      const base = current();
+      const person = "---\nprovenance: human\n---\nperson\n";
+      // Work on a branch from today's main: an agent document.
+      const side = commit(
+        "branch work",
+        base,
+        tree(undefined, undefined, { "branch.md": "# b\n" }),
+      );
+      // Meanwhile the server writes main: a person's document, the server's block.
+      const { ownerId } = await prisma.knowledgeBase.findUniqueOrThrow({ where: { id } });
+      const written = commit(
+        `web edit\n\nActed-by: Git test via web\nKb-Actor-Key: user:${ownerId}\nKb-Provenance: human`,
+        base,
+        tree(undefined, undefined, { "person.md": person }),
+      );
+      git(["update-ref", "refs/heads/kb-test-server", written]);
+      try {
+        git(["fetch", "--no-tags", clone, "refs/heads/kb-test-server:refs/kb-test/server"], repo);
+        git(["update-ref", "-d", "refs/kb-test/server"], repo);
+      } finally {
+        git(["update-ref", "-d", "refs/heads/kb-test-server"]);
+      }
+      git(["update-ref", "refs/heads/main", written, base], repo);
+      await prisma.knowledgeBase.update({ where: { id }, data: { headSha: written } });
+      // The branch merges main: each document is one side's exact blob.
+      const merged = git([
+        "commit-tree",
+        tree(undefined, undefined, { "branch.md": "# b\n", "person.md": person }),
+        "-p",
+        written,
+        "-p",
+        side,
+        "-m",
+        "Merge main into branch",
+      ]);
+      await push(`${merged}:refs/heads/main`);
+      expect(current()).toBe(merged);
+      expect(git(["show", `${merged}:person.md`], repo)).toBe(person.trimEnd());
+    });
+  });
   it("denies force/non-FF, deletion, reserved namespaces and invalid intermediate trees", () => {
     return runOwnedGitPushAction(async () => {
       const head = current();
@@ -671,7 +781,7 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
           env: hardenedGitEnv(),
           input: Array.from(
             { length: 1100 },
-            (_, n) => `100644 blob ${object("blob", `# bulk ${n}\n`)}\t${n}.md\n`,
+            (_, n) => `100644 blob ${object("blob", agent(`# bulk ${n}\n`))}\t${n}.md\n`,
           ).join(""),
           encoding: "utf8",
         }).trim();
@@ -703,6 +813,7 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
             clientId: `pat:${randomUUID()}`,
             referenceId: "pat",
             scopes: ["mcp:write"],
+            authoringMode: "BOTH",
             toolGroups: ["read", "edit"],
             createdKbBits: [],
           },
@@ -979,6 +1090,7 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
             clientId: `pat:${tokenId}`,
             referenceId: "pat",
             scopes: ["mcp:write"],
+            authoringMode: "BOTH",
             toolGroups: ["read", "edit"],
             createdKbBits: [],
             acl: { create: { kbId: crashId, bits: ["write"] } },

@@ -481,6 +481,8 @@ impl Store {
         input: BasesCreateInput,
     ) -> Result<KbMutationOutput, StoreError> {
         check_input::<BasesCreate>(&input)?;
+        // Creating a KB writes its first document (`index.md`).
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let receipt = self.create_kb(
             principal,
             CreateKbRequest {
@@ -574,6 +576,8 @@ impl Store {
         input: BasesDeleteInput,
     ) -> Result<BasesDeleteOutput, StoreError> {
         check_input::<BasesDelete>(&input)?;
+        // Deleting a KB destroys its documents.
+        self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let key = parse_key(input.idempotency_key.as_str())?;
         let hash = request_hash(&[
             b"kb-local/KB_DELETE/v1",

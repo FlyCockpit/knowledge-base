@@ -4,6 +4,13 @@ import type { Prisma, PrismaClient } from "@knowledge-base/db/client";
 import { z } from "zod";
 import { isUserBanned } from "./ban";
 import {
+  authoringCapabilities,
+  authoringModeFromDb,
+  authoringModeToDb,
+  MCP_AUTHORING_MODES,
+  type McpAuthoringMode,
+} from "./mcp-authoring-mode";
+import {
   deriveMcpConsentReferenceId,
   expandMcpBits,
   MCP_KB_PERMISSIONS,
@@ -23,6 +30,8 @@ const scopes = ["mcp:read", "mcp:write", "offline_access"] as const;
 const bits = z.array(z.enum(MCP_KB_PERMISSIONS)).max(5);
 const toolGroups = z.array(z.enum(MCP_TOOL_GROUPS)).min(1).max(MCP_TOOL_GROUPS.length);
 const kbId = z.string().regex(/^[a-z0-9]{24,32}$/);
+/** The write mode: required with mcp:write, refused without it (normalizeGrantCeiling). */
+const authoringMode = z.enum(MCP_AUTHORING_MODES).nullable().default(null);
 const recipient = z.strictObject({
   kbId,
   namespace: z.uuid(),
@@ -53,6 +62,7 @@ export const credentialSelection = z
     acl: z.array(z.strictObject({ kbId, bits: bits.min(1) })).max(256),
     allowCreate: z.boolean().default(false),
     createdKbBits: bits.default([]),
+    authoringMode,
     recipients: z.array(recipient).max(256).default([]),
   })
   .transform((input, ctx) => {
@@ -92,6 +102,7 @@ const consentSelectionFields = {
   acl: z.array(z.strictObject({ kbId, bits: bits.min(1) })).max(256),
   allowCreate: z.boolean().default(false),
   createdKbBits: bits.default([]),
+  authoringMode,
 };
 /**
  * The normalized OAuth consent selection has no place for a
@@ -108,12 +119,33 @@ export const consentSelection = z.strictObject(consentSelectionFields).transform
   return selection;
 });
 export type ConsentSelection = z.output<typeof consentSelection>;
+/**
+ * The approved scopes refresh reads from a stored consent selection, or null
+ * when it is not a valid ceiling. Tolerant of shape drift only: keys this
+ * release does not know are ignored, and a selection approved before write
+ * modes (no `authoringMode`) is checked with its grant row's mode, which the
+ * row (not this JSON) carries. Every other ceiling rule still applies.
+ */
+export function approvedConsentScopes(
+  selection: unknown,
+  grantAuthoringMode: McpAuthoringMode | null,
+): readonly string[] | null {
+  const loose = z.object(consentSelectionFields).safeParse(selection);
+  if (!loose.success) return null;
+  const write = loose.data.scopes.includes("mcp:write");
+  const parsed = consentSelection.safeParse({
+    ...loose.data,
+    authoringMode: write ? (loose.data.authoringMode ?? grantAuthoringMode) : null,
+  });
+  return parsed.success ? loose.data.scopes : null;
+}
 type Ceiling = {
   scopes: readonly string[];
   toolGroups: readonly string[];
   acl: readonly { kbId: string; bits: readonly string[] }[];
   allowCreate?: boolean;
   createdKbBits?: readonly string[];
+  authoringMode?: McpAuthoringMode | null;
 };
 export class McpConsentError extends Error {
   constructor(message = "Invalid MCP consent") {
@@ -138,6 +170,10 @@ const subset = (a: readonly string[], b: readonly string[]) => a.every((v) => b.
 export function isConsentSubset(a: Ceiling, b: Ceiling): boolean {
   return (
     subset(a.scopes, b.scopes) &&
+    subset(
+      authoringCapabilities(a.authoringMode ?? null),
+      authoringCapabilities(b.authoringMode ?? null),
+    ) &&
     a.toolGroups.length > 0 &&
     subset(a.toolGroups, b.toolGroups) &&
     (!a.allowCreate || !!b.allowCreate) &&
@@ -304,7 +340,8 @@ export const consentApprovalInput = z.strictObject({
 });
 /**
  * Whether consent reuse removes anything from the stored grant: a scope, a
- * group, creation, a created-KB bit, a KB, or a bit on a kept KB.
+ * group, a write-mode capability, creation, a created-KB bit, a KB, or a bit
+ * on a kept KB.
  */
 async function consentReuseNarrows(
   tx: Prisma.TransactionClient,
@@ -314,6 +351,7 @@ async function consentReuseNarrows(
     toolGroups: string[];
     allowCreate: boolean;
     createdKbBits: string[];
+    authoringMode: string | null;
   },
   next: z.output<typeof consentSelection>,
 ): Promise<boolean> {
@@ -322,6 +360,10 @@ async function consentReuseNarrows(
   if (
     lost(old.scopes, next.scopes) ||
     lost(old.toolGroups, next.toolGroups) ||
+    lost(
+      authoringCapabilities(authoringModeFromDb(old.authoringMode)),
+      authoringCapabilities(next.authoringMode),
+    ) ||
     (old.allowCreate && !next.allowCreate) ||
     lost(expandMcpBits(old.allowCreate ? old.createdKbBits : []), expandMcpBits(next.createdKbBits))
   )
@@ -555,7 +597,12 @@ export function createMcpConsentService(options: {
           old.clientId === query.clientId &&
           !old.revokedAt &&
           old.consentIntents.length === 1;
-        const reusable = active && isConsentSubset(input.selection, old);
+        const reusable =
+          active &&
+          isConsentSubset(input.selection, {
+            ...old,
+            authoringMode: authoringModeFromDb(old.authoringMode),
+          });
         if (intent.grantId) {
           if (
             !reusable ||
@@ -572,6 +619,7 @@ export function createMcpConsentService(options: {
           toolGroups: input.selection.toolGroups,
           allowCreate: input.selection.allowCreate,
           createdKbBits: input.selection.createdKbBits,
+          authoringMode: authoringModeToDb(input.selection.authoringMode),
         };
         if (reusable) {
           // Reuse can only reduce the shared generation, including older credentials.

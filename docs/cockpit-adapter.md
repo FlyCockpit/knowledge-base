@@ -44,12 +44,25 @@ Max eight upserts, each body 64 KiB; larger staged edits are ordinary edit calls
 not a DreamSink batch. Source UUIDs/model are provenance, never delegated identity.
 
 Existing IDs retain their paths; new IDs map to deterministic `concepts/<id>.md`.
-Non-dream or absent provenance is conservatively human and cannot be overwritten.
+A dream may update a document whose provenance is `dream` or `agent` (an agent's
+direct edit, stamped by the server). `human`, absent or any other value is a
+person's and cannot be overwritten (`FORBIDDEN`).
 No dream deletes/assets/sealed literals. One invalid upsert fails the entire
 set without a commit/PR/job. Server applies a credential-pattern floor but the
 client owns redaction-before-upload and its private RedactionTable. Merge checks
 human provenance again against current main, even for a previously accepted
-proposal. A later human edit causes a conflict rather than review bypass.
+proposal. A later human edit causes a conflict rather than review bypass, also
+when the document was an agent's at proposal time.
+
+Credentials: the expected DreamSink credential is a dream-only one (write mode
+`dream`, [MCP write modes](./mcp.md#write-modes-and-provenance)). The server
+refuses its direct edits with `FORBIDDEN` `{reason: "WRITE_MODE", required:
+"edit"}` (`kb_client::ErrorDetails::WriteMode`), and an edit-only credential's
+dreams with `required: "dream"`; neither is retryable. A host that also lets an
+agent edit directly uses a separate `edit` credential (or one `both`
+credential), and those edits are labelled `agent`, so later dreams may still
+consolidate them. `kb_client::DocumentProvenance` reads the label (`dream`,
+`agent`, `human`, `absent`; unknown values are human).
 
 Wire outcomes are `applied`, `noop` or `proposed`. Applied finalizes Git and metadata.
 A noop is a durable receipt with no new commit/PR/job: unchanged main has `proposal:null`;

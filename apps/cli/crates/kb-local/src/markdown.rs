@@ -490,6 +490,196 @@ fn assert_json_safe(value: &YamlValue, depth: usize) -> Result<(), MarkdownIssue
 
 const SEALED_PREFIX: &str = "sealed:v1:knowledge_base:";
 
+/// Who wrote a document, from its front matter `provenance` (the server's
+/// `readDocumentProvenance`): `dream`, `agent` and `human` read as
+/// themselves, no label (or `null`) as absent, anything else as human.
+pub fn document_provenance(front_matter: &YamlMap) -> kb_client::authoring::DocumentProvenance {
+    use kb_client::authoring::DocumentProvenance;
+    match front_matter.get("provenance") {
+        None | Some(YamlValue::Null) => DocumentProvenance::Absent,
+        Some(YamlValue::String(label)) => DocumentProvenance::from_label(label),
+        Some(_) => DocumentProvenance::Human,
+    }
+}
+
+/// The label a write stamps: a local MCP session (an agent) stamps `agent`;
+/// `human` is a person's (the shared corpus runs both).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProvenanceStamp {
+    Agent,
+    Human,
+}
+
+impl ProvenanceStamp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProvenanceStamp::Agent => "agent",
+            ProvenanceStamp::Human => "human",
+        }
+    }
+}
+
+/// The refusal text of an unstampable document (the server's).
+pub const PROVENANCE_STAMP_REFUSED: &str =
+    "front matter provenance must be a single `provenance: <value>` line";
+
+/// A front-matter line naming the key, quoted or not (`^["']?provenance["']?[ \t]*:`).
+fn names_provenance(line: &str) -> bool {
+    let rest = line
+        .strip_prefix(['"', '\''])
+        .unwrap_or(line)
+        .strip_prefix("provenance");
+    let Some(rest) = rest else { return false };
+    let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest);
+    rest.trim_start_matches([' ', '\t']).starts_with(':')
+}
+
+/// The one line shape replaced in place: `^provenance:[ \t]+[^\r\n]*$`.
+fn stampable_line(line: &str) -> bool {
+    line.strip_prefix("provenance:")
+        .is_some_and(|rest| rest.starts_with([' ', '\t']) && !rest.contains(['\r', '\n']))
+}
+
+/// Server-side provenance stamp, a byte-identical port of the server's
+/// `stampProvenance` (`parse-markdown.ts`; shared corpus
+/// `fixtures/provenance-stamp-cases.json`). The result says exactly
+/// `provenance: <value>` and is otherwise the same document:
+/// * already `value`: the bytes, untouched;
+/// * no front matter: `---\nprovenance: <value>\n---\n` is prepended;
+/// * no provenance key: the line is appended as the last front-matter line,
+///   in the document's line-ending style;
+/// * one simple column-0 `provenance: <scalar>` line: replaced in place.
+///
+/// Anything else (a quoted or escaped key, a block, flow or multi-line
+/// value) is refused with [`PROVENANCE_STAMP_REFUSED`], never guessed at.
+/// The result is re-parsed: every other key and the body must be unchanged.
+pub fn stamp_provenance(bytes: &[u8], value: ProvenanceStamp) -> Result<Vec<u8>, String> {
+    let refused = || PROVENANCE_STAMP_REFUSED.to_owned();
+    let label = value.as_str();
+    let before = parse_markdown(bytes).map_err(|issue| issue.message)?;
+    if matches!(before.front_matter.get("provenance"), Some(YamlValue::String(v)) if v == label) {
+        return Ok(bytes.to_vec());
+    }
+    let (yaml, body_start) = split_front_matter(bytes);
+    let body = &bytes[body_start..];
+    let stamped = match yaml {
+        None => {
+            let mut out = format!("---\nprovenance: {label}\n---\n").into_bytes();
+            out.extend_from_slice(bytes);
+            out
+        }
+        Some(yaml) => {
+            let eol = if bytes.get(3) == Some(&b'\r') {
+                "\r\n"
+            } else {
+                "\n"
+            };
+            let yaml_start = yaml.as_ptr() as usize - bytes.as_ptr() as usize;
+            let yaml_end = yaml_start + yaml.len();
+            let text = std::str::from_utf8(yaml).map_err(|_| refused())?;
+            let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+            // `split` leaves one trailing empty element after the final line ending.
+            if lines.last().is_some_and(String::is_empty) {
+                lines.pop();
+            }
+            let keyed: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| names_provenance(line.strip_suffix('\r').unwrap_or(line)))
+                .map(|(index, _)| index)
+                .collect();
+            let next_yaml = if before.front_matter.get("provenance").is_none() && keyed.is_empty() {
+                format!("{text}provenance: {label}{eol}")
+            } else if let [index] = keyed[..]
+                && stampable_line(lines[index].strip_suffix('\r').unwrap_or(&lines[index]))
+            {
+                let ending = if lines[index].ends_with('\r') {
+                    "\r"
+                } else {
+                    ""
+                };
+                lines[index] = format!("provenance: {label}{ending}");
+                format!("{}\n", lines.join("\n"))
+            } else {
+                return Err(refused());
+            };
+            let mut out = Vec::with_capacity(bytes.len() + 32);
+            out.extend_from_slice(&bytes[..yaml_start]);
+            out.extend_from_slice(next_yaml.as_bytes());
+            out.extend_from_slice(&bytes[yaml_end..]);
+            out
+        }
+    };
+    let after = parse_markdown(&stamped).map_err(|_| refused())?;
+    if !matches!(after.front_matter.get("provenance"), Some(YamlValue::String(v)) if v == label) {
+        return Err(refused());
+    }
+    let rest = |map: &YamlMap| {
+        let mut json = map_to_json(map);
+        json.remove("provenance");
+        json
+    };
+    if rest(&before.front_matter) != rest(&after.front_matter)
+        || &stamped[split_front_matter(&stamped).1..] != body
+    {
+        return Err(refused());
+    }
+    Ok(stamped)
+}
+
+/// Whether one front-matter line (its ending included) is a provenance line:
+/// it starts in column 0 and, parsed on its own as a one-line front matter
+/// (`---\n<line>\n---\n`, line ending removed), yields exactly one key and
+/// that key is `provenance` — plain, quoted or escaped alike.
+fn is_provenance_line(line: &str) -> bool {
+    let content = line.strip_suffix('\n').unwrap_or(line);
+    let content = content.strip_suffix('\r').unwrap_or(content);
+    if content.is_empty() || content.starts_with([' ', '\t']) {
+        return false;
+    }
+    parse_markdown(format!("---\n{content}\n---\n").as_bytes()).is_ok_and(
+        |parsed| matches!(&parsed.front_matter.entries[..], [(key, _)] if key == "provenance"),
+    )
+}
+
+/// Whether `next` is `prior` up to its provenance line (the server's
+/// provenance-only noop rule, identical on both sides): both parse, their
+/// bodies are byte-equal, and their front-matter texts (absent = empty) are
+/// byte-equal once every [provenance line](is_provenance_line) is removed,
+/// the remaining lines compared with their line endings. A comment or
+/// spelling change elsewhere is therefore a change; a requoted label or an
+/// escaped key is not, and neither is a block-scalar header alone — but a
+/// block scalar's (indented) value lines stay and are compared.
+pub fn same_except_provenance_line(prior: &[u8], next: &[u8]) -> bool {
+    let (Ok(before), Ok(after)) = (parse_markdown(prior), parse_markdown(next)) else {
+        return false;
+    };
+    let (prior_yaml, prior_body) = split_front_matter(prior);
+    let (next_yaml, next_body) = split_front_matter(next);
+    if prior[prior_body..] != next[next_body..] {
+        return false;
+    }
+    // The parsed metadata must agree too, apart from the real `provenance` key:
+    // a line that only looks like a provenance line on its own (e.g. a key
+    // starting with U+FEFF, which only the stream start strips) is other metadata.
+    let rest = |map: &YamlMap| {
+        let mut json = map_to_json(map);
+        json.remove("provenance");
+        json
+    };
+    if rest(&before.front_matter) != rest(&after.front_matter) {
+        return false;
+    }
+    // Both parsed, so both front-matter texts are UTF-8.
+    let kept = |yaml: Option<&[u8]>| {
+        let text = std::str::from_utf8(yaml.unwrap_or_default()).unwrap_or_default();
+        text.split_inclusive('\n')
+            .filter(|line| !is_provenance_line(line))
+            .collect::<String>()
+    };
+    kept(prior_yaml) == kept(next_yaml)
+}
+
 /// Every `{{sealed:v1:knowledge_base:<36>:<36>}}` reference in `text`
 /// (prefix ASCII case-insensitive, like the TS `/gi` pattern), normalized to
 /// `sealed:v1:knowledge_base:<a>:<b>`, leftmost non-overlapping.
@@ -1531,6 +1721,48 @@ mod tests {
 
     fn fm(src: &str) -> Result<ParsedMarkdown, MarkdownIssue> {
         parse_markdown(format!("---\n{src}---\nbody\n").as_bytes())
+    }
+
+    #[test]
+    fn only_provenance_lines_are_ignored_by_the_noop_rule() {
+        let same = |a: &str, b: &str| same_except_provenance_line(a.as_bytes(), b.as_bytes());
+        let human = "---\nprovenance: human\ntitle: T # old\n---\n# P\n";
+        // Plain, quoted and escaped keys, quoted values, absent lines.
+        for next in [
+            "---\nprovenance: agent\ntitle: T # old\n---\n# P\n",
+            "---\nprovenance: \"agent\"\ntitle: T # old\n---\n# P\n",
+            "---\n'provenance': agent\ntitle: T # old\n---\n# P\n",
+            "---\n\"\\u0070rovenance\": agent\ntitle: T # old\n---\n# P\n",
+            "---\ntitle: T # old\n---\n# P\n",
+            "---\ntitle: T # old\nprovenance: agent\n---\n# P\n",
+        ] {
+            assert!(same(human, next), "{next:?}");
+        }
+        // No front matter reads as empty front-matter text.
+        assert!(same("# P\n", "---\nprovenance: agent\n---\n# P\n"));
+        // A U+FEFF-prefixed key is other metadata, though its line alone parses as provenance.
+        assert!(!same(
+            "---\ntitle: T\nprovenance: human\n---\n# P\n",
+            "---\ntitle: T\n\u{feff}provenance: custom\nprovenance: human\n---\n# P\n"
+        ));
+        for next in [
+            // A comment, a requoted value, a line ending, the body.
+            "---\nprovenance: human\ntitle: T # new\n---\n# P\n",
+            "---\nprovenance: human\ntitle: 'T' # old\n---\n# P\n",
+            "---\r\nprovenance: human\r\ntitle: T # old\r\n---\r\n# P\n",
+            "---\nprovenance: human\ntitle: T # old\n---\n# Q\n",
+            // An indented provenance-looking line is not column 0.
+            "---\nprovenance: human\ntitle: T # old\n---\n# P\n\n",
+        ] {
+            assert!(!same(human, next), "{next:?}");
+        }
+        // A block scalar's value lines stay in the comparison.
+        assert!(!same(
+            "---\nprovenance: |\n  human\n---\n# P\n",
+            "---\nprovenance: |\n  agent\n---\n# P\n",
+        ));
+        // Unparsable documents are never the same.
+        assert!(!same("---\na: [\n---\n", "---\na: [\n---\n"));
     }
 
     #[test]

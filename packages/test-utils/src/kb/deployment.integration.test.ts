@@ -186,6 +186,7 @@ async function mint(bits?: { kbId: string; bits: string[] }[]) {
   return rpc<{ secret: string }>("mcpTokens/create", {
     name: "Deployment fixture",
     scopes: ["mcp:read", "mcp:write"],
+    authoringMode: "both",
     toolGroups: [...MCP_TOOL_GROUPS],
     acl: bits ?? [],
     allowCreate: !bits,

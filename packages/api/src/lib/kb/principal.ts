@@ -1,3 +1,8 @@
+import {
+  authoringModeAllows,
+  type McpAuthoringMode,
+  type McpAuthoringNeed,
+} from "@knowledge-base/auth/mcp-authoring-mode";
 import type { LockQuery } from "./lock";
 
 export type KbAdmissionCode =
@@ -8,15 +13,29 @@ export type KbAdmissionCode =
   | "QUOTA_EXCEEDED"
   | "STORAGE_UNAVAILABLE";
 
+/** Why a FORBIDDEN admission was refused, when the caller can act on it. */
+export type KbAdmissionDetails = { reason: "WRITE_MODE"; required: McpAuthoringNeed };
+
 export class KbAdmissionError extends Error {
   readonly name = "KbAdmissionError";
   constructor(
     readonly code: KbAdmissionCode,
     message: string,
     readonly retryAfterSeconds?: number,
+    readonly details?: KbAdmissionDetails,
   ) {
     super(message);
   }
+}
+
+/** The grant's write mode does not allow this mutation (`dream` or `edit`). */
+export function writeModeRefusal(required: McpAuthoringNeed): KbAdmissionError {
+  return new KbAdmissionError(
+    "FORBIDDEN",
+    `Write mode does not allow ${required === "dream" ? "dreams" : "direct edits"}`,
+    undefined,
+    { reason: "WRITE_MODE", required },
+  );
 }
 
 export type BrowserPrincipal = {
@@ -45,6 +64,12 @@ export type TokenPrincipal = {
    * against the live grant's groups. Set only through `demandToolGroups`.
    */
   toolGroupDemands?: readonly (readonly string[])[];
+  /**
+   * Write-mode demands of the operation (`dream` or `edit`), checked like
+   * tool-group demands on every admission against the grant's live write
+   * mode. Set only through `demandAuthoring`.
+   */
+  authoringDemands?: readonly McpAuthoringNeed[];
 };
 
 export type Principal = BrowserPrincipal | TokenPrincipal;
@@ -57,6 +82,8 @@ export type TokenAdmission = {
   twoFactorSatisfied: boolean;
   /** Live tool groups of the grant generation; absent satisfies no demand. */
   toolGroups?: readonly string[];
+  /** Live write mode of the grant generation; absent or null satisfies no write-mode demand. */
+  authoringMode?: McpAuthoringMode | null;
   /**
    * The temporary access (elevations) in force in this same read, sorted ids
    * with the earliest expiry among them (`validUntil`, null when none). A
@@ -154,6 +181,24 @@ export function demandToolGroups<P extends Principal>(principal: P, groups: read
   return { ...principal, toolGroupDemands: [...(principal.toolGroupDemands ?? []), groups] };
 }
 
+/**
+ * The principal with one more write-mode demand. Browser principals (people in
+ * the web app) hold no grant and are never limited by a write mode.
+ */
+export function demandAuthoring<P extends Principal>(principal: P, need: McpAuthoringNeed): P {
+  if (principal.kind !== "token") return principal;
+  if (principal.authoringDemands?.includes(need)) return principal;
+  return { ...principal, authoringDemands: [...(principal.authoringDemands ?? []), need] };
+}
+
+/** The first write-mode demand the live mode does not satisfy, if any. */
+export function unmetAuthoringDemand(
+  demands: readonly McpAuthoringNeed[] | undefined,
+  mode: McpAuthoringMode | null | undefined,
+): McpAuthoringNeed | null {
+  return (demands ?? []).find((need) => !authoringModeAllows(mode ?? null, need)) ?? null;
+}
+
 /** Whether a grant's live groups satisfy every demand. */
 export function toolGroupsSatisfy(
   demands: readonly (readonly string[])[] | undefined,
@@ -183,5 +228,7 @@ export async function assertTokenAdmissible(
   if (!toolGroupsSatisfy(principal.toolGroupDemands, admission.toolGroups)) {
     throw new KbAdmissionError("FORBIDDEN", "Tool group not granted");
   }
+  const unmet = unmetAuthoringDemand(principal.authoringDemands, admission.authoringMode);
+  if (unmet) throw writeModeRefusal(unmet);
   return admission;
 }

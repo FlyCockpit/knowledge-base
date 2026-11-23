@@ -20,6 +20,9 @@ const actor = (): BearerAdmission => ({
   demandToolGroups: () => {
     throw new Error("the endpoint never narrows its admission");
   },
+  demandAuthoring: () => {
+    throw new Error("the endpoint never narrows its admission");
+  },
   principal: {
     kind: "token",
     userId: "u",

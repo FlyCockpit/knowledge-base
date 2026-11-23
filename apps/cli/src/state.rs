@@ -4,7 +4,7 @@
 //! so a concurrent re-login cannot lose its new credential. No network under
 //! these locks. No disposable index or config file contains credentials.
 use anyhow::{Context, Result, bail};
-use kb_client::{origin::McpResource, types::SecretToken};
+use kb_client::{authoring::AuthoringMode, origin::McpResource, types::SecretToken};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -74,6 +74,14 @@ impl CredentialStore {
         Ok(())
     }
     pub fn load(&self, resource: &McpResource) -> Result<Option<SecretToken>> {
+        Ok(self.load_entry(resource)?.map(|(token, _)| token))
+    }
+    /// The stored token and the write mode its login was approved for
+    /// (`None`: imported, read-only, or stored before write modes).
+    pub fn load_entry(
+        &self,
+        resource: &McpResource,
+    ) -> Result<Option<(SecretToken, Option<AuthoringMode>)>> {
         check_ancestors(&self.dir)?;
         if !self.dir.try_exists()? {
             return Ok(None);
@@ -81,7 +89,10 @@ impl CredentialStore {
         let _lock = self.lock()?;
         self.load_locked(resource)
     }
-    fn load_locked(&self, resource: &McpResource) -> Result<Option<SecretToken>> {
+    fn load_locked(
+        &self,
+        resource: &McpResource,
+    ) -> Result<Option<(SecretToken, Option<AuthoringMode>)>> {
         let path = self.path(resource, "json");
         if fs::symlink_metadata(&path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
             return Ok(None);
@@ -105,28 +116,47 @@ impl CredentialStore {
         if disk.secret.is_empty() || disk.secret.len() > 8192 {
             bail!("invalid stored credential");
         }
-        Ok(Some(SecretToken::new(disk.secret.to_string())))
+        Ok(Some((
+            SecretToken::new(disk.secret.to_string()),
+            disk.authoring_mode,
+        )))
     }
     pub fn save(&self, resource: &McpResource, token: &SecretToken) -> Result<()> {
+        self.save_with_mode(resource, token, None)
+    }
+    /// Save `token` with the write mode it was approved for (`None` stores
+    /// no mode, exactly as before write modes).
+    pub fn save_with_mode(
+        &self,
+        resource: &McpResource,
+        token: &SecretToken,
+        mode: Option<AuthoringMode>,
+    ) -> Result<()> {
         ensure_private_dir(&self.dir)?;
         let _lock = self.lock()?;
         let path = self.path(resource, "json");
         if fs::symlink_metadata(&path).is_ok() {
             check_private_path(&path, false)?;
         }
-        let file = self.write_temp(resource, token)?;
+        let file = self.write_temp(resource, token, mode)?;
         file.persist(&path)
             .map_err(|e| e.error)
             .context("publishing private credential state")?;
         sync_dir(&self.dir)
     }
-    fn write_temp(&self, resource: &McpResource, token: &SecretToken) -> Result<NamedTempFile> {
+    fn write_temp(
+        &self,
+        resource: &McpResource,
+        token: &SecretToken,
+        authoring_mode: Option<AuthoringMode>,
+    ) -> Result<NamedTempFile> {
         check_private_path(&self.dir, true)?;
         let resource_string = resource.as_string();
         let bytes = Zeroizing::new(serde_json::to_vec(&DiskWrite {
             origin: resource.origin(),
             resource: &resource_string,
             secret: token.expose_secret(),
+            authoring_mode,
         })?);
         #[cfg(windows)]
         let bytes = protect(&bytes, true)?;
@@ -155,7 +185,7 @@ impl CredentialStore {
             return Ok(false);
         }
         let _lock = self.lock()?;
-        if self.load_locked(resource)?.as_ref() != Some(expected) {
+        if self.load_locked(resource)?.map(|(token, _)| token).as_ref() != Some(expected) {
             return Ok(false);
         }
         fs::remove_file(self.path(resource, "json")).context("removing local credential")?;
@@ -168,6 +198,9 @@ struct DiskWrite<'a> {
     origin: &'a str,
     resource: &'a str,
     secret: &'a str,
+    /// The approved write mode; omitted when unknown (older files have none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authoring_mode: Option<AuthoringMode>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,6 +208,8 @@ struct DiskRead {
     origin: String,
     resource: String,
     secret: Zeroizing<String>,
+    #[serde(default)]
+    authoring_mode: Option<AuthoringMode>,
 }
 
 fn check_ancestors(path: &Path) -> Result<()> {
@@ -581,6 +616,42 @@ mod tests {
     }
 
     #[test]
+    fn the_approved_write_mode_is_stored_with_the_credential() {
+        let dir = canonical_tempdir();
+        let root = dir.path().join("credentials");
+        let store = CredentialStore::new(root.clone());
+        let resource = McpResource::parse(
+            "https://kb.example",
+            kb_client::origin::TransportPolicy::HttpsOnly,
+        )
+        .expect("resource");
+        let token = SecretToken::new("disposable-mode".into());
+        // No mode: the file is exactly the pre-write-mode shape.
+        store.save(&resource, &token).expect("save");
+        let file = fs::read_dir(&root)
+            .expect("dir")
+            .map(|entry| entry.expect("entry").path())
+            .find(|path| path.extension().is_some_and(|e| e == "json"))
+            .expect("credential file");
+        #[cfg(unix)]
+        assert!(
+            !fs::read_to_string(&file)
+                .expect("read")
+                .contains("authoring_mode")
+        );
+        assert_eq!(store.load_entry(&resource).expect("load").unwrap().1, None);
+        for mode in AuthoringMode::ALL {
+            store
+                .save_with_mode(&resource, &token, Some(mode))
+                .expect("save");
+            let (loaded, stored) = store.load_entry(&resource).expect("load").unwrap();
+            assert_eq!(loaded, token);
+            assert_eq!(stored, Some(mode));
+        }
+        assert!(store.remove_if_matches(&resource, &token).expect("remove"));
+    }
+
+    #[test]
     fn killed_atomic_writer_preserves_old_private_state() {
         let dir = canonical_tempdir();
         let root = dir.path().join("credentials");
@@ -678,7 +749,7 @@ mod tests {
         .expect("resource");
         let _lock = store.lock().expect("writer holds the production lock");
         let _temp = store
-            .write_temp(&resource, &SecretToken::new("disposable-new".into()))
+            .write_temp(&resource, &SecretToken::new("disposable-new".into()), None)
             .expect("private synced temp");
         let mut output = std::io::stdout();
         // libtest prefixes the running test on this line with one test thread.

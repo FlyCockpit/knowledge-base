@@ -300,6 +300,7 @@ describe("grants: PAT mint", () => {
       mintPersonalToken(runtime, owner.id, {
         name: "t",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       }),
@@ -328,6 +329,7 @@ describe("grants: creation implies kb_admin (e2e decision 7)", () => {
       mintPersonalToken(runtime, owner.id, {
         name: "no-admin",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read", "edit"],
         acl: [],
         ...create,
@@ -337,6 +339,7 @@ describe("grants: creation implies kb_admin (e2e decision 7)", () => {
     const plain = await mintPrincipal(owner.id, {
       name: "plain",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read", "edit"],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -361,6 +364,7 @@ describe("grants: effective authority = grant ceiling ∩ live bits", () => {
     const principal = await mintPrincipal(owner.id, {
       name: "ro",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -392,6 +396,7 @@ describe("grants: effective authority = grant ceiling ∩ live bits", () => {
     const principal = await mintPrincipal(member.id, {
       name: "shared",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [{ kbId: kb.id, bits: ["write"] }],
     });
@@ -418,6 +423,7 @@ describe("grants: creator ACL append", () => {
     const principal = await mintPrincipal(owner.id, {
       name: "nc",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [],
     });
@@ -436,6 +442,7 @@ describe("grants: creator ACL append", () => {
     const creator = await mintPrincipal(owner.id, {
       name: "creator",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [],
       allowCreate: true,
@@ -444,6 +451,7 @@ describe("grants: creator ACL append", () => {
     const sibling = await mintPrincipal(owner.id, {
       name: "sibling",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: [...MCP_TOOL_GROUPS],
       acl: [],
       allowCreate: true,
@@ -619,6 +627,7 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
       updateGrant(runtime, owner.id, {
         id: first.grantId,
         scopes: ["mcp:read", "mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read", "edit", "kb_admin"],
         acl: [
           { kbId: kb.id, bits: ["write"] },
@@ -725,6 +734,7 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
     const principal = await mintPrincipal(owner.id, {
       name: "both",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read", "edit"],
       acl: [{ kbId: kb.id, bits: ["write"] }],
     });
@@ -745,6 +755,80 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
     expect((await verifier.inspect(principal)).generationActive).toBe(false);
   });
 
+  it("the write mode is part of the ceiling: required with write, kept when omitted, never temporary", async () => {
+    const owner = await user();
+    const kb = await activeKb(owner.id);
+    const base = {
+      name: "mode",
+      toolGroups: ["read", "edit"] as const,
+      acl: [{ kbId: kb.id, bits: ["write" as const] }],
+    };
+    // Write without a mode, and a mode without write, are refused before persistence.
+    for (const shape of [
+      { scopes: ["mcp:write" as const] },
+      { scopes: ["mcp:read" as const], authoringMode: "dream" as const },
+    ])
+      await expect(
+        mintPersonalToken(runtime, owner.id, {
+          ...base,
+          toolGroups: [...base.toolGroups],
+          ...shape,
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(await prisma.mcpGrant.count({ where: { userId: owner.id } })).toBe(0);
+    const principal = await mintPrincipal(owner.id, {
+      ...base,
+      toolGroups: [...base.toolGroups],
+      scopes: ["mcp:write"],
+      authoringMode: "edit",
+    });
+    const id = principal.grantId;
+    const stored = async () =>
+      (await prisma.mcpGrant.findUniqueOrThrow({ where: { id } })).authoringMode;
+    expect(await stored()).toBe("EDIT");
+    expect((await verifier.inspect(principal)).authoringMode).toBe("edit");
+    // Omitted: an unrelated edit keeps the stored mode.
+    await updateGrant(runtime, owner.id, { id, toolGroups: ["read", "edit", "assets"] });
+    expect(await stored()).toBe("EDIT");
+    // edit -> dream both removes and adds; dream -> both only adds; both -> edit only removes.
+    for (const [authoringMode, widened, narrowed, db] of [
+      ["dream", true, true, "DREAM"],
+      ["both", true, false, "BOTH"],
+      ["edit", false, true, "EDIT"],
+    ] as const) {
+      await expect(updateGrant(runtime, owner.id, { id, authoringMode })).resolves.toEqual({
+        id,
+        widened,
+        narrowed,
+      });
+      expect(await stored()).toBe(db);
+      // Live: the same secret's next admission sees the new mode.
+      expect((await verifier.inspect(principal)).authoringMode).toBe(authoringMode);
+    }
+    // The audit names the mode change by capability.
+    const last = (await editEvents(id)).at(-1)!.metadata as { before: string; after: string };
+    expect(JSON.parse(last.before)).toMatchObject({ authoringMode: ["dream", "edit"] });
+    expect(JSON.parse(last.after)).toMatchObject({ authoringMode: ["edit"] });
+    // Temporary access never changes the mode.
+    await expect(
+      updateGrant(runtime, owner.id, { id, authoringMode: "dream", duration: "1h" }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(await stored()).toBe("EDIT");
+    // Dropping write drops the mode; a read-only grant cannot take one.
+    await updateGrant(runtime, owner.id, { id, scopes: ["mcp:read"] });
+    expect(await stored()).toBeNull();
+    await expect(
+      updateGrant(runtime, owner.id, { id, authoringMode: "edit" }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    // Adding write back needs a mode again.
+    await expect(
+      updateGrant(runtime, owner.id, { id, scopes: ["mcp:write"] }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(await stored()).toBeNull();
+    await updateGrant(runtime, owner.id, { id, scopes: ["mcp:write"], authoringMode: "dream" });
+    expect(await stored()).toBe("DREAM");
+  });
+
   it("a preset cap narrows a 257-entry creator-expanded ACL atomically with a bounded audit", async () => {
     const owner = await user();
     const kbIds = Array.from({ length: 257 }, (_, i) => `cap${String(i).padStart(21, "0")}`);
@@ -762,6 +846,7 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
     const principal = await mintPrincipal(owner.id, {
       name: "large",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read", "edit"],
       acl: kbIds.slice(0, 256).map((kbId) => ({ kbId, bits: ["write"] })),
     });
@@ -907,6 +992,7 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
         clientId: "edit-oauth-client",
         referenceId: randomUUID(),
         scopes: ["mcp:write", "offline_access"],
+        authoringMode: "BOTH",
         toolGroups: ["read", "edit"],
         createdKbBits: [],
         acl: { create: [{ kbId: kb.id, bits: ["read", "propose", "write"] }] },
@@ -996,6 +1082,7 @@ describe("grants: temporary access (elevations)", () => {
     const minted = await mintPersonalToken(runtime, owner.id, {
       name: "temporary",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read"],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -1124,6 +1211,7 @@ describe("grants: temporary access (elevations)", () => {
     const minted = await mintPersonalToken(runtime, owner.id, {
       name: "grown creator",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read"],
       acl: [],
     });
@@ -1245,6 +1333,7 @@ describe("grants: temporary access (elevations)", () => {
     const minted = await mintPersonalToken(runtime, owner.id, {
       name: "fallback",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read"],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -1385,6 +1474,7 @@ describe("grants: temporary access (elevations)", () => {
         clientId: "elevate-oauth-client",
         referenceId: randomUUID(),
         scopes: ["mcp:write"],
+        authoringMode: "BOTH",
         toolGroups: ["read"],
         createdKbBits: [],
       },
@@ -1414,6 +1504,7 @@ describe("grants: temporary access (elevations)", () => {
     const minted = await mintPersonalToken(runtime, owner.id, {
       name: "owned",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read"],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -1448,6 +1539,7 @@ describe("grants: temporary access (elevations)", () => {
     const minted = await mintPersonalToken(runtime, owner.id, {
       name: "capped",
       scopes: ["mcp:write"],
+      authoringMode: "both",
       toolGroups: ["read"],
       acl: [{ kbId: kb.id, bits: ["read"] }],
     });
@@ -1869,6 +1961,7 @@ async function consentCreator(aclCount = 0) {
       explicitConsent: true,
       selection: {
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: MCP_TOOL_GROUPS.filter((group) => group !== "sealed"),
         acl,
         allowCreate: true,
@@ -2475,6 +2568,7 @@ describe("R30 F6 library identity-taking capabilities", () => {
         controls.tokens.create({
           name: "takeover",
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups: [...MCP_TOOL_GROUPS],
           acl: [{ kbId: kb.id, bits: ["manage"] }],
         }),

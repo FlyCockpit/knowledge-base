@@ -179,6 +179,12 @@ function GrantEditForm({
     acl: [],
     allowCreate: selection.allowCreate,
     createdKbBits: [...selection.createdKbBits],
+    // Temporary access keeps the stored mode, whatever the draft says.
+    authoringMode: scopes.includes("mcp:write")
+      ? temporary
+        ? snapshot.authoringMode
+        : selection.authoringMode
+      : null,
   });
   const temporaryProblem = temporary
     ? temporaryIssue(plan, {
@@ -368,6 +374,9 @@ function GrantEditForm({
           writeScopeSelected={scopes.includes("mcp:write")}
           offerSealed={!oauth}
           disabled={update.isPending || kbQuery.isPending}
+          authoringModeLockedReason={
+            temporary ? t("settings:credentials.edit.temporaryWriteMode") : undefined
+          }
         />
       )}
       {kbQuery.hasNextPage && (
@@ -518,6 +527,7 @@ export function ChangeList({
     ...(changes.createdKbBits.length
       ? [t("credentials.edit.changeCreatedBits", { bits: bits(changes.createdKbBits) })]
       : []),
+    ...changes.authoringMode.map((need) => t(`credentials.edit.changeWriteMode.${need}`)),
   ];
   if (items.length === 0) return null;
   return (

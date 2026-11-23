@@ -23,6 +23,7 @@ import {
   type DeviceClaim,
   type DevicePhase,
   type DeviceRecipient,
+  deviceWriteModes,
   formatUserCode,
 } from "@/hooks/use-device-approval";
 import type {
@@ -131,6 +132,7 @@ export function DeviceApproval(props: DeviceApprovalProps) {
               scopeMode="fixed"
               fixedScopes={claim.scopes}
               writeScopeSelected={claim.scopes.includes("mcp:write")}
+              authoringModes={deviceWriteModes(claim.requestedWriteMode)}
               offerSealed
               disabled={busy || phase.kind === "error"}
             />

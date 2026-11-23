@@ -138,7 +138,7 @@ describe("reviewControls", () => {
   it("the person owns the PR: any of their credentials' PRs are theirs to close", () => {
     const viaToken = summary({
       authorActorKey: "grant:00000000-0000-4000-8000-000000000001",
-      author: { name: "Bob Builder", via: "bob-direct", isViewer: true },
+      author: { kind: "credential", name: "Bob Builder", via: "bob-direct", isViewer: true },
     });
     expect(
       reviewControls({ bits: ["read", "propose"], viewerActorKey: AUTHOR, pr: viaToken }).canClose,

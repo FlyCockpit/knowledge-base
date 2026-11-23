@@ -22,7 +22,9 @@ use std::rc::Rc;
 use kb_client::casefold_path_key;
 use serde::{Deserialize, Serialize};
 
-use crate::markdown::parse_markdown;
+use crate::markdown::{
+    ProvenanceStamp, document_provenance, parse_markdown, split_front_matter, stamp_provenance,
+};
 use crate::store::StoreError;
 use crate::tree::{MANIFEST_PATH, ManifestEntry, TREE_LIMITS, canonical_manifest_bytes};
 
@@ -241,6 +243,9 @@ pub(crate) trait MergeSource {
         &mut self,
         items: &[LineMergeItem<'_>],
     ) -> Result<HashMap<String, Option<Vec<u8>>>, StoreError>;
+    /// Store a blob the merge synthesized itself (a line merge relabelled
+    /// with its writers' provenance); returns its name.
+    fn write(&mut self, bytes: &[u8]) -> Result<String, StoreError>;
     /// Cooperative cancellation, called every few hundred steps.
     fn checkpoint(&mut self) -> Result<(), StoreError> {
         Ok(())
@@ -554,6 +559,59 @@ fn measure(value: Option<&Value>, limit: Limit) -> i64 {
     }
 }
 
+/// How protected a document's label is from dreams (dream 0, agent 1,
+/// human/absent/unknown 2). Without parsing, absent only when there is no
+/// front matter, or its region has neither `provenance` bytes nor a quote
+/// (a quoted key may spell `provenance` with escapes): else it is parsed.
+fn label_protection(bytes: &[u8]) -> u8 {
+    let Some(front_matter) = split_front_matter(bytes).0 else {
+        return 2;
+    };
+    if !front_matter
+        .windows(10)
+        .any(|window| window == b"provenance")
+        && !front_matter.iter().any(|byte| matches!(byte, b'"' | b'\''))
+    {
+        return 2;
+    }
+    parse_markdown(bytes).map_or(2, |parsed| {
+        document_provenance(&parsed.front_matter).protection()
+    })
+}
+
+/// `merged` labelled with the more protected provenance of `main` and
+/// `proposal` (the server's `mergedProvenance`): `None` when it cannot be
+/// stamped (a conflict for the writer); the flag says it was relabelled.
+/// The sides are read only when the combined text is less protected than a
+/// person's.
+fn merged_provenance(
+    state: &mut State<'_>,
+    merged: Vec<u8>,
+    main: &Blob,
+    proposal: &Blob,
+) -> Result<Option<(Vec<u8>, bool)>, StoreError> {
+    let current = label_protection(&merged);
+    if current == 2 {
+        return Ok(Some((merged, false)));
+    }
+    let keep = label_protection(&state.load(main)?).max(label_protection(&state.load(proposal)?));
+    // Already as protected (e.g. both dreams): untouched.
+    if current == keep {
+        return Ok(Some((merged, false)));
+    }
+    if keep == 0 {
+        return Ok(None);
+    }
+    let stamp = if keep == 2 {
+        ProvenanceStamp::Human
+    } else {
+        ProvenanceStamp::Agent
+    };
+    Ok(stamp_provenance(&merged, stamp)
+        .ok()
+        .map(|bytes| (bytes, true)))
+}
+
 /// Merge `proposal` onto `main` from their common `base`. Conflicts are
 /// sorted by path and kind; `tree` is the provisional, valid result.
 pub(crate) fn merge_logical_trees(
@@ -626,15 +684,26 @@ pub(crate) fn merge_logical_trees(
         } else if same_blob(b, m) {
             p.cloned()
         } else {
-            let merged = match (m, p) {
-                (Some(_), Some(_)) => line_merges.get(path.as_str()).cloned().flatten(),
+            // A combined document is new text from both writers: it keeps
+            // the more protected of their two labels (a person's over an
+            // agent's over a dream's), stamped before the size and parse
+            // checks. A label that cannot be stamped is a conflict.
+            let merged = match (m, p, line_merges.get(path.as_str()).cloned().flatten()) {
+                (Some(m), Some(p), Some(lines)) => merged_provenance(&mut state, lines, m, p)?,
                 _ => None,
             };
             match merged {
-                Some(bytes)
+                Some((bytes, relabelled))
                     if bytes.len() <= TREE_LIMITS.max_markdown_bytes
                         && parse_markdown(&bytes).is_ok() =>
                 {
+                    // Only a relabelled text is not already stored (the
+                    // line merge wrote its own result).
+                    if relabelled && state.source.write(&bytes)? != git_blob_sha(&bytes) {
+                        return Err(StoreError::StorageUnavailable(
+                            "merged document was stored under another name".into(),
+                        ));
+                    }
                     Some(Blob {
                         sha: git_blob_sha(&bytes),
                         size: Some(bytes.len() as u64),
@@ -1039,6 +1108,11 @@ mod tests {
                     )
                 })
                 .collect())
+        }
+        fn write(&mut self, bytes: &[u8]) -> Result<String, StoreError> {
+            let sha = git_blob_sha(bytes);
+            self.blobs.insert(sha.clone(), bytes.to_vec());
+            Ok(sha)
         }
     }
 

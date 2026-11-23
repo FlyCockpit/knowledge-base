@@ -1,12 +1,14 @@
 import {
   assertTokenAdmissible,
   type CredentialVerifier,
+  demandAuthoring,
   demandToolGroups,
   KbAdmissionError,
   type TokenAdmission,
   type TokenPrincipal,
   tokenHasOauthScope,
 } from "@knowledge-base/api/lib/kb/principal";
+import type { McpAuthoringNeed } from "@knowledge-base/auth/mcp-authoring-mode";
 
 /** Data-plane identity only. Staging, assets and transfers consume this same actor. */
 export type BearerAdmission = {
@@ -19,6 +21,8 @@ export type BearerAdmission = {
   recheck(): Promise<TokenAdmission>;
   /** This admission narrowed by one more tool-group demand; its recheck enforces it. */
   demandToolGroups(groups: readonly string[]): BearerAdmission;
+  /** This admission narrowed by a write-mode demand (`dream` or `edit`); its recheck enforces it. */
+  demandAuthoring(need: McpAuthoringNeed): BearerAdmission;
 };
 export type BearerAdmitter = (
   request: Request,
@@ -48,5 +52,7 @@ export function bindBearerAdmission(
     },
     demandToolGroups: (groups) =>
       bindBearerAdmission(demandToolGroups(principal, groups), verifier, assertOpen),
+    demandAuthoring: (need) =>
+      bindBearerAdmission(demandAuthoring(principal, need), verifier, assertOpen),
   };
 }

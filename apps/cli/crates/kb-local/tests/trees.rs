@@ -616,3 +616,53 @@ fn incoming_metadata_exact_cap_deduplicates_preflight_and_full_validation() {
         vec![next]
     );
 }
+
+/// The shared provenance-stamp corpus (`fixtures/provenance-stamp-cases.json`,
+/// also run by `parse-markdown.test.ts`): byte-identical results and the same
+/// refusals as the server's `stampProvenance`.
+#[test]
+fn provenance_stamps_match_the_shared_corpus() {
+    use kb_local::markdown::{ProvenanceStamp, parse_markdown, stamp_provenance};
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../packages/api/src/lib/kb/fixtures/provenance-stamp-cases.json"
+    );
+    let raw = std::fs::read_to_string(path).expect("shared provenance corpus");
+    let corpus: serde_json::Value = serde_json::from_str(&raw).expect("corpus json");
+    assert_eq!(corpus["version"], 1);
+    let cases = corpus["cases"].as_array().expect("cases");
+    assert!(cases.len() > 20);
+    for case in cases {
+        let name = case["name"].as_str().expect("name");
+        let input = case["input"].as_str().expect("input").as_bytes();
+        let stamp = match case["stamp"].as_str() {
+            Some("agent") => ProvenanceStamp::Agent,
+            Some("human") => ProvenanceStamp::Human,
+            other => panic!("{name}: stamp {other:?}"),
+        };
+        let result = stamp_provenance(input, stamp);
+        match case["expect"].as_str() {
+            None => assert!(result.is_err(), "{name}: {result:?}"),
+            Some(expected) => {
+                let stamped = result.unwrap_or_else(|e| panic!("{name}: {e}"));
+                assert_eq!(String::from_utf8(stamped).unwrap(), expected, "{name}");
+                // The label reads back and stamping again is idempotent.
+                let parsed = parse_markdown(expected.as_bytes()).expect(name);
+                assert_eq!(
+                    kb_local::markdown::document_provenance(&parsed.front_matter).protection(),
+                    if stamp == ProvenanceStamp::Agent {
+                        1
+                    } else {
+                        2
+                    },
+                    "{name}"
+                );
+                assert_eq!(
+                    stamp_provenance(expected.as_bytes(), stamp).unwrap(),
+                    expected.as_bytes(),
+                    "{name}"
+                );
+            }
+        }
+    }
+}

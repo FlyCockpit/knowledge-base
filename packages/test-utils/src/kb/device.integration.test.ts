@@ -326,7 +326,9 @@ const startSchema = z.object({
   expires_in: z.number(),
   interval: z.number(),
 });
-async function fixture() {
+async function fixture(
+  startBody: Record<string, string> = { client_id: "kb-cli", scope: "mcp:read mcp:write" },
+) {
   const user = await prisma.user.create({
     data: { name: "Device", email: `${randomUUID()}@example.invalid`, twoFactorEnabled: true },
   });
@@ -334,10 +336,7 @@ async function fixture() {
     data: { userId: user.id, token: randomUUID(), expiresAt: new Date(Date.now() + 3600000) },
   });
   const cookie = cookieFor(session.token);
-  const start = await send("/api/auth/device/code", {
-    client_id: "kb-cli",
-    scope: "mcp:read mcp:write",
-  });
+  const start = await send("/api/auth/device/code", startBody);
   expect(start.status).toBe(200);
   const code = startSchema.parse(await start.json());
   const actor = { userId: user.id, sessionId: session.id };
@@ -933,6 +932,8 @@ describe("device HTTP/PG boundary", () => {
                   secret: z.string(),
                   expiresAt: z.iso.datetime(),
                   resource: z.literal(resource),
+                  // A read-only login has no write mode.
+                  authoringMode: z.null(),
                 }),
               })
               .parse(parsed).json;
@@ -1230,6 +1231,8 @@ describe("device HTTP/PG boundary", () => {
             secret: z.string(),
             expiresAt: z.iso.datetime(),
             resource: z.literal(resource),
+            // A read-only login has no write mode.
+            authoringMode: z.null(),
           }),
         })
         .parse(await response.json()).json;
@@ -1410,6 +1413,7 @@ describe("device HTTP/PG boundary", () => {
       const f = await fixture();
       const selection = {
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [],
         allowCreate: true,
@@ -1436,6 +1440,90 @@ describe("device HTTP/PG boundary", () => {
       });
       expect(pat.grant.createdKbBits).toEqual(["read"]);
       expect(pat.grant.allowCreate).toBe(true);
+    });
+  });
+  it("kb login --write-mode bounds the approved write mode; the exchange returns it and the grant stores it", () => {
+    return runOwnedDeviceAction(async () => {
+      // A requested mode needs write, and only the three modes exist.
+      for (const body of [
+        { client_id: "kb-cli", scope: "mcp:read", kb_write_mode: "dream" },
+        { client_id: "kb-cli", scope: "mcp:read mcp:write", kb_write_mode: "everything" },
+      ])
+        expect((await send("/api/auth/device/code", body)).status).toBe(400);
+      const f = await fixture({
+        client_id: "kb-cli",
+        scope: "mcp:read mcp:write",
+        kb_write_mode: "dream",
+      });
+      // The plugin keeps the requested ceiling with the code's scope.
+      const claimed = await send(`/api/auth/device?user_code=${f.code.user_code}`, undefined, {
+        cookie: f.cookie,
+      });
+      expect(claimed.status).toBe(200);
+      const claim = z
+        .object({ nonce: z.uuid(), scope: z.string(), requested_write_mode: z.string().nullable() })
+        .parse(await claimed.json());
+      expect(claim).toMatchObject({
+        scope: "mcp:read mcp:write kb:write-mode:dream",
+        requested_write_mode: "dream",
+      });
+      const write = {
+        scopes: ["mcp:read", "mcp:write"],
+        toolGroups: [...MCP_TOOL_GROUPS],
+        acl: [],
+      };
+      const intent = () =>
+        prisma.deviceApproval.findUniqueOrThrow({
+          where: { deviceCodeDigest: digestDeviceCode(f.code.device_code) },
+        });
+      // Write without a mode, a mode beyond the requested ceiling, and a mode
+      // on a read-only selection are all refused, recording nothing.
+      for (const selection of [
+        write,
+        { ...write, authoringMode: "edit" },
+        { ...write, authoringMode: "both" },
+        { scopes: ["mcp:read"], toolGroups: [...MCP_TOOL_GROUPS], acl: [], authoringMode: "dream" },
+      ]) {
+        expect((await f.select(claim.nonce, selection)).status).toBeGreaterThanOrEqual(400);
+        expect((await intent()).selection).toBeNull();
+      }
+      expect((await f.select(claim.nonce, { ...write, authoringMode: "dream" })).status).toBe(200);
+      expect((await f.decide(claim.nonce)).status).toBe(200);
+      await f.maturePoll();
+      const response = await f.exchange();
+      expect(response.status).toBe(200);
+      const result = z
+        .object({ json: z.object({ credentialId: z.string(), authoringMode: z.string() }) })
+        .parse(await response.json()).json;
+      expect(result.authoringMode).toBe("dream");
+      const pat = await prisma.mcpPersonalToken.findUniqueOrThrow({
+        where: { id: result.credentialId },
+        include: { grant: true },
+      });
+      expect(pat.grant).toMatchObject({
+        scopes: ["mcp:read", "mcp:write"],
+        authoringMode: "DREAM",
+      });
+
+      // Without a requested ceiling any mode may be approved.
+      const open = await fixture();
+      const nonce = await open.approve({ ...write, authoringMode: "edit" });
+      expect(nonce).toEqual(expect.any(String));
+      await open.maturePoll();
+      const exchanged = await open.exchange();
+      expect(exchanged.status).toBe(200);
+      const minted = z
+        .object({ json: z.object({ credentialId: z.string(), authoringMode: z.string() }) })
+        .parse(await exchanged.json()).json;
+      expect(minted.authoringMode).toBe("edit");
+      expect(
+        (
+          await prisma.mcpPersonalToken.findUniqueOrThrow({
+            where: { id: minted.credentialId },
+            include: { grant: true },
+          })
+        ).grant.authoringMode,
+      ).toBe("EDIT");
     });
   });
   describe.each(["select", "approve", "exchange"] as const)(

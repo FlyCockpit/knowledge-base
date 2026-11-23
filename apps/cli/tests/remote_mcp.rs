@@ -454,3 +454,120 @@ fn remote_read_only_and_local_principal_cannot_bypass_the_backend_boundary() {
     assert!(peer.call("knowledge_bases_list", json!({}))["data"].is_object());
     peer.close();
 }
+
+/// A stored login approved for dreams only, and no `--write-mode`: the one
+/// server's list loses the always-edit tools, an edit, a merge and a hidden
+/// edit tool are refused locally with the server's `WRITE_MODE` details,
+/// and nothing mutating reaches the server. A tool the server never listed
+/// is still an unknown tool.
+#[test]
+fn a_dream_only_login_narrows_one_server_and_refuses_edits_locally() {
+    let tool_calls = |server: &Server| {
+        server
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| {
+                let body: Value =
+                    serde_json::from_str(request.wire.split_once("\r\n\r\n").unwrap().1).unwrap();
+                body["method"] == "tools/call"
+            })
+            .count()
+    };
+    let save_dream = |dir: &Path, origin: &str| {
+        let resource = McpResource::parse(origin, TransportPolicy::AllowLoopbackHttp).unwrap();
+        CredentialStore::new(dir.join("data/credentials"))
+            .save_with_mode(
+                &resource,
+                &SecretToken::new("disposable-remote-canary".into()),
+                Some(kb_client::authoring::AuthoringMode::Dream),
+            )
+            .unwrap();
+    };
+    let refused = |reply: &Value| {
+        let error = &reply["result"]["structuredContent"]["error"];
+        assert_eq!(error["code"], "FORBIDDEN", "{reply}");
+        assert_eq!(
+            error["details"],
+            json!({"reason":"WRITE_MODE","required":"edit"})
+        );
+        assert_eq!(error["message"], kb_client::error::WRITE_MODE_EDIT_MESSAGE);
+        kb_client::ToolError::from_value(error).expect("a valid kb/1 refusal");
+    };
+    let valid = |name: &str| fixture()["tools"][name]["validInput"].clone();
+
+    let server = Server::new(|_, wire, _| answer(wire));
+    let dir = support::canonical_tempdir();
+    save_dream(dir.path(), &server.origin);
+    let mut peer = Peer::start(
+        dir.path(),
+        &["mcp", "--server", &server.origin, "--allow-loopback-http"],
+    );
+    let tools = peer.request("tools/list", json!({}))["result"]["tools"].clone();
+    let names: Vec<&str> = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    for kept in [
+        "knowledge_changes_apply",
+        "knowledge_pull_requests_review",
+        "knowledge_search",
+    ] {
+        assert!(names.contains(&kept), "{kept}");
+    }
+    for hidden in [
+        "knowledge_documents_create",
+        "knowledge_documents_update",
+        "knowledge_upload_begin",
+        "knowledge_assets_put",
+        "knowledge_pull_requests_create",
+        "knowledge_bases_create",
+        "knowledge_bases_delete",
+    ] {
+        assert!(!names.contains(&hidden), "{hidden}");
+    }
+    // An edit through `changes_apply`, a merge, and tools hidden only by the
+    // mode: each refused with details, none forwarded.
+    refused(&peer.request(
+        "tools/call",
+        json!({"name":"knowledge_changes_apply","arguments":valid("knowledge_changes_apply")}),
+    ));
+    refused(&peer.request(
+        "tools/call",
+        json!({"name":"knowledge_pull_requests_review","arguments":valid("knowledge_pull_requests_review")}),
+    ));
+    for hidden in ["knowledge_documents_create", "knowledge_bases_delete"] {
+        refused(&peer.request(
+            "tools/call",
+            json!({"name":hidden,"arguments":valid(hidden)}),
+        ));
+    }
+    assert_eq!(tool_calls(&server), 0, "no upstream mutation call");
+    // Reads still forward.
+    let row = &fixture()["tools"]["knowledge_documents_get"];
+    assert_eq!(
+        peer.call("knowledge_documents_get", row["validInput"].clone())["data"],
+        row["validOutput"]
+    );
+    assert_eq!(tool_calls(&server), 1);
+    peer.close();
+
+    // A server that never listed an edit tool: still an unknown tool.
+    let scoped = Server::new(|_, wire, _| scoped_answer(wire));
+    let dir = support::canonical_tempdir();
+    save_dream(dir.path(), &scoped.origin);
+    let mut peer = Peer::start(
+        dir.path(),
+        &["mcp", "--server", &scoped.origin, "--allow-loopback-http"],
+    );
+    let reply = peer.request(
+        "tools/call",
+        json!({"name":"knowledge_documents_create","arguments":valid("knowledge_documents_create")}),
+    );
+    assert_eq!(reply["error"]["code"], -32602, "{reply}");
+    assert_eq!(tool_calls(&scoped), 0);
+    peer.close();
+}

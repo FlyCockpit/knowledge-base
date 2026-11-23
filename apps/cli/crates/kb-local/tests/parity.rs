@@ -63,7 +63,7 @@ async fn every_row_validates_and_lifecycle_replays() {
     .await;
     assert_eq!(
         document["structuredContent"]["data"]["markdown"],
-        "# Knowledge base\n\nParity fixture description\n"
+        "---\nprovenance: agent\n---\n# Knowledge base\n\nParity fixture description\n"
     );
     let b = dispatch(
         &s,
@@ -97,5 +97,95 @@ async fn every_row_validates_and_lifecycle_replays() {
                 .expect("fixture"),
             r["structuredContent"]
         );
+    }
+}
+
+/// Defence in depth behind `kb mcp --write-mode`: a store held to a write
+/// mode refuses every mutation the mode does not allow (each tool's every
+/// corpus input), FORBIDDEN with `WRITE_MODE` details, before any effect;
+/// what the mode allows is never refused for it.
+#[tokio::test]
+async fn write_modes_refuse_each_mutation_before_any_effect() {
+    use kb_client::authoring::{AuthoringMode, tool_authoring_need};
+    const FIXTURES: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../packages/api/src/lib/kb/protocol/fixtures.json"
+    ));
+    let fixtures: Value = serde_json::from_str(FIXTURES).expect("shared fixtures");
+    for mode in [AuthoringMode::Dream, AuthoringMode::Edit] {
+        let f = fixture::Fixture::new(&format!("write-mode-{mode}"));
+        let s = Store::open(&f.root.join("store")).expect("fixture");
+        let exe = model_host::fake_host(&f.root, std::time::Duration::from_secs(5));
+        let made = dispatch(
+            &s,
+            &s.owner(),
+            ToolName::KnowledgeBasesCreate,
+            json!({"name":"Modes","slug":"modes","description":"Write mode fixture","idempotencyKey":"create-modes-001"}),
+            &CallControl::default(),
+            &exe,
+        )
+        .await;
+        let kb = made["structuredContent"]["data"]["kb"]["id"]
+            .as_str()
+            .expect("created")
+            .to_owned();
+        s.narrow_authoring(mode);
+        assert_eq!(s.authoring(), mode);
+        let db = rusqlite::Connection::open(s.paths().state_db()).expect("state");
+        let effects = || -> (i64, i64, i64, i64) {
+            let count = |table: &str| {
+                db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                    .expect("count")
+            };
+            (
+                count("operation_intents"),
+                count("staged_uploads"),
+                count("pull_requests"),
+                count("kbs"),
+            )
+        };
+        for name in ToolName::ALL {
+            let row = &fixtures["tools"][name.as_str()];
+            let inputs = std::iter::once(row["validInput"].clone()).chain(
+                row["validInputVariants"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|variant| variant["value"].clone()),
+            );
+            for mut input in inputs {
+                if input.get("kbId").is_some() {
+                    input["kbId"] = json!(kb);
+                }
+                let need = tool_authoring_need(*name, &input);
+                let before = effects();
+                let r = dispatch(&s, &s.owner(), *name, input, &CallControl::default(), &exe).await;
+                let error = &r["structuredContent"]["error"];
+                match need {
+                    Some(need) if !mode.allows(need) => {
+                        assert_eq!(error["code"], "FORBIDDEN", "{} {mode}", name.as_str());
+                        assert_eq!(
+                            error["details"],
+                            json!({"reason":"WRITE_MODE","required":need.as_str()}),
+                            "{}",
+                            name.as_str()
+                        );
+                        assert_eq!(
+                            error["message"],
+                            kb_client::error::write_mode_message(need),
+                            "{}",
+                            name.as_str()
+                        );
+                        assert_eq!(effects(), before, "{} has no effect", name.as_str());
+                    }
+                    _ => assert_ne!(
+                        error["details"]["reason"],
+                        "WRITE_MODE",
+                        "{} {mode}",
+                        name.as_str()
+                    ),
+                }
+            }
+        }
     }
 }

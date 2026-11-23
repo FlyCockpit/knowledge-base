@@ -500,7 +500,8 @@ describe("asset-manifest", () => {
       path: "large.md",
       query: prismaAssetQuery(prisma),
     });
-    expect(doc.markdown).toBe(markdown);
+    // A person's edit: the server stamps it human, the body is unchanged.
+    expect(doc.markdown).toBe(`---\nprovenance: human\n---\n${markdown}`);
     expect(doc.assetRefs).toHaveLength(1);
     await expect(
       apply(

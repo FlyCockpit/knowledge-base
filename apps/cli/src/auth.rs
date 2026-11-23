@@ -2,6 +2,7 @@
 //! automatic retry: a lost exchange reply may already have consumed the code.
 use anyhow::{Result, bail};
 use kb_client::{
+    authoring::AuthoringMode,
     origin::{McpResource, TransportPolicy},
     types::SecretToken,
 };
@@ -43,6 +44,13 @@ pub fn recipient_key(file: &Path) -> Result<kb_client::sealed::RecipientKey> {
         id,
         *stored.private_key,
     ))
+}
+
+/// `--write-mode <dream|edit|both>`: the three modes, listed in `--help`.
+pub fn write_mode_parser() -> impl clap::builder::TypedValueParser<Value = AuthoringMode> {
+    use clap::builder::TypedValueParser as _;
+    clap::builder::PossibleValuesParser::new(["dream", "edit", "both"])
+        .try_map(|mode: String| mode.parse::<AuthoringMode>())
 }
 
 #[derive(Debug, clap::Args)]
@@ -90,6 +98,8 @@ pub struct Selected {
     pub policy: TransportPolicy,
     /// The named entry's `read_only`.
     pub read_only: bool,
+    /// The named entry's `write_mode`.
+    pub write_mode: Option<AuthoringMode>,
 }
 
 /// Resolve one `--server` value: anything containing `://` is a URL
@@ -133,6 +143,7 @@ pub fn select(
         resource: McpResource::parse(url, policy).map_err(origin_hint)?,
         policy,
         read_only: entry.is_some_and(|entry| entry.read_only),
+        write_mode: entry.and_then(|entry| entry.write_mode),
     })
 }
 
@@ -184,10 +195,18 @@ impl Remote {
             request
         }
     }
-    pub async fn start(&self, policy: TransportPolicy) -> Result<DeviceStart> {
-        let body = serde_json::to_vec(
-            &serde_json::json!({"client_id":"kb-cli", "scope":"mcp:read mcp:write"}),
-        )?;
+    /// Start device approval. `write_mode` (`kb login --write-mode`) is the
+    /// most the approval may grant; sent only when given.
+    pub async fn start(
+        &self,
+        policy: TransportPolicy,
+        write_mode: Option<AuthoringMode>,
+    ) -> Result<DeviceStart> {
+        let mut body = serde_json::json!({"client_id":"kb-cli", "scope":"mcp:read mcp:write"});
+        if let Some(mode) = write_mode {
+            body["kb_write_mode"] = serde_json::json!(mode.as_str());
+        }
+        let body = serde_json::to_vec(&body)?;
         let (status, bytes) = read_response(
             self.post("/api/auth/device/code")
                 .header("content-type", "application/json")
@@ -255,7 +274,7 @@ impl Remote {
                 );
             }
             let token = parse_token(result.secret.as_bytes())?;
-            return Ok(Poll::Authorized(token));
+            return Ok(Poll::Authorized(token, result.authoring_mode));
         }
         if status == StatusCode::BAD_REQUEST
             && let Ok(envelope) = serde_json::from_slice::<Envelope<FlowError>>(&bytes)
@@ -437,6 +456,10 @@ struct Exchange {
     #[serde(rename = "expiresAt")]
     _expires_at: String,
     resource: String,
+    /// The approved write mode; `null` for a read-only credential (absent
+    /// from servers before write modes).
+    #[serde(rename = "authoringMode", default)]
+    authoring_mode: Option<AuthoringMode>,
 }
 #[derive(Deserialize)]
 struct FlowError {
@@ -450,7 +473,8 @@ struct FlowData {
 pub enum Poll {
     Pending,
     SlowDown,
-    Authorized(SecretToken),
+    /// The credential and the write mode it was approved for.
+    Authorized(SecretToken, Option<AuthoringMode>),
 }
 
 /// Exact bounded UTF8 for human sealed enrollment; unlike token import, no

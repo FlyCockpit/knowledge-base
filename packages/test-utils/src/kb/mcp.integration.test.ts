@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import {
   mkdtempSync,
   readdirSync,
@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import type { Context } from "@knowledge-base/api/context";
 import { prismaAssetQuery } from "@knowledge-base/api/lib/kb/asset-authz";
+import { mutateAsset } from "@knowledge-base/api/lib/kb/assets";
 import { runLockedOperation } from "@knowledge-base/api/lib/kb/authority-lock";
 import {
   createKnowledgeBase,
@@ -62,14 +63,20 @@ import {
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { enrollSealedRecord, grantSealedRecord } from "@knowledge-base/api/lib/kb/sealed-records";
 import { shareRevoke } from "@knowledge-base/api/lib/kb/shares";
-import { uploadBegin, uploadWrite } from "@knowledge-base/api/lib/kb/uploads";
+import { stagedUploadPath, uploadBegin, uploadWrite } from "@knowledge-base/api/lib/kb/uploads";
 import {
   endGrantElevation,
   mintPersonalToken,
+  mintPersonalTokenInTransaction,
   revokePersonalToken,
   updateGrant,
 } from "@knowledge-base/api/lib/mcp-token-access";
 import type { AppRouter, AppRouterClient } from "@knowledge-base/api/routers/index";
+import {
+  createDeviceApprovalService,
+  digestDeviceCode,
+} from "@knowledge-base/auth/device-approval";
+import { createMcpConsentService } from "@knowledge-base/auth/mcp-consent";
 import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
 import type { PrismaClient } from "@knowledge-base/db/client";
 import { Queue } from "bullmq";
@@ -89,26 +96,29 @@ type Actor = {
   verifier: CredentialVerifier;
   recheck(): Promise<unknown>;
   demandToolGroups(groups: readonly string[]): Actor;
+  demandAuthoring(need: "dream" | "edit"): Actor;
 };
 /**
  * Runs `before` immediately before the Nth recheck of each tool call's own
- * (group-demanding) admission; the recheck itself stays the real one.
+ * (group-demanding, and for writes write-mode-demanding) admission; the
+ * recheck itself stays the real one.
  */
 const beforeRecheck =
   (nth: number, before: () => Promise<unknown>) =>
   (actor: Actor): Actor => ({
     ...actor,
     demandToolGroups: (groups) => {
-      const inner = actor.demandToolGroups(groups);
-      let calls = 0;
-      return {
+      const counter = { calls: 0 };
+      const counted = (inner: Actor): Actor => ({
         ...inner,
         recheck: async () => {
-          calls += 1;
-          if (calls === nth) await before();
+          counter.calls += 1;
+          if (counter.calls === nth) await before();
           return inner.recheck();
         },
-      };
+        demandAuthoring: (need) => counted(inner.demandAuthoring(need)),
+      });
+      return counted(actor.demandToolGroups(groups));
     },
   });
 type GatePort = {
@@ -123,7 +133,7 @@ type Auth = {
     withQuery?: CredentialQuery;
     gate?: GatePort;
     origin: string;
-    verifyOAuth(): Promise<Record<string, unknown>>;
+    verifyOAuth(request: Request): Promise<Record<string, unknown>>;
   }): (request: Request) => Promise<Actor>;
 };
 type Gate = { createAdmissionGate(): GatePort };
@@ -258,6 +268,8 @@ function client(
   ownedAdmission = false,
   decorateActor?: (actor: Actor) => Actor,
   beforeDiscoveryDecision?: () => Promise<void>,
+  /** Bearer admission for this client (default: the shared PAT-only one). */
+  admitWith: (request: Request) => Promise<Actor> = admit,
 ) {
   const gate = createAdmissionGate();
   const endpoint = createMcpEndpoint({
@@ -272,7 +284,7 @@ function client(
           },
         })
       : async (request) => {
-          const actor = await admit(request);
+          const actor = await admitWith(request);
           return decorateActor ? decorateActor(actor) : actor;
         },
     gate,
@@ -432,6 +444,7 @@ async function fixture(bits: Permission[] = ["read", "manage"]) {
   const minted = await mintPersonalToken(runtime, user.id, {
     name: "creator",
     scopes: ["mcp:write"],
+    authoringMode: "both",
     toolGroups: [...MCP_TOOL_GROUPS],
     acl: [],
     allowCreate: true,
@@ -477,15 +490,26 @@ afterAll(async () => {
 });
 
 describe("SDK HTTP MCP real domain data plane", () => {
-  fixtureTest("names who created a KB in its initial commit", async ({ kb }) => {
-    const message = execFileSync(
-      "git",
-      ["-C", join(reposDir, `kb_${kb.id}.git`), "cat-file", "commit", kb.headSha as string],
-      { env: fixtureGitEnv(), encoding: "utf8" },
-    );
+  fixtureTest("names who created a KB in its initial commit", async ({ kb, minted }) => {
+    const repo = join(reposDir, `kb_${kb.id}.git`);
+    const message = execFileSync("git", ["-C", repo, "cat-file", "commit", kb.headSha as string], {
+      env: fixtureGitEnv(),
+      encoding: "utf8",
+    });
+    const { grantId } = await prisma.mcpPersonalToken.findUniqueOrThrow({
+      where: { id: minted.token.id },
+    });
+    // A credential created it: the server's block names the actor key and the
+    // agent provenance it stamped on index.md.
     expect(message.split("\n\n").slice(1).join("\n\n")).toBe(
-      "Initial commit\n\nActed-by: MCP fixture via creator\n",
+      `Initial commit\n\nActed-by: MCP fixture via creator\nKb-Actor-Key: grant:${grantId}\nKb-Provenance: agent\n`,
     );
+    expect(
+      execFileSync("git", ["-C", repo, "show", `${kb.headSha}:index.md`], {
+        env: fixtureGitEnv(),
+        encoding: "utf8",
+      }),
+    ).toMatch(/^---\nprovenance: agent\n---\n/);
   });
   fixtureTest(
     "shares the exact Redis upload allowance across grants and browser without charging acknowledged retries",
@@ -493,6 +517,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const sibling = await mintPersonalToken(runtime, user.id, {
         name: "upload sibling",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       });
@@ -550,6 +575,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
         const minted = await mintPersonalToken(runtime, user.id, {
           name: `groups ${toolGroups.join(" ")}`,
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups: toolGroups as (typeof MCP_TOOL_GROUPS)[number][],
           acl: [{ kbId: kb.id, bits: ["write"] }],
         });
@@ -681,6 +707,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "edited connection",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read", "edit"],
         acl: [{ kbId: kb.id, bits: ["write"] }],
       });
@@ -761,6 +788,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
         updateGrant(runtime, user.id, {
           id: grantId,
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups: ["read", "edit"],
           acl: [{ kbId: kb.id, bits: ["write"] }],
         }),
@@ -787,6 +815,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "temporary connection",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read"],
         acl: [{ kbId: kb.id, bits: ["read"] }],
       });
@@ -911,6 +940,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "narrowed under elevation",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read"],
         acl: [{ kbId: kb.id, bits: ["write"] }],
       });
@@ -991,6 +1021,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "grown discovery",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read"],
         acl: [{ kbId: kb.id, bits: ["read"] }],
       });
@@ -1056,6 +1087,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "lapsing discovery",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read"],
         acl: [{ kbId: kb.id, bits: ["read"] }],
       });
@@ -1271,6 +1303,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const owner = await mintPersonalToken(runtime, user.id, {
         name: "discovery owner",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["manage"] }],
         allowCreate: true,
@@ -1303,6 +1336,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, member.id, {
         name: "boundary editor",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: ["read", "edit"],
         acl: [{ kbId: kb.id, bits: ["write"] }],
       });
@@ -1398,6 +1432,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
         const minted = await mintPersonalToken(runtime, user.id, {
           name: `staged ${key()}`,
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups,
           acl: [{ kbId: kb.id, bits: ["write"] }],
         });
@@ -1627,6 +1662,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const token = await mintPersonalToken(runtime, member.id, {
         name: "member",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       });
@@ -2649,6 +2685,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const minted = await mintPersonalToken(runtime, user.id, {
         name: "proposal author",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       });
@@ -2854,6 +2891,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const reader = await mintPersonalToken(runtime, user.id, {
         name: "reader",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["read"] }],
       });
@@ -2870,6 +2908,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const otherToken = await mintPersonalToken(runtime, other.id, {
         name: "other author",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       });
@@ -2911,6 +2950,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const token = await mintPersonalToken(runtime, user.id, {
         name: "proposer",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["propose"] }],
       });
@@ -2950,12 +2990,14 @@ describe("SDK HTTP MCP real domain data plane", () => {
       const reviewer = await mintPersonalToken(runtime, user.id, {
         name: "reviewer",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["review"] }],
       });
       const writer = await mintPersonalToken(runtime, user.id, {
         name: "writer",
         scopes: ["mcp:write"],
+        authoringMode: "both",
         toolGroups: [...MCP_TOOL_GROUPS],
         acl: [{ kbId: kb.id, bits: ["write"] }],
       });
@@ -3055,6 +3097,8 @@ describe("SDK HTTP MCP real domain data plane", () => {
         const token = await mintPersonalToken(runtime, identity.id, {
           name: "matrix",
           scopes: [scope],
+          // A write-capable token needs a write mode; both keeps its old authority.
+          authoringMode: scope === "mcp:write" ? "both" : null,
           toolGroups: [...MCP_TOOL_GROUPS],
           acl: [{ kbId: kb.id, bits: [bit] }],
         });
@@ -3106,6 +3150,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
         const hidden = await mintPersonalToken(runtime, user.id, {
           name: "ungranted",
           scopes: ["mcp:write"],
+          authoringMode: "both",
           toolGroups: [...MCP_TOOL_GROUPS],
           acl: [],
         });
@@ -3613,6 +3658,7 @@ describe("SDK HTTP MCP real domain data plane", () => {
           const admin = await mintPersonalToken(configured, user.id, {
             name: "scoped CLI admin",
             scopes: ["mcp:write"],
+            authoringMode: "both",
             toolGroups: ["read", "kb_admin"],
             acl: [
               { kbId: kb.id, bits: ["manage"] },
@@ -3674,5 +3720,809 @@ describe("SDK HTTP MCP real domain data plane", () => {
         }
       }),
     240_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Write modes (dream / edit / both), live per grant, for every grant type.
+// ---------------------------------------------------------------------------
+const MODES = ["dream", "edit", "both"] as const;
+type Mode = (typeof MODES)[number];
+const oauthResource = `${runtime.canonicalOrigin}/mcp`;
+const consentSecret = "disposable-write-mode-consent-secret";
+const consentService = createMcpConsentService({
+  db: prisma,
+  secret: consentSecret,
+  resource: oauthResource,
+});
+const deviceService = createDeviceApprovalService({ db: prisma, resource: oauthResource });
+/**
+ * OAuth access tokens of this block: only the JWT signature check is replaced
+ * (the claims a verified token carries); the grant is minted by real consent
+ * and checked live by the production verifier on every call.
+ */
+const oauthTokens = new Map<string, Record<string, unknown>>();
+const oauthAdmit = createBearerAdmission({
+  query: prismaAssetQuery(prisma),
+  origin: runtime.canonicalOrigin,
+  verifyOAuth: async (request) => {
+    const raw = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+    const claims = raw ? oauthTokens.get(raw) : undefined;
+    if (!claims) throw new Error("unknown fixture access token");
+    return claims;
+  },
+});
+type WriteModeOwner = {
+  user: { id: string };
+  actor: { userId: string; sessionId: string };
+};
+async function writeModeOwner(): Promise<WriteModeOwner> {
+  const user = await prisma.user.create({
+    data: { name: "Write mode owner", email: `${key()}@example.invalid`, twoFactorEnabled: true },
+  });
+  const session = await prisma.session.create({
+    data: { userId: user.id, token: key(), expiresAt: new Date(Date.now() + 3600_000) },
+  });
+  return { user, actor: { userId: user.id, sessionId: session.id } };
+}
+/** A write-capable ceiling on `kbId` with this write mode (and KB creation). */
+function modeSelection(kbId: string, mode: Mode, oauth = false) {
+  return {
+    scopes: ["mcp:read", "mcp:write"] as ("mcp:read" | "mcp:write")[],
+    authoringMode: mode,
+    toolGroups: oauth
+      ? MCP_TOOL_GROUPS.filter((group) => group !== "sealed")
+      : [...MCP_TOOL_GROUPS],
+    acl: [{ kbId, bits: ["read", "write", "review", "manage"] as Permission[] }],
+    allowCreate: true,
+    createdKbBits: ["read", "manage"] as Permission[],
+  };
+}
+type ModeGrant = { c: ReturnType<typeof client>; grantId: string };
+const grantIdOfToken = async (tokenId: string) =>
+  (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: tokenId } })).grantId;
+const userCode = () =>
+  Array.from(randomBytes(8), (byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte % 32]).join("");
+/** Each grant type, minted the way its real surface mints it. */
+const grantTypes: Record<
+  "pat" | "device" | "oauth",
+  (
+    owner: WriteModeOwner,
+    kbId: string,
+    mode: Mode,
+    configured?: KbRuntimeConfig,
+  ) => Promise<ModeGrant>
+> = {
+  // mcpTokens.create's own mint.
+  pat: async (owner, kbId, mode, configured = runtime) => {
+    const minted = await mintPersonalToken(runtime, owner.user.id, {
+      name: `pat ${mode}`,
+      ...modeSelection(kbId, mode),
+    });
+    return {
+      c: client(minted.secret, configured),
+      grantId: await grantIdOfToken(minted.token.id),
+    };
+  },
+  // `kb login --write-mode <mode>`: the start stores the ceiling in the code's
+  // scope; claim, select, approve and exchange are the device service's own,
+  // and the exchange mints exactly as cliCredentials.exchangeDeviceCode does.
+  device: async (owner, kbId, mode, configured = runtime) => {
+    const deviceCode = randomBytes(24).toString("base64url");
+    const code = userCode();
+    await prisma.deviceCode.create({
+      data: {
+        deviceCodeDigest: digestDeviceCode(deviceCode),
+        userCode: code,
+        expiresAt: new Date(Date.now() + 600_000),
+        status: "pending",
+        clientId: "kb-cli",
+        scope: `mcp:read mcp:write kb:write-mode:${mode}`,
+        pollingInterval: 5000,
+      },
+    });
+    const claim = await deviceService.claim(owner.actor, code);
+    expect(claim.requested_write_mode).toBe(mode);
+    await deviceService.select(owner.actor, {
+      userCode: code,
+      nonce: claim.nonce,
+      selection: modeSelection(kbId, mode),
+    });
+    await deviceService.decide(owner.actor, { userCode: code, nonce: claim.nonce }, "approve");
+    const exchanged = await deviceService.exchange(
+      { deviceCode, name: `device ${mode}` },
+      async (tx, userId, selection, name, expiresAt) => {
+        const { recipients: _recipients, ...ceiling } = selection;
+        const minted = await mintPersonalTokenInTransaction(
+          prismaAssetQuery(tx),
+          randomUUID(),
+          runtime.canonicalOrigin,
+          userId,
+          {
+            ...ceiling,
+            scopes: ceiling.scopes.filter(
+              (scope): scope is "mcp:read" | "mcp:write" => scope !== "offline_access",
+            ),
+            name,
+            expiresAt,
+          },
+        );
+        return {
+          credentialId: minted.token.id,
+          grantId: minted.grantId,
+          secret: minted.secret,
+          expiresAt,
+        };
+      },
+    );
+    expect(exchanged.authoringMode).toBe(mode);
+    return {
+      c: client(exchanged.secret, configured),
+      grantId: await grantIdOfToken(exchanged.credentialId),
+    };
+  },
+  // Browser consent for a registered client, then its access token's claims.
+  oauth: async (owner, kbId, mode, configured = runtime) => {
+    const clientId = key();
+    await prisma.oauthResource.upsert({
+      where: { identifier: oauthResource },
+      create: {
+        identifier: oauthResource,
+        name: "MCP",
+        allowedScopes: ["mcp:read", "mcp:write", "offline_access"],
+      },
+      update: {},
+    });
+    await prisma.oauthClient.create({
+      data: {
+        clientId,
+        redirectUris: ["https://client.invalid/cb"],
+        scopes: ["mcp:read", "mcp:write"],
+        contacts: [],
+        grantTypes: ["authorization_code"],
+        responseTypes: ["code"],
+        postLogoutRedirectUris: [],
+        clientResources: { create: { resourceId: oauthResource } },
+      },
+    });
+    const query = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: "https://client.invalid/cb",
+      resource: oauthResource,
+      scope: "mcp:read mcp:write",
+      state: key(),
+      response_type: "code",
+      code_challenge: "a".repeat(43),
+      code_challenge_method: "S256",
+      exp: String(Math.floor(Date.now() / 1000) + 600),
+    });
+    query.sort();
+    query.set("sig", createHmac("sha256", consentSecret).update(query.toString()).digest("base64"));
+    const oauthQuery = query.toString();
+    const prepared = await consentService.prepare(owner.actor, oauthQuery);
+    const approved = await consentService.approve(owner.actor, {
+      ...prepared,
+      oauthQuery,
+      explicitConsent: true,
+      selection: modeSelection(kbId, mode, true),
+    });
+    const token = `oauth.${randomBytes(24).toString("base64url")}`;
+    oauthTokens.set(token, {
+      sub: owner.user.id,
+      client_id: clientId,
+      mcp_grant_id: approved.grantId,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: oauthResource,
+      scope: "mcp:read mcp:write",
+    });
+    return {
+      c: client(token, configured, false, undefined, undefined, oauthAdmit),
+      grantId: approved.grantId,
+    };
+  },
+};
+type ModeKb = {
+  owner: WriteModeOwner;
+  kbId: string;
+  /** The owner's both-mode creator: seeds the KB and reads it back. */
+  admin: ReturnType<typeof client>;
+  /** The owner's propose-only token: opens the PRs the cells review. */
+  proposer: ReturnType<typeof client>;
+  asset: { rev: string; hash: string };
+  /** A READY asset upload a refused assets_put names (it must stay READY). */
+  spareUpload: string;
+};
+const png = media.minimalPng();
+const pngHash = `sha256:${createHash("sha256").update(png).digest("hex")}`;
+async function readyAsset(c: ReturnType<typeof client>, kbId: string) {
+  const upload = await c.call("knowledge_upload_begin", {
+    kbId,
+    kind: "asset",
+    size: png.length,
+    mime: "image/png",
+    contentHash: pngHash,
+    idempotencyKey: key(),
+  });
+  await c.call("knowledge_upload_write", {
+    kbId,
+    uploadId: upload.uploadId,
+    offset: 0,
+    bytesBase64: png.toString("base64"),
+  });
+  await c.call("knowledge_upload_finish", { kbId, uploadId: upload.uploadId });
+  return upload.uploadId;
+}
+async function modeKb(): Promise<ModeKb> {
+  setKbRecoveryComplete(true);
+  runtime.ratePort = createMemoryRatePort();
+  const owner = await writeModeOwner();
+  const creator = await mintPersonalToken(runtime, owner.user.id, {
+    name: "creator",
+    scopes: ["mcp:write"],
+    authoringMode: "both",
+    toolGroups: [...MCP_TOOL_GROUPS],
+    acl: [],
+    allowCreate: true,
+    createdKbBits: ["read", "write", "review", "manage"],
+  });
+  const admin = client(creator.secret);
+  const { kb } = await admin.call("knowledge_bases_create", creation());
+  const seeded = await admin.call("knowledge_documents_create", {
+    kbId: kb.id,
+    baseRevision: kb.headSha,
+    idempotencyKey: key(),
+    path: "seed.md",
+    content: { markdown: "# seed\n" },
+  });
+  const put = await admin.call("knowledge_assets_put", {
+    kbId: kb.id,
+    baseRevision: seeded.commitSha,
+    idempotencyKey: key(),
+    path: "a.png",
+    uploadId: await readyAsset(admin, kb.id),
+  });
+  const proposing = await mintPersonalToken(runtime, owner.user.id, {
+    name: "proposer",
+    scopes: ["mcp:write"],
+    authoringMode: "both",
+    toolGroups: [...MCP_TOOL_GROUPS],
+    acl: [{ kbId: kb.id, bits: ["propose"] }],
+  });
+  return {
+    owner,
+    kbId: kb.id,
+    admin,
+    proposer: client(proposing.secret),
+    asset: { rev: put.commitSha, hash: pngHash },
+    spareUpload: await readyAsset(admin, kb.id),
+  };
+}
+const kbRepo = (kbId: string) => join(reposDir, `kb_${kbId}.git`);
+const kbGit = (kbId: string, ...args: string[]) =>
+  execFileSync("git", ["-C", kbRepo(kbId), ...args], { env: fixtureGitEnv(), encoding: "utf8" });
+/** Everything a refused mutation must leave untouched. */
+async function sideEffects(f: ModeKb) {
+  return {
+    refs: kbGit(f.kbId, "for-each-ref", "--format=%(refname) %(objectname)"),
+    objects: kbGit(f.kbId, "count-objects", "-v"),
+    kbs: await prisma.knowledgeBase.findMany({
+      where: { ownerId: f.owner.user.id },
+      select: { id: true, state: true, headSha: true, metadataVersion: true },
+      orderBy: { id: "asc" },
+    }),
+    intents: await prisma.operationIntent.count(),
+    prs: await prisma.pullRequest.findMany({
+      where: { kbId: f.kbId },
+      select: { number: true, status: true, headSha: true },
+      orderBy: { number: "asc" },
+    }),
+    uploads: await prisma.stagedUpload.findMany({
+      select: { id: true, state: true, reservedByOpId: true, consumedByOpId: true },
+      orderBy: { id: "asc" },
+    }),
+    quota: await prisma.quotaAccount.findMany({
+      select: { id: true, committed: true, reserved: true },
+      orderBy: { id: "asc" },
+    }),
+    reservations: await prisma.quotaReservation.count(),
+  };
+}
+async function refusedByMode(
+  f: ModeKb,
+  c: ReturnType<typeof client>,
+  name: KbToolName,
+  args: unknown,
+  required: "dream" | "edit",
+) {
+  const before = await sideEffects(f);
+  const response = await c.raw(name, args);
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as {
+    result: { isError: boolean; structuredContent: { error?: unknown } };
+  };
+  expect(body.result.isError, `${name} should be refused`).toBe(true);
+  expect(body.result.structuredContent.error, name).toMatchObject({
+    code: "FORBIDDEN",
+    details: { reason: "WRITE_MODE", required },
+  });
+  expect(await sideEffects(f), `${name} left a side effect`).toEqual(before);
+}
+
+describe.each(Object.keys(grantTypes) as (keyof typeof grantTypes)[])(
+  "write modes: %s grants × mode × mutation tool",
+  (grantType) => {
+    let f: ModeKb;
+    beforeAll(
+      () =>
+        runOwnedMcpAction(async () => {
+          f = await modeKb();
+        }),
+      180_000,
+    );
+    it.each(MODES)(
+      "mode %s: each mutation is allowed or refused (FORBIDDEN WRITE_MODE, no side effect)",
+      (mode) =>
+        runOwnedMcpAction(async () => {
+          runtime.ratePort = createMemoryRatePort();
+          const { c: g, grantId } = await grantTypes[grantType](f.owner, f.kbId, mode);
+          expect(
+            (await prisma.mcpGrant.findUniqueOrThrow({ where: { id: grantId } })).authoringMode,
+          ).toBe(mode.toUpperCase());
+          const may = (need: "dream" | "edit") => mode === "both" || mode === need;
+          const head = async () => {
+            const sha = (await f.admin.call("knowledge_bases_get", { kbId: f.kbId })).kb.headSha;
+            if (!sha) throw new Error("fixture main must exist");
+            return sha;
+          };
+          /** Call: allowed cells must succeed, refused ones must leave nothing behind. */
+          const attempt = async (need: "dream" | "edit", name: KbToolName, args: unknown) => {
+            if (may(need)) return (await g.call(name, args)) as Record<string, unknown>;
+            await refusedByMode(f, g, name, args, need);
+            return null;
+          };
+          const write = async () => ({
+            kbId: f.kbId,
+            baseRevision: await head(),
+            idempotencyKey: key(),
+          });
+
+          // Discovery: a dream-only grant does not see the edit-only tools.
+          const listed = (await g.list()).map((tool) => tool.name);
+          expect(listed).toContain("knowledge_changes_apply");
+          expect(listed).toContain("knowledge_pull_requests_review");
+          for (const tool of [
+            "knowledge_documents_create",
+            "knowledge_assets_put",
+            "knowledge_bases_create",
+          ] as const)
+            expect(listed.includes(tool), tool).toBe(mode !== "dream");
+
+          // knowledge_changes_apply, by its own mode.
+          await attempt("edit", "knowledge_changes_apply", {
+            ...(await write()),
+            mode: "edit",
+            title: `edit ${mode}`,
+            changes: [{ op: "create", path: `${mode}/edit.md`, content: { markdown: "# edit\n" } }],
+            sourceSessionIds: [],
+          });
+          await attempt("dream", "knowledge_changes_apply", {
+            ...(await write()),
+            mode: "dream",
+            changes: [],
+            title: `dream ${mode}`,
+            sourceSessionIds: [key()],
+            dream: {
+              model: { provider: "fixture", model: "fixture" },
+              redactionApplied: true,
+              upserts: [
+                {
+                  id: `dream-${mode}`,
+                  type: "concept",
+                  title: null,
+                  body: "Dreamt",
+                  citations: [],
+                  provenance: "dream",
+                },
+              ],
+            },
+          });
+
+          // The document wrappers.
+          await attempt("edit", "knowledge_documents_create", {
+            ...(await write()),
+            path: `${mode}/doc.md`,
+            content: { markdown: "# doc\n" },
+          });
+          const target = may("edit") ? `${mode}/doc.md` : "seed.md";
+          await attempt("edit", "knowledge_documents_update", {
+            ...(await write()),
+            path: target,
+            content: { markdown: "# updated\n" },
+          });
+          await attempt("edit", "knowledge_documents_delete", {
+            ...(await write()),
+            path: target,
+            confirm: "DELETE",
+          });
+
+          // Upload staging and assets.
+          await attempt("edit", "knowledge_upload_begin", {
+            kbId: f.kbId,
+            kind: "markdown",
+            size: 1,
+            mime: "text/markdown",
+            contentHash: `sha256:${createHash("sha256").update("x").digest("hex")}`,
+            idempotencyKey: key(),
+          });
+          await attempt("edit", "knowledge_assets_put", {
+            ...(await write()),
+            path: `${mode}/a.png`,
+            uploadId: may("edit") ? await readyAsset(g, f.kbId) : f.spareUpload,
+          });
+          await attempt("edit", "knowledge_assets_import", {
+            ...(await write()),
+            path: `${mode}/imported.png`,
+            source: { kbId: f.kbId, rev: f.asset.rev, hash: f.asset.hash },
+          });
+
+          // Opening a PR from the grant's own user branch.
+          const branch = `users/${grantType}-${mode}`;
+          const branchHead = await head();
+          kbGit(f.kbId, "update-ref", `refs/heads/${branch}`, branchHead);
+          await prisma.branchOwner.create({
+            data: {
+              kbId: f.kbId,
+              refName: `refs/heads/${branch}`,
+              ownerActorKey: `grant:${grantId}`,
+              purpose: "USER",
+            },
+          });
+          const opened = await attempt("edit", "knowledge_pull_requests_create", {
+            kbId: f.kbId,
+            headBranch: branch,
+            expectedHeadSha: branchHead,
+            expectedTargetSha: branchHead,
+            title: `PR ${mode}`,
+            idempotencyKey: key(),
+          });
+
+          // Reviewing: merge needs edit, close needs no write mode.
+          const proposal = async (path: string) => {
+            const proposed = await f.proposer.call("knowledge_documents_create", {
+              ...(await write()),
+              path,
+              content: { markdown: "# proposal\n" },
+            });
+            expect(proposed.kind).toBe("proposed");
+            return (
+              await f.admin.call("knowledge_pull_requests_get", {
+                kbId: f.kbId,
+                number: proposed.proposal!.number,
+              })
+            ).pr;
+          };
+          const review = (
+            pr: { number: number; headSha: string; targetSha: string },
+            decision: "merge" | "close",
+          ) => ({
+            kbId: f.kbId,
+            number: pr.number,
+            decision,
+            expectedHeadSha: pr.headSha,
+            expectedTargetSha: pr.targetSha,
+            idempotencyKey: key(),
+            confirm: decision === "merge" ? "MERGE" : "CLOSE",
+          });
+          const first = await proposal(`${mode}/proposal.md`);
+          const merged = await attempt(
+            "edit",
+            "knowledge_pull_requests_review",
+            review(first, "merge"),
+          );
+          if (merged) expect((merged.pr as { status: string }).status).toBe("MERGED");
+          const closable = merged ? await proposal(`${mode}/proposal-2.md`) : first;
+          expect(
+            (await g.call("knowledge_pull_requests_review", review(closable, "close"))).pr.status,
+          ).toBe("CLOSED");
+          if (opened) {
+            // Main moved since it opened: close against the PR as it reads now.
+            const { pr } = await f.admin.call("knowledge_pull_requests_get", {
+              kbId: f.kbId,
+              number: (opened.pr as { number: number }).number,
+            });
+            expect(
+              (await g.call("knowledge_pull_requests_review", review(pr, "close"))).pr.status,
+            ).toBe("CLOSED");
+          }
+
+          // KB lifecycle: creating writes index.md, deleting destroys documents.
+          const created = await attempt("edit", "knowledge_bases_create", creation());
+          const victim = created
+            ? (created.kb as { id: string; metadataVersion: number })
+            : (await f.admin.call("knowledge_bases_get", { kbId: f.kbId })).kb;
+          await attempt("edit", "knowledge_bases_delete", {
+            kbId: victim.id,
+            metadataVersion: victim.metadataVersion,
+            idempotencyKey: key(),
+            confirm: "DELETE",
+          });
+          // A refused cell never touched the spare upload.
+          if (!may("edit"))
+            expect(
+              await prisma.stagedUpload.findUniqueOrThrow({ where: { id: f.spareUpload } }),
+            ).toMatchObject({ state: "READY", reservedByOpId: null, consumedByOpId: null });
+        }),
+      240_000,
+    );
+    const markdownUpload = Buffer.from("---\nprovenance: agent\n---\n# Narrowed\n\nSome text.\n");
+    it.each(["markdown", "asset"] as const)(
+      "a grant narrowed to dream after staging can neither write, retry nor finish its %s upload",
+      (kind) =>
+        runOwnedMcpAction(async () => {
+          runtime.ratePort = createMemoryRatePort();
+          const { c: g, grantId } = await grantTypes[grantType](f.owner, f.kbId, "both");
+          const bytes = kind === "asset" ? png : markdownUpload;
+          const begin = () =>
+            g.call("knowledge_upload_begin", {
+              kbId: f.kbId,
+              kind,
+              size: bytes.length,
+              mime: kind === "asset" ? "image/png" : "text/markdown",
+              contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+              idempotencyKey: key(),
+            });
+          const half = Math.floor(bytes.length / 2);
+          // One upload mid-write, one already finished (READY), both
+          // acknowledged under `both` before the grant narrows.
+          const writing = await begin();
+          await g.call("knowledge_upload_write", {
+            kbId: f.kbId,
+            uploadId: writing.uploadId,
+            offset: 0,
+            bytesBase64: bytes.subarray(0, half).toString("base64"),
+          });
+          const ready = await begin();
+          await g.call("knowledge_upload_write", {
+            kbId: f.kbId,
+            uploadId: ready.uploadId,
+            offset: 0,
+            bytesBase64: bytes.toString("base64"),
+          });
+          await g.call("knowledge_upload_finish", { kbId: f.kbId, uploadId: ready.uploadId });
+          await updateGrant(runtime, f.owner.user.id, { id: grantId, authoringMode: "dream" });
+          const staged = async (uploadId: string) => ({
+            row: await prisma.stagedUpload.findUniqueOrThrow({
+              where: { id: uploadId },
+              select: {
+                offset: true,
+                rollingHashHex: true,
+                state: true,
+                reservedByOpId: true,
+                finishResponse: true,
+              },
+            }),
+            bytes: readFileSync(stagedUploadPath(runtime.assetsDir, uploadId)),
+          });
+          const before = {
+            writing: await staged(writing.uploadId),
+            ready: await staged(ready.uploadId),
+          };
+          expect(before.writing.row).toMatchObject({ offset: half, state: "WRITING" });
+          expect(before.writing.bytes.equals(bytes.subarray(0, half))).toBe(true);
+          expect(before.ready.row).toMatchObject({ offset: bytes.length, state: "READY" });
+          expect(before.ready.bytes.equals(bytes)).toBe(true);
+          const write = (uploadId: string, offset: number, chunk: Buffer) =>
+            refusedByMode(
+              f,
+              g,
+              "knowledge_upload_write",
+              { kbId: f.kbId, uploadId, offset, bytesBase64: chunk.toString("base64") },
+              "edit",
+            );
+          const finish = (uploadId: string) =>
+            refusedByMode(f, g, "knowledge_upload_finish", { kbId: f.kbId, uploadId }, "edit");
+          // New bytes, then the retry of the already acknowledged chunk.
+          await write(writing.uploadId, half, bytes.subarray(half));
+          await write(writing.uploadId, 0, bytes.subarray(0, half));
+          await finish(writing.uploadId);
+          // The finished upload: neither its write nor its finish replays.
+          await write(ready.uploadId, 0, bytes);
+          await finish(ready.uploadId);
+          expect({
+            writing: await staged(writing.uploadId),
+            ready: await staged(ready.uploadId),
+          }).toEqual(before);
+        }),
+    );
+  },
+);
+
+describe("write modes: publication-level demands", () => {
+  let f: ModeKb;
+  beforeAll(
+    () =>
+      runOwnedMcpAction(async () => {
+        f = await modeKb();
+      }),
+    180_000,
+  );
+  const pat = async (mode: Mode) => {
+    const minted = await mintPersonalToken(runtime, f.owner.user.id, {
+      name: `publication ${mode}`,
+      ...modeSelection(f.kbId, mode),
+    });
+    return { secret: minted.secret, grantId: await grantIdOfToken(minted.token.id) };
+  };
+  const head = async () =>
+    (await f.admin.call("knowledge_bases_get", { kbId: f.kbId })).kb.headSha as string;
+
+  it("a changes publication in import mode needs an edit-capable mode", () =>
+    runOwnedMcpAction(async () => {
+      runtime.ratePort = createMemoryRatePort();
+      const { secret } = await pat("dream");
+      // The publication's own demand, below the tool's: the import request
+      // goes straight to the changes publication with the grant's admission.
+      const actor = await admit(
+        new Request(`${runtime.canonicalOrigin}/mcp`, {
+          headers: { authorization: `Bearer ${secret}` },
+        }),
+      );
+      const before = await sideEffects(f);
+      await expect(
+        mutateAsset(
+          runtime,
+          actor.principal,
+          "import",
+          {
+            kbId: f.kbId,
+            baseRevision: await head(),
+            idempotencyKey: key(),
+            path: "dream/imported.png",
+            source: { kbId: f.kbId, rev: f.asset.rev, hash: f.asset.hash },
+          },
+          actor.verifier,
+        ),
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        details: { reason: "WRITE_MODE", required: "edit" },
+      });
+      expect(await sideEffects(f)).toEqual(before);
+    }));
+
+  it.each(Object.keys(grantTypes) as (keyof typeof grantTypes)[])(
+    "a both %s grant narrowed to dream after admission, before publication, publishes nothing",
+    (grantType) =>
+      runOwnedMcpAction(async () => {
+        runtime.ratePort = createMemoryRatePort();
+        let grantId: string | undefined;
+        let narrowed = false;
+        // The call's admission (its first recheck) passes under both. The grant
+        // narrows once the publication is handed to the coordinator, ahead of
+        // the lock-held reauthorization and any Git or DB work. (The second
+        // Actor recheck is the final one after publication, which only withholds
+        // the receipt, so it is no place for this narrowing.)
+        const narrowing: KbRuntimeConfig = {
+          ...runtime,
+          coordinator: {
+            run: async (options) => {
+              if (options.kind === "git-write" && !narrowed && grantId) {
+                await updateGrant(runtime, f.owner.user.id, {
+                  id: grantId,
+                  authoringMode: "dream",
+                });
+                narrowed = true;
+              }
+              return runtime.coordinator.run(options);
+            },
+          },
+        };
+        const minted = await grantTypes[grantType](f.owner, f.kbId, "both", narrowing);
+        grantId = minted.grantId;
+        await refusedByMode(
+          f,
+          minted.c,
+          "knowledge_documents_create",
+          {
+            kbId: f.kbId,
+            baseRevision: await head(),
+            idempotencyKey: key(),
+            path: `narrowed/late-${grantType}.md`,
+            content: { markdown: "# late\n" },
+          },
+          "edit",
+        );
+        expect(narrowed).toBe(true);
+        expect(
+          (await prisma.mcpGrant.findUniqueOrThrow({ where: { id: grantId } })).authoringMode,
+        ).toBe("DREAM");
+      }),
+  );
+});
+
+describe("provenance of token writes", () => {
+  fixtureTest(
+    "edit-mode token writes are stamped agent (inline, uploaded, spoofed); an unstampable key is refused",
+    async ({ c, kb, minted }) => {
+      let head = kb.headSha as string;
+      const blob = (path: string) => kbGit(kb.id, "show", `${head}:${path}`);
+      const create = async (path: string, content: { markdown: string } | { uploadId: string }) => {
+        const result = await c.call("knowledge_documents_create", {
+          kbId: kb.id,
+          baseRevision: head,
+          idempotencyKey: key(),
+          path,
+          content,
+        });
+        head = result.commitSha;
+        return result;
+      };
+      // No front matter: the server adds it. Front matter without the key: appended.
+      await create("inline.md", { markdown: "# Inline\n" });
+      expect(blob("inline.md")).toBe("---\nprovenance: agent\n---\n# Inline\n");
+      await create("titled.md", { markdown: "---\ntitle: T\n---\nbody\n" });
+      expect(blob("titled.md")).toBe("---\ntitle: T\nprovenance: agent\n---\nbody\n");
+      // A credential cannot keep a dream's or a person's label, quoted or not.
+      for (const [path, spoof] of [
+        ["spoof-dream.md", "dream"],
+        ["spoof-human.md", "human"],
+        ["spoof-quoted.md", '"human"'],
+      ] as const) {
+        await create(path, { markdown: `---\ntitle: S\nprovenance: ${spoof}\n---\nbody\n` });
+        expect(blob(path)).toBe("---\ntitle: S\nprovenance: agent\n---\nbody\n");
+      }
+      // Upload-sourced Markdown is stamped the same way.
+      const bytes = Buffer.from("---\nprovenance: human\n---\n# Uploaded\n");
+      const upload = await c.call("knowledge_upload_begin", {
+        kbId: kb.id,
+        kind: "markdown",
+        size: bytes.length,
+        mime: "text/markdown",
+        contentHash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+        idempotencyKey: key(),
+      });
+      await c.call("knowledge_upload_write", {
+        kbId: kb.id,
+        uploadId: upload.uploadId,
+        offset: 0,
+        bytesBase64: bytes.toString("base64"),
+      });
+      await c.call("knowledge_upload_finish", { kbId: kb.id, uploadId: upload.uploadId });
+      await create("uploaded.md", { uploadId: upload.uploadId });
+      expect(blob("uploaded.md")).toBe("---\nprovenance: agent\n---\n# Uploaded\n");
+      // The commit carries the server's attribution block.
+      const { grantId } = await prisma.mcpPersonalToken.findUniqueOrThrow({
+        where: { id: minted.token.id },
+      });
+      const message = kbGit(kb.id, "log", "-1", "--format=%B", head);
+      expect(message).toContain(`Kb-Actor-Key: grant:${grantId}`);
+      expect(message).toContain("Kb-Provenance: agent");
+      // A re-save that differs only by the label keeps the stamped blob: a noop.
+      const resaved = await c.call("knowledge_documents_update", {
+        kbId: kb.id,
+        baseRevision: head,
+        idempotencyKey: key(),
+        path: "spoof-human.md",
+        content: { markdown: "---\ntitle: S\nprovenance: human\n---\nbody\n" },
+      });
+      expect(resaved.kind).toBe("noop");
+      // A provenance key the server cannot rewrite as one plain line is refused.
+      for (const markdown of [
+        '---\n"provenance": human\n---\nbody\n',
+        "---\n'provenance': dream\n---\nbody\n",
+        '---\n"prov\\u0065nance": human\n---\nbody\n',
+      ])
+        await c.error(
+          "knowledge_documents_create",
+          {
+            kbId: kb.id,
+            baseRevision: head,
+            idempotencyKey: key(),
+            path: "unstampable.md",
+            content: { markdown },
+          },
+          "INVALID_ARGUMENT",
+        );
+      expect((await c.call("knowledge_bases_get", { kbId: kb.id })).kb.headSha).toBe(head);
+    },
   );
 });

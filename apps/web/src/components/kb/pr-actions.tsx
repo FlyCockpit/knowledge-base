@@ -36,7 +36,7 @@ import { orpc } from "@/utils/orpc";
 
 const short = (sha: string) => sha.slice(0, 12);
 
-/** "Opened by Bob Builder via bob-direct" or "… via web"; nothing without an author. */
+/** "Opened by Bob Builder via credential “bob-direct”" or "… in the web app"; nothing without an author. */
 export function PrAuthor({
   author,
   className,
@@ -49,9 +49,11 @@ export function PrAuthor({
   const name = author.name ?? t("pr.author.unknown");
   return (
     <span data-testid="pr-author" className={className}>
-      {author.via === null
+      {author.kind === "web"
         ? t("pr.author.web", { name })
-        : t("pr.author.token", { name, via: author.via })}
+        : author.via === null
+          ? t("pr.author.tokenUnknown", { name })
+          : t("pr.author.token", { name, via: author.via })}
     </span>
   );
 }

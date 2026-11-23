@@ -39,6 +39,10 @@ export const PUSH_REFUSALS = {
   BRANCH_CLOSED: "This branch's pull request is closed or merged: push to a new branch name.",
   INVALID_CONTENT:
     "A pushed commit does not pass this knowledge base's checks (Markdown, paths, sizes, assets).",
+  PROVENANCE:
+    "Markdown you push must say `provenance: agent` in its front matter: pushes are a credential's writes, and the server labels every other write itself.",
+  RESERVED_TRAILER:
+    "A pushed commit message carries an Acted-by: or Kb-*: trailer line; the server writes those, remove them and push again.",
 } as const;
 export type PushRefusalCode = keyof typeof PUSH_REFUSALS;
 export function isPushRefusalCode(value: unknown): value is PushRefusalCode {
@@ -55,7 +59,7 @@ export class PushRefusedError extends Error {
   ) {
     const value = detail && typeof detail === "object" ? (detail as Record<string, unknown>) : {};
     const code =
-      refusal === "INVALID_CONTENT" &&
+      (refusal === "INVALID_CONTENT" || refusal === "PROVENANCE") &&
       typeof value.code === "string" &&
       /^TREE_[A-Z_]{1,40}$/.test(value.code)
         ? value.code
@@ -371,11 +375,30 @@ export async function validatePush(
     if (fastForward === false) throw new PushRefusedError("NON_FAST_FORWARD");
     base = command.oldSha;
   }
-  const result = await validateNewlyReachableCommits(options, {
-    oldSha: base,
-    newSha: command.newSha,
-  });
-  if (!result.ok) throw new PushRefusedError("INVALID_CONTENT", [], result);
+  // Pushes are always a token's (git HTTP admits PATs only): commits new to
+  // the repository carry no server trailer and label their Markdown `agent`.
+  // Commits some existing ref already reaches (main's, merged in) are trusted.
+  const fresh = runGit(options.repoPath, [
+    "rev-list",
+    `--max-count=${KB_TREE_LIMITS.maxNewCommitsPerPush + 1}`,
+    command.newSha,
+    "--not",
+    "--all",
+  ]);
+  const freshCommits = new Set(fresh.split("\n").filter(Boolean));
+  // Over the new-commit cap: refused as content, exactly as the range walk below
+  // refuses it (TREE_BUDGET), not as a malformed request.
+  if (freshCommits.size > KB_TREE_LIMITS.maxNewCommitsPerPush)
+    throw new PushRefusedError("INVALID_CONTENT", [], { code: "TREE_BUDGET" });
+  const result = await validateNewlyReachableCommits(
+    { ...options, pushAuthorship: { freshCommits } },
+    { oldSha: base, newSha: command.newSha },
+  );
+  if (!result.ok) {
+    if (result.code === "TREE_PROVENANCE") throw new PushRefusedError("PROVENANCE", [], result);
+    if (result.code === "TREE_TRAILER") throw new PushRefusedError("RESERVED_TRAILER");
+    throw new PushRefusedError("INVALID_CONTENT", [], result);
+  }
   return result;
 }
 

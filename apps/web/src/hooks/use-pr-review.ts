@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 import z from "zod";
+import type { DocumentProvenance, HistoryActor } from "@/components/kb/document-history";
 import type { KbViewerDocument } from "@/components/kb/markdown-view";
 import { type KbAccessActor, recheckKbAccess } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
@@ -36,7 +37,13 @@ const prSummarySchema = z.object({
   mergeCommitSha: sha.nullable(),
   /** The person behind the PR (browser only); absent in review receipts. */
   author: z
-    .object({ name: z.string().nullable(), via: z.string().nullable(), isViewer: z.boolean() })
+    .object({
+      /** From the actor key: a credential (PAT or app) or the web app. */
+      kind: z.enum(["credential", "web"]),
+      name: z.string().nullable(),
+      via: z.string().nullable(),
+      isViewer: z.boolean(),
+    })
     .optional(),
 });
 const reviewResultSchema = z.object({ operationId: z.string(), pr: prSummarySchema });
@@ -48,6 +55,11 @@ export type FileDelta = {
   status: "added" | "modified" | "deleted";
   beforeBlobSha: string | null;
   afterBlobSha: string | null;
+  /** Browser only: the Markdown file's label on each side (null when absent there). */
+  beforeProvenance?: DocumentProvenance | null;
+  afterProvenance?: DocumentProvenance | null;
+  /** Browser only: who made the newest change to it in the PR; null when unknown. */
+  writtenBy?: HistoryActor | null;
 };
 export type AssetDelta = { path: string; before: AssetRefLike | null; after: AssetRefLike | null };
 export type PrPage = {

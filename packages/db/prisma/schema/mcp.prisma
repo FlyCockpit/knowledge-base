@@ -3,6 +3,15 @@ enum McpGrantKind {
   OAUTH
 }
 
+/// How a write-capable grant may author content ("write mode" in the UI):
+/// DREAM consolidations only, EDIT direct edits only, or BOTH. Present exactly
+/// when the grant holds mcp:write (a CHECK constraint enforces it).
+enum McpAuthoringMode {
+  DREAM
+  EDIT
+  BOTH
+}
+
 /// One durable MCP authority generation. The id is a random UUID minted per
 /// generation and is never reused: revocation writes a permanent tombstone
 /// (revokedAt) and nothing clears it. The actor snapshot and the
@@ -24,6 +33,8 @@ model McpGrant {
   toolGroups           String[]
   allowCreate          Boolean               @default(false)
   createdKbBits        String[]
+  /// The write mode, live-checked on every mutation like toolGroups.
+  authoringMode        McpAuthoringMode?
   revokedAt            DateTime?             @db.Timestamptz(3)
   revokeReason         String?
   /// Last in-place widening through the owner's control plane (mcpGrants.updateMine).

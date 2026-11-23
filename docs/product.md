@@ -36,6 +36,17 @@ provider. Asset CAS retains historical bytes. Raw Markdown editing and reviewed
 PRs preserve human authority. See [client guides](./mcp.md),
 [operator deployment](./deploy.md) and [Cockpit seams](./cockpit-adapter.md).
 
+## Agent write modes and provenance
+
+Each agent credential is approved to dream, to edit directly, or both (its
+write mode, chosen explicitly at approval), and the server enforces it on every
+write path. Every document says who wrote it last, stamped by the server: a
+person in the web app (`human`), an agent's direct edit (`agent`) or a dream
+(`dream`). Dreams may consolidate what dreams and agents wrote but never touch
+what a person wrote. The web app shows the label, each document's history (who
+or which credential wrote each version) and the writer of each file in PR
+review. See [write modes and provenance](./mcp.md#write-modes-and-provenance).
+
 ## Optional asset authority
 
 Disk CAS remains the default. Opt-in S3 makes remote objects authoritative and

@@ -45,6 +45,51 @@ uploads need `edit` and asset uploads `assets`. Git fetch and asset reads need
 and scopes above, and are rechecked live on every call. OAuth apps cannot hold
 `sealed`.
 
+### Write modes and provenance
+
+Every write-capable connection (a PAT, a device login, an OAuth app) also has a
+**write mode**: `dream` (dreams only), `edit` (direct edits only) or `both`.
+It is chosen explicitly when the credential is approved (the web preselects
+nothing; `kb login --write-mode` can only narrow what the approval page offers)
+and can be changed under **Edit access**, never through temporary access. In
+the code and the database it is the grant's `authoringMode`; it is unrelated to
+a KB attachment's `writeMode` (`direct`, `proposal_required`, `read_only`).
+Read-only connections have none. The server checks it live on every
+mutation, like tool groups, before any Git, database or staging work:
+
+| Mutation | Needs |
+|---|---|
+| `knowledge_changes_apply` `mode: "dream"` | `dream` or `both` |
+| `knowledge_changes_apply` `mode: "edit"`, `knowledge_documents_*`, `knowledge_upload_*`, `knowledge_assets_put`/`import`, `knowledge_pull_requests_create`, a PR merge, `knowledge_bases_create`/`delete`, Git push | `edit` or `both` |
+| closing a PR, KB metadata updates, index and embedding administration, reads | no write mode |
+
+A refusal is `FORBIDDEN` with details `{ "reason": "WRITE_MODE", "required":
+"dream" | "edit" }` and a message saying what to do. A dream-only connection is
+not shown the tools that always need direct edits; `knowledge_changes_apply`
+stays listed with a dream-only description (an edit-only connection gets one
+without dreams). Input schemas never vary. Credentials approved before write
+modes existed were migrated to `both`, exactly the authority they had.
+
+Every document write is labelled by the server in the document's front matter
+(`provenance:`), never by the client: a credential's direct edit is `agent`, a
+person's edit in the web app is `human`, a dream is `dream`. A `provenance`
+value the client sends in edit mode is replaced (a value the server cannot
+safely rewrite, such as a quoted key or a block value, is refused as
+`INVALID_ARGUMENT`). A rewrite that differs from the stored document only by
+its `provenance:` lines (however the key or value is quoted) is no change and
+keeps the stored bytes; any other difference, even a comment, is a write and is
+labelled. Dreams may update `dream` and `agent` documents, never
+`human` or unlabelled ones; people and edit-mode agents may change anything
+their access allows, so an agent that edits a person's document relabels it
+`agent`. Merges keep each side's label, and a document both sides changed keeps
+the more protected of the two (a person's over an agent's over a dream's).
+Commits carry `Acted-by`, `Kb-Actor-Key` (`grant:<id>` for a credential,
+`user:<id>` for a person) and, on content commits, `Kb-Provenance` trailers;
+document history and PR review in the web app show them. Git pushes may not
+carry those trailers, and every Markdown file a push adds or changes must say
+`provenance: agent` ([Git access](./git.md)). Commits and labels written before
+this existed are unverified and shown as unattributed.
+
 `tools/list` shows a connection only the tools its groups include and its scope
 and stored KB bits could ever allow, in catalog order. Each `kbId` (and the
 asset import `source.kbId`) carries an `enum` of the KBs the connection can
@@ -337,4 +382,5 @@ Each edit call accepts at most 32 changes and commits on success. For a larger b
 
 An invalid operation in a 32-change batch produces zero effects. Inline text
 is at most 128 KiB; finished Markdown uploads allow 2 MiB. Dreams use one atomic
-call and protect human provenance; see [Cockpit seams](./cockpit-adapter.md).
+call and never overwrite a person's document (see [write modes and
+provenance](#write-modes-and-provenance) and [Cockpit seams](./cockpit-adapter.md)).

@@ -208,7 +208,8 @@
         "scopeRequired": "Elige al menos un tipo de acceso.",
         "toolGroupRequired": "Elige al menos un grupo de herramientas.",
         "createNeedsRead": "Las bases de conocimiento que cree deben incluir Lectura.",
-        "createNeedsWriteScope": "Crear bases de conocimiento requiere el tipo de acceso de lectura y cambios."
+        "createNeedsWriteScope": "Crear bases de conocimiento requiere el tipo de acceso de lectura y cambios.",
+        "writeModeRequired": "Elige un modo de escritura."
       },
       "previewNoUsableTools": "El agente todavía no puede usar ninguna de las herramientas seleccionadas. Las notas de abajo indican qué falta.",
       "kbBitName": "{{kb}}: {{bit}}"
@@ -255,7 +256,8 @@
       "temporaryIssues": {
         "limit": "Esta conexión ya tiene {{max}} accesos temporales activos. Termina uno primero.",
         "removes": "El acceso temporal solo puede agregar. Deshaz lo que quitaste o elige Permanente para quitar acceso.",
-        "needsWrite": "Estas herramientas cambian datos, lo que requiere el tipo de acceso de lectura y cambios. El acceso temporal no puede agregarlo."
+        "needsWrite": "Estas herramientas cambian datos, lo que requiere el tipo de acceso de lectura y cambios. El acceso temporal no puede agregarlo.",
+        "writeMode": "El acceso temporal no puede cambiar el modo de escritura. Elige Permanente para cambiarlo."
       },
       "temporaryConfirm": "Este acceso termina por sí solo después de {{duration}}. Puedes terminarlo antes desde la lista de conexiones.",
       "temporaryCreatedKbs": "Las bases de conocimiento que el agente cree durante este tiempo seguirán siendo accesibles para él después de que termine el acceso temporal.",
@@ -263,7 +265,12 @@
       "confirmChangesTitle": "Confirmar cambios",
       "endsTemporary": "Esto también termina el acceso temporal de esta conexión.",
       "review": "Revisar cambios",
-      "confirmStep": "Paso 2 de 2 · Aún no se guarda"
+      "confirmStep": "Paso 2 de 2 · Aún no se guarda",
+      "temporaryWriteMode": "El acceso temporal conserva el modo de escritura actual.",
+      "changeWriteMode": {
+        "dream": "Modo de escritura: dreams",
+        "edit": "Modo de escritura: ediciones directas"
+      }
     },
     "temporary": {
       "title": "Acceso temporal",
@@ -300,7 +307,27 @@
     "revokeAllConfirmToken": "revocar todo",
     "revokeAllSuccess": "Se revocaron todos los tokens y apps conectadas.",
     "revokeAllError": "Algunas credenciales no se revocaron. Revisa la lista e inténtalo de nuevo.",
-    "revokeAllCopyConfirm": "Copiar texto de confirmación"
+    "revokeAllCopyConfirm": "Copiar texto de confirmación",
+    "writeMode": {
+      "legend": "Modo de escritura",
+      "hint": "Cómo puede cambiar esta credencial las bases de conocimiento. Elige uno; el servidor lo verifica en cada escritura.",
+      "limited": "El inicio de sesión desde la línea de comandos pidió un modo de escritura más limitado, así que solo se ofrecen estos.",
+      "summary": "Modo de escritura: {{mode}}",
+      "modes": {
+        "dream": {
+          "label": "Solo dreams",
+          "description": "Consolida notas mediante dreams. Un dream solo actualiza documentos escritos por dreams o agentes, nunca los de una persona."
+        },
+        "edit": {
+          "label": "Solo ediciones directas",
+          "description": "Crea, edita y elimina documentos, cargas y solicitudes de extracción. Sus cambios se marcan como Agente."
+        },
+        "both": {
+          "label": "Dreams y ediciones directas",
+          "description": "Ambos: dreams y ediciones directas marcadas como Agente."
+        }
+      }
+    }
   },
   "providers": {
     "title": "Proveedores de embeddings",

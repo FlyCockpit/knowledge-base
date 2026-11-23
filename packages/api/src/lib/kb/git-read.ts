@@ -588,6 +588,31 @@ function parseCommitBlobs(output: Buffer): Map<string, string> {
 const COMMIT_BLOBS_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
+ * Every merge base of two commits (`merge-base --all`; empty for unrelated
+ * histories). SHA-only input; more than `limit` bases is a budget refusal.
+ */
+export function readMergeBases(repoPath: string, a: string, b: string, limit: number): string[] {
+  if (!SHA1.test(a) || !SHA1.test(b)) throw new Error("invalid commit sha");
+  let output: string;
+  try {
+    output = runGit(repoPath, ["merge-base", "--all", a, b]);
+  } catch (error) {
+    // Exit 1 without output: the histories share no commit.
+    if ((error as { status?: unknown }).status === 1) return [];
+    throw error;
+  }
+  const bases = output.split("\n").filter(Boolean);
+  if (bases.some((base) => !SHA1.test(base))) throw new TreeStructureError("invalid merge base");
+  if (bases.length > limit) {
+    throw new TreeReadBudgetError("merge base traversal exceeds budget", {
+      size: bases.length,
+      maxBytes: limit,
+    });
+  }
+  return bases;
+}
+
+/**
  * `path -> blob` of one commit's whole tree in a single bounded
  * `ls-tree -r -z` (L-8: which paths a new commit changes). The commit was
  * validated when written, so its paths are already canonical.

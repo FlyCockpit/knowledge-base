@@ -41,7 +41,11 @@ import {
   prismaAuthorityStore,
 } from "@knowledge-base/api/lib/kb/permissions";
 import { actorKeyFor, tokenHasOauthScope } from "@knowledge-base/api/lib/kb/principal";
-import { KB_TOOL_CATALOG, type KbToolName } from "@knowledge-base/api/lib/kb/protocol/catalog";
+import {
+  KB_TOOL_CATALOG,
+  type KbToolName,
+  toolAuthoringNeed,
+} from "@knowledge-base/api/lib/kb/protocol/catalog";
 import {
   buildKbErrorCallToolResult,
   buildKbSuccessCallToolResult,
@@ -455,7 +459,11 @@ export async function dispatchTool<N extends KbToolName>(
   // recheck (first, final and error-path) and every domain or lock-held
   // authorization enforces it. Supporting tools demand no group. A call is
   // allowed by the connection's live groups, never by what the tool list showed.
-  const ctx: Context = { ...base, actor: base.actor.demandToolGroups(entry.groups) };
+  // The write-mode demand (dream / edit) rides on the same admission, so a
+  // refused mode fails at the first recheck, before any Git, DB or staging work.
+  const need = toolAuthoringNeed(entry, input);
+  const grouped = base.actor.demandToolGroups(entry.groups);
+  const ctx: Context = { ...base, actor: need ? grouped.demandAuthoring(need) : grouped };
   try {
     ctx.signal.throwIfAborted();
     await ctx.actor.recheck();

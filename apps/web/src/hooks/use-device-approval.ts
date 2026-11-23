@@ -1,3 +1,9 @@
+import {
+  authoringModeWithin,
+  isMcpAuthoringMode,
+  MCP_AUTHORING_MODES,
+  type McpAuthoringMode,
+} from "@knowledge-base/auth/mcp-authoring-mode";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 
@@ -49,6 +55,8 @@ export type DeviceClaim = {
   clientId: string;
   scopes: SelectableScope[];
   nonce: string;
+  /** The most `kb login --write-mode` asked for; null: any write mode. */
+  requestedWriteMode: McpAuthoringMode | null;
   recipientKey?: { recipientKeyId: string; recipientPublicKey: string };
 };
 export type DeviceRecipient = {
@@ -114,6 +122,8 @@ function parseClaim(userCode: string, data: unknown): DeviceClaim | null {
   const requested = String(record.scope).split(" ");
   const scopes = SELECTABLE_SCOPES.filter((s) => requested.includes(s));
   if (scopes.length === 0) return null;
+  const ceiling = record.requested_write_mode ?? null;
+  if (ceiling !== null && !isMcpAuthoringMode(ceiling)) return null;
   const key = record.recipient_key as Record<string, unknown> | null | undefined;
   if (
     key != null &&
@@ -129,6 +139,7 @@ function parseClaim(userCode: string, data: unknown): DeviceClaim | null {
     clientId: String(record.client_id),
     scopes,
     nonce: String(record.nonce),
+    requestedWriteMode: ceiling,
     ...(key
       ? {
           recipientKey: {
@@ -157,16 +168,31 @@ export async function claimDevice(deps: DeviceDeps, userCode: string): Promise<C
   return claim ? { kind: "claimed", claim } : { kind: "unavailable" };
 }
 
-/** Grant selection for a device: scopes are exactly those the CLI requested (no offline_access). */
+/** The write modes a device login may be approved for: those within the CLI's ceiling. */
+export function deviceWriteModes(ceiling: McpAuthoringMode | null): McpAuthoringMode[] {
+  return MCP_AUTHORING_MODES.filter((mode) => authoringModeWithin(mode, ceiling));
+}
+
+/**
+ * Grant selection for a device: scopes are exactly those the CLI requested (no
+ * offline_access), and a write mode beyond the CLI's ceiling is never sent.
+ */
 export function deviceGrant(
   selection: CredentialSelection,
   live: readonly LiveKbOption[],
   scopes: readonly string[],
   recipients: readonly DeviceRecipient[] = [],
+  writeModeCeiling: McpAuthoringMode | null = null,
 ): DeviceGrant {
+  const grant = toGrantSelection(
+    selection,
+    live,
+    SELECTABLE_SCOPES.filter((s) => scopes.includes(s)),
+  );
+  const mode = grant.authoringMode;
   return {
-    ...toGrantSelection(selection, live),
-    scopes: SELECTABLE_SCOPES.filter((s) => scopes.includes(s)),
+    ...grant,
+    authoringMode: mode !== null && authoringModeWithin(mode, writeModeCeiling) ? mode : null,
     ...(recipients.length ? { recipients: [...recipients] } : {}),
   };
 }
@@ -291,8 +317,15 @@ export function useDeviceApproval(userCode: string | null) {
   const { data } = claim;
   const claimed = data?.kind === "claimed" ? data.claim : null;
   const grant = useMemo(
-    () => deviceGrant(selection, kbs.live, claimed?.scopes ?? [], recipients),
-    [selection, kbs.live, claimed?.scopes, recipients],
+    () =>
+      deviceGrant(
+        selection,
+        kbs.live,
+        claimed?.scopes ?? [],
+        recipients,
+        claimed?.requestedWriteMode ?? null,
+      ),
+    [selection, kbs.live, claimed?.scopes, claimed?.requestedWriteMode, recipients],
   );
 
   const submit = useCallback(

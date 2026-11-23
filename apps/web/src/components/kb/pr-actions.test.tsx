@@ -5,7 +5,12 @@ import type { ComponentProps } from "react";
 import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 import { kbDocumentHref } from "@/components/kb/kb-links";
-import { PrActionsView, type PrConflictPath, PrConflictsView } from "@/components/kb/pr-actions";
+import {
+  PrActionsView,
+  PrAuthor,
+  type PrConflictPath,
+  PrConflictsView,
+} from "@/components/kb/pr-actions";
 import type { PrSummary } from "@/hooks/use-pr-review";
 import { renderWithTestRouter as renderToStaticMarkup } from "@/lib/router-test-utils";
 
@@ -203,5 +208,26 @@ describe("PrConflictsView (R3-W6)", () => {
   it("notes a truncated list, and renders nothing for a PR that merges", () => {
     expect(view({ truncated: true })).toContain('data-testid="pr-conflicts-truncated"');
     expect(view({ paths: [] })).toBe("");
+  });
+});
+
+describe("PrAuthor attribution", () => {
+  const author = (value: NonNullable<PrSummary["author"]>) =>
+    renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <PrAuthor author={value} />
+      </I18nextProvider>,
+    );
+  it("names credentials by the actor kind, never by the credential's name", () => {
+    expect(author({ kind: "credential", name: "Ana", via: "web", isViewer: false })).toContain(
+      "Opened by Ana via credential “web”",
+    );
+    // A credential whose name sanitizes away is still a credential.
+    expect(author({ kind: "credential", name: "Ana", via: null, isViewer: false })).toContain(
+      "Opened by Ana via a credential",
+    );
+    expect(author({ kind: "web", name: "Ana", via: null, isViewer: false })).toContain(
+      "Opened by Ana in the web app",
+    );
   });
 });

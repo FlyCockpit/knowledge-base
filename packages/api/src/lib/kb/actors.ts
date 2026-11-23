@@ -110,16 +110,91 @@ export async function actedByTrailer(query: LockQuery, actorKey: string): Promis
 const TRAILER_LINE = /^[A-Za-z][A-Za-z0-9-]*: \S/;
 
 /**
- * Append a trailer to a commit message (no-op without one). Git reads only
- * the last paragraph as trailers, so an existing trailer block (a dream's
- * Kb-Op-Digest) is extended rather than followed by a second paragraph.
+ * A caller-supplied commit title as one line: a title can never open a
+ * paragraph of its own, so it can never pose as (or extend) the server's
+ * trailer block.
  */
-export function withTrailer(message: string, trailer: string | null): string {
+export function commitSubject(title: string): string {
+  return title.replace(/\r\n?|\n/g, " ").trim() || "Update";
+}
+
+/**
+ * Append the server's trailer lines to a commit message (no-op without any).
+ * Git reads only the last paragraph as trailers, so a server-built trailer
+ * block (a dream's Kb-Op-Digest) is extended rather than followed by a second
+ * paragraph. Callers pass caller text only through `commitSubject`, so the
+ * only multi-paragraph messages are the server's own.
+ */
+export function withTrailer(
+  message: string,
+  trailers: string | null | readonly (string | null)[],
+): string {
+  const lines = (typeof trailers === "string" || trailers === null ? [trailers] : trailers).filter(
+    (line): line is string => !!line,
+  );
   const body = message.replace(/\s+$/u, "");
-  if (!trailer) return `${body}\n`;
+  if (lines.length === 0) return `${body}\n`;
+  const trailer = lines.join("\n");
   const paragraphs = body.split("\n\n");
   const last = paragraphs.at(-1)!;
   const trailerBlock =
     paragraphs.length > 1 && last.split("\n").every((line) => TRAILER_LINE.test(line));
   return trailerBlock ? `${body}\n${trailer}\n` : `${body}\n\n${trailer}\n`;
+}
+
+/**
+ * The server's attribution lines for a commit: who acted (`Acted-by`, for
+ * people), the actor key (`Kb-Actor-Key`, for machines: `grant:<id>` is a
+ * credential, `user:<id>` a person in the web app) and, on content commits,
+ * the provenance it stamped (`Kb-Provenance`). Pushed commits may not carry
+ * any of these (push validation), so a block holding `Kb-Actor-Key` is the
+ * server's.
+ */
+export async function attributionTrailers(
+  query: LockQuery,
+  actorKey: string,
+  provenance?: "agent" | "human" | "dream",
+): Promise<string[]> {
+  const acted = await actedByTrailer(query, actorKey);
+  return [
+    ...(acted ? [acted] : []),
+    `Kb-Actor-Key: ${actorKey}`,
+    ...(provenance ? [`Kb-Provenance: ${provenance}`] : []),
+  ];
+}
+
+const SERVER_TRAILER =
+  /^(Acted-by|Kb-Actor-Key|Kb-Provenance|Kb-Op-Digest|Kb-Source-Digest): (.+)$/;
+const ACTOR_KEY =
+  /^(grant:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|user:[A-Za-z0-9_-]{1,128})$/;
+
+export type ServerAttribution = {
+  actorKey: string;
+  actedBy: string | null;
+  provenance: "agent" | "human" | "dream" | null;
+};
+
+/**
+ * The server's attribution of a commit, read strictly: the last paragraph
+ * must consist only of server trailer lines, each at most once, with a
+ * well-formed `Kb-Actor-Key`. Anything else (a Git push, a commit from before
+ * attribution keys existed) is unattributed: null.
+ */
+export function parseServerAttribution(message: string): ServerAttribution | null {
+  const paragraphs = message.replace(/\r\n?/g, "\n").replace(/\s+$/u, "").split("\n\n");
+  if (paragraphs.length < 2) return null;
+  const fields = new Map<string, string>();
+  for (const line of paragraphs.at(-1)!.split("\n")) {
+    const match = SERVER_TRAILER.exec(line);
+    if (!match || fields.has(match[1]!)) return null;
+    fields.set(match[1]!, match[2]!);
+  }
+  const actorKey = fields.get("Kb-Actor-Key");
+  if (!actorKey || !ACTOR_KEY.test(actorKey)) return null;
+  const stamped = fields.get("Kb-Provenance");
+  const provenance =
+    stamped === "agent" || stamped === "human" || stamped === "dream" ? stamped : null;
+  if (stamped !== undefined && provenance === null) return null;
+  const acted = fields.get("Acted-by");
+  return { actorKey, actedBy: acted ? displayLine(acted) : null, provenance };
 }

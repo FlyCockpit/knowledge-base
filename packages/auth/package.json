@@ -37,6 +37,9 @@
     "./mcp-cimd": {
       "default": "./src/mcp-cimd.ts"
     },
+    "./mcp-authoring-mode": {
+      "default": "./src/mcp-authoring-mode.ts"
+    },
     "./mcp-grant": {
       "default": "./src/mcp-grant.ts"
     },

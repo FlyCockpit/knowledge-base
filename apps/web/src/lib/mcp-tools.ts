@@ -1,3 +1,4 @@
+import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
 import type { McpToolGroup } from "@knowledge-base/auth/mcp-tool-groups";
 
 import type { KbBit } from "@/hooks/use-mcp-consent";
@@ -6,8 +7,9 @@ import type { KbBit } from "@/hooks/use-mcp-consent";
  * The kb/1 tools as the credential pickers preview them: name, the groups that
  * make each available (none = a supporting tool every connection may call),
  * whether it only reads, and the KB permissions any one of which makes it
- * usable on a knowledge base (null: not KB-scoped; creation needs allowCreate).
- * Mirrors `KB_TOOL_CATALOG` in catalog order without bundling its schemas
+ * usable on a knowledge base (null: not KB-scoped; creation needs allowCreate),
+ * and whether it always makes a direct edit (hidden from a dream-only write
+ * mode, as server discovery hides it). Mirrors `KB_TOOL_CATALOG` in catalog order without bundling its schemas
  * (test-enforced).
  */
 export const MCP_TOOLS: readonly {
@@ -15,83 +17,207 @@ export const MCP_TOOLS: readonly {
   groups: readonly McpToolGroup[];
   readOnly: boolean;
   kbBits: readonly KbBit[] | null;
+  editOnly: boolean;
 }[] = [
-  { name: "knowledge_bases_list", groups: [], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_bases_get", groups: [], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_bases_create", groups: ["kb_admin"], readOnly: false, kbBits: null },
-  { name: "knowledge_bases_update", groups: ["kb_admin"], readOnly: false, kbBits: ["manage"] },
-  { name: "knowledge_bases_delete", groups: ["kb_admin"], readOnly: false, kbBits: ["manage"] },
-  { name: "knowledge_documents_list", groups: ["read"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_documents_get", groups: ["read"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_search", groups: ["read"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_structured_search", groups: ["read"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_changes_apply", groups: ["edit"], readOnly: false, kbBits: ["propose"] },
-  { name: "knowledge_documents_create", groups: ["edit"], readOnly: false, kbBits: ["propose"] },
-  { name: "knowledge_documents_update", groups: ["edit"], readOnly: false, kbBits: ["propose"] },
-  { name: "knowledge_documents_delete", groups: ["edit"], readOnly: false, kbBits: ["propose"] },
+  { name: "knowledge_bases_list", groups: [], readOnly: true, kbBits: ["read"], editOnly: false },
+  { name: "knowledge_bases_get", groups: [], readOnly: true, kbBits: ["read"], editOnly: false },
+  {
+    name: "knowledge_bases_create",
+    groups: ["kb_admin"],
+    readOnly: false,
+    kbBits: null,
+    editOnly: true,
+  },
+  {
+    name: "knowledge_bases_update",
+    groups: ["kb_admin"],
+    readOnly: false,
+    kbBits: ["manage"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_bases_delete",
+    groups: ["kb_admin"],
+    readOnly: false,
+    kbBits: ["manage"],
+    editOnly: true,
+  },
+  {
+    name: "knowledge_documents_list",
+    groups: ["read"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_documents_get",
+    groups: ["read"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  { name: "knowledge_search", groups: ["read"], readOnly: true, kbBits: ["read"], editOnly: false },
+  {
+    name: "knowledge_structured_search",
+    groups: ["read"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_changes_apply",
+    groups: ["edit"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_documents_create",
+    groups: ["edit"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: true,
+  },
+  {
+    name: "knowledge_documents_update",
+    groups: ["edit"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: true,
+  },
+  {
+    name: "knowledge_documents_delete",
+    groups: ["edit"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: true,
+  },
   {
     name: "knowledge_upload_begin",
     groups: ["edit", "assets"],
     readOnly: false,
     kbBits: ["propose"],
+    editOnly: true,
   },
   {
     name: "knowledge_upload_write",
     groups: ["edit", "assets"],
     readOnly: false,
     kbBits: ["propose"],
+    editOnly: true,
   },
   {
     name: "knowledge_upload_finish",
     groups: ["edit", "assets"],
     readOnly: false,
     kbBits: ["propose"],
+    editOnly: true,
   },
-  { name: "knowledge_assets_put", groups: ["assets"], readOnly: false, kbBits: ["propose"] },
-  { name: "knowledge_assets_import", groups: ["assets"], readOnly: false, kbBits: ["propose"] },
-  { name: "knowledge_assets_list", groups: ["assets"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_export_prepare", groups: ["export"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_transfer_read", groups: ["export"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_export_complete", groups: ["export"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_index_status", groups: ["index_admin"], readOnly: true, kbBits: ["read"] },
-  { name: "knowledge_index_rebuild", groups: ["index_admin"], readOnly: false, kbBits: ["manage"] },
+  {
+    name: "knowledge_assets_put",
+    groups: ["assets"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: true,
+  },
+  {
+    name: "knowledge_assets_import",
+    groups: ["assets"],
+    readOnly: false,
+    kbBits: ["propose"],
+    editOnly: true,
+  },
+  {
+    name: "knowledge_assets_list",
+    groups: ["assets"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_export_prepare",
+    groups: ["export"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_transfer_read",
+    groups: ["export"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_export_complete",
+    groups: ["export"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_index_status",
+    groups: ["index_admin"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_index_rebuild",
+    groups: ["index_admin"],
+    readOnly: false,
+    kbBits: ["manage"],
+    editOnly: false,
+  },
   {
     name: "knowledge_embedding_profile_get",
     groups: ["index_admin"],
     readOnly: true,
     kbBits: ["read"],
+    editOnly: false,
   },
   {
     name: "knowledge_embedding_profile_set",
     groups: ["index_admin"],
     readOnly: false,
     kbBits: ["manage"],
+    editOnly: false,
   },
   {
     name: "knowledge_pull_requests_list",
     groups: ["pull_requests"],
     readOnly: true,
     kbBits: ["read"],
+    editOnly: false,
   },
   {
     name: "knowledge_pull_requests_get",
     groups: ["pull_requests"],
     readOnly: true,
     kbBits: ["read"],
+    editOnly: false,
   },
   {
     name: "knowledge_pull_requests_create",
     groups: ["pull_requests"],
     readOnly: false,
     kbBits: ["propose"],
+    editOnly: true,
   },
   {
     name: "knowledge_pull_requests_review",
     groups: ["pull_requests"],
     readOnly: false,
     kbBits: ["review", "propose"],
+    editOnly: false,
   },
-  { name: "knowledge_sealed_resolve", groups: ["sealed"], readOnly: true, kbBits: ["read"] },
+  {
+    name: "knowledge_sealed_resolve",
+    groups: ["sealed"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
 ];
 
 const IMPLIED: Record<KbBit, readonly KbBit[]> = {
@@ -133,6 +259,8 @@ export function previewTools(input: {
   allowCreate: boolean;
   kbBits: readonly (readonly KbBit[])[];
   createdKbBits: readonly KbBit[];
+  /** The write mode: `dream` hides the tools that always edit directly. */
+  authoringMode?: McpAuthoringMode | null;
 }): ToolPreview {
   const has = (group: McpToolGroup) => input.groups.includes(group);
   const held = [...input.kbBits, ...(input.allowCreate ? [input.createdKbBits] : [])].map(expand);
@@ -141,7 +269,10 @@ export function previewTools(input: {
       ? input.allowCreate
       : held.some((bits) => tool.kbBits!.some((bit) => bits.has(bit)));
   const selected = MCP_TOOLS.filter(
-    (tool) => tool.groups.length > 0 && tool.groups.some((group) => has(group)),
+    (tool) =>
+      tool.groups.length > 0 &&
+      tool.groups.some((group) => has(group)) &&
+      !(input.writeScope && input.authoringMode === "dream" && tool.editOnly),
   );
   const needWrite = input.writeScope
     ? []

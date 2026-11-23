@@ -3,7 +3,12 @@ import { resolveMarkdownAssetReferences } from "./documents-read";
 import { type GitReadOptions, listTreeBlobsAsync, readBlobsAsync } from "./git-read";
 import { KB_TREE_LIMITS } from "./limits";
 import { type AssetManifestEntry, canonicalManifestBytes, parseAssetManifest } from "./manifest";
-import { parseMarkdownDocument, validateMarkdownBytes } from "./parse-markdown";
+import {
+  parseMarkdownDocument,
+  sameExceptProvenanceLine,
+  stampProvenance,
+  validateMarkdownBytes,
+} from "./parse-markdown";
 import { isKbNamespacePath, isMarkdownPath, normalizeKbPath } from "./paths";
 import type { ApplyWarning } from "./protocol/common";
 import type { KbInvalidArgumentReason } from "./protocol/envelope";
@@ -57,6 +62,12 @@ export async function walkGitTreeAtCommit(input: {
   resolving?: { documents: ReadonlySet<string>; assets: ReadonlySet<string> };
   /** The publication's cancellation and deadline (reads never block the lock). */
   gitOptions?: GitReadOptions;
+  /**
+   * The provenance the server stamps on every document this publication
+   * writes (create/replace): `agent` for a credential's edit, `human` for a
+   * person's web edit. Absent: written as given (dreams serialize their own).
+   */
+  stamp?: "agent" | "human";
 }): Promise<PlannedPublication> {
   // Typed: an asset op never resolves a document conflict, nor the reverse.
   const resolvingDocuments = input.resolving?.documents ?? new Set<string>();
@@ -83,6 +94,33 @@ export async function walkGitTreeAtCommit(input: {
   for (const [path, entry] of input.assetEntries ?? []) assets.set(path, entry);
   const changedPaths: string[] = [...(input.assetEntries?.keys() ?? [])];
   const removedAssets: string[] = [];
+  const stamp = input.stamp;
+  /** The bytes to write, stamped when the publication stamps. */
+  const stamped = (bytes: Buffer): Buffer | { message: string } => {
+    if (!stamp) return bytes;
+    const result = stampProvenance(bytes, stamp);
+    return result.ok ? result.bytes : { message: result.message };
+  };
+  /**
+   * Write a document's given bytes over whatever the tree holds at `path`.
+   * A rewrite equal to the stored document, or differing from it only by
+   * provenance lines (`sameExceptProvenanceLine`), is no change and the
+   * stored blob is kept: re-saving never relabels (or unprotects) a document,
+   * through a requoted label or an escaped key alike. A resolution still
+   * counts as resolved below. Returns the stamp's refusal, if any.
+   */
+  const write = (path: string, given: Buffer): string | null => {
+    const prior = files.get(path);
+    if (prior && (prior.equals(given) || (stamp && sameExceptProvenanceLine(prior, given))))
+      return null;
+    const next = stamped(given);
+    if (!Buffer.isBuffer(next)) return next.message;
+    if (!prior?.equals(next)) {
+      files.set(path, next);
+      changedPaths.push(path);
+    }
+    return null;
+  };
   for (const [changeIndex, change] of input.changes.entries()) {
     const at = (
       message: string,
@@ -118,8 +156,10 @@ export async function walkGitTreeAtCommit(input: {
       if (issue) return at(issue.message, markdownIssueReason(issue.code), "content");
       const parsed = parseMarkdownDocument(Buffer.from(markdown, "utf8"));
       if ("code" in parsed) return at(parsed.message, markdownIssueReason(parsed.code), "content");
-      files.set(path, Buffer.from(markdown, "utf8"));
-      changedPaths.push(path);
+      // A create resolving a recorded conflict over an existing path is a
+      // write over that document: the same provenance-only noop rule applies.
+      const failure = write(path, Buffer.from(markdown, "utf8"));
+      if (failure) return at(failure, "SCHEMA", "content");
       continue;
     }
     if (change.op === "delete") {
@@ -134,12 +174,8 @@ export async function walkGitTreeAtCommit(input: {
     if (issue) return at(issue.message, markdownIssueReason(issue.code), "content");
     const parsed = parseMarkdownDocument(Buffer.from(markdown, "utf8"));
     if ("code" in parsed) return at(parsed.message, markdownIssueReason(parsed.code), "content");
-    const next = Buffer.from(markdown, "utf8");
-    const prior = files.get(path);
-    if (!prior?.equals(next)) {
-      files.set(path, next);
-      changedPaths.push(path);
-    }
+    const failure = write(path, Buffer.from(markdown, "utf8"));
+    if (failure) return at(failure, "SCHEMA", "content");
   }
 
   const manifest = canonicalManifestBytes({ version: 1, entries: [...assets.values()] });

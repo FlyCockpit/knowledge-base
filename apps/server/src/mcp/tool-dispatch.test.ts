@@ -275,3 +275,111 @@ describe("tool-group authorization at dispatch", () => {
     expect(result.structuredContent).toMatchObject({ error: { code: "FORBIDDEN" } });
   });
 });
+
+describe("write-mode authorization at dispatch", () => {
+  const groups = ["read", "edit", "assets", "export", "pull_requests", "index_admin", "kb_admin"];
+  const actor = (authoringMode: "dream" | "edit" | "both") =>
+    bindBearerAdmission(
+      {
+        kind: "token",
+        userId: "u",
+        grantId: "g",
+        grantGeneration: "g",
+        scopes: ["mcp:read", "mcp:write"],
+        expiresAt: new Date("2099-01-01"),
+        storedAcl: new Map(),
+      },
+      {
+        inspect: async () => ({
+          generationActive: true,
+          instanceEnabled: true,
+          expired: false,
+          banned: false,
+          twoFactorSatisfied: true,
+          toolGroups: groups,
+          authoringMode,
+        }),
+      },
+    );
+  // An empty Prisma stub: a call that got past admission would fail as INTERNAL,
+  // never as the write-mode refusal asserted here.
+  const runtime = { prisma: {} } as unknown as KbRuntimeConfig;
+  const kbId = "k".repeat(24);
+  const key = "00000000-0000-4000-8000-000000000000";
+  const sha = "a".repeat(40);
+  const calls: Record<string, { need: "dream" | "edit"; input: Record<string, unknown> }> = {
+    "knowledge_changes_apply:edit": {
+      need: "edit",
+      input: { kbId, idempotencyKey: key, mode: "edit", baseRevision: sha, changes: [] },
+    },
+    "knowledge_changes_apply:dream": {
+      need: "dream",
+      input: { kbId, idempotencyKey: key, mode: "dream", baseRevision: sha, changes: [] },
+    },
+    knowledge_documents_create: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_documents_update: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_documents_delete: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_upload_begin: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_upload_write: { need: "edit", input: { kbId } },
+    knowledge_upload_finish: { need: "edit", input: { kbId } },
+    knowledge_assets_put: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_assets_import: { need: "edit", input: { kbId, idempotencyKey: key } },
+    knowledge_pull_requests_create: { need: "edit", input: { kbId, idempotencyKey: key } },
+    "knowledge_pull_requests_review:merge": {
+      need: "edit",
+      input: { kbId, idempotencyKey: key, decision: "merge" },
+    },
+    knowledge_bases_create: { need: "edit", input: { name: "x", slug: "x", idempotencyKey: key } },
+    knowledge_bases_delete: { need: "edit", input: { kbId, idempotencyKey: key } },
+  };
+
+  it("refuses each authoring call the write mode does not allow, before any domain call, with WRITE_MODE details", async () => {
+    for (const [label, { need, input }] of Object.entries(calls)) {
+      const name = label.split(":")[0] as (typeof KB_TOOL_NAMES)[number];
+      const refusing = need === "dream" ? "edit" : "dream";
+      const result = await dispatchTool(name, input as never, {
+        runtime,
+        actor: actor(refusing),
+        signal: new AbortController().signal,
+      });
+      expect(result.structuredContent, label).toMatchObject({
+        error: { code: "FORBIDDEN", details: { reason: "WRITE_MODE", required: need } },
+      });
+    }
+  });
+
+  it("lets the matching mode and `both` past the write-mode check (then the stub fails)", async () => {
+    for (const [label, { need, input }] of Object.entries(calls)) {
+      const name = label.split(":")[0] as (typeof KB_TOOL_NAMES)[number];
+      for (const mode of [need, "both"] as const) {
+        const result = await dispatchTool(name, input as never, {
+          runtime,
+          actor: actor(mode),
+          signal: new AbortController().signal,
+        });
+        expect(
+          (result.structuredContent as { error?: { details?: { reason?: string } } }).error?.details
+            ?.reason,
+          `${label} ${mode}`,
+        ).not.toBe("WRITE_MODE");
+      }
+    }
+  });
+
+  it("closing a PR and reading need no write mode", async () => {
+    for (const [name, input] of [
+      ["knowledge_pull_requests_review", { kbId, idempotencyKey: key, decision: "close" }],
+      ["knowledge_documents_get", { kbId, path: "a.md" }],
+    ] as const) {
+      const result = await dispatchTool(name, input as never, {
+        runtime,
+        actor: actor("dream"),
+        signal: new AbortController().signal,
+      });
+      expect(
+        (result.structuredContent as { error?: { details?: { reason?: string } } }).error?.details
+          ?.reason,
+      ).not.toBe("WRITE_MODE");
+    }
+  });
+});

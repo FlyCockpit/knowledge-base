@@ -25,6 +25,7 @@ describe("narrow PAT self-revoke route", () => {
       verifier: { inspect: vi.fn() },
       recheck: vi.fn(),
       demandToolGroups: vi.fn(),
+      demandAuthoring: vi.fn(),
     }));
     const app = createKbTokenRoutes({ admit, revoke, charge, isClosing: () => false });
     const call = (body?: string) =>

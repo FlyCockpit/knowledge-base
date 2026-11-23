@@ -2,6 +2,7 @@ import {
   KB_TOOL_CATALOG,
   KB_TOOL_NAMES,
   type KbMinimumAccess,
+  toolUsableDreamOnly,
 } from "@knowledge-base/api/lib/kb/protocol/catalog";
 import { describe, expect, it } from "vitest";
 
@@ -36,6 +37,7 @@ describe("MCP tool preview", () => {
         groups: [...KB_TOOL_CATALOG[name].groups],
         readOnly: KB_TOOL_CATALOG[name].readOnly,
         kbBits: kbBitsFor(KB_TOOL_CATALOG[name].minimumAccess),
+        editOnly: !toolUsableDreamOnly(KB_TOOL_CATALOG[name]),
       })),
     );
   });
@@ -80,6 +82,29 @@ describe("MCP tool preview", () => {
     expect(created.tools).toContain("knowledge_documents_create");
     expect(created.tools).toContain("knowledge_bases_create");
     expect(created.noEligibleKb).toEqual(["knowledge_bases_update", "knowledge_bases_delete"]);
+  });
+
+  it("hides direct-edit tools from a dream-only write mode, as discovery does", () => {
+    const groups = ["read", "edit", "assets", "kb_admin", "pull_requests"] as const;
+    const input = {
+      ...none,
+      groups,
+      allowCreate: true,
+      createdKbBits: ["read", "manage"] as const,
+      kbBits: [["manage"] as const],
+    };
+    const both = previewTools({ ...input, authoringMode: "both" });
+    const dream = previewTools({ ...input, authoringMode: "dream" });
+    const editOnly = MCP_TOOLS.filter((tool) => tool.editOnly).map((tool) => tool.name);
+    expect(editOnly.every((name) => both.tools.includes(name))).toBe(true);
+    expect(dream.tools).toEqual(both.tools.filter((name) => !editOnly.includes(name)));
+    expect(dream.tools).toContain("knowledge_changes_apply");
+    expect(dream.tools).toContain("knowledge_pull_requests_review");
+    expect(dream.tools).not.toContain("knowledge_documents_update");
+    // Without write access the mode is moot: the tools still say they need it.
+    expect(
+      previewTools({ ...input, writeScope: false, authoringMode: "dream" }).needWrite,
+    ).toContain("knowledge_documents_update");
   });
 
   it("calls out overlaps and missing prerequisites", () => {

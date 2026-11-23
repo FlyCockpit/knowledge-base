@@ -448,3 +448,57 @@ fn schema_violations_carry_reason_and_pointer() {
         decode("INVALID_ARGUMENT", got).expect("valid details");
     }
 }
+
+/// Write-mode refusals: FORBIDDEN with `{reason: "WRITE_MODE", required}`
+/// and the server's per-need message; empty FORBIDDEN details stay valid.
+#[test]
+fn write_mode_refusals_round_trip_with_their_messages() {
+    use kb_client::authoring::WriteKind;
+    use kb_client::error::{WRITE_MODE_DREAM_MESSAGE, WRITE_MODE_EDIT_MESSAGE, message_for};
+    for (kind, wire, message) in [
+        (WriteKind::Dream, "dream", WRITE_MODE_DREAM_MESSAGE),
+        (WriteKind::Edit, "edit", WRITE_MODE_EDIT_MESSAGE),
+    ] {
+        let details = json!({"reason": "WRITE_MODE", "required": wire});
+        let error = ToolError::new(
+            ErrorCode::Forbidden,
+            ErrorDetails::WriteMode { required: kind },
+        )
+        .unwrap();
+        assert_eq!(error.message(), message);
+        let envelope = encode_error_envelope(&error);
+        assert_eq!(envelope["error"]["details"], details);
+        assert_eq!(envelope["error"]["message"], message);
+        assert_eq!(message_for(ErrorCode::Forbidden, &details), message);
+        let mut member = error_member("FORBIDDEN", details.clone());
+        member["error"]["message"] = json!(message);
+        match decode_envelope::<KnowledgeSearch>(member.clone()) {
+            Err(KbError::Tool(decoded)) => assert_eq!(decoded, error),
+            other => panic!("{other:?}"),
+        }
+        // The generic message, another code, or an unknown need is malformed.
+        member["error"]["message"] = json!("Forbidden");
+        assert!(matches!(
+            decode_envelope::<KnowledgeSearch>(member),
+            Err(KbError::Protocol(_))
+        ));
+        assert!(
+            ToolError::new(
+                ErrorCode::Conflict,
+                ErrorDetails::WriteMode { required: kind }
+            )
+            .is_err()
+        );
+    }
+    for bad in [
+        json!({"reason": "WRITE_MODE", "required": "both"}),
+        json!({"reason": "WRITE_MODE"}),
+        json!({"reason": "WRITE_MODE", "required": "edit", "field": "/mode"}),
+    ] {
+        assert!(decode("FORBIDDEN", bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(
+        decode("FORBIDDEN", json!({})).unwrap().details(),
+        &ErrorDetails::Empty
+    );
+}

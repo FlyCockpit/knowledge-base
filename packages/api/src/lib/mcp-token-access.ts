@@ -1,6 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { revokeUserMcpGrants } from "@knowledge-base/auth/ban";
 import {
+  authoringCapabilities,
+  authoringModeFromDb,
+  authoringModeToDb,
+  MCP_AUTHORING_MODES,
+  type McpAuthoringMode,
+} from "@knowledge-base/auth/mcp-authoring-mode";
+import {
   canonicalMcpResource,
   MCP_PAT_CLIENT_ID_PREFIX,
   MCP_PAT_GRANT_REFERENCE,
@@ -190,6 +197,8 @@ export type GrantAdmission = TokenAdmission & {
   consumerKind: "pat" | "oauth";
   /** Live tool groups of an active generation; empty whenever inactive. */
   toolGroups: readonly string[];
+  /** Live write mode of an active generation; null when read-only or inactive. */
+  authoringMode: McpAuthoringMode | null;
 };
 
 /**
@@ -234,6 +243,7 @@ export function createGrantCredentialVerifier(
         twoFactorSatisfied: false,
         consumerKind: "pat",
         toolGroups: [],
+        authoringMode: null,
       };
       if (!UUID.test(principal.grantId) || principal.grantGeneration !== principal.grantId) {
         return inactive;
@@ -244,6 +254,7 @@ export function createGrantCredentialVerifier(
         kind: string;
         scopes: string[];
         toolGroups: unknown;
+        authoringMode: string | null;
         revokedAt: Date | string | null;
         tokenRevokedAt: Date | string | null;
         tokenExpiresAt: Date | string | null;
@@ -252,7 +263,7 @@ export function createGrantCredentialVerifier(
         resource: string | null;
         elevations?: unknown;
       }>(
-        `SELECT g.id::text AS id, g."userId", g.kind::text AS kind, g.scopes, g."toolGroups", g."revokedAt",
+        `SELECT g.id::text AS id, g."userId", g.kind::text AS kind, g.scopes, g."toolGroups", g."authoringMode"::text AS "authoringMode", g."revokedAt",
                 g."clientId", t.id AS "tokenId", t.resource,
                 t."revokedAt" AS "tokenRevokedAt", t."expiresAt" AS "tokenExpiresAt",
                 (SELECT jsonb_agg(jsonb_build_object(
@@ -307,6 +318,8 @@ export function createGrantCredentialVerifier(
         banned: identity ? identity.banned : true,
         twoFactorSatisfied: identity?.twoFactorSatisfied ?? false,
         consumerKind,
+        // The write mode is the base grant's own: elevations never change it.
+        authoringMode: authoringModeFromDb(row?.authoringMode),
         // Effective groups: the base grant united with every active elevation
         // (read live on this same statement, by the database clock).
         toolGroups: effectiveToolGroups(
@@ -381,6 +394,8 @@ export const patMintInput = z.strictObject({
     .max(MCP_GRANT_MAX_ACL_ENTRIES),
   allowCreate: z.boolean().optional(),
   createdKbBits: z.array(permissionSchema).max(5).optional(),
+  /** The write mode: required with mcp:write, refused without it. */
+  authoringMode: z.enum(MCP_AUTHORING_MODES).nullable().optional(),
   // Omitted = now+90d; a date must be future and <= 365d; null = never expires.
   expiresAt: z.coerce.date().nullable().optional(),
 });
@@ -523,9 +538,9 @@ export async function mintPersonalTokenInTransaction(
   await query(
     `INSERT INTO "mcp_grant"
          (id, "actorUserIdSnapshot", "userId", kind, "clientId", "referenceId", scopes,
-          "toolGroups", "allowCreate", "createdKbBits", "createdAt")
+          "toolGroups", "allowCreate", "createdKbBits", "authoringMode", "createdAt")
        VALUES ($1::uuid, $2, $2, 'PAT'::"McpGrantKind", $3, $4, $5::text[], $6::text[], $7,
-               $8::text[], now())`,
+               $8::text[], $9::"McpAuthoringMode", now())`,
     [
       grantId,
       userId,
@@ -535,6 +550,7 @@ export async function mintPersonalTokenInTransaction(
       ceiling.toolGroups,
       ceiling.allowCreate,
       createdKbBits,
+      authoringModeToDb(ceiling.authoringMode),
     ],
   );
   for (const entry of acl) {
@@ -754,6 +770,12 @@ export const grantUpdateInput = z
     allowCreate: z.boolean().optional(),
     createdKbBits: patMintInput.shape.createdKbBits,
     /**
+     * The write mode. Omitted keeps the stored one while the grant keeps write
+     * access (it is dropped with mcp:write and required when write is added).
+     * Never part of temporary access.
+     */
+    authoringMode: patMintInput.shape.authoringMode,
+    /**
      * Absent = a permanent edit. Present = temporary access (§5a): the input
      * describes the elevated ceiling, which may only add to the stored one,
      * and lapses on its own after this long.
@@ -767,12 +789,16 @@ export const grantUpdateInput = z
       input.acl !== undefined ||
       input.aclCap !== undefined ||
       input.allowCreate !== undefined ||
-      input.createdKbBits !== undefined,
+      input.createdKbBits !== undefined ||
+      input.authoringMode !== undefined,
   )
-  // Temporary access never changes scopes and never narrows.
+  // Temporary access never changes scopes or the write mode, and never narrows.
   .refine(
     (input) =>
-      input.duration === undefined || (input.scopes === undefined && input.aclCap === undefined),
+      input.duration === undefined ||
+      (input.scopes === undefined &&
+        input.aclCap === undefined &&
+        input.authoringMode === undefined),
   );
 export type GrantUpdateInput = z.input<typeof grantUpdateInput>;
 
@@ -823,13 +849,15 @@ export async function updateGrant(
       toolGroups: unknown;
       allowCreate: boolean;
       createdKbBits: string[];
+      authoringMode: string | null;
       revokedAt: Date | string | null;
       tokenId: string | null;
       tokenRevokedAt: Date | string | null;
       tokenExpiresAt: Date | string | null;
     }>(
       `SELECT g."userId", g.kind::text AS kind, g.scopes, g."toolGroups", g."allowCreate",
-              g."createdKbBits", g."revokedAt", t.id AS "tokenId",
+              g."createdKbBits", g."authoringMode"::text AS "authoringMode", g."revokedAt",
+              t.id AS "tokenId",
               t."revokedAt" AS "tokenRevokedAt", t."expiresAt" AS "tokenExpiresAt"
          FROM "mcp_grant" g
          LEFT JOIN "mcp_personal_token" t ON t."grantId" = g.id
@@ -861,12 +889,21 @@ export async function updateGrant(
 
     // Shape rules shared with minting, applied to the complete next ceiling.
     const allowCreate = input.allowCreate ?? row.allowCreate;
+    const storedMode = authoringModeFromDb(row.authoringMode);
+    const ceilingScopes = (input.scopes ?? row.scopes).filter((scope) =>
+      (MCP_PAT_SCOPES as readonly string[]).includes(scope),
+    );
     let ceiling: ReturnType<typeof normalizeGrantCeiling>;
     try {
       ceiling = normalizeGrantCeiling({
-        scopes: (input.scopes ?? row.scopes).filter((scope) =>
-          (MCP_PAT_SCOPES as readonly string[]).includes(scope),
-        ),
+        scopes: ceilingScopes,
+        // Kept while write stays; dropped with mcp:write; required when write is added.
+        authoringMode:
+          input.authoringMode !== undefined
+            ? input.authoringMode
+            : ceilingScopes.includes("mcp:write")
+              ? storedMode
+              : null,
         toolGroups: input.toolGroups ?? storedGroups,
         acl: patch.filter((entry) => entry.bits.length > 0),
         allowCreate,
@@ -972,6 +1009,12 @@ export async function updateGrant(
       after.allowCreate = allowCreate;
     }
     compare("createdKbBits", expandBits(row.createdKbBits), nextCreated);
+    // A write mode is the set of what it may author: dream <-> edit both adds and removes.
+    compare(
+      "authoringMode",
+      authoringCapabilities(storedMode),
+      authoringCapabilities(ceiling.authoringMode),
+    );
     if (aclChanges.length > 0) {
       // Bounded: a large patch is summarized by counts, never dumped entry by entry.
       if (aclChanges.length <= AUDIT_ACL_DETAIL_MAX) {
@@ -996,9 +1039,18 @@ export async function updateGrant(
       `UPDATE "mcp_grant"
           SET scopes = $2::text[], "toolGroups" = $3::text[], "allowCreate" = $4,
               "createdKbBits" = $5::text[],
-              "widenedAt" = CASE WHEN $6::boolean THEN now() ELSE "widenedAt" END
+              "widenedAt" = CASE WHEN $6::boolean THEN now() ELSE "widenedAt" END,
+              "authoringMode" = $7::"McpAuthoringMode"
         WHERE id = $1::uuid AND "revokedAt" IS NULL`,
-      [input.id, nextScopes, ceiling.toolGroups, ceiling.allowCreate, nextCreated, widened],
+      [
+        input.id,
+        nextScopes,
+        ceiling.toolGroups,
+        ceiling.allowCreate,
+        nextCreated,
+        widened,
+        authoringModeToDb(ceiling.authoringMode),
+      ],
     );
     if (!oauth) {
       // The token's scope snapshot moves with the grant, so the issued-scope check holds.
@@ -1094,6 +1146,7 @@ async function createElevation(
     storedGroups: McpToolGroup[];
     allowCreate: boolean;
     createdKbBits: string[];
+    authoringMode: string | null;
     oauth: boolean;
   },
 ): Promise<GrantUpdateResult> {
@@ -1105,6 +1158,8 @@ async function createElevation(
     // Shape rules shared with minting; an empty `bits` (a removal) is rejected here.
     ceiling = normalizeGrantCeiling({
       scopes: row.scopes.filter((scope) => (MCP_PAT_SCOPES as readonly string[]).includes(scope)),
+      // The base mode passes through: temporary access never changes it.
+      authoringMode: authoringModeFromDb(row.authoringMode),
       toolGroups: input.toolGroups ?? row.storedGroups,
       acl: patch,
       allowCreate,
@@ -1357,6 +1412,7 @@ export async function listPersonalTokens(
       toolGroups: string[];
       allowCreate: boolean;
       createdKbBits: string[];
+      authoringMode: string | null;
       grantId: string;
       createdAt: Date;
       expiresAt: Date | null;
@@ -1365,14 +1421,17 @@ export async function listPersonalTokens(
       elevations: GrantElevationRow[];
     }>(
       `SELECT t.id, t.name, t."lookupPrefix", t.scopes, g."toolGroups", g."allowCreate",
-              g."createdKbBits", t."grantId"::text AS "grantId", t."createdAt", t."expiresAt",
+              g."createdKbBits", g."authoringMode"::text AS "authoringMode",
+              t."grantId"::text AS "grantId", t."createdAt", t."expiresAt",
               t."revokedAt", g."widenedAt", ${ACTIVE_ELEVATIONS_JSON_SQL} AS elevations
          FROM mcp_personal_token t JOIN mcp_grant g ON g.id = t."grantId"
         WHERE t."userId" = $1 AND ($2::text IS NULL OR t.id > $2)
         ORDER BY t.id LIMIT $3`,
       [userId, cursor, take + 1],
     );
-    const items = rows.slice(0, take);
+    const items = rows
+      .slice(0, take)
+      .map((row) => ({ ...row, authoringMode: authoringModeFromDb(row.authoringMode) }));
     return { items, nextCursor: rows.length > take ? (items.at(-1)?.id ?? null) : null };
   });
 }
@@ -1409,6 +1468,7 @@ export async function listGrants(
       toolGroups: string[];
       allowCreate: boolean;
       createdKbBits: string[];
+      authoringMode: string | null;
       createdAt: Date;
       revokedAt: Date | null;
       widenedAt: Date | null;
@@ -1418,7 +1478,8 @@ export async function listGrants(
       `SELECT g.id::text AS id, g.kind::text AS kind, g."clientId",
               (SELECT c.name FROM oauth_client c WHERE c."clientId" = g."clientId") AS "clientName",
               g.scopes, g."toolGroups",
-              g."allowCreate", g."createdKbBits", g."createdAt", g."revokedAt", g."widenedAt",
+              g."allowCreate", g."createdKbBits", g."authoringMode"::text AS "authoringMode",
+              g."createdAt", g."revokedAt", g."widenedAt",
               ${ACTIVE_ELEVATIONS_JSON_SQL} AS elevations,
               COALESCE((SELECT jsonb_agg(a ORDER BY a."kbId") FROM (
                 SELECT x."kbId", x.bits, ${aclKbNameSql("$1")} AS name FROM grant_kb_acl x
@@ -1433,6 +1494,7 @@ export async function listGrants(
       const acl = row.acl.slice(0, MCP_GRANT_MAX_ACL_ENTRIES);
       return {
         ...row,
+        authoringMode: authoringModeFromDb(row.authoringMode),
         acl,
         // A new inspection must discard previously loaded tails, even when
         // several writes leave the preview and cardinality unchanged.
