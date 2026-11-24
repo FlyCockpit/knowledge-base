@@ -157,6 +157,30 @@ export function createGitHttp(options: {
         );
       }
       const body = receive && !discovery && spool ? await spool.file.readFile() : undefined;
+      // Before streaming a body larger than its http.postBuffer, Git sends a
+      // lone flush-pkt to check the credential (remote-curl's probe_rpc) and
+      // sends the pack only after a 200. Answer it as git-http-backend does:
+      // empty, after the same authorization. It is not a push attempt.
+      if (body?.length === 4 && body.toString("latin1") === "0000") {
+        // Live authority, as a push recheck: access may change while the body arrives.
+        await reauthorize();
+        await authorize({
+          store: options.store,
+          principal: actor.principal,
+          verifier: actor.verifier,
+          kbId,
+          operation: "propose",
+        });
+        abort.signal.throwIfAborted();
+        pushActor = undefined;
+        return new Response(null, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/x-git-receive-pack-result",
+            "Cache-Control": "private, no-store",
+          },
+        });
+      }
       pushBody = body;
       const command = body ? inspectPushRequest(body) : undefined;
       if (body && command) pushRequest = { command, capabilities: pushCapabilities(body) };

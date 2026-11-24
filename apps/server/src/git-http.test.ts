@@ -326,6 +326,53 @@ describe("Git HTTP push refusals and failures", () => {
       }
     },
   );
+  it("answers Git's flush-pkt auth probe with an empty 200, not a refusal", async () => {
+    const { app } = fixture({ push: true });
+    storedAcl.set(id, ["read", "propose"]);
+    principal.scopes = ["mcp:read", "mcp:write"];
+    const logged = captureLog();
+    try {
+      const response = await post(app, "0000");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/x-git-receive-pack-result");
+      expect(await response.text()).toBe("");
+      expect(receivePush).not.toHaveBeenCalled();
+      expect(logged.records).not.toContainEqual(
+        expect.objectContaining({ site: "git-http.refused" }),
+      );
+      // The probe is authorized like the push it precedes.
+      storedAcl.set(id, ["read"]);
+      expect((await post(app, "0000")).status).toBe(403);
+      // Including live: propose revoked while the body arrives.
+      storedAcl.set(id, ["read", "propose"]);
+      // The first chunk is pulled when the stream is built; the second only once
+      // the server reads the body, after its pre-upload checks.
+      let pulls = 0;
+      const revoking = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulls++ === 0) return controller.enqueue(new TextEncoder().encode("00"));
+          storedAcl.set(id, ["read"]);
+          controller.enqueue(new TextEncoder().encode("00"));
+          controller.close();
+        },
+      });
+      const revoked = await app.request(`/git/${id}.git/git-receive-pack`, {
+        method: "POST",
+        headers: {
+          authorization: basic(),
+          "content-type": "application/x-git-receive-pack-request",
+        },
+        body: revoking,
+        duplex: "half",
+      } as RequestInit);
+      expect(revoked.status).toBe(403);
+    } finally {
+      logged.restore();
+      receivePush.mockReset();
+      principal.scopes = ["mcp:read"];
+      storedAcl.set(id, ["read"]);
+    }
+  });
   it("logs an unexpected push failure before its 503, without the credential", async () => {
     const { app } = fixture({ push: true });
     storedAcl.set(id, ["read", "propose"]);

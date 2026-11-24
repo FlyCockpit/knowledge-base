@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -379,6 +379,33 @@ describe("git-push real PAT, Git quarantine and journal", { timeout: 120_000 }, 
           where: { opId: intent.opId, action: "git_push", outcome: "FAILURE" },
         }),
       ).toBe(0);
+    });
+  });
+  it("accepts a push larger than Git's http.postBuffer (flush-pkt probe, then a chunked body)", () => {
+    return runOwnedGitPushAction(async () => {
+      const head = current();
+      // Incompressible text well past the 64 KiB postBuffer floor: Git first
+      // probes with a lone flush-pkt, then streams the pack chunked.
+      const large = randomBytes(96 * 1024).toString("base64");
+      const next = commit(
+        "larger than postBuffer",
+        head,
+        tree("# valid\n", undefined, { "large.md": `${large}\n` }),
+      );
+      const failures = () =>
+        prisma.auditEvent.count({ where: { action: "git_push", outcome: "FAILURE" } });
+      const before = await failures();
+      await remote([
+        "-c",
+        "http.postBuffer=65536",
+        "-C",
+        clone,
+        "push",
+        url,
+        `${next}:refs/heads/main`,
+      ]);
+      expect(current()).toBe(next);
+      expect(await failures()).toBe(before);
     });
   });
   it("audits rejected authenticated pushes before intent creation and authorization, without client payloads", () => {
