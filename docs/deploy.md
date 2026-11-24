@@ -265,7 +265,25 @@ Docker network, pass it as `--proxy-network`, and run `cloudflared` on it; the
 server joins that network under the alias `<project>-server`. No host port is
 published, so the tunnel is the only way in. If you run `cloudflared` on the
 host instead of in a container, publish the server only on loopback
-(`127.0.0.1:3000:3000`), never on `0.0.0.0`.
+(`127.0.0.1:3000:3000`), never on `0.0.0.0`: Docker's published ports bypass
+host firewalls such as `ufw`. Its ingress then points at
+`http://127.0.0.1:3000`.
+
+Create a named tunnel either way:
+
+- **Remotely managed** (simplest): create it in the Zero Trust dashboard, add
+  the public hostname there, and run the connector with the tunnel token. The
+  token is the only secret; keep it in the Compose environment block, never in
+  a file in the checkout.
+- **Locally managed**: `cloudflared tunnel login`, `cloudflared tunnel create`,
+  `cloudflared tunnel route dns`, then a `config.yml`. Keep it and the
+  credentials JSON **outside the checkout** (for example `/etc/cloudflared`):
+  the image build runs `COPY . .`, so a credentials file inside the checkout
+  would land in the build layers. The official `cloudflare/cloudflared` image
+  runs as UID 65532 and the credentials file is owner-readable only, so hand
+  the directory to that UID (`chmod 400` the named `<tunnel-uuid>.json`, then
+  `chown -R 65532:65532` and `chmod 700` the directory; these need root, so
+  run them yourself).
 
 Sample `/etc/cloudflared/config.yml` (direct; the project name is
 `knowledge-base-production`):
@@ -277,6 +295,19 @@ ingress:
   - hostname: kb.example.com
     service: http://knowledge-base-production-server:3000
   - service: http_status:404
+```
+
+and the connector, on the same private network as the server:
+
+```yaml
+  cloudflared:
+    image: cloudflare/cloudflared:<version>   # pin a version you have tested
+    command: tunnel --no-autoupdate run
+    # Remotely managed: no volume; set TUNNEL_TOKEN in the environment instead.
+    volumes:
+      - /etc/cloudflared:/etc/cloudflared:ro
+    networks: [<proxy-network>]
+    restart: unless-stopped
 ```
 
 Through Traefik, point the ingress at Traefik's TLS entrypoint instead; the
@@ -296,6 +327,13 @@ self-signed fallback on that local hop add `noTLSVerify`:
       originServerName: kb.example.com
       noTLSVerify: true # only while Traefik serves its self-signed default
 ```
+
+Or skip the certificate on that local hop: add a router for the hostname on a
+plain-HTTP Traefik entrypoint that does not redirect to HTTPS and point the
+ingress at `http://dokploy-traefik:80`. Either way, a Traefik port published
+on the host is reachable from the LAN, and anyone there can send a forged
+`X-Forwarded-For` through a hop the server trusts; forward no router ports and
+keep those ports to trusted machines.
 
 **Environment.** These match the generated Compose apart from the hop count:
 
