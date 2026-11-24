@@ -16,7 +16,7 @@ import {
   requestIndexBuild,
 } from "@knowledge-base/api/lib/kb/generations";
 import { claimDispatchBatch } from "@knowledge-base/api/lib/kb/jobs";
-import { createMemoryRatePort } from "@knowledge-base/api/lib/kb/limits";
+import { createMemoryRatePort, type RatePort } from "@knowledge-base/api/lib/kb/limits";
 import type { LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import type { TokenPrincipal } from "@knowledge-base/api/lib/kb/principal";
 import { createProvider, revokeProvider } from "@knowledge-base/api/lib/kb/providers";
@@ -106,6 +106,31 @@ const tx = <T>(run: (q: LockQuery) => Promise<T>) =>
     kind: "authority",
     run: (lease) => lease.transaction(run),
   });
+/**
+ * Removes `kbId`'s lexical arm by order, not time. Admission charges the returned rate port
+ * inside its authority section; that enqueues a test section on the FIFO authority gate, which
+ * runs right after admission (commit included) and before any later section of the same search,
+ * such as the lexical fallback after the embedding share expires. It clears the KB's active
+ * generation, so that fallback finds nothing to degrade to. `removed` settles only once a
+ * request reached its charge.
+ */
+function removeLexicalArmAfterAdmission(kbId: string) {
+  let charged!: () => void;
+  const admission = new Promise<void>((resolve) => {
+    charged = resolve;
+  });
+  // Registered here, outside admission's operation context.
+  const removed = admission.then(() =>
+    tx((q) => q('UPDATE knowledge_base SET "activeGenerationId"=NULL WHERE id=$1', [kbId])),
+  );
+  const ratePort: RatePort = {
+    consume: (bucket, rateKey, points) => {
+      charged();
+      return opts.ratePort.consume(bucket, rateKey, points);
+    },
+  };
+  return { ratePort, removed };
+}
 const runtime: KbRuntimeConfig = {
   prisma,
   connectionString: db.urls.runtime,
@@ -921,16 +946,111 @@ describe("leased query embeddings", () => {
       }
     },
   );
+  it("a progress peek cut off by the embedding share's own deadline is that share expiring", async () => {
+    // The peek's statement_timeout is the time left in the embedding share. Run the peek as a
+    // statement that outlives any share, so Postgres cancels it (57014) exactly at that
+    // deadline: the share expired. Before the fix it surfaced as a storage failure
+    // (INDEX_UNAVAILABLE) whenever the last peek of a share straddled its deadline.
+    const f = await fixture();
+    const { ratePort, removed } = removeLexicalArmAfterAdmission(f.kbId);
+    const original = Client.prototype.query;
+    const queries = vi.spyOn(Client.prototype, "query");
+    let peeks = 0;
+    queries.mockImplementation(function (this: Client, ...args) {
+      const statement: unknown = args[0];
+      if (typeof statement === "string" && statement.startsWith("SELECT r.state,")) {
+        peeks++;
+        return Reflect.apply(original, this, ["SELECT pg_sleep(30)"]);
+      }
+      return Reflect.apply(original, this, args);
+    });
+    try {
+      await expect(
+        withQueryEmbedding(
+          { ...opts, ratePort },
+          f.actor,
+          { kbId: f.kbId, query: "straddling peek", timeoutMs: 1500 },
+          async () => "unexpected",
+        ),
+      ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+      expect(peeks).toBe(1);
+      expect((await removed).rowCount).toBe(1);
+    } finally {
+      queries.mockRestore();
+    }
+  });
+  it("a peek storage failure stays one even when its cleanup outlasts the embedding share", async () => {
+    // Classification happens where the error arrives. The peek session's inherit fails (08006)
+    // long before any deadline; while that session is cleaned up, the wall clock jumps past
+    // every deadline (Date.now only: real timers, and so the call's own abort, are untouched).
+    // Classifying after cleanup read that as the share expiring (here DEADLINE_EXCEEDED, as the
+    // jump also expires the fallback; with time left, lexical success).
+    const f = await fixture();
+    const realNow = Date.now;
+    let offset = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    const original = { query: Client.prototype.query, end: Client.prototype.end };
+    let peekClient: Client | undefined;
+    const queries = vi.spyOn(Client.prototype, "query");
+    queries.mockImplementation(function (this: Client, ...args) {
+      const statement: unknown = args[0];
+      if (
+        typeof statement === "string" &&
+        statement.startsWith("SELECT pg_try_advisory_lock_shared(")
+      ) {
+        peekClient = this;
+        return Promise.reject(
+          Object.assign(new Error("fixture inherit failure"), { code: "08006" }),
+        );
+      }
+      return Reflect.apply(original.query, this, args);
+    });
+    const ends = vi.spyOn(Client.prototype, "end");
+    ends.mockImplementation(function (this: Client, ...args) {
+      if (this === peekClient) offset = 60_000;
+      return Reflect.apply(original.end, this, args);
+    });
+    const lexical = vi.fn(async () => "keywords");
+    try {
+      await expect(
+        withQueryEmbedding(
+          opts,
+          f.actor,
+          { kbId: f.kbId, query: "inherit failure", timeoutMs: 1500 },
+          async () => "hybrid",
+          undefined,
+          lexical,
+        ),
+      ).rejects.toMatchObject({ code: "INDEX_UNAVAILABLE" });
+      expect(peekClient).toBeDefined();
+      expect(offset).toBe(60_000);
+      expect(lexical).not.toHaveBeenCalled();
+    } finally {
+      ends.mockRestore();
+      queries.mockRestore();
+      now.mockRestore();
+    }
+  });
   it("bounded API timeout/cancel scrubs payload and successful delivery releases after consumption", async () => {
     const f = await fixture();
+    // With no worker the embedding share of the budget expires first, and the call degrades
+    // to the lexical arm whenever that fallback still fits in the reserved rest, so a short
+    // budget raced DEADLINE_EXCEEDED against the fallback's speed. Without a lexical arm the
+    // bounded call must report its deadline.
+    const stalled = await fixture();
+    const { ratePort, removed } = removeLexicalArmAfterAdmission(stalled.kbId);
     await expect(
       withQueryEmbedding(
-        opts,
-        f.actor,
-        { kbId: f.kbId, query: "no consumer", timeoutMs: 150 },
+        { ...opts, ratePort },
+        stalled.actor,
+        { kbId: stalled.kbId, query: "no consumer", timeoutMs: 150 },
         async () => "unexpected",
       ),
     ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+    // An admitted request always ran the removal (an admission that overran the budget
+    // itself ends the same way, before charging).
+    if (await prisma.queryEmbeddingRequest.count({ where: { kbId: stalled.kbId } }))
+      expect((await removed).rowCount).toBe(1);
     const controller = new AbortController();
     controller.abort();
     await expect(

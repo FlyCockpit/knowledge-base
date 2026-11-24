@@ -517,8 +517,22 @@ function peekRemainingMs(deadlineAt: number): number {
   return deadlineAt - Date.now();
 }
 
+/** Whole milliseconds, rounded up: a peek's own bound never fires before its deadline. */
 function peekTimeoutMs(deadlineAt: number): number {
-  return Math.max(1, peekRemainingMs(deadlineAt));
+  return Math.max(1, Math.ceil(peekRemainingMs(deadlineAt)));
+}
+
+/**
+ * Whether the peek's own bound (its connect or statement timeout: the embedding share's
+ * deadline, rounded up) cut it off, so the share expired rather than storage failing. Callers
+ * evaluate it where the error arrives, before any cleanup could let the deadline pass for an
+ * unrelated failure. Under 1 ms left counts, as Date.now() is whole milliseconds.
+ */
+function cutByPeekBound(error: unknown, deadlineAt: number, connect: boolean): boolean {
+  return (
+    peekRemainingMs(deadlineAt) < 1 &&
+    (connect || (error instanceof Error && "code" in error && error.code === "57014"))
+  );
 }
 
 async function closePeekSession(session: PeekSession) {
@@ -562,8 +576,9 @@ async function ensurePeekClient(
   try {
     await client.connect();
   } catch (error) {
+    const expired = cutByPeekBound(error, deadlineAt, true);
     if (session.connecting === client) session.connecting = null;
-    throw error;
+    throw expired ? new EmbeddingPhaseExpired() : error;
   }
   const closedDuringConnect = session.connecting !== client;
   if (!closedDuringConnect) session.connecting = null;
@@ -577,8 +592,9 @@ async function ensurePeekClient(
     signal.throwIfAborted();
     return client;
   } catch (error) {
+    const expired = cutByPeekBound(error, deadlineAt, false);
     await closePeekSession(session);
-    throw error;
+    throw expired ? new EmbeddingPhaseExpired() : error;
   }
 }
 
@@ -592,14 +608,20 @@ async function peekQueryEmbeddingProgress(
   if (signal.aborted) throw failure("CANCELLED");
   if (peekRemainingMs(deadlineAt) <= 0) throw new EmbeddingPhaseExpired();
 
+  const read = async (client: Client) => {
+    try {
+      await client.query(`SET statement_timeout = '${peekTimeoutMs(deadlineAt)}ms'`);
+      return await client.query<{ state: string; live: boolean; jobState: string }>(
+        `SELECT r.state,(r.deadline>clock_timestamp()) AS live,j.state AS "jobState"
+         FROM query_embedding_request r JOIN durable_job j ON j.id=r.id WHERE r.id=$1`,
+        [id],
+      );
+    } catch (error) {
+      throw cutByPeekBound(error, deadlineAt, false) ? new EmbeddingPhaseExpired() : error;
+    }
+  };
   const run = async (): Promise<PeekProgress> => {
-    const client = await ensurePeekClient(session, deadlineAt, signal);
-    await client.query(`SET statement_timeout = '${peekTimeoutMs(deadlineAt)}ms'`);
-    const { rows } = await client.query<{ state: string; live: boolean; jobState: string }>(
-      `SELECT r.state,(r.deadline>clock_timestamp()) AS live,j.state AS "jobState"
-       FROM query_embedding_request r JOIN durable_job j ON j.id=r.id WHERE r.id=$1`,
-      [id],
-    );
+    const { rows } = await read(await ensurePeekClient(session, deadlineAt, signal));
     const row = rows[0];
     if (!row) return { phase: "terminal", code: "INDEX_UNAVAILABLE" };
     if (!row.live) return { phase: "terminal", code: "DEADLINE_EXCEEDED" };
@@ -632,6 +654,7 @@ async function peekQueryEmbeddingProgress(
   } catch (error) {
     if (signal.aborted) throw failure("CANCELLED");
     await closePeekSession(session);
+    // Only cutByPeekBound, at the failing call, turns a failure into EmbeddingPhaseExpired.
     // A failed peek is not a pending embedding. Retrying SQL/connection failures until
     // the embedding share expires would turn a storage failure into lexical success.
     throw error;
