@@ -525,12 +525,17 @@ async function carryContractState(client, schema, release, present, migrations) 
   );
   const byName = new Map(rows.map((r) => [r.name, r]));
   const ran = release.replaces.filter((e) => byName.get(e.name)?.contract_applied_at);
-  const wrong = ran.filter((e) => byName.get(e.name).contract_checksum !== e.contractChecksum);
+  // Every recorded contract, pending ones too (null-aware, as validateContract
+  // compares): a pending deletion must not change by being reconciled onto
+  // the release, and one that ran must be the one the release describes.
+  const wrong = release.replaces.filter(
+    (e) => byName.has(e.name) && byName.get(e.name).contract_checksum !== e.contractChecksum,
+  );
   if (wrong.length)
     throw new Error(
-      `the scheduled deletion (contract.sql) that ran here for ${wrong.map((e) => e.name).join(", ")} is not the one ` +
-        `${release.name}/${REPLACES_FILE} records (checksum mismatch): this database deleted something the release does not ` +
-        "describe. Rebuild this test database, or ask a person (docs/schema-migrations.md § Recovery runbook)",
+      `the scheduled deletion (contract.sql) recorded here for ${wrong.map((e) => e.name).join(", ")} is not the one ` +
+        `${release.name}/${REPLACES_FILE} records (checksum mismatch): this database scheduled or ran a deletion the release ` +
+        "does not describe. Rebuild this test database, or ask a person (docs/schema-migrations.md § Recovery runbook)",
     );
   const withContract = release.replaces.filter((e) => e.contractChecksum);
   const done = ran;
