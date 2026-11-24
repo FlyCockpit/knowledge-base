@@ -46,6 +46,7 @@ const READ_TOOLS = [
   "knowledge_documents_list",
   "knowledge_documents_get",
   "knowledge_search",
+  "knowledge_search_all",
   "knowledge_structured_search",
 ];
 /** What a harness sends to the model: name, description and input schema. */
@@ -65,8 +66,22 @@ describe("scoped tools/list", () => {
     const discovery = buildDiscovery(inputs());
     expect(discovery.tools.map((tool) => tool.name)).toEqual(READ_TOOLS);
     for (const tool of discovery.tools)
-      expect((tool.inputSchema as unknown as Schema).properties.kbId?.enum).toEqual([id(1)]);
+      if (tool.name !== "knowledge_search_all")
+        expect((tool.inputSchema as unknown as Schema).properties.kbId?.enum).toEqual([id(1)]);
     expect(discovery.instructions).toBe(`${PREFIX}${id(1)} = "KB 1"`);
+  });
+
+  it("lists knowledge_search_all with exactly its pinned input schema: kbIds is never narrowed", () => {
+    for (const kbs of [
+      [kb(1, ["read"])],
+      Array.from({ length: 5 }, (_, n) => kb(n + 1, ["read"])),
+    ]) {
+      const tool = buildDiscovery(inputs({ kbs })).tools.find(
+        (entry) => entry.name === "knowledge_search_all",
+      );
+      expect(tool?.inputSchema).toEqual(protocol.tools.knowledge_search_all.input);
+      expect(JSON.stringify(tool?.inputSchema)).not.toContain('"enum"');
+    }
   });
 
   it("every group lists all 31 tools in catalog order with pinned schemas apart from kbId enums", () => {

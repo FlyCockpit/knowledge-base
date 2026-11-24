@@ -160,6 +160,7 @@ pub mod qwen;
 pub mod recovery;
 pub mod sealed;
 pub mod search;
+pub mod search_all;
 pub mod sensitive_text;
 mod sqlite_vec;
 pub mod state;

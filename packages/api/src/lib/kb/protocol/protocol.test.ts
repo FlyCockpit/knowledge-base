@@ -398,6 +398,7 @@ describe("kb/1 protocol catalog", () => {
         "knowledge_documents_list",
         "knowledge_documents_get",
         "knowledge_search",
+        "knowledge_search_all",
         "knowledge_structured_search",
       ],
       edit: [

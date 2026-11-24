@@ -32,6 +32,7 @@ const db = prisma as unknown as {
   $executeRaw: MockInstance;
   $executeRawUnsafe: MockInstance;
   $queryRaw: MockInstance;
+  $queryRawUnsafe: MockInstance;
   appSetting: {
     findMany: MockInstance;
     findUnique: MockInstance;
@@ -498,6 +499,78 @@ describe("settingsRouter", () => {
           return true;
         },
       );
+    });
+  });
+  describe("knowledge_search_all limit", () => {
+    const admin = () =>
+      createRouterClient(settingsRouter, {
+        context: buildContext({ user: { role: "admin", twoFactorEnabled: true } }),
+      });
+    const notFound = (error: ORPCError<string, unknown>) => {
+      expect(error).toBeInstanceOf(ORPCError);
+      expect(error.code).toBe("NOT_FOUND");
+      return true;
+    };
+
+    it.each([
+      [[], 16],
+      [[{ value: "5" }], 5],
+      [[{ value: "64" }], 64],
+      [[{ value: "65" }], 16],
+      [[{ value: "zero" }], 16],
+    ])("reads stored %j as %d (default 16, allowed 1..64)", async (rows, limit) => {
+      db.$queryRawUnsafe.mockResolvedValue(rows);
+      await expect(admin().kbSearchAllLimit()).resolves.toEqual({ limit, default: 16, max: 64 });
+      const [sql, key] = db.$queryRawUnsafe.mock.calls[0]!;
+      expect(sql).toMatch(/^SELECT value FROM app_setting WHERE key = \$1$/);
+      expect(key).toBe("kb.searchAll.limit");
+    });
+
+    it("upserts the AppSetting row in the live-admin transaction and returns the stored limit", async () => {
+      db.$queryRawUnsafe.mockImplementation(async (sql: string) =>
+        sql.startsWith("SELECT") ? [{ value: "24" }] : [],
+      );
+      await expect(admin().setKbSearchAllLimit({ limit: 24 })).resolves.toEqual({
+        limit: 24,
+        default: 16,
+        max: 64,
+      });
+      const write = db.$queryRawUnsafe.mock.calls.find(([sql]) =>
+        String(sql).startsWith("INSERT"),
+      )!;
+      expect(write.slice(1)).toEqual(["kb.searchAll.limit", "24"]);
+      expect(write[0]).toContain("ON CONFLICT (key) DO UPDATE");
+    });
+
+    it.each([0, 65, 1.5, -1])("refuses limit %d without writing", async (limit) => {
+      await expect(admin().setKbSearchAllLimit({ limit })).rejects.toThrow();
+      expect(db.$queryRawUnsafe.mock.calls.some(([sql]) => String(sql).startsWith("INSERT"))).toBe(
+        false,
+      );
+    });
+
+    it.each([
+      ["unauthenticated", null],
+      ["a non-admin", { user: { role: "user" } }],
+      ["an admin without 2FA", { user: { role: "admin", twoFactorEnabled: false } }],
+      ["an unverified admin", { user: { role: "admin", emailVerified: false } }],
+    ] as const)("answers NOT_FOUND to %s for both procedures", async (_label, session) => {
+      const client = createRouterClient(settingsRouter, {
+        context: buildContext(session as never),
+      });
+      await expect(client.kbSearchAllLimit()).rejects.toSatisfy(notFound);
+      await expect(client.setKbSearchAllLimit({ limit: 8 })).rejects.toSatisfy(notFound);
+      expect(db.$queryRawUnsafe).not.toHaveBeenCalled();
+    });
+
+    it("is not client-readable through getAll", async () => {
+      db.appSetting.findMany.mockResolvedValue([]);
+      const client = createRouterClient(settingsRouter, { context: buildContext() });
+      await client.getAll();
+      const call = db.appSetting.findMany.mock.calls[0]?.[0] as {
+        where: { key: { in: string[] } };
+      };
+      expect(call.where.key.in).not.toContain("kb.searchAll.limit");
     });
   });
 });

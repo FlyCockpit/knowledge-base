@@ -524,7 +524,8 @@ fn route(
     // A server's `kbId` enum is its startup snapshot: as with one server, the
     // server's live grant (a KB created since, a revoked share) decides, so
     // it is only a source of known IDs below, never a local refusal.
-    // A KB ID only another server has shown never goes to this one.
+    // A KB ID only another server has shown never goes to this one (each
+    // element of a `kbIds` list included: the whole call is refused).
     for kb in kb_ids(&input) {
         let here = up
             .known
@@ -573,10 +574,20 @@ fn route(
     }
 }
 
+/// Every KB ID a call names: `kbId`, `source.kbId` and each element of
+/// `knowledge_search_all`'s `kbIds`.
 fn kb_ids(input: &Value) -> impl Iterator<Item = &str> {
     ["/kbId", "/source/kbId"]
         .into_iter()
         .filter_map(|pointer| input.pointer(pointer).and_then(Value::as_str))
+        .chain(
+            input
+                .get("kbIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str),
+        )
 }
 
 /// The KB IDs a server's list narrows `kbId` to.
@@ -602,8 +613,22 @@ fn learn_kb_ids(up: &Upstream, name: ToolName, result: &Value) {
     if result["isError"] == json!(true) {
         return;
     }
-    let data = &result["structuredContent"]["data"];
-    let ids: Vec<&str> = match name {
+    let ids = learned_kb_ids(name, &result["structuredContent"]["data"]);
+    if !ids.is_empty() {
+        let mut known = up
+            .known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        known.extend(ids.into_iter().map(str::to_owned));
+    }
+}
+
+/// The KB IDs one successful result shows this server holds. A
+/// `knowledge_search_all` row other than `not_found` is a base the server
+/// searched (or told the caller about) for this credential; a `not_found` row
+/// proves nothing, so it never teaches an ID.
+fn learned_kb_ids(name: ToolName, data: &Value) -> Vec<&str> {
+    match name {
         ToolName::KnowledgeBasesList => data["items"]
             .as_array()
             .into_iter()
@@ -613,14 +638,18 @@ fn learn_kb_ids(up: &Upstream, name: ToolName, result: &Value) {
         ToolName::KnowledgeBasesGet
         | ToolName::KnowledgeBasesCreate
         | ToolName::KnowledgeBasesUpdate => data["kb"]["id"].as_str().into_iter().collect(),
+        ToolName::KnowledgeSearchAll => data["knowledgeBases"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row["status"]
+                    .as_str()
+                    .is_some_and(|status| status != "not_found")
+            })
+            .filter_map(|row| row["kbId"].as_str())
+            .collect(),
         _ => Vec::new(),
-    };
-    if !ids.is_empty() {
-        let mut known = up
-            .known
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        known.extend(ids.into_iter().map(str::to_owned));
     }
 }
 
@@ -731,6 +760,25 @@ fn error_code(error: &ClientError) -> ErrorCode {
 mod tests {
     use super::*;
     use kb_client::TransportPolicy;
+
+    #[test]
+    fn search_all_rows_teach_searched_ids_never_not_found_ones() {
+        let data = json!({"knowledgeBases":[
+            {"kbId":"aaaaaaaaaaaaaaaaaaaaaaaa","status":"ok"},
+            {"kbId":"bbbbbbbbbbbbbbbbbbbbbbbb","status":"not_found"},
+            {"kbId":"cccccccccccccccccccccccc","status":"rate_limited"},
+            {"kbId":"dddddddddddddddddddddddd","status":"lexical_only"}
+        ]});
+        assert_eq!(
+            learned_kb_ids(ToolName::KnowledgeSearchAll, &data),
+            [
+                "aaaaaaaaaaaaaaaaaaaaaaaa",
+                "cccccccccccccccccccccccc",
+                "dddddddddddddddddddddddd"
+            ]
+        );
+        assert!(learned_kb_ids(ToolName::KnowledgeSearch, &data).is_empty());
+    }
 
     fn selected(name: &str, origin: &str) -> Selected {
         Selected {
@@ -919,5 +967,10 @@ mod tests {
             ["k1", "k2"]
         );
         assert_eq!(kb_ids(&json!({"name":"x"})).count(), 0);
+        assert_eq!(
+            kb_ids(&json!({"query":"q","kbIds":["k1","k2","k1"]})).collect::<Vec<_>>(),
+            ["k1", "k2", "k1"]
+        );
+        assert_eq!(kb_ids(&json!({"query":"q"})).count(), 0);
     }
 }

@@ -9,6 +9,7 @@ import {
   compareIsoUtc,
   documentSchema,
   fileDeltaSchema,
+  freshnessSchema,
   hashSchema,
   indexNoticeSchema,
   indexStatusSchema,
@@ -25,6 +26,9 @@ import {
   pathSchema,
   providerSummarySchema,
   prSummarySchema,
+  SEARCH_ALL_MAX_BASES,
+  SEARCH_ALL_MAX_PER_BASE,
+  SEARCH_ALL_MAX_RESULTS,
   safeIntSchema,
   shaSchema,
   unicodeBoundedString,
@@ -83,6 +87,44 @@ export const exportJobSchema = closed({
   mime: z.literal("application/zip"),
 });
 
+/**
+ * How one base of a knowledge_search_all call ended. `ok` and `lexical_only` were searched
+ * (keyword arm only for the latter); `rebuilding` has no index to serve while its first or next
+ * build runs; `unavailable` could not be searched now; `rate_limited` spent its per-base query
+ * budget; `deadline` did not finish (or start) before the call's one shared deadline;
+ * `not_found` is a base that does not exist or that this credential cannot read (the two are
+ * never told apart).
+ */
+export const SEARCH_ALL_BASE_STATUSES = [
+  "ok",
+  "lexical_only",
+  "rebuilding",
+  "unavailable",
+  "rate_limited",
+  "deadline",
+  "not_found",
+] as const;
+
+const searchAllBaseSchema = closed({
+  kbId: kbIdSchema,
+  status: z.enum(SEARCH_ALL_BASE_STATUSES),
+  /** Hits this base contributed to `results`. */
+  hitCount: safeIntSchema.min(0).max(SEARCH_ALL_MAX_PER_BASE),
+  /** Set only for a searched base (`ok` / `lexical_only`); null otherwise. */
+  generationId: kbIdSchema.nullable(),
+  freshness: freshnessSchema.nullable(),
+  indexedCommitSha: shaSchema.nullable(),
+  headSha: shaSchema.nullable(),
+  indexNotices: z.array(indexNoticeSchema).max(1),
+  /** Set only for `rate_limited`. */
+  retryAfterSeconds: safeIntSchema.min(1).nullable(),
+});
+
+/** One merged hit: a knowledge_search hit plus its rank (1 = best) inside its own base. */
+export const searchAllHitSchema = citationHitSchema.extend({
+  rank: safeIntSchema.min(1).max(SEARCH_ALL_MAX_PER_BASE),
+});
+
 export const kbReadToolSchemas = {
   knowledge_bases_list: {
     input: pageInputSchema,
@@ -127,6 +169,26 @@ export const kbReadToolSchemas = {
       indexedCommitSha: shaSchema.nullable(),
       headSha: shaSchema,
       indexNotices: z.array(indexNoticeSchema).max(1),
+    }),
+  },
+  knowledge_search_all: {
+    input: closed({
+      query: unicodeBoundedString({ min: 1, max: 1024, postgresText: true }),
+      /** Bases to search, in this order; omitted = every base this credential can read. */
+      kbIds: z.array(kbIdSchema).min(1).max(SEARCH_ALL_MAX_BASES).optional(),
+      limitPerBase: z.number().int().min(1).max(SEARCH_ALL_MAX_PER_BASE).optional(),
+    }),
+    output: closed({
+      /**
+       * Every base's rank-1 hit (in `knowledgeBases` order), then every rank-2 hit, and so on.
+       * Not one relevance ranking: scores compare only within one base.
+       */
+      results: z.array(searchAllHitSchema).max(SEARCH_ALL_MAX_RESULTS),
+      order: z.literal("rank_interleaved"),
+      /** The per-base hit limit applied (the requested one, shrunk to fit the merged cap). */
+      limitPerBase: safeIntSchema.min(1).max(SEARCH_ALL_MAX_PER_BASE),
+      /** One row per base searched, in request order (or listing order for "all"). */
+      knowledgeBases: z.array(searchAllBaseSchema).max(SEARCH_ALL_MAX_BASES),
     }),
   },
   knowledge_structured_search: {

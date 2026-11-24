@@ -58,6 +58,13 @@ export const MCP_TOOLS: readonly {
   },
   { name: "knowledge_search", groups: ["read"], readOnly: true, kbBits: ["read"], editOnly: false },
   {
+    name: "knowledge_search_all",
+    groups: ["read"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
     name: "knowledge_structured_search",
     groups: ["read"],
     readOnly: true,

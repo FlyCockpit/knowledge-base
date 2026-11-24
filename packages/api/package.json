@@ -340,6 +340,9 @@
     "./lib/kb/search": {
       "default": "./src/lib/kb/search.ts"
     },
+    "./lib/kb/search-all": {
+      "default": "./src/lib/kb/search-all.ts"
+    },
     "./lib/kb/sealed-resolve": {
       "default": "./src/lib/kb/sealed-resolve.ts"
     },

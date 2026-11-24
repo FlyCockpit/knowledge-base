@@ -529,6 +529,28 @@ function addConformanceCases(base: Record<string, FixtureRow>): KbFixtureCorpus[
     { label: "empty-query", value: { ...search, query: "" } },
     { label: "limit-over-cap", value: { ...search, limit: 21 } },
   );
+  const searchAll = input("knowledge_search_all");
+  row("knowledge_search_all").validInputVariants.push(
+    { label: "all-readable", value: { query: "fixture query" } },
+    { label: "query-1024-astral-scalars", value: { ...searchAll, query: "😀".repeat(1024) } },
+    {
+      label: "kb-ids-64",
+      value: { ...searchAll, kbIds: Array.from({ length: 64 }, () => FIXTURE_KB_ID) },
+    },
+  );
+  row("knowledge_search_all").invalidInputs.push(
+    { label: "query-1025-scalars", value: { ...searchAll, query: "😀".repeat(1025) } },
+    { label: "empty-query", value: { ...searchAll, query: "" } },
+    { label: "nul-query", value: { ...searchAll, query: "canary\0value" } },
+    { label: "empty-kb-ids", value: { ...searchAll, kbIds: [] } },
+    {
+      label: "kb-ids-65",
+      value: { ...searchAll, kbIds: Array.from({ length: 65 }, () => FIXTURE_KB_ID) },
+    },
+    { label: "bad-kb-id", value: { ...searchAll, kbIds: ["Not-An-Id"] } },
+    { label: "limit-per-base-over-cap", value: { ...searchAll, limitPerBase: 11 } },
+    { label: "limit-per-base-zero", value: { ...searchAll, limitPerBase: 0 } },
+  );
   const create = input("knowledge_bases_create");
   row("knowledge_bases_create").validInputVariants.push({
     label: "name-120-scalars",
@@ -755,6 +777,52 @@ function addConformanceCases(base: Record<string, FixtureRow>): KbFixtureCorpus[
       },
     },
   );
+  const searchAllOut = output("knowledge_search_all");
+  const searchAllRow = (searchAllOut as { knowledgeBases: Record<string, unknown>[] })
+    .knowledgeBases[0]!;
+  const notFoundRow = {
+    ...searchAllRow,
+    status: "not_found",
+    generationId: null,
+    freshness: null,
+    indexedCommitSha: null,
+    headSha: null,
+  };
+  row("knowledge_search_all").validOutputVariants.push(
+    {
+      label: "populated-hit",
+      value: {
+        ...searchAllOut,
+        results: [{ ...SEARCH_HIT, rank: 1 }],
+        knowledgeBases: [{ ...searchAllRow, hitCount: 1 }],
+      },
+    },
+    {
+      label: "rate-limited-and-not-found",
+      value: {
+        ...searchAllOut,
+        knowledgeBases: [
+          { ...notFoundRow, status: "rate_limited", retryAfterSeconds: 7 },
+          notFoundRow,
+        ],
+      },
+    },
+  );
+  row("knowledge_search_all").invalidOutputs.push(
+    {
+      label: "hit-without-rank",
+      value: { ...searchAllOut, results: [SEARCH_HIT] },
+    },
+    {
+      label: "hit-rank-zero",
+      value: { ...searchAllOut, results: [{ ...SEARCH_HIT, rank: 0 }] },
+    },
+    {
+      label: "unknown-status",
+      value: { ...searchAllOut, knowledgeBases: [{ ...searchAllRow, status: "failed" }] },
+    },
+    { label: "score-order", value: { ...searchAllOut, order: "score" } },
+  );
   const reservedRow = Object.fromEntries([
     ["__proto__", "present"],
     ["constructor", "ctor"],
@@ -976,6 +1044,31 @@ function buildFixtureCorpus(): KbFixtureCorpus {
       },
       invalidInputs: [
         { label: "unknown-field", value: { kbId: FIXTURE_KB_ID, query: "q", extra: true } },
+      ],
+    },
+    knowledge_search_all: {
+      validInput: { query: "fixture query", kbIds: [FIXTURE_KB_ID], limitPerBase: 4 },
+      validOutput: {
+        results: [],
+        order: "rank_interleaved",
+        limitPerBase: 4,
+        knowledgeBases: [
+          {
+            kbId: FIXTURE_KB_ID,
+            status: "ok",
+            hitCount: 0,
+            generationId: FIXTURE_KB_ID,
+            freshness: "current",
+            indexedCommitSha: FIXTURE_SHA,
+            headSha: FIXTURE_SHA,
+            indexNotices: [],
+            retryAfterSeconds: null,
+          },
+        ],
+      },
+      invalidInputs: [
+        { label: "unknown-field", value: { query: "q", extra: true } },
+        { label: "per-base-kb-id", value: { query: "q", kbId: FIXTURE_KB_ID } },
       ],
     },
     knowledge_structured_search: {

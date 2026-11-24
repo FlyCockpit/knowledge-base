@@ -188,9 +188,14 @@ and every ID in it belongs to that server. One connection serves at most 16
 servers.
 
 - **Addressing.** The pair `(server, kbId)` identifies a knowledge base. A kbId
-  that one server has shown (its `kbId` enum, or a KB list/get/create/update
-  result) and the named server has not is refused locally (`FORBIDDEN`), so one
-  server's KB, path or sealed ciphertext request never reaches another.
+  that one server has shown (its `kbId` enum, a KB list/get/create/update
+  result, or a `knowledge_search_all` row other than `not_found`) and the named
+  server has not is refused locally (`FORBIDDEN`), so one
+  server's KB, path or sealed ciphertext request never reaches another. This
+  holds for every element of `knowledge_search_all`'s `kbIds`: one such ID
+  refuses the whole call. That tool searches one server per call; a call
+  without `kbIds` searches every base the named server lets this credential
+  read.
   Otherwise each server's live grant decides, as with one server (its `kbId`
   enum is a startup snapshot, so a KB created since is still usable).
   A missing `server` is `INVALID_ARGUMENT` (`MISSING_ARGUMENT` at `/server`); a
@@ -395,6 +400,33 @@ outside `--kb` is NOT_FOUND. The two supporting tools stay callable.
 to the selection), and a KB the connection creates joins its selection.
 `--read-only` intersects with both flags. The store owner holds every permission, so presets select
 groups only: `propose` does not stop the owner's edits from reaching main.
+
+`knowledge_search_all` (group `read`) searches several local KBs in one call,
+with the server tool's input, output and statuses. Each base runs the local
+`knowledge_search` unchanged: its own read check, query permit (4 per store
+owner), per-KB minute window, embedding breaker and keyword fallback. At most
+two bases run at once, in request order, under one 60-second deadline for
+the whole call. `kbIds` (1 to 64, duplicates dropped at their first
+occurrence) names the bases; without it the call searches exactly what
+`knowledge_bases_list` lists for this principal and `--kb` selection, and more
+than 16 such KBs (the fixed local limit, the server's default) fails the
+whole call with `INVALID_ARGUMENT` `{reason: "TOO_MANY_BASES", max: 16}`
+instead of searching a subset; pass `kbIds` then. Each base gives
+`min(limitPerBase (default 4), max(1, floor(100 / bases)))` hits, and
+`results` interleaves them by rank (every base's first hit in row order, then
+every second hit), never by score. One row per base gives its `status`:
+`ok`, `lexical_only` (ranked by keyword alone, whatever the hits),
+`rebuilding` (no complete index while its build is pending or running),
+`unavailable`, `rate_limited` (with `retryAfterSeconds`), `deadline`
+(failed or not started before the shared deadline) or `not_found`. A KB that
+does not exist, one this principal cannot read and one outside `--kb` give
+the same `not_found` row; any other failure shows only while the base is
+still readable, and every base is read-checked again before the reply (a
+revoked one becomes `not_found` and its hits are dropped). A sensitive query
+fails the whole call before any base; cancelling the call waits for both
+running bases to stop and answers `CANCELLED`. Each base's index notice adds
+the one-line warning `knowledge_search` gives for it. The query embedding is
+computed once per base (no reuse across bases).
 
 `--write-mode dream|edit|both` (default `both`) is a local connection's write
 mode, as on a server grant: `dream` hides the tools that always edit directly

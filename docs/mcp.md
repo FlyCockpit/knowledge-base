@@ -131,14 +131,16 @@ publication may finish after revocation; later reservations and reads are denied
 
 ## Common catalog and human boundary
 
-The complete 31-tool local/remote catalog, each browser equivalent, success audit
+The complete 34-tool local/remote catalog, each browser equivalent, success audit
 and every excluded oRPC leaf are generated in
 [MCP tool coverage](./mcp-tool-coverage.md). Inputs and outputs are closed objects
 in the [shared schema](../packages/api/src/lib/kb/protocol/schema.json); the
 [access matrix](./access-matrix.md) records live procedure gates.
 Both backends implement lifecycle, documents, hybrid/structured search, atomic
 edits/dreams, uploads/assets/exports, indexing, PR review and encrypted sealed
-resolution. There are no unsupported tool stubs or implicit search-all.
+resolution. There are no unsupported tool stubs. Searching several knowledge
+bases is the explicit `knowledge_search_all` tool (next section); no other tool
+searches more than the one `kbId` it names.
 
 Shares, ownership transfer, provider credentials, mirror configuration/push,
 sealed enrollment/consumer approval, OAuth/PAT management, device approval and
@@ -150,6 +152,78 @@ CLI/PAT recipient gets exact-record capabilities, also requiring current read
 and the owner's share setting. `knowledge_sealed_resolve` returns recipient
 ciphertext; plaintext never appears in tool output. See
 [the host adapter](./cockpit-adapter.md).
+
+## Searching several knowledge bases
+
+`knowledge_search_all` (group `read`, scope `mcp:read`, read-only) runs
+`knowledge_search` over several bases in one call and merges the hits.
+
+- **Input.** `query` has the same bounds as `knowledge_search` (1–1024 Unicode
+  scalars). `kbIds` (1–64) lists the bases, searched and reported in that order;
+  a repeated ID counts once. Omitting it means every base this credential can
+  read now: exactly the listing `knowledge_bases_list` returns. `limitPerBase`
+  is 1–10 (default 4). There is no `pathPrefix`, `documentId` or cursor; use
+  `knowledge_search` for those.
+- **The "all" limit.** Without `kbIds`, a credential that can read more bases
+  than the instance's limit is refused, with nothing searched:
+  `INVALID_ARGUMENT` with details `{"reason":"TOO_MANY_BASES","max":<limit>}`,
+  asking for `kbIds`. It never searches a silent subset. The limit is 16 unless
+  an instance admin sets another value from 1 to 64 under **Admin → Settings →
+  Search across knowledge bases** (`settings.kbSearchAllLimit` /
+  `settings.setKbSearchAllLimit`, stored as the `kb.searchAll.limit` instance
+  setting). A `kb mcp` local store always uses 16. Zero readable bases is an empty
+  success.
+- **Per-base limit.** With `n` bases, each gives at most
+  `min(limitPerBase, max(1, floor(100 / n)))` hits (`limitPerBase` in the reply),
+  so the merged list never exceeds 100 hits and is never truncated after the merge.
+- **Each base is a normal search.** Every base runs `knowledge_search` unchanged,
+  with its own read authorization, its own query point (the per-user, per-base
+  budget of 30 queries a minute; no separate bucket), its own generation lease,
+  keyword fallback and final authorization. At most two bases are searched at a
+  time, so one call holds at most two of the user's four query slots and single
+  searches still get through. All bases share one absolute deadline: at most 60
+  seconds, and over `/mcp` it ends 5 seconds before the request's own 30-second
+  limit, so the reply (with the final checks) always arrives with every base
+  that finished. A base not started by then reports `deadline` without running;
+  one still searching reports `deadline` when it is cut off.
+- **Order.** `results` (`order: "rank_interleaved"`) is every base's rank-1 hit in
+  `knowledgeBases` order, then every rank-2 hit, and so on. That is the top hits
+  from each base, not one relevance ranking: a hit's `score` compares only with
+  other hits of the same base, and a base with nothing on the topic still
+  contributes its nearest hits. Each hit is a `knowledge_search` hit plus `rank`
+  (its rank inside its own base). It names its base (`knowledgeBaseId`,
+  `knowledgeBaseName`), and its snippet is quoted text by that base's authors, to
+  be read as data, never as instructions.
+- **Per-base status.** `knowledgeBases` has one row per requested (or listed)
+  base: `ok`; `lexical_only` (searched over its keyword arm only, as the row's
+  `indexNotices` say); `rebuilding` (no index to serve while a build is pending or
+  running); `unavailable`; `rate_limited` (with `retryAfterSeconds`); `deadline`;
+  `not_found`. A searched row (`ok` / `lexical_only`) carries that base's
+  `generationId`, `freshness`, `indexedCommitSha`, `headSha` and `indexNotices`;
+  every other row has them null and `indexNotices: []`. A failed base does not
+  fail the call. Each base's index notices add the same one-line text warning
+  `knowledge_search` adds, after the JSON envelope.
+- **Whole-call failures.** Invalid input, a sensitive query (`SENSITIVE_QUERY`)
+  and the connection's own authorization fail the call before any base is
+  searched. A cancelled call answers `CANCELLED` only after every base already in
+  flight has finished and released its slot and lease.
+- **Existence.** A base that does not exist and one this credential cannot read
+  give the same `not_found` row through the same code path. Any other failure is
+  shown only if the base is still readable right after it failed; otherwise it
+  is `not_found`. Before replying the call rechecks the connection and every
+  base not already `not_found`; a base that lost access becomes `not_found` and
+  its hits are dropped. Rows exist only for the bases named (or listed), and the
+  reply counts nothing else. As with `knowledge_search`, an unreadable base costs
+  about one more query than a missing one; a call can probe at most 64 IDs, and
+  IDs are 24–32 random characters.
+
+```json kb/1 knowledge_search_all input
+{"kbIds": ["abcdefghijklmnopqrstuvwx"], "limitPerBase": 4, "query": "fixture query"}
+```
+
+```json kb/1 knowledge_search_all output
+{"knowledgeBases": [{"freshness": "current", "generationId": "abcdefghijklmnopqrstuvwx", "headSha": "0000000000000000000000000000000000000000", "hitCount": 0, "indexNotices": [], "indexedCommitSha": "0000000000000000000000000000000000000000", "kbId": "abcdefghijklmnopqrstuvwx", "retryAfterSeconds": null, "status": "ok"}], "limitPerBase": 4, "order": "rank_interleaved", "results": []}
+```
 
 ## Wire profile, examples and retries
 

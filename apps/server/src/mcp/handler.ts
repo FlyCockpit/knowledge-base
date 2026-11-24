@@ -108,6 +108,8 @@ export function createMcpEndpoint(options: {
     pending: Set<Promise<unknown>>;
     discovery: Discovery | null;
     requestId?: string;
+    /** The admitted request's deadline (epoch ms). */
+    deadlineAt?: number;
   }>();
   const transport = createMcpHandler(
     (ctx) => {
@@ -115,7 +117,7 @@ export function createMcpEndpoint(options: {
         throw new Error("Admission closed");
       const state = admissions.getStore();
       if (!state || !ctx.requestInfo) throw new Error("Missing admitted request");
-      const { discovery, requestId } = state;
+      const { discovery, requestId, deadlineAt } = state;
       const server = new McpServer(
         { name: "knowledge-base", version: pkg.version },
         {
@@ -132,6 +134,7 @@ export function createMcpEndpoint(options: {
         pending: state.pending,
         discovery,
         requestId,
+        deadlineAt,
         runtime,
         masterKey:
           options.masterKey ??
@@ -183,8 +186,9 @@ export function createMcpEndpoint(options: {
         const actor = await options.admit(canonical);
         permit.signal.throwIfAborted();
         const deliver = async (discovery: Discovery | null) => {
-          const response = await admissions.run({ actor, pending, discovery, requestId }, () =>
-            transport.fetch(canonicalRequest()),
+          const response = await admissions.run(
+            { actor, pending, discovery, requestId, deadlineAt: permit.deadlineAt },
+            () => transport.fetch(canonicalRequest()),
           );
           return {
             response,

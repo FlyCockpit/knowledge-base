@@ -86,6 +86,8 @@ const humanOnly = {
   "settings.myNotificationPreferences": "browser preferences",
   "settings.updateMyNotificationPreferences": "browser preferences",
   "settings.update": "instance administration",
+  "settings.kbSearchAllLimit": "instance administration",
+  "settings.setKbSearchAllLimit": "instance administration",
   "users.list": "instance administration",
   "users.invite": "instance administration",
   "users.setRole": "instance administration",

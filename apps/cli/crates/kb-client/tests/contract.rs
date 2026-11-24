@@ -247,8 +247,158 @@ fn corpus_covers_every_required_rejection_class() {
             "invalidOutputs",
             "unsafe-dimensions",
         ),
+        ("knowledge_search_all", "validInputVariants", "all-readable"),
+        ("knowledge_search_all", "validInputVariants", "kb-ids-64"),
+        ("knowledge_search_all", "invalidInputs", "kb-ids-65"),
+        ("knowledge_search_all", "invalidInputs", "empty-kb-ids"),
+        ("knowledge_search_all", "invalidInputs", "per-base-kb-id"),
+        (
+            "knowledge_search_all",
+            "invalidInputs",
+            "limit-per-base-over-cap",
+        ),
+        (
+            "knowledge_search_all",
+            "invalidInputs",
+            "limit-per-base-zero",
+        ),
+        (
+            "knowledge_search_all",
+            "validOutputVariants",
+            "populated-hit",
+        ),
+        (
+            "knowledge_search_all",
+            "validOutputVariants",
+            "rate-limited-and-not-found",
+        ),
+        ("knowledge_search_all", "invalidOutputs", "hit-without-rank"),
+        ("knowledge_search_all", "invalidOutputs", "hit-rank-zero"),
+        ("knowledge_search_all", "invalidOutputs", "unknown-status"),
+        ("knowledge_search_all", "invalidOutputs", "score-order"),
     ] {
         assert!(has(tool, key, label), "corpus lacks {tool}.{key}:{label}");
+    }
+}
+
+// ── knowledge_search_all ────────────────────────────────────────────────────
+
+/// The typed shapes read the fixtures exactly (a hit is a search hit plus
+/// `rank`), and the constants are the server's.
+#[test]
+fn search_all_typed_shapes_and_constants_match_the_contract() {
+    use kb_client::types::{SearchAll, SearchAllStatus};
+    let corpus = corpus();
+    let row = &corpus["tools"]["knowledge_search_all"];
+    let populated = labelled(row, "validOutputVariants")
+        .into_iter()
+        .find(|(label, _)| label == "populated-hit")
+        .expect("populated-hit")
+        .1;
+    let decoded = decode_output::<SearchAll>(populated.clone()).expect("decodes");
+    assert_eq!(decoded.results.len(), 1);
+    assert_eq!(decoded.results[0].rank, 1);
+    let mut hit = populated["results"][0].clone();
+    hit.as_object_mut().unwrap().remove("rank");
+    assert_eq!(serde_json::to_value(&decoded.results[0].hit).unwrap(), hit);
+    assert_eq!(decoded.knowledge_bases[0].status, SearchAllStatus::Ok);
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), populated);
+    let mixed = labelled(row, "validOutputVariants")
+        .into_iter()
+        .find(|(label, _)| label == "rate-limited-and-not-found")
+        .expect("rate-limited-and-not-found")
+        .1;
+    let decoded = decode_output::<SearchAll>(mixed).expect("decodes");
+    assert_eq!(
+        decoded
+            .knowledge_bases
+            .iter()
+            .map(|row| (row.status, row.retry_after_seconds))
+            .collect::<Vec<_>>(),
+        [
+            (SearchAllStatus::RateLimited, Some(7)),
+            (SearchAllStatus::NotFound, None)
+        ]
+    );
+    let statuses: Vec<Value> = [
+        SearchAllStatus::Ok,
+        SearchAllStatus::LexicalOnly,
+        SearchAllStatus::Rebuilding,
+        SearchAllStatus::Unavailable,
+        SearchAllStatus::RateLimited,
+        SearchAllStatus::Deadline,
+        SearchAllStatus::NotFound,
+    ]
+    .iter()
+    .map(|status| {
+        assert_eq!(
+            status.searched(),
+            matches!(status, SearchAllStatus::Ok | SearchAllStatus::LexicalOnly)
+        );
+        serde_json::to_value(status).unwrap()
+    })
+    .collect();
+    let schema = protocol_file("schema.json");
+    assert_eq!(
+        schema["tools"]["knowledge_search_all"]["output"]["properties"]["knowledgeBases"]["items"]
+            ["properties"]["status"]["enum"],
+        Value::Array(statuses)
+    );
+    let common =
+        std::fs::read_to_string(repo_root().join("packages/api/src/lib/kb/protocol/common.ts"))
+            .expect("common.ts");
+    for (name, value) in [
+        ("SEARCH_ALL_MAX_BASES", types::SEARCH_ALL_MAX_BASES as u64),
+        (
+            "SEARCH_ALL_DEFAULT_BASES",
+            types::SEARCH_ALL_DEFAULT_BASES as u64,
+        ),
+        ("SEARCH_ALL_MAX_PER_BASE", types::SEARCH_ALL_MAX_PER_BASE),
+        (
+            "SEARCH_ALL_DEFAULT_PER_BASE",
+            types::SEARCH_ALL_DEFAULT_PER_BASE,
+        ),
+        ("SEARCH_ALL_MAX_RESULTS", types::SEARCH_ALL_MAX_RESULTS),
+    ] {
+        assert!(
+            common.contains(&format!("export const {name} = {value};")),
+            "{name}"
+        );
+    }
+    // The server's `tooManyBasesMessage` template, word for word.
+    let envelope =
+        std::fs::read_to_string(repo_root().join("packages/api/src/lib/kb/protocol/envelope.ts"))
+            .expect("envelope.ts");
+    let template = kb_client::error::too_many_bases_message(16)
+        .unwrap()
+        .replace("16", "${max}");
+    assert!(
+        envelope.contains(&format!("return `{template}`;")),
+        "{template}"
+    );
+    for (max, ok) in [(0, false), (1, true), (64, true), (65, false), (-1, false)] {
+        assert_eq!(
+            kb_client::error::too_many_bases_message(max).is_some(),
+            ok,
+            "{max}"
+        );
+    }
+    // Effective per-base limit: min(requested ?? 4, max(1, floor(100 / n))).
+    for (requested, bases, want) in [
+        (None, 0, 4),
+        (None, 1, 4),
+        (Some(10), 1, 10),
+        (Some(10), 11, 9),
+        (Some(10), 16, 6),
+        (None, 16, 4),
+        (Some(10), 64, 1),
+        (Some(1), 2, 1),
+    ] {
+        assert_eq!(
+            types::search_all_limit_per_base(requested, bases),
+            want,
+            "{requested:?} over {bases}"
+        );
     }
 }
 

@@ -811,6 +811,7 @@ fn owner_chosen_tools_and_kbs_shape_discovery_and_refuse_calls() {
             "knowledge_documents_list",
             "knowledge_documents_get",
             "knowledge_search",
+            "knowledge_search_all",
             "knowledge_structured_search",
             "knowledge_assets_list",
             "knowledge_pull_requests_list",

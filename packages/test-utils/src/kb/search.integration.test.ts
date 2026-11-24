@@ -37,14 +37,16 @@ import { parseMarkdownDocument } from "@knowledge-base/api/lib/kb/parse-markdown
 import { plainSnippet } from "@knowledge-base/api/lib/kb/plain-snippet";
 import { createProvider, revokeProvider } from "@knowledge-base/api/lib/kb/providers";
 import type { QueryEmbeddingOptions } from "@knowledge-base/api/lib/kb/query-embedding";
+import { setKbRecoveryComplete } from "@knowledge-base/api/lib/kb/recovery";
 import { purgeRetiredGenerations } from "@knowledge-base/api/lib/kb/retention";
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { type SearchOptions, searchKnowledgeBase } from "@knowledge-base/api/lib/kb/search";
+import { searchKnowledgeBases } from "@knowledge-base/api/lib/kb/search-all";
 import { structuredSearchKnowledgeBase } from "@knowledge-base/api/lib/kb/structured-search";
 import type { PrismaClient } from "@knowledge-base/db/client";
 import { captureLog } from "@knowledge-base/env/log";
 import { Queue } from "bullmq";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { deliverIndexBuild } from "./index-delivery";
 import { openKbPostgresClusterFromEnv } from "./postgres";
 import { openKbRedisFromEnv } from "./redis";
@@ -1133,5 +1135,164 @@ describe("stored vector bytes follow the embedding formula through the real buil
       int8: [127, 127, 127, 127, 127, 127, 127, 11],
       bitsHex: "ff",
     });
+  });
+});
+
+describe("knowledge_search_all over real Postgres", () => {
+  beforeAll(() => setKbRecoveryComplete(true));
+  const liveSlots = async () =>
+    (
+      await db.query(
+        "runtime",
+        `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid
+          WHERE a.application_name LIKE 'kb-query-capacity-%' AND l.locktype='advisory' AND l.granted`,
+      )
+    ).rows[0]?.n as number;
+  const liveLeases = (kbIds: string[]) =>
+    prisma.generationLease.count({
+      where: { generation: { kbId: { in: kbIds } }, expiresAt: { gt: new Date() } },
+    });
+  /** One reader who can read every given fixture (the first fixture's reader). */
+  async function sharedReader(fixtures: Fixture[]) {
+    const [first, ...rest] = fixtures;
+    for (const f of rest)
+      await prisma.kbShare.create({
+        data: { kbId: f.kbId, userId: first!.reader.id, bits: ["read"] },
+      });
+    return { ...first!.actor, recheck: async () => {} };
+  }
+  /**
+   * Starts one multi-search and, in the background until it settles, delivers each admitted
+   * query embedding of the `deliverFor` bases (as the worker would).
+   */
+  function startSearchAll(
+    actor: Awaited<ReturnType<typeof sharedReader>>,
+    input: { query: string; kbIds: string[]; limitPerBase?: number },
+    deliverFor: string[] = input.kbIds,
+    signal = new AbortController().signal,
+  ) {
+    let settled = false;
+    const delivered = new Set<string>();
+    const pending = searchKnowledgeBases({ ...runtime, masterKey }, actor, input, { signal })
+      .catch((error: unknown) => error)
+      .finally(() => {
+        settled = true;
+      });
+    const delivering = (async () => {
+      const until = Date.now() + 60_000;
+      while (!settled && Date.now() < until) {
+        const request = await prisma.queryEmbeddingRequest.findFirst({
+          where: { kbId: { in: deliverFor }, state: "PENDING", id: { notIn: [...delivered] } },
+        });
+        if (!request) {
+          await new Promise((r) => setTimeout(r, 10));
+          continue;
+        }
+        delivered.add(request.id);
+        await publish();
+        await runQueryEmbeddingDelivery(prisma, {
+          ...opts,
+          durableJobId: request.id,
+          workerId: key(),
+          embedder,
+        }).catch(() => {});
+      }
+    })();
+    return { pending, delivering, delivered };
+  }
+  async function searchAll(
+    actor: Awaited<ReturnType<typeof sharedReader>>,
+    input: { query: string; kbIds: string[]; limitPerBase?: number },
+  ) {
+    const run = startSearchAll(actor, input);
+    const result = await run.pending;
+    await run.delivering;
+    if (result instanceof Error) throw result;
+    return result as Awaited<ReturnType<typeof searchKnowledgeBases>>;
+  }
+
+  it("interleaves two bases' hits by per-base rank and leaves no slot or lease", async () => {
+    const a = await fixture(golden.documents, "Multi A");
+    const b = await fixture(golden.documents, "Multi B");
+    const actor = await sharedReader([a, b]);
+    const result = await searchAll(actor, { query: "alpha", kbIds: [a.kbId, b.kbId] });
+    expect(result.knowledgeBases.map((row) => [row.kbId, row.status])).toEqual([
+      [a.kbId, "ok"],
+      [b.kbId, "ok"],
+    ]);
+    expect(result.limitPerBase).toBe(4);
+    expect(result.results).toHaveLength(8);
+    expect(result.results.map((hit) => [hit.knowledgeBaseId, hit.rank])).toEqual(
+      [1, 2, 3, 4].flatMap((rank) => [
+        [a.kbId, rank],
+        [b.kbId, rank],
+      ]),
+    );
+    expect(result.results[0]).toMatchObject({ knowledgeBaseName: "Multi A", mode: "hybrid" });
+    expect(result.results[1]).toMatchObject({ knowledgeBaseName: "Multi B" });
+    expect(await liveLeases([a.kbId, b.kbId])).toBe(0);
+    expect(await liveSlots()).toBe(0);
+  });
+
+  it("a failing base is a row status; the other base still answers; nothing is left held", async () => {
+    const failing = await fixture(golden.documents, "Multi failing");
+    const ok = await fixture(golden.documents, "Multi ok");
+    rmSync(generationFilePath(indexDir, failing.kbId, failing.generationId), { force: true });
+    const actor = await sharedReader([failing, ok]);
+    const log = captureLog();
+    try {
+      const result = await searchAll(actor, { query: "alpha", kbIds: [failing.kbId, ok.kbId] });
+      expect(result.knowledgeBases.map((row) => row.status)).toEqual(["unavailable", "ok"]);
+      expect(result.knowledgeBases[0]).toMatchObject({ hitCount: 0, generationId: null });
+      expect(result.results.every((hit) => hit.knowledgeBaseId === ok.kbId)).toBe(true);
+      expect(JSON.stringify(log.records)).not.toContain("alpha");
+    } finally {
+      log.restore();
+    }
+    expect(await liveLeases([failing.kbId, ok.kbId])).toBe(0);
+    expect(await liveSlots()).toBe(0);
+  });
+
+  it("cancel mid-search with one base failed: CANCELLED after both lanes settle, no slot or lease left", async () => {
+    const failing = await fixture(golden.documents, "Cancel failing");
+    const waiting = await fixture(golden.documents, "Cancel waiting");
+    rmSync(generationFilePath(indexDir, failing.kbId, failing.generationId), { force: true });
+    const actor = await sharedReader([failing, waiting]);
+    const controller = new AbortController();
+    // Only the failing base's embeddings are delivered: the other lane stays in flight,
+    // holding its query slot and generation lease, until the cancel.
+    const run = startSearchAll(
+      actor,
+      { query: "alpha", kbIds: [failing.kbId, waiting.kbId] },
+      [failing.kbId],
+      controller.signal,
+    );
+    await vi.waitFor(
+      async () => {
+        // Both admissions of the failing base (the missing-file retry) ran and released.
+        expect(run.delivered.size).toBe(2);
+        expect(await liveLeases([failing.kbId])).toBe(0);
+        expect(
+          await prisma.queryEmbeddingRequest.count({
+            where: { kbId: waiting.kbId, state: "PENDING" },
+          }),
+        ).toBe(1);
+        // Only the waiting lane still holds anything.
+        expect(await liveLeases([waiting.kbId])).toBe(1);
+        expect(await liveSlots()).toBe(1);
+      },
+      { timeout: 30_000, interval: 20 },
+    );
+    controller.abort();
+    expect(await run.pending).toMatchObject({ code: "CANCELLED" });
+    await run.delivering;
+    // A leaked lease would live 90 s and a leaked slot until its session ends: both are gone.
+    await vi.waitFor(
+      async () => {
+        expect(await liveSlots()).toBe(0);
+        expect(await liveLeases([failing.kbId, waiting.kbId])).toBe(0);
+      },
+      { timeout: 5_000, interval: 20 },
+    );
   });
 });

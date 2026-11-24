@@ -61,6 +61,7 @@ import { SensitiveQueryError } from "@knowledge-base/api/lib/kb/redact-for-embed
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { resolveSealedReference } from "@knowledge-base/api/lib/kb/sealed-resolve";
 import { searchKnowledgeBase } from "@knowledge-base/api/lib/kb/search";
+import { searchKnowledgeBases } from "@knowledge-base/api/lib/kb/search-all";
 import { structuredSearchKnowledgeBase } from "@knowledge-base/api/lib/kb/structured-search";
 import { completeExport, readTransfer } from "@knowledge-base/api/lib/kb/transfers";
 import { uploadBegin, uploadFinish, uploadWrite } from "@knowledge-base/api/lib/kb/uploads";
@@ -78,7 +79,16 @@ type Context = {
   masterKey?: string;
   /** The HTTP request id, for the operator log line of an unexpected failure. */
   requestId?: string;
+  /** The admitted request's deadline (epoch ms), when the transport has one. */
+  deadlineAt?: number;
 };
+
+/**
+ * knowledge_search_all answers with whatever its bases returned before the request ends: its
+ * shared deadline stops this long before the request's own, leaving the final rechecks and the
+ * reply time to run.
+ */
+export const SEARCH_ALL_REPLY_RESERVE_MS = 5_000;
 type Binding<N extends KbToolName> = (
   input: z.output<(typeof schemas)[N]["input"]>,
   ctx: Context,
@@ -93,8 +103,17 @@ function lexicalOnlyWarning(kbId: string, detail: string): string {
 
 /** One-line MCP text warning per search notice (the JSON envelope stays first). */
 export function indexNoticeWarnings(data: unknown): string[] {
-  const output = data as { indexNotices?: unknown; items?: Array<{ mode?: string }> };
-  const notices = output.indexNotices;
+  const output = data as {
+    indexNotices?: unknown;
+    items?: Array<{ mode?: string }>;
+    knowledgeBases?: Array<{ indexNotices?: unknown }>;
+  };
+  // knowledge_search_all: each searched base's notices, in row order, as single search words them.
+  const notices = Array.isArray(output.knowledgeBases)
+    ? output.knowledgeBases.flatMap((row) =>
+        Array.isArray(row.indexNotices) ? (row.indexNotices as unknown[]) : [],
+      )
+    : output.indexNotices;
   // Structured exact-filter pages (including empty pages) perform no semantic ranking.
   const structured =
     Array.isArray(output.items) &&
@@ -282,6 +301,21 @@ const bindings: { [N in KbToolName]: Binding<N> } = {
   knowledge_documents_get: (i, c) => documents(c, i),
   knowledge_search: (i, c) =>
     searchKnowledgeBase({ ...c.runtime, masterKey: c.masterKey }, c.actor, i, c.signal),
+  // No top-level kbId: the whole-call recheck, scope and group demand run in dispatchTool;
+  // every base's authorization (before, on failure and final) runs in the domain loop.
+  knowledge_search_all: (i, c) =>
+    searchKnowledgeBases(
+      {
+        ...c.runtime,
+        masterKey: c.masterKey,
+        ...(c.deadlineAt === undefined
+          ? {}
+          : { deadlineAt: c.deadlineAt - SEARCH_ALL_REPLY_RESERVE_MS }),
+      },
+      c.actor,
+      i,
+      { signal: c.signal },
+    ),
   knowledge_structured_search: (i, c) =>
     structuredSearchKnowledgeBase({ ...c.runtime, masterKey: c.masterKey }, c.actor, i, c.signal),
   knowledge_changes_apply: ({ kbId, idempotencyKey, ...input }, c) => {

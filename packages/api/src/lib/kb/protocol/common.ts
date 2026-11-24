@@ -15,6 +15,15 @@ export const KB_PROTOCOL_VERSION = "kb/1" as const;
 
 export const KB_PAGE_DEFAULT = 20;
 export const KB_PAGE_MAX = 50;
+/** knowledge_search_all: most bases one call searches (an explicit kbIds list or "all"). */
+export const SEARCH_ALL_MAX_BASES = 64;
+/** knowledge_search_all: the instance-admin "all I can read" limit when none is set. */
+export const SEARCH_ALL_DEFAULT_BASES = 16;
+/** knowledge_search_all: most hits one base contributes, and the default. */
+export const SEARCH_ALL_MAX_PER_BASE = 10;
+export const SEARCH_ALL_DEFAULT_PER_BASE = 4;
+/** knowledge_search_all: most merged hits; the per-base limit shrinks to fit. */
+export const SEARCH_ALL_MAX_RESULTS = 100;
 export const KB_CURSOR_MAX_BYTES = 1024;
 export const PR_DETAIL_MAX_DELTAS_PER_PAGE = 200;
 

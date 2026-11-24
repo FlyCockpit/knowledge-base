@@ -150,6 +150,8 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   ),
   "rpc:settings.myNotificationPreferences": read,
   "rpc:settings.updateMyNotificationPreferences": outOfBand("per-user preference"),
+  "rpc:settings.kbSearchAllLimit": read,
+  "rpc:settings.setKbSearchAllLimit": outOfBand("instance setting (knowledge_search_all limit)"),
   "rpc:settings.update": outOfBand(
     "instance settings; grant sweeps it triggers are audited as grant_revoke",
   ),
@@ -172,6 +174,7 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "mcp:knowledge_documents_list": read,
   "mcp:knowledge_documents_get": read,
   "mcp:knowledge_search": read,
+  "mcp:knowledge_search_all": read,
   "mcp:knowledge_structured_search": read,
   "mcp:knowledge_changes_apply": CHANGES,
   "mcp:knowledge_documents_create": CHANGES,

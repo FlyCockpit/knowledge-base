@@ -5700,6 +5700,624 @@
         }
       ]
     },
+    "knowledge_search_all": {
+      "invalidInputs": [
+        {
+          "label": "unknown-field",
+          "value": {
+            "extra": true,
+            "query": "q"
+          }
+        },
+        {
+          "label": "per-base-kb-id",
+          "value": {
+            "kbId": "abcdefghijklmnopqrstuvwx",
+            "query": "q"
+          }
+        },
+        {
+          "label": "null-kbIds",
+          "value": {
+            "kbIds": null,
+            "limitPerBase": 4,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "unsafe-limitPerBase",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 9007199254740992,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "query-1025-scalars",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          }
+        },
+        {
+          "label": "empty-query",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": ""
+          }
+        },
+        {
+          "label": "nul-query",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": "canary\u0000value"
+          }
+        },
+        {
+          "label": "empty-kb-ids",
+          "value": {
+            "kbIds": [],
+            "limitPerBase": 4,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "kb-ids-65",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "bad-kb-id",
+          "value": {
+            "kbIds": [
+              "Not-An-Id"
+            ],
+            "limitPerBase": 4,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "limit-per-base-over-cap",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 11,
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "limit-per-base-zero",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 0,
+            "query": "fixture query"
+          }
+        }
+      ],
+      "invalidOutputs": [
+        {
+          "label": "null-knowledgeBases",
+          "value": {
+            "knowledgeBases": null,
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": []
+          }
+        },
+        {
+          "label": "unsafe-limitPerBase",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 9007199254740992,
+            "order": "rank_interleaved",
+            "results": []
+          }
+        },
+        {
+          "label": "unknown-field",
+          "value": {
+            "extra": true,
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": []
+          }
+        },
+        {
+          "label": "hit-without-rank",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": [
+              {
+                "assetRefs": [
+                  {
+                    "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "mime": "image/png",
+                    "path": "assets/x.png",
+                    "size": 12
+                  }
+                ],
+                "blobSha": "0000000000000000000000000000000000000000",
+                "chunkIndex": 2,
+                "commitSha": "0000000000000000000000000000000000000000",
+                "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "documentCitations": [
+                  {
+                    "label": "Episode",
+                    "target": "cockpit://episode/fixture"
+                  }
+                ],
+                "documentId": "doc-guide",
+                "freshness": "stale",
+                "indexGenerationId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseName": "Fixture knowledge base",
+                "matchedRow": {
+                  "active": true,
+                  "count": 3,
+                  "name": "alpha",
+                  "note": null,
+                  "ratio": 0.5
+                },
+                "mode": "structured",
+                "path": "docs/guide.md",
+                "score": 0.03278688524590164,
+                "snippet": "Fixture snippet with ünïcödé 😀 text",
+                "span": {
+                  "endByte": 133,
+                  "endToken": 19,
+                  "startByte": 41,
+                  "startToken": 7
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "hit-rank-zero",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": [
+              {
+                "assetRefs": [
+                  {
+                    "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "mime": "image/png",
+                    "path": "assets/x.png",
+                    "size": 12
+                  }
+                ],
+                "blobSha": "0000000000000000000000000000000000000000",
+                "chunkIndex": 2,
+                "commitSha": "0000000000000000000000000000000000000000",
+                "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "documentCitations": [
+                  {
+                    "label": "Episode",
+                    "target": "cockpit://episode/fixture"
+                  }
+                ],
+                "documentId": "doc-guide",
+                "freshness": "stale",
+                "indexGenerationId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseName": "Fixture knowledge base",
+                "matchedRow": {
+                  "active": true,
+                  "count": 3,
+                  "name": "alpha",
+                  "note": null,
+                  "ratio": 0.5
+                },
+                "mode": "structured",
+                "path": "docs/guide.md",
+                "rank": 0,
+                "score": 0.03278688524590164,
+                "snippet": "Fixture snippet with ünïcödé 😀 text",
+                "span": {
+                  "endByte": 133,
+                  "endToken": 19,
+                  "startByte": 41,
+                  "startToken": 7
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "unknown-status",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "failed"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": []
+          }
+        },
+        {
+          "label": "score-order",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "score",
+            "results": []
+          }
+        }
+      ],
+      "validInput": {
+        "kbIds": [
+          "abcdefghijklmnopqrstuvwx"
+        ],
+        "limitPerBase": 4,
+        "query": "fixture query"
+      },
+      "validInputVariants": [
+        {
+          "label": "all-readable",
+          "value": {
+            "query": "fixture query"
+          }
+        },
+        {
+          "label": "query-1024-astral-scalars",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          }
+        },
+        {
+          "label": "kb-ids-64",
+          "value": {
+            "kbIds": [
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx",
+              "abcdefghijklmnopqrstuvwx"
+            ],
+            "limitPerBase": 4,
+            "query": "fixture query"
+          }
+        }
+      ],
+      "validOutput": {
+        "knowledgeBases": [
+          {
+            "freshness": "current",
+            "generationId": "abcdefghijklmnopqrstuvwx",
+            "headSha": "0000000000000000000000000000000000000000",
+            "hitCount": 0,
+            "indexNotices": [],
+            "indexedCommitSha": "0000000000000000000000000000000000000000",
+            "kbId": "abcdefghijklmnopqrstuvwx",
+            "retryAfterSeconds": null,
+            "status": "ok"
+          }
+        ],
+        "limitPerBase": 4,
+        "order": "rank_interleaved",
+        "results": []
+      },
+      "validOutputVariants": [
+        {
+          "label": "populated-hit",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": "current",
+                "generationId": "abcdefghijklmnopqrstuvwx",
+                "headSha": "0000000000000000000000000000000000000000",
+                "hitCount": 1,
+                "indexNotices": [],
+                "indexedCommitSha": "0000000000000000000000000000000000000000",
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "ok"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": [
+              {
+                "assetRefs": [
+                  {
+                    "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "mime": "image/png",
+                    "path": "assets/x.png",
+                    "size": 12
+                  }
+                ],
+                "blobSha": "0000000000000000000000000000000000000000",
+                "chunkIndex": 2,
+                "commitSha": "0000000000000000000000000000000000000000",
+                "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "documentCitations": [
+                  {
+                    "label": "Episode",
+                    "target": "cockpit://episode/fixture"
+                  }
+                ],
+                "documentId": "doc-guide",
+                "freshness": "stale",
+                "indexGenerationId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseId": "abcdefghijklmnopqrstuvwx",
+                "knowledgeBaseName": "Fixture knowledge base",
+                "matchedRow": {
+                  "active": true,
+                  "count": 3,
+                  "name": "alpha",
+                  "note": null,
+                  "ratio": 0.5
+                },
+                "mode": "structured",
+                "path": "docs/guide.md",
+                "rank": 1,
+                "score": 0.03278688524590164,
+                "snippet": "Fixture snippet with ünïcödé 😀 text",
+                "span": {
+                  "endByte": 133,
+                  "endToken": 19,
+                  "startByte": 41,
+                  "startToken": 7
+                }
+              }
+            ]
+          }
+        },
+        {
+          "label": "rate-limited-and-not-found",
+          "value": {
+            "knowledgeBases": [
+              {
+                "freshness": null,
+                "generationId": null,
+                "headSha": null,
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": null,
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": 7,
+                "status": "rate_limited"
+              },
+              {
+                "freshness": null,
+                "generationId": null,
+                "headSha": null,
+                "hitCount": 0,
+                "indexNotices": [],
+                "indexedCommitSha": null,
+                "kbId": "abcdefghijklmnopqrstuvwx",
+                "retryAfterSeconds": null,
+                "status": "not_found"
+              }
+            ],
+            "limitPerBase": 4,
+            "order": "rank_interleaved",
+            "results": []
+          }
+        }
+      ]
+    },
     "knowledge_structured_search": {
       "invalidInputs": [
         {

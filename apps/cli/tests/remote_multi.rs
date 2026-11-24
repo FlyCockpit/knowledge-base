@@ -511,7 +511,27 @@ fn the_same_kb_id_on_two_servers_stays_separate_and_a_foreign_one_is_refused() {
     import["source"]["kbId"] = json!(KB_A);
     let foreign = peer.call("knowledge_assets_import", import);
     assert_eq!(foreign["structuredContent"]["error"]["code"], "FORBIDDEN");
+    // Every element of a search-all list: one foreign ID refuses the call.
+    let search_all = |kbs: &[&str], server: &str| json!({"server":server,"query":"x","kbIds":kbs});
+    let foreign = peer.call("knowledge_search_all", search_all(&[KB_SHARED, KB_A], "b"));
+    assert_eq!(foreign["structuredContent"]["error"]["code"], "FORBIDDEN");
+    assert_eq!(foreign["_meta"]["kb/server"], "b");
+    let foreign = peer.call("knowledge_search_all", search_all(&[KB_B], "a"));
+    assert_eq!(foreign["structuredContent"]["error"]["code"], "FORBIDDEN");
     assert_eq!((calls(&a).len(), calls(&b).len()), before);
+    // Its own and shared IDs (and "all") are forwarded unchanged.
+    let own = peer.call("knowledge_search_all", search_all(&[KB_SHARED, KB_B], "b"));
+    assert_eq!(own["isError"], false, "{own}");
+    assert_eq!(
+        calls(&b).last().unwrap()["params"]["arguments"],
+        json!({"query":"x","kbIds":[KB_SHARED, KB_B]})
+    );
+    let all = peer.call("knowledge_search_all", json!({"server":"a","query":"x"}));
+    assert_eq!(all["_meta"]["kb/server"], "a");
+    assert_eq!(
+        calls(&a).last().unwrap()["params"]["arguments"],
+        json!({"query":"x"})
+    );
     // A sealed read on the server that owns the KB is forwarded unchanged.
     let mut sealed = with(valid("knowledge_sealed_resolve"), "b");
     sealed["kbId"] = json!(KB_B);

@@ -16,6 +16,7 @@ Each tool belongs to the tool groups a connection can be granted. A tool with se
 | knowledge_documents_list | read | documents-read.listDocumentsAtRevision | documents.list | read-only |
 | knowledge_documents_get | read | documents-read.readDocumentAtRevision | documents.get | read-only |
 | knowledge_search | read | search.searchKnowledgeBase | search.hybrid | read-only |
+| knowledge_search_all | read | search-all.searchKnowledgeBases (search.searchKnowledgeBase per base) | none (MCP data plane) | read-only |
 | knowledge_structured_search | read | structured-search.structuredSearchKnowledgeBase | search.structured | read-only |
 | knowledge_changes_apply | edit | changes.createChangesPublication | none (MCP data plane) | changes_apply; proposal: pr_create/pr_source_advance; noop: receipt only |
 | knowledge_documents_create | edit | changes.changesPublicationForDocument | documents.create | changes_apply; proposal: pr_create/pr_source_advance |
@@ -114,7 +115,9 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | queue.listFailed | instance administration |
 | settings.adminSetupStatus | browser settings |
 | settings.getAll | browser settings |
+| settings.kbSearchAllLimit | instance administration |
 | settings.myNotificationPreferences | browser preferences |
+| settings.setKbSearchAllLimit | instance administration |
 | settings.setupKeyStatus | instance administration |
 | settings.update | instance administration |
 | settings.updateMyNotificationPreferences | browser preferences |

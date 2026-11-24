@@ -10,6 +10,9 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import { adminOr404Procedure, authenticatedProcedure, liveAdminOr404Procedure } from "../index";
+import { prismaAssetQuery } from "../lib/kb/asset-authz";
+import { SEARCH_ALL_DEFAULT_BASES, SEARCH_ALL_MAX_BASES } from "../lib/kb/protocol/common";
+import { readSearchAllLimit, writeSearchAllLimit } from "../lib/kb/search-all";
 import { FORCE_2FA_SETTING_KEYS } from "../lib/two-factor-policy";
 
 // Leak-prevention boundary: only keys listed here are exposed to clients via getAll; future settings must be explicitly opted in.
@@ -17,6 +20,11 @@ const CLIENT_READABLE_SETTING_KEYS: readonly string[] = FORCE_2FA_SETTING_KEYS;
 const writableSettingKeySchema = z.enum(FORCE_2FA_SETTING_KEYS);
 /** Rows whose role merely contains "admin" (e.g. a custom role) are filtered by `isAdminRole`. */
 const ADMIN_PROBE_ROWS = 20;
+
+/** The knowledge_search_all "every base I can read" limit, as the admin settings page shows it. */
+function searchAllLimitView(limit: number) {
+  return { limit, default: SEARCH_ALL_DEFAULT_BASES, max: SEARCH_ALL_MAX_BASES };
+}
 
 export const settingsRouter = {
   getAll: authenticatedProcedure.handler(async () => {
@@ -82,6 +90,19 @@ export const settingsRouter = {
       });
       return { success: true };
     }),
+
+  /** Instance-admin only (404 otherwise); not client-readable through getAll. */
+  kbSearchAllLimit: liveAdminOr404Procedure.handler(async ({ context }) =>
+    searchAllLimitView(await readSearchAllLimit(prismaAssetQuery(context.authorityTx))),
+  ),
+
+  setKbSearchAllLimit: liveAdminOr404Procedure
+    .input(z.strictObject({ limit: z.number().int().min(1).max(SEARCH_ALL_MAX_BASES) }))
+    .handler(async ({ input, context }) =>
+      searchAllLimitView(
+        await writeSearchAllLimit(prismaAssetQuery(context.authorityTx), input.limit),
+      ),
+    ),
 
   update: liveAdminOr404Procedure
     .input(

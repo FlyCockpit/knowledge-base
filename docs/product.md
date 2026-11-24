@@ -30,7 +30,10 @@ The entire common data-plane catalog in the protocol contract is identical and f
 
 The complete live catalog and exclusions are generated in
 [MCP tool coverage](./mcp-tool-coverage.md); [access notes](./access-matrix.md)
-record procedure gates. There are no unsupported stubs. Optional Gemma/Qwen
+record procedure gates. There are no unsupported stubs. `knowledge_search_all`
+searches several bases (named, or every readable one up to an instance-admin
+limit, 16 by default) with `knowledge_search`'s own per-base checks; see
+[client guides](./mcp.md). Optional Gemma/Qwen
 built-ins start disabled, one active at a time; each KB can instead use a user
 provider. Asset CAS retains historical bytes. Raw Markdown editing and reviewed
 PRs preserve human authority. See [client guides](./mcp.md),

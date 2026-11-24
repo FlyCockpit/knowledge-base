@@ -75,13 +75,29 @@ impl SearchControl {
     fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
-    fn git_scope(&self) -> crate::git_read::OperationDeadline {
+    pub(crate) fn git_scope(&self) -> crate::git_read::OperationDeadline {
         crate::git_read::OperationDeadline::bounded(
             std::time::Instant::now() + self.remaining(),
             self.cancelled.clone(),
         )
     }
-    fn check(&self) -> Result<(), StoreError> {
+    /// A fresh bound of `grace` (still cancellable) for the work that must
+    /// run after the deadline to answer at all: a reply's final recheck.
+    pub(crate) fn reply_scope(&self, grace: Duration) -> crate::git_read::OperationDeadline {
+        crate::git_read::OperationDeadline::bounded(
+            std::time::Instant::now() + grace,
+            self.cancelled.clone(),
+        )
+    }
+    /// The caller cancelled this search (or the call it belongs to).
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+    /// The search's absolute deadline has passed.
+    pub(crate) fn expired(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+    pub(crate) fn check(&self) -> Result<(), StoreError> {
         if self.token.is_cancelled() {
             Err(StoreError::OperationAborted(ErrorCode::Cancelled))
         } else if Instant::now() >= self.deadline {
@@ -749,13 +765,32 @@ impl Store {
         p: &LocalPrincipal,
         input: SearchInput,
         ctl: &SearchControl,
-        mut embed: impl AsyncFnMut(
+        embed: impl AsyncFnMut(
             &ProfileSnapshot,
             &str,
             &QueryEmbeddingControl,
         ) -> Result<Vec<f64>, StoreError>,
         observer: &mut dyn FnMut(SearchStage) -> Result<(), StoreError>,
     ) -> Result<SearchOutput, StoreError> {
+        self.search_generation_admitted_mode(p, input, ctl, embed, observer)
+            .await
+            .map(|(out, _)| out)
+    }
+    /// [`Self::search_generation_admitted`] that also says whether the reply
+    /// was ranked by the keyword arm alone (the final effective mode, not
+    /// read from the hits): `knowledge_search_all`'s `lexical_only`.
+    pub(crate) async fn search_generation_admitted_mode(
+        &self,
+        p: &LocalPrincipal,
+        input: SearchInput,
+        ctl: &SearchControl,
+        mut embed: impl AsyncFnMut(
+            &ProfileSnapshot,
+            &str,
+            &QueryEmbeddingControl,
+        ) -> Result<Vec<f64>, StoreError>,
+        observer: &mut dyn FnMut(SearchStage) -> Result<(), StoreError>,
+    ) -> Result<(SearchOutput, bool), StoreError> {
         check_input::<KnowledgeSearch>(&input)?;
         ctl.check()?;
         self.authorize(p, &input.kb_id, Permission::Read)?;
@@ -782,7 +817,7 @@ impl Store {
             &QueryEmbeddingControl,
         ) -> Result<Vec<f64>, StoreError>,
         observer: &mut dyn FnMut(SearchStage) -> Result<(), StoreError>,
-    ) -> Result<SearchOutput, GenerationReadError> {
+    ) -> Result<(SearchOutput, bool), GenerationReadError> {
         let text = crate::sensitive_text::prepare_embedding_query(&input.query)?;
         observer(SearchStage::BeforeAdmission)?;
         let mut pin = self.query_pin(p, &input.kb_id, None, ctl)?;
@@ -837,7 +872,7 @@ impl Store {
             // The final check degraded the mode: rank again lexically, never
             // return vector ranks of a profile that can no longer serve.
             if pin.lexical() == ranked_lexical {
-                return Ok(out);
+                return Ok((out, ranked_lexical));
             }
         }
     }
@@ -1254,7 +1289,7 @@ impl Store {
     }
     /// The built-in runtime a search embeds with names the model cache its
     /// effective availability reads.
-    fn attach_runtime_cache(&self, io: &IndexEmbedder<'_>) {
+    pub(crate) fn attach_runtime_cache(&self, io: &IndexEmbedder<'_>) {
         if let IndexEmbedder::Builtin(runtime)
         | IndexEmbedder::Routed {
             builtin: runtime, ..
@@ -1271,13 +1306,26 @@ impl Store {
         ctl: &SearchControl,
     ) -> Result<SearchOutput, StoreError> {
         self.attach_runtime_cache(&io);
+        self.search_with_mode(p, input, &io, ctl)
+            .await
+            .map(|(out, _)| out)
+    }
+    /// [`Self::search`] after [`Self::attach_runtime_cache`], also saying
+    /// whether the reply came from the keyword arm alone.
+    pub(crate) async fn search_with_mode(
+        &self,
+        p: &LocalPrincipal,
+        input: SearchInput,
+        io: &IndexEmbedder<'_>,
+        ctl: &SearchControl,
+    ) -> Result<(SearchOutput, bool), StoreError> {
         let kb = input.kb_id.clone();
-        self.search_generation_admitted(
+        self.search_generation_admitted_mode(
             p,
             input,
             ctl,
             async |pin, text, call| {
-                self.embed_search(pin, text, &io, call, &|| {
+                self.embed_search(pin, text, io, call, &|| {
                     ctl.check()?;
                     self.authorize(p, &kb, Permission::Read)?;
                     Ok(())

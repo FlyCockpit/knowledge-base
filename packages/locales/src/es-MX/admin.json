@@ -207,6 +207,18 @@
       "saved": "Límite guardado.",
       "failed": "No se pudo guardar el límite. Inténtalo de nuevo."
     },
+    "searchAllLimit": {
+      "title": "Búsqueda en varias bases de conocimiento",
+      "description": "Cuántas bases de conocimiento puede buscar una llamada a knowledge_search_all cuando un agente omite kbIds (todas las bases que su credencial puede leer). Si la credencial puede leer más, la llamada se rechaza y se le pide que indique las bases. Cada base buscada gasta una consulta del presupuesto de esa base, y una llamada busca dos a la vez.",
+      "label": "Máximo de bases de conocimiento por búsqueda",
+      "help": "De 1 a {{max, number}}. Valor predeterminado: {{default, number}}.",
+      "invalid": "Ingresa un número entero de 1 a {{max, number}}.",
+      "loadFailed": "No se pudo cargar el límite de búsqueda.",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "saved": "Límite de búsqueda guardado.",
+      "failed": "No se pudo guardar el límite de búsqueda. Inténtalo de nuevo."
+    },
     "enableNamed": "Habilitar: {{name}}",
     "disableNamed": "Deshabilitar: {{name}}",
     "force2faConfirm": {

@@ -219,6 +219,18 @@
       "saved": "Ceiling saved.",
       "failed": "Couldn't save the ceiling. Try again."
     },
+    "searchAllLimit": {
+      "title": "Search across knowledge bases",
+      "description": "How many knowledge bases one knowledge_search_all call may search when an agent leaves out kbIds (every base its credential can read). A credential that can read more is refused and asked to list the bases. Each base searched spends one query from that base's budget, and a call searches two at a time.",
+      "label": "Most knowledge bases per search",
+      "help": "From 1 to {{max, number}}. Default {{default, number}}.",
+      "invalid": "Enter a whole number from 1 to {{max, number}}.",
+      "loadFailed": "Couldn't load the search limit.",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Search limit saved.",
+      "failed": "Couldn't save the search limit. Try again."
+    },
     "enableNamed": "Enable: {{name}}",
     "disableNamed": "Disable: {{name}}",
     "force2faConfirm": {

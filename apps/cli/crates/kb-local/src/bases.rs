@@ -231,7 +231,7 @@ impl Store {
         })
     }
 
-    fn generation_state(
+    pub(crate) fn generation_state(
         &self,
         kb: &KbId,
         sql: &str,

@@ -46,7 +46,9 @@ vi.mock("./query-embedding", () => ({
   ),
 }));
 const { withQueryEmbedding } = await import("./query-embedding");
-const { searchKnowledgeBase, SEARCH_DEFAULT_LIMIT } = await import("./search");
+const { searchKnowledgeBase, searchKnowledgeBaseServed, SEARCH_DEFAULT_LIMIT } = await import(
+  "./search"
+);
 
 const kbId = "k".repeat(24);
 const commitSha = "a".repeat(40);
@@ -164,6 +166,33 @@ describe("hybrid search service", () => {
     expect(request.signal).toBeInstanceOf(AbortSignal);
     expect(request.deadlineAt).toBeGreaterThan(Date.now());
     expect(pg.end).toHaveBeenCalled();
+  });
+
+  it("reports which arm source served the reply (knowledge_search_all's lexical_only)", async () => {
+    const hybridServed = await searchKnowledgeBaseServed(options, actor, { kbId, query: "alpha" });
+    expect(hybridServed.lexical).toBe(false);
+    expect(hybridServed.result).toEqual(
+      await searchKnowledgeBase(options, actor, { kbId, query: "alpha" }),
+    );
+    pg.query.mockImplementation(async (sql: string) =>
+      sql.includes("FOR KEY SHARE OF g") ? { rows: [generation] } : { rows: [] },
+    );
+    vi.mocked(withQueryEmbedding).mockImplementationOnce(
+      async (_o, _a, _i, _consume, _signal, lexicalConsume) =>
+        lexicalConsume!(
+          {
+            lexical: true,
+            generationId: leased.generationId,
+            index: leased.index as never,
+            pinned: false,
+            notice: null,
+          },
+          new AbortController().signal,
+        ),
+    );
+    const lexicalServed = await searchKnowledgeBaseServed(options, actor, { kbId, query: "alpha" });
+    expect(lexicalServed.lexical).toBe(true);
+    expect(lexicalServed.result.results.every((hit) => hit.mode === "lexical")).toBe(true);
   });
 
   it("a failed file read fails the whole search with zero hits, never keyword-only", async () => {

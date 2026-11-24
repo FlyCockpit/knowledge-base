@@ -18,6 +18,24 @@ use crate::types::{IndexState, KbId, Sha};
 
 pub(crate) const TOO_MANY_CHANGES_MESSAGE: &str = "At most 32 changes per call. Each call commits on success: apply the first 32 now, then send the rest in another call using the returned commit as baseRevision.";
 
+/// The message of `INVALID_ARGUMENT` `{reason: "TOO_MANY_BASES", max}`: a
+/// `knowledge_search_all` without `kbIds` by a credential that can read more
+/// than `max` bases (the server's `tooManyBasesMessage(max)`,
+/// `protocol/envelope.ts`). `None` outside `1..=SEARCH_ALL_MAX_BASES`, the only
+/// limits an instance (or a local store) can have.
+pub fn too_many_bases_message(max: i64) -> Option<&'static str> {
+    static TABLE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (1..=crate::types::SEARCH_ALL_MAX_BASES)
+            .map(|max| format!("This credential can read more than {max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to {}) to choose the bases to search; knowledge_bases_list lists them.", crate::types::SEARCH_ALL_MAX_BASES))
+            .collect()
+    });
+    let at = usize::try_from(max).ok()?.checked_sub(1)?;
+    table.get(at).map(String::as_str)
+}
+/// Wire reason of the too-many-bases refusal.
+pub const TOO_MANY_BASES_REASON: &str = "TOO_MANY_BASES";
+
 /// `FORBIDDEN` by the credential's write mode, by what the call needed (the
 /// server's `WRITE_MODE_MESSAGES`, `protocol/envelope.ts`).
 pub const WRITE_MODE_DREAM_MESSAGE: &str = "This credential's write mode does not allow dreams. Write the change directly with mode \"edit\", or ask the owner for a credential that may dream.";
@@ -39,6 +57,12 @@ pub fn write_mode_message(required: WriteKind) -> &'static str {
 pub fn message_for(code: ErrorCode, details: &Value) -> &'static str {
     if code == ErrorCode::InvalidArgument && details["reason"] == "TOO_MANY_CHANGES" {
         return TOO_MANY_CHANGES_MESSAGE;
+    }
+    if code == ErrorCode::InvalidArgument
+        && details["reason"] == TOO_MANY_BASES_REASON
+        && let Some(message) = details["max"].as_i64().and_then(too_many_bases_message)
+    {
+        return message;
     }
     if code == ErrorCode::Forbidden && details["reason"] == WRITE_MODE_REASON {
         match details["required"].as_str() {
@@ -217,6 +241,7 @@ reasons! {
         UnknownArgument => "UNKNOWN_ARGUMENT",
         MissingArgument => "MISSING_ARGUMENT",
         TooManyChanges => "TOO_MANY_CHANGES",
+        TooManyBases => "TOO_MANY_BASES",
         ConfirmRequired => "CONFIRM_REQUIRED",
         InvalidPrefix => "INVALID_PREFIX",
         QueryTooLong => "QUERY_TOO_LONG",
@@ -715,13 +740,20 @@ impl ToolError {
                     && (1..=MAX_SAFE_INTEGER as u64).contains(retry_after_seconds)
             }
             ErrorDetails::InvalidArgument {
-                field, min, max, ..
+                reason,
+                field,
+                min,
+                max,
             } => {
                 code == ErrorCode::InvalidArgument
                     && field.as_deref().is_none_or(is_field_pointer)
                     && [min, max].iter().all(|n| {
                         n.is_none_or(|n| (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&n))
                     })
+                    // A too-many-bases limit is one an instance can have:
+                    // its message names it.
+                    && (*reason != InvalidReason::TooManyBases
+                        || max.is_none_or(|max| too_many_bases_message(max).is_some()))
             }
             ErrorDetails::ConflictReason { field, .. } => {
                 code == ErrorCode::Conflict && field.as_deref().is_none_or(is_field_pointer)
@@ -764,6 +796,11 @@ impl ToolError {
                 reason: InvalidReason::TooManyChanges,
                 ..
             } => TOO_MANY_CHANGES_MESSAGE,
+            ErrorDetails::InvalidArgument {
+                reason: InvalidReason::TooManyBases,
+                max: Some(max),
+                ..
+            } => too_many_bases_message(max).unwrap_or(self.code.message()),
             ErrorDetails::WriteMode { required } => write_mode_message(required),
             _ => self.code.message(),
         }

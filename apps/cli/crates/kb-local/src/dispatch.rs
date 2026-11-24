@@ -293,6 +293,21 @@ async fn dispatch_with_io_observed(
                 )
                 .map_err(|_| StoreError::Internal("search output".into()))?
             }
+            KnowledgeSearchAll => {
+                let i = kb_client::decode_input::<SearchAll>(input)
+                    .map_err(|_| StoreError::InvalidArgument("search input".into()))?;
+                serde_json::to_value(
+                    s.search_all(
+                        p,
+                        i,
+                        io.embedder(),
+                        &crate::search::SearchControl::transport(c),
+                        io.kbs,
+                    )
+                    .await?,
+                )
+                .map_err(|_| StoreError::Internal("search output".into()))?
+            }
             KnowledgeStructuredSearch => {
                 let i = kb_client::decode_input::<StructuredSearch>(input)
                     .map_err(|_| StoreError::InvalidArgument("structured input".into()))?;
@@ -363,6 +378,14 @@ fn lexical_only_warning(id: &str, detail: &str) -> String {
         .replace("{why}", why)
 }
 fn warnings(data: &Value) -> Vec<String> {
+    // knowledge_search_all: each searched base's notice gives the one-line
+    // warning a knowledge_search of that base would, in row order.
+    if let Some(rows) = data["knowledgeBases"].as_array() {
+        return rows
+            .iter()
+            .flat_map(|row| warnings(&json!({"indexNotices": row["indexNotices"]})))
+            .collect();
+    }
     let structured = data["items"]
         .as_array()
         .is_some_and(|a| !a.is_empty() && a.iter().all(|v| v["mode"] == "structured"));
@@ -418,6 +441,28 @@ mod warning_tests {
                 );
             }
         }
+        // knowledge_search_all: one warning per base notice, in row order,
+        // with the text a knowledge_search of that base gives.
+        let other = "o".repeat(24);
+        let rows = json!({"results":[],"knowledgeBases":[
+            {"kbId":kb,"indexNotices":[{"kbId":kb,"code":"LEXICAL_ONLY","detail":"NO_EMBEDDING_PROFILE"}]},
+            {"kbId":"n".repeat(24),"indexNotices":[]},
+            {"kbId":other,"indexNotices":[{"kbId":other,"code":"EMBEDDING_REBUILD_PENDING","detail":"EMBEDDING_MODEL_CHANGED"}]}]});
+        let single = |id: &str, notice: Value| {
+            warnings(&json!({"results":[{"mode":"lexical"}],"indexNotices":[notice]}))
+                .remove(0)
+                .replace(id, "{}")
+        };
+        let got = warnings(&rows);
+        assert_eq!(got.len(), 2);
+        assert_eq!(
+            got[0].replace(&kb, "{}"),
+            single(&kb, rows["knowledgeBases"][0]["indexNotices"][0].clone())
+        );
+        assert_eq!(
+            got[1].replace(&other, "{}"),
+            single(&other, rows["knowledgeBases"][2]["indexNotices"][0].clone())
+        );
         let pending = json!({"results":[{"mode":"lexical"}],"indexNotices":[{"kbId":kb,"code":"EMBEDDING_REBUILD_PENDING","detail":"EMBEDDING_MODEL_CHANGED"}]});
         assert_eq!(
             warnings(&pending),

@@ -396,6 +396,20 @@ export async function searchKnowledgeBase(
   raw: SearchInput,
   signal?: AbortSignal,
 ): Promise<SearchResult> {
+  return (await searchKnowledgeBaseServed(options, actor, raw, signal)).result;
+}
+
+/**
+ * searchKnowledgeBase, plus which arm source served the reply: `lexical` is true when the
+ * keyword arm alone ranked it (a lexical-only generation or the lexical fallback), decided
+ * from the arm source the reply was read with, never from its hits.
+ */
+export async function searchKnowledgeBaseServed(
+  options: SearchOptions,
+  actor: IndexActor,
+  raw: SearchInput,
+  signal?: AbortSignal,
+): Promise<{ result: SearchResult; lexical: boolean }> {
   options = {
     ...options,
     deadlineAt: Math.min(options.deadlineAt ?? Infinity, Date.now() + QUERY_DEADLINE_MS),
@@ -419,7 +433,7 @@ export async function searchKnowledgeBase(
       undefined,
       drainRead,
     );
-    return searchSchemas.output.parse({
+    const result = searchSchemas.output.parse({
       results,
       generationId: leased.generationId,
       // Every field derives from the generation served (and the status read with it).
@@ -428,6 +442,7 @@ export async function searchKnowledgeBase(
       headSha: leased.index.headSha,
       indexNotices: indexNoticesFor(input.kbId, leased.index, leased),
     });
+    return { result, lexical: "lexical" in leased };
   };
   return retryOnceOnMissingFile(() =>
     withQueryEmbedding(

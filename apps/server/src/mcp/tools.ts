@@ -26,6 +26,8 @@ export function bindTools(
     discovery?: Discovery | null;
     /** The HTTP request id, carried into failure logs. */
     requestId?: string;
+    /** The admitted request's deadline (epoch ms): work that can answer partially stops before it. */
+    deadlineAt?: number;
   },
 ) {
   // Discovery is computed before the server is built (the factory owns its
@@ -58,6 +60,7 @@ export function bindTools(
           runtime: options.runtime(),
           masterKey: await options.masterKey(),
           requestId: options.requestId,
+          deadlineAt: options.deadlineAt,
         });
       } catch (error) {
         return toolFailure(error, { tool: name, requestId: options.requestId });

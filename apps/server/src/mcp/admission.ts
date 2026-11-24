@@ -1,3 +1,6 @@
+/** Every MCP request ends after this long (its permit aborts with a TimeoutError). */
+export const MCP_REQUEST_DEADLINE_MS = 30_000;
+
 /** A permit owns work until it settles. Cancellation alone never proves drain. */
 export function createAdmissionGate() {
   let closed = false;
@@ -17,13 +20,16 @@ export function createAdmissionGate() {
       const cancel = () => controller.abort(client.reason);
       client.addEventListener("abort", cancel, { once: true });
       if (client.aborted) cancel();
+      const deadlineAt = Date.now() + MCP_REQUEST_DEADLINE_MS;
       const timer = setTimeout(
         () => controller.abort(new DOMException("Deadline exceeded", "TimeoutError")),
-        30_000,
+        MCP_REQUEST_DEADLINE_MS,
       );
       timer.unref();
       return {
         signal: controller.signal,
+        /** When `signal` aborts with the request deadline (epoch ms). */
+        deadlineAt,
         release() {
           clearTimeout(timer);
           client.removeEventListener("abort", cancel);

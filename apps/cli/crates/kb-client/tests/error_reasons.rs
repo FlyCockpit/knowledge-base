@@ -120,6 +120,36 @@ fn invalid_argument_bounds_round_trip() {
     }
 }
 
+/// `knowledge_search_all` over more bases than the "all" limit: the server's
+/// `tooManyBasesMessage(max)` text, on stdio and on remote decode; a limit no
+/// instance can have is a malformed envelope.
+#[test]
+fn too_many_bases_names_its_limit_on_stdio_and_remote_decode() {
+    for max in [1, 16, 64] {
+        let details = json!({"reason": "TOO_MANY_BASES", "max": max});
+        let result = kb_client::stdio::tool_error(ErrorCode::InvalidArgument, details.clone());
+        let wire = &result["structuredContent"]["error"];
+        let error = ToolError::from_value(wire).unwrap();
+        assert_eq!(
+            error.message(),
+            format!(
+                "This credential can read more than {max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them."
+            )
+        );
+        assert_eq!(error.details().to_value(), details);
+        assert_eq!(&error.to_value(), wire);
+        // The generic text is not accepted in its place.
+        let mut generic = wire.clone();
+        generic["message"] = json!("Invalid argument");
+        assert!(ToolError::from_value(&generic).is_err());
+    }
+    for max in [0, 65] {
+        let wire = json!({"code": "INVALID_ARGUMENT", "message": "Invalid argument",
+            "retryable": false, "details": {"reason": "TOO_MANY_BASES", "max": max}});
+        assert!(ToolError::from_value(&wire).is_err(), "{max}");
+    }
+}
+
 #[test]
 fn oversized_batches_explain_commit_boundaries_on_stdio_and_remote_decode() {
     let details = json!({"reason":"TOO_MANY_CHANGES", "field":"/changes", "max":32});

@@ -139,14 +139,18 @@ async function remote(name: string, args: Record<string, unknown>) {
     }),
   );
   if (
-    (name === "knowledge_search" || name === "knowledge_structured_search") &&
+    (name === "knowledge_search" ||
+      name === "knowledge_structured_search" ||
+      name === "knowledge_search_all") &&
     typeof args.query === "string" &&
     !schemaDiagnostic(schema.tools[name].input, args)
   ) {
+    // knowledge_search_all is delivered here only for a one-base kbIds list.
+    const searched = name === "knowledge_search_all" ? (args.kbIds as unknown[])?.[0] : args.kbId;
     let row: { id: string } | null = null;
     for (let n = 0; n < 200 && !row; n++) {
       row = await prisma.queryEmbeddingRequest.findFirst({
-        where: { kbId: String(args.kbId), state: "PENDING" },
+        where: { kbId: String(searched), state: "PENDING" },
         select: { id: true },
       });
       if (!row) await new Promise((r) => setTimeout(r, 10));
@@ -1053,6 +1057,17 @@ describe("complete rich corpus", () => {
       refs.map((r) => ({ ...r, query: "Alpha" })),
     );
     expect((out[0]!.results as Record<string, unknown>[]).map((r) => r.path)).toContain(
+      "concepts/concept.md",
+    );
+    const all = await call(
+      "knowledge_search_all",
+      refs.map((r) => ({ query: "Alpha", kbIds: [r.kbId] })),
+    );
+    expect(all[0]!.order).toBe("rank_interleaved");
+    expect((all[0]!.knowledgeBases as { status: string }[]).map((row) => row.status)).toEqual([
+      "ok",
+    ]);
+    expect((all[0]!.results as Record<string, unknown>[]).map((r) => r.path)).toContain(
       "concepts/concept.md",
     );
     await call(

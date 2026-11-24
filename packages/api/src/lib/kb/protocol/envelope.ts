@@ -44,6 +44,14 @@ export const KB_RETRYABLE_ERROR_CODES = new Set<KbProtocolErrorCode>([
 export const TOO_MANY_CHANGES_MESSAGE =
   "At most 32 changes per call. Each call commits on success: apply the first 32 now, then send the rest in another call using the returned commit as baseRevision.";
 
+/**
+ * knowledge_search_all without kbIds when the credential can read more bases than the
+ * instance's "all" limit (`max` in the details).
+ */
+export function tooManyBasesMessage(max: number): string {
+  return `This credential can read more than ${max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them.`;
+}
+
 /** FORBIDDEN by the credential's write mode, by what the call needed. */
 export const WRITE_MODE_MESSAGES = {
   dream:
@@ -88,6 +96,7 @@ export const KB_INVALID_ARGUMENT_REASONS = [
   "UNKNOWN_ARGUMENT",
   "MISSING_ARGUMENT",
   "TOO_MANY_CHANGES",
+  "TOO_MANY_BASES",
   "CONFIRM_REQUIRED",
   "INVALID_PREFIX",
   "QUERY_TOO_LONG",
@@ -315,6 +324,16 @@ export function kbProtocolMessageForCode(code: KbProtocolErrorCode, details?: un
     details.reason === "TOO_MANY_CHANGES"
   )
     return TOO_MANY_CHANGES_MESSAGE;
+  if (
+    code === "INVALID_ARGUMENT" &&
+    details !== null &&
+    typeof details === "object" &&
+    "reason" in details &&
+    details.reason === "TOO_MANY_BASES" &&
+    "max" in details &&
+    typeof details.max === "number"
+  )
+    return tooManyBasesMessage(details.max);
   if (
     code === "FORBIDDEN" &&
     details !== null &&

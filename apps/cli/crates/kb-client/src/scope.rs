@@ -356,7 +356,11 @@ impl ToolScope {
     /// Group or read-only refused: `FORBIDDEN`; a write the mode does not
     /// allow: `FORBIDDEN` with `WRITE_MODE` details; a KB outside the
     /// selection: `NOT_FOUND` (as for a KB outside a grant); an operation
-    /// whose group is not selected: `FORBIDDEN`.
+    /// whose group is not selected: `FORBIDDEN`. `knowledge_search_all`'s
+    /// `kbIds` are not refused here: each one outside the selection is a
+    /// `not_found` row of the call, through the same path as a KB that does
+    /// not exist (the store applies [`Self::allows_kb`] per base), as a server
+    /// grant's KB list does for that tool.
     pub fn admit(&self, name: ToolName, arguments: &Value) -> Result<(), Refusal> {
         if !self.grants_groups(name) {
             return Err(ErrorCode::Forbidden.into());
@@ -595,7 +599,7 @@ mod tests {
                 .unwrap()
                 .tools()
         );
-        // Read: the four read tools plus KB discovery (no names are sent).
+        // Read: the five read tools plus KB discovery (no names are sent).
         assert_eq!(
             listed(&ToolScope::new(&selected(&["read"]), false, None)),
             [
@@ -603,6 +607,7 @@ mod tests {
                 "knowledge_documents_list",
                 "knowledge_documents_get",
                 "knowledge_search",
+                "knowledge_search_all",
                 "knowledge_structured_search"
             ]
         );
@@ -749,6 +754,25 @@ mod tests {
                 name.as_str()
             );
         }
+    }
+
+    #[test]
+    fn search_all_kb_ids_are_decided_per_base_by_the_store() {
+        let scope = ToolScope::new(&["read"], false, Some(&[kb(A)]));
+        for input in [
+            json!({"query": "q", "kbIds": [A, B]}),
+            json!({"query": "q", "kbIds": [B]}),
+            json!({"query": "q"}),
+        ] {
+            assert_eq!(scope.admit(ToolName::KnowledgeSearchAll, &input), Ok(()));
+        }
+        assert!(scope.allows_kb(A) && !scope.allows_kb(B));
+        // The tool's group still decides the call.
+        let edit = ToolScope::new(&["edit"], false, Some(&[kb(A)]));
+        assert_eq!(
+            edit.admit(ToolName::KnowledgeSearchAll, &json!({"query": "q"})),
+            Err(ErrorCode::Forbidden.into())
+        );
     }
 
     #[test]

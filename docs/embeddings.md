@@ -74,7 +74,8 @@ tie breaks. A hit's `score` is that sum normalized by its maximum for the arms
 that ran, `rrf * 61 / arms`, so it lies in (0, 1]: 1 means first in every arm,
 and a hybrid hit found by only one arm scores at most 0.5. It measures rank
 agreement between the arms, not calibrated relevance; compare scores within one
-reply only. A hit's `snippet` is plain text on every transport (MCP, CLI and
+reply only (for `knowledge_search_all`, within one base: its merged list
+interleaves the bases by rank and never compares their scores). A hit's `snippet` is plain text on every transport (MCP, CLI and
 web): Markdown markup is reduced to its text (shared corpus
 `fixtures/plain-snippet.json`); its `span` still cites the exact source bytes.
 

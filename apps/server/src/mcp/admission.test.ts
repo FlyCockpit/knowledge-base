@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAdmissionGate } from "./admission";
+import { createAdmissionGate, MCP_REQUEST_DEADLINE_MS } from "./admission";
 
 describe("admission lifetime", () => {
   it("distinguishes a transport deadline from client cancellation", async () => {
@@ -8,6 +8,21 @@ describe("admission lifetime", () => {
     try {
       await vi.advanceTimersByTimeAsync(30_000);
       expect(permit.signal.reason).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      permit.release();
+      vi.useRealTimers();
+    }
+  });
+  it("tells the work when the request deadline aborts it", async () => {
+    vi.useFakeTimers();
+    const before = Date.now();
+    const permit = createAdmissionGate().admit(new AbortController().signal)!;
+    try {
+      expect(permit.deadlineAt).toBe(before + MCP_REQUEST_DEADLINE_MS);
+      await vi.advanceTimersByTimeAsync(MCP_REQUEST_DEADLINE_MS - 1);
+      expect(permit.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(permit.signal.aborted).toBe(true);
     } finally {
       permit.release();
       vi.useRealTimers();

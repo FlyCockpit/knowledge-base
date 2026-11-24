@@ -960,6 +960,15 @@ fn local_limits_only_lower_and_match_the_shared_constants() {
             .expect("common.ts");
     assert!(common_ts.contains(&format!("KB_PAGE_DEFAULT = {PAGE_DEFAULT};")));
     assert!(common_ts.contains(&format!("KB_PAGE_MAX = {PAGE_MAX};")));
+    // knowledge_search_all: the local "all" limit is the server's default.
+    assert!(common_ts.contains(&format!(
+        "SEARCH_ALL_DEFAULT_BASES = {};",
+        kb_local::search_all::SEARCH_ALL_LOCAL_BASES
+    )));
+    assert_eq!(
+        kb_local::search_all::SEARCH_ALL_LOCAL_BASES,
+        kb_client::types::SEARCH_ALL_DEFAULT_BASES
+    );
     let cursor_ts =
         std::fs::read_to_string(repo.join("packages/api/src/lib/kb/cursor.ts")).expect("cursor.ts");
     assert_eq!(CURSOR_TTL_SECS, 15 * 60);

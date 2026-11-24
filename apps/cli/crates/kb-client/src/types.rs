@@ -293,6 +293,12 @@ literal_str!(RebuildPendingCode, "EMBEDDING_REBUILD_PENDING");
 literal_str!(LexicalOnlyCode, "LEXICAL_ONLY");
 literal_str!(AssetStillReferencedCode, "ASSET_STILL_REFERENCED");
 literal_str!(SealedAlgorithm, "X25519-HKDF-SHA256-AES256GCM");
+literal_str!(
+    /// `knowledge_search_all` `order`: per-base ranks interleaved, never a
+    /// cross-base score order.
+    RankInterleaved,
+    "rank_interleaved"
+);
 
 /// The JSON literal `true`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -763,6 +769,81 @@ pub struct CitationHit {
     pub matched_row: Option<Map<String, Value>>,
 }
 
+// ── knowledge_search_all ────────────────────────────────────────────────────
+
+/// Most bases one `knowledge_search_all` call searches (`SEARCH_ALL_MAX_BASES`).
+pub const SEARCH_ALL_MAX_BASES: usize = 64;
+/// The server's default "all I can read" limit (`SEARCH_ALL_DEFAULT_BASES`).
+pub const SEARCH_ALL_DEFAULT_BASES: usize = 16;
+/// Most hits one base contributes (`SEARCH_ALL_MAX_PER_BASE`).
+pub const SEARCH_ALL_MAX_PER_BASE: u64 = 10;
+/// `limitPerBase` when omitted (`SEARCH_ALL_DEFAULT_PER_BASE`).
+pub const SEARCH_ALL_DEFAULT_PER_BASE: u64 = 4;
+/// Most merged hits (`SEARCH_ALL_MAX_RESULTS`); the per-base limit shrinks to fit.
+pub const SEARCH_ALL_MAX_RESULTS: u64 = 100;
+
+/// The per-base hit limit a call over `bases` bases applies:
+/// `min(requested ?? 4, max(1, floor(100 / bases)))` (no bases: the request).
+pub fn search_all_limit_per_base(requested: Option<u64>, bases: usize) -> u64 {
+    let requested = requested.unwrap_or(SEARCH_ALL_DEFAULT_PER_BASE);
+    match u64::try_from(bases) {
+        Ok(n) if n > 0 => requested.min((SEARCH_ALL_MAX_RESULTS / n).max(1)),
+        _ => requested,
+    }
+}
+
+/// How one base of a `knowledge_search_all` call ended (`SEARCH_ALL_BASE_STATUSES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchAllStatus {
+    Ok,
+    LexicalOnly,
+    Rebuilding,
+    Unavailable,
+    RateLimited,
+    Deadline,
+    NotFound,
+}
+
+impl SearchAllStatus {
+    /// The base was searched (`ok` / `lexical_only`).
+    pub fn searched(self) -> bool {
+        matches!(self, SearchAllStatus::Ok | SearchAllStatus::LexicalOnly)
+    }
+}
+
+/// One merged hit: a `knowledge_search` hit plus its 1-based rank inside its
+/// own base. The wire object is the hit's members plus `rank`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchAllHit {
+    pub hit: CitationHit,
+    pub rank: u64,
+}
+
+impl Serialize for SearchAllHit {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error as _;
+        let mut object = match serde_json::to_value(&self.hit).map_err(S::Error::custom)? {
+            Value::Object(object) => object,
+            _ => return Err(S::Error::custom("citation hit is not an object")),
+        };
+        object.insert("rank".to_owned(), Value::from(self.rank));
+        object.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for SearchAllHit {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut object = Map::<String, Value>::deserialize(d)?;
+        let rank = object
+            .remove("rank")
+            .ok_or_else(|| D::Error::missing_field("rank"))?;
+        let rank = u64::deserialize(rank).map_err(D::Error::custom)?;
+        let hit = CitationHit::deserialize(Value::Object(object)).map_err(D::Error::custom)?;
+        Ok(SearchAllHit { hit, rank })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrSummary {
@@ -1018,6 +1099,18 @@ tool_structs! {
         results: req Vec<CitationHit>, generation_id: req KbId, freshness: req Freshness,
         indexed_commit_sha: null Sha, head_sha: req Sha, index_notices: req Vec<IndexNotice>,
     }
+    SearchAllInput { query: req String, kb_ids: opt Vec<KbId>, limit_per_base: opt u64 }
+    /// One `knowledge_search_all` row: searched rows carry the base's index
+    /// fields, every other row has them `null` (and no notices).
+    SearchAllBase {
+        kb_id: req KbId, status: req SearchAllStatus, hit_count: req u64,
+        generation_id: null KbId, freshness: null Freshness, indexed_commit_sha: null Sha,
+        head_sha: null Sha, index_notices: req Vec<IndexNotice>, retry_after_seconds: null u64,
+    }
+    SearchAllOutput {
+        results: req Vec<SearchAllHit>, order: req RankInterleaved, limit_per_base: req u64,
+        knowledge_bases: req Vec<SearchAllBase>,
+    }
     StructuredSearchInput {
         kb_id: req KbId, limit: opt u64, cursor: cursor String, query: opt String,
         r#type: opt String, title: opt String, tags: opt Vec<String>,
@@ -1261,6 +1354,8 @@ catalog! {
     KnowledgeDocumentsGet => DocumentsGet, "knowledge_documents_get", true,
         DocumentsGetInput, Document;
     KnowledgeSearch => KnowledgeSearch, "knowledge_search", true, SearchInput, SearchOutput;
+    KnowledgeSearchAll => SearchAll, "knowledge_search_all", true,
+        SearchAllInput, SearchAllOutput;
     KnowledgeStructuredSearch => StructuredSearch, "knowledge_structured_search", true,
         StructuredSearchInput, StructuredSearchOutput;
     KnowledgeChangesApply => ChangesApply, "knowledge_changes_apply", false,

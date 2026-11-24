@@ -195,6 +195,7 @@ describe("stateless SDK endpoint", () => {
           "knowledge_documents_list",
           "knowledge_documents_get",
           "knowledge_search",
+          "knowledge_search_all",
           "knowledge_structured_search",
         ]);
       else {

@@ -23,6 +23,7 @@ import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { InlineRetry } from "@/components/inline-retry";
 import { IndexCeilingAdminPanel } from "@/components/kb/index-ceiling-admin-panel";
 import { ModelAdminPanel } from "@/components/kb/model-admin-panel";
+import { SearchAllLimitAdminPanel } from "@/components/kb/search-all-limit-admin-panel";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import { pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
@@ -112,6 +113,7 @@ function AdminSettings() {
       )}
       <ModelAdminPanel />
       <IndexCeilingAdminPanel />
+      <SearchAllLimitAdminPanel />
     </PageShell>
   );
 }

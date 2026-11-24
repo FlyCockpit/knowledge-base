@@ -2,13 +2,22 @@ import { kbListRetryError, mapKbDomainError } from "@knowledge-base/api/lib/kb/b
 import { KbDomainError } from "@knowledge-base/api/lib/kb/errors";
 import { KbLockError, type KbLockErrorCode } from "@knowledge-base/api/lib/kb/lock";
 import { KB_TOOL_NAMES } from "@knowledge-base/api/lib/kb/protocol/catalog";
+import { tooManyBasesMessage } from "@knowledge-base/api/lib/kb/protocol/envelope";
 import fixtures from "@knowledge-base/api/lib/kb/protocol/fixtures.json";
 import { kbReadToolSchemas } from "@knowledge-base/api/lib/kb/protocol/reads";
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { captureLog } from "@knowledge-base/env/log";
 import { describe, expect, it, vi } from "vitest";
 import { type BearerAdmission, bindBearerAdmission } from "./context";
-import { dispatchTool, toolFailure, toolSuccess } from "./tool-dispatch";
+import {
+  dispatchTool,
+  SEARCH_ALL_REPLY_RESERVE_MS,
+  toolFailure,
+  toolSuccess,
+} from "./tool-dispatch";
+
+const searchAll = vi.hoisted(() => ({ searchKnowledgeBases: vi.fn() }));
+vi.mock("@knowledge-base/api/lib/kb/search-all", () => searchAll);
 
 describe("closed MCP envelopes", () => {
   const lockCases: Record<KbLockErrorCode, [string, boolean]> = {
@@ -381,5 +390,173 @@ describe("write-mode authorization at dispatch", () => {
           ?.reason,
       ).not.toBe("WRITE_MODE");
     }
+  });
+});
+
+describe("knowledge_search_all binding", () => {
+  const kbId = "k".repeat(24);
+  const sha = "a".repeat(40);
+  const row = (indexNotices: unknown[]) => ({
+    kbId,
+    status: "ok",
+    hitCount: 0,
+    generationId: "g".repeat(24),
+    freshness: "current",
+    indexedCommitSha: sha,
+    headSha: sha,
+    indexNotices,
+    retryAfterSeconds: null,
+  });
+  const output = (indexNotices: unknown[] = []) => ({
+    results: [],
+    order: "rank_interleaved",
+    limitPerBase: 4,
+    knowledgeBases: [row(indexNotices)],
+  });
+  const admission = (toolGroups: string[]) => ({
+    generationActive: true,
+    instanceEnabled: true,
+    expired: false,
+    banned: false,
+    twoFactorSatisfied: true,
+    toolGroups,
+  });
+  const actor = (toolGroups: string[], scopes = ["mcp:read"]) => {
+    const inspect = vi.fn(async () => admission(toolGroups));
+    return {
+      inspect,
+      admission: bindBearerAdmission(
+        {
+          kind: "token",
+          userId: "u",
+          grantId: "g",
+          grantGeneration: "g",
+          scopes,
+          expiresAt: new Date("2099-01-01"),
+          storedAcl: new Map(),
+        },
+        { inspect },
+      ),
+    };
+  };
+  const runtime = { prisma: {}, coordinator: { run: vi.fn() } } as unknown as KbRuntimeConfig;
+
+  it("runs the domain loop once with the connection admission, rechecking before and after", async () => {
+    searchAll.searchKnowledgeBases.mockReset().mockResolvedValue(output());
+    const a = actor(["read"]);
+    const signal = new AbortController().signal;
+    const result = await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      {
+        runtime,
+        actor: a.admission,
+        signal,
+        masterKey: "mk",
+      },
+    );
+    expect(result.structuredContent).toEqual({ schemaVersion: "kb/1", data: output() });
+    expect(searchAll.searchKnowledgeBases).toHaveBeenCalledOnce();
+    const [options, passedActor, input, ctx] = searchAll.searchKnowledgeBases.mock.calls[0]!;
+    expect(options).toMatchObject({ masterKey: "mk", prisma: runtime.prisma });
+    expect(input).toEqual({ query: "q" });
+    expect(ctx).toEqual({ signal });
+    // No transport deadline: the domain keeps its own 60 s.
+    expect(options).not.toHaveProperty("deadlineAt");
+    // The admission the loop gets carries the tool's `read` group demand.
+    expect(passedActor.principal.toolGroupDemands).toEqual([["read"]]);
+    // First recheck, then the final recheck after the loop returned.
+    expect(a.inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends the shared deadline before the MCP request's own, leaving the reply reserve", async () => {
+    searchAll.searchKnowledgeBases.mockReset().mockResolvedValue(output());
+    const a = actor(["read"]);
+    const deadlineAt = Date.now() + 30_000;
+    await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      { runtime, actor: a.admission, signal: new AbortController().signal, deadlineAt },
+    );
+    const [options] = searchAll.searchKnowledgeBases.mock.calls[0]!;
+    expect(options.deadlineAt).toBe(deadlineAt - SEARCH_ALL_REPLY_RESERVE_MS);
+    expect(SEARCH_ALL_REPLY_RESERVE_MS).toBeGreaterThan(0);
+  });
+
+  it("refuses a connection without the read group before any base is searched", async () => {
+    searchAll.searchKnowledgeBases.mockReset();
+    const result = await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      { runtime, actor: actor(["edit"]).admission, signal: new AbortController().signal },
+    );
+    expect(result.structuredContent).toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(searchAll.searchKnowledgeBases).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token without an MCP read scope before any base is searched", async () => {
+    searchAll.searchKnowledgeBases.mockReset();
+    const result = await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      { runtime, actor: actor(["read"], []).admission, signal: new AbortController().signal },
+    );
+    expect(result.structuredContent).toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(searchAll.searchKnowledgeBases).not.toHaveBeenCalled();
+  });
+
+  it("drops the reply when the final recheck fails", async () => {
+    const a = actor(["read"]);
+    searchAll.searchKnowledgeBases.mockReset().mockImplementation(async () => {
+      a.inspect.mockResolvedValue({ ...admission(["read"]), generationActive: false });
+      return output();
+    });
+    const result = await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      { runtime, actor: a.admission, signal: new AbortController().signal },
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("rank_interleaved");
+  });
+
+  it("answers TOO_MANY_BASES with its own message and details", async () => {
+    searchAll.searchKnowledgeBases.mockReset().mockRejectedValue(
+      new KbDomainError("INVALID_ARGUMENT", "x", undefined, {
+        reason: "TOO_MANY_BASES",
+        max: 16,
+      }),
+    );
+    const result = await dispatchTool(
+      "knowledge_search_all",
+      { query: "q" },
+      { runtime, actor: actor(["read"]).admission, signal: new AbortController().signal },
+    );
+    expect(result.structuredContent).toEqual({
+      schemaVersion: "kb/1",
+      error: {
+        code: "INVALID_ARGUMENT",
+        message: tooManyBasesMessage(16),
+        retryable: false,
+        details: { reason: "TOO_MANY_BASES", max: 16 },
+      },
+    });
+  });
+
+  it("words per-base index notices exactly as knowledge_search does, after the JSON envelope", () => {
+    const notice = { kbId, code: "LEXICAL_ONLY", detail: "SEMANTIC_INDEX_BUILDING" };
+    const single = toolSuccess("knowledge_search", {
+      results: [],
+      generationId: "g".repeat(24),
+      freshness: "current",
+      indexedCommitSha: sha,
+      headSha: sha,
+      indexNotices: [notice],
+    });
+    const multi = toolSuccess("knowledge_search_all", output([notice]));
+    expect(multi.content).toHaveLength(2);
+    expect(JSON.parse(multi.content[0].text)).toEqual(multi.structuredContent);
+    expect(multi.content[1]).toEqual(single.content[1]);
+    expect(toolSuccess("knowledge_search_all", output()).content).toHaveLength(1);
   });
 });
