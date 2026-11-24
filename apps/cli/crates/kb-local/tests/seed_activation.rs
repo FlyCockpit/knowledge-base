@@ -2,6 +2,7 @@
 //! activation; server parity): head work keeps priority, and while nothing of
 //! the head serves, the newest generation of an older commit does. Seeding a
 //! KB with quick commits therefore never leaves it without an index.
+use kb_client::tools::{BasesCreate, BasesGet, DocumentsCreate, IndexRebuild};
 use kb_client::{decode_input, types::*};
 use kb_local::Store;
 use serde_json::json;

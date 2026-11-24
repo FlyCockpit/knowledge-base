@@ -1,9 +1,13 @@
 //! Spec-first tests: real managed store, Git, CAS and framed I/O.
 use base64::{Engine, engine::general_purpose::STANDARD};
+use kb_client::tools::{
+    BasesCreate, DocumentsGet, ExportCancel, ExportComplete, ExportPrepare, ExportStatus, Tool,
+    TransferRead, UploadBegin,
+};
 use kb_client::{
     ErrorCode, decode_input,
+    host::snapshot::content_hash,
     schema::{Direction, validate},
-    snapshot::content_hash,
     types::*,
 };
 use kb_local::{

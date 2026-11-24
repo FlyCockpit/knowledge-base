@@ -15,10 +15,10 @@ use crate::{
     state::{LocalPrincipal, new_uuid_v4, now_utc},
     tree::{TreeError, validate_commit},
 };
+use kb_client::tools::{PullRequestsCreate, PullRequestsGet, PullRequestsList, PullRequestsReview};
 use kb_client::types::{
-    KbId, Page, Permission, PrMutationOutput, PrStatus, PullRequestsCreate,
-    PullRequestsCreateInput, PullRequestsGet, PullRequestsGetInput, PullRequestsGetOutput,
-    PullRequestsList, PullRequestsListInput, PullRequestsReview, PullRequestsReviewInput,
+    KbId, Page, Permission, PrMutationOutput, PrStatus, PullRequestsCreateInput,
+    PullRequestsGetInput, PullRequestsGetOutput, PullRequestsListInput, PullRequestsReviewInput,
     ReviewConfirm, ReviewDecision, Sha, Uuid,
 };
 use rusqlite::OptionalExtension;

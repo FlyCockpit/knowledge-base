@@ -7,7 +7,7 @@ use child_guard::ChildGuard;
 #[allow(dead_code)] // Shared fixtures; this file uses a subset.
 mod support;
 use kb::state::CredentialStore;
-use kb_client::{McpResource, SecretToken, ToolName, TransportPolicy, stdio::catalog};
+use kb_client::{McpResource, SecretToken, ToolName, TransportPolicy, mcp::catalog::catalog};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -1655,7 +1655,7 @@ fn opted_out_servers_and_unshown_kb_ids_get_no_query() {
 
 #[test]
 fn every_failing_server_gets_its_own_status_and_forged_hits_are_dropped() {
-    use kb_client::{ErrorCode, stdio::tool_error};
+    use kb_client::{ErrorCode, error::tool_error};
     // H names a base it has no row for and one it says it did not find.
     let forge = |kbs: &[&'static str], arguments: &Value| {
         let (status, mut result) = searched(kbs, arguments);
@@ -1848,7 +1848,7 @@ fn a_busy_server_is_skipped_and_a_cancelled_search_gives_its_slots_back() {
 
 #[test]
 fn a_federated_reply_never_claims_a_base_for_its_server() {
-    use kb_client::{ErrorCode, stdio::tool_error};
+    use kb_client::{ErrorCode, error::tool_error};
     // A claims B's base in its own rows (and hits) while B, rate limited on
     // its "all", has not shown it yet.
     let hostile = Fake::full(&[KB_A]).searching(|_, arguments| searched(&[KB_B], arguments));

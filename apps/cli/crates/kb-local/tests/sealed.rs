@@ -1,10 +1,14 @@
 //! Task 61 spec-first tests. Real SQLite, Git and publication boundaries;
 //! only the trusted OS credential adapter is substituted with disposable keys.
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use kb_client::tools::{
+    BasesCreate, BasesDelete, DocumentsCreate, DocumentsUpdate, ExportPrepare, SealedResolve, Tool,
+    UploadBegin,
+};
 use kb_client::{
     ErrorCode, decode_input,
+    host::sealed::{RecipientKey, SealedReference, open_envelope},
     schema::{Direction, validate},
-    sealed::{RecipientKey, SealedReference, open_envelope},
     types::*,
 };
 use kb_local::{
@@ -1100,7 +1104,7 @@ fn fix_disk_admission_precedes_initial_key_and_fresh_writes_but_exempts_replay_a
 fn fix_disk_admission_preserves_pending_upload_promises() {
     let t = Test::new();
     let bytes = vec![b'x'; 4096];
-    t.s.upload_begin(&t.s.owner(), decode_input::<UploadBegin>(serde_json::json!({"kbId":t.kb.id,"idempotencyKey":"pending-upload-001","kind":"markdown","size":bytes.len(),"contentHash":kb_client::snapshot::content_hash(&bytes),"mime":"text/markdown"})).unwrap()).unwrap();
+    t.s.upload_begin(&t.s.owner(), decode_input::<UploadBegin>(serde_json::json!({"kbId":t.kb.id,"idempotencyKey":"pending-upload-001","kind":"markdown","size":bytes.len(),"contentHash":kb_client::host::snapshot::content_hash(&bytes),"mime":"text/markdown"})).unwrap()).unwrap();
     t.s.set_disk_meter_for_tests(ciphertext_headroom);
     code(
         t.enrollment(Some(uuid(1)), "pending-enroll-001", CANARY),
@@ -1220,7 +1224,7 @@ fn pr_status_runs_the_merges_whole_tree_validation() {
     let cached =
         t.s.pull_requests_get(
             &t.s.owner(),
-            decode_input::<kb_client::types::PullRequestsGet>(
+            decode_input::<kb_client::tools::PullRequestsGet>(
                 serde_json::json!({"kbId":t.kb.id,"number":number}),
             )
             .unwrap(),
@@ -1233,7 +1237,7 @@ fn pr_status_runs_the_merges_whole_tree_validation() {
     let get =
         t.s.pull_requests_get(
             &t.s.owner(),
-            decode_input::<kb_client::types::PullRequestsGet>(
+            decode_input::<kb_client::tools::PullRequestsGet>(
                 serde_json::json!({"kbId":t.kb.id,"number":number}),
             )
             .unwrap(),
@@ -1242,7 +1246,7 @@ fn pr_status_runs_the_merges_whole_tree_validation() {
     assert_eq!(get.pr.status, kb_client::types::PrStatus::Conflict);
     let merge = t.s.pull_requests_review(
         &t.s.owner(),
-        decode_input::<kb_client::types::PullRequestsReview>(serde_json::json!({
+        decode_input::<kb_client::tools::PullRequestsReview>(serde_json::json!({
             "kbId":t.kb.id,"number":number,"decision":"merge","confirm":"MERGE",
             "expectedHeadSha":get.pr.head_sha,"expectedTargetSha":get.pr.target_sha,
             "idempotencyKey":"pr-sealed-merge-01"

@@ -1395,8 +1395,9 @@ mod context_tests {
             let started = std::time::Instant::now();
             let fitted = fit_context(&body, chunk_body(&body), 1024, |text| Ok(text.len() + 2))
                 .expect("fit");
-            let digest =
-                kb_client::snapshot::content_hash(&serde_json::to_vec(&fitted).expect("encode"));
+            let digest = kb_client::host::snapshot::content_hash(
+                &serde_json::to_vec(&fitted).expect("encode"),
+            );
             assert_eq!(
                 digest.to_string(),
                 expected,

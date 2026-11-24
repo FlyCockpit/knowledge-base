@@ -7,6 +7,7 @@ use crate::{
     exports::{self, EXPORT_GRACE_MS, FRAME_BYTES},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
+use kb_client::tools::{ExportComplete, TransferRead};
 use kb_client::types::*;
 use rusqlite::OptionalExtension;
 use std::{

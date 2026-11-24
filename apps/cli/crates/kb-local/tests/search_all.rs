@@ -4,6 +4,7 @@
 //! sqlite-vec. Every output is checked against the shared kb/1 schema.
 #[path = "support/search_fixture.rs"]
 mod support;
+use kb_client::tools::SearchAll;
 use kb_client::{ErrorCode, types::*};
 use kb_local::{
     CommitRequest, CreateKbRequest, LocalPrincipal, StoreError,
@@ -231,7 +232,8 @@ fn permits_free(f: &Fixture) {
     // Every query permit is free again: four searches hold four at once.
     let held: Vec<_> = (0..kb_local::search::QUERIES_IN_FLIGHT)
         .map(|slot| {
-            let hash = kb_client::snapshot::content_hash(f.store.owner().actor_key().as_bytes());
+            let hash =
+                kb_client::host::snapshot::content_hash(f.store.owner().actor_key().as_bytes());
             let path = f
                 .store
                 .paths()
@@ -599,7 +601,7 @@ async fn all_is_the_listing_and_more_than_the_limit_is_refused() {
         err.protocol_details(),
         json!({"reason": "TOO_MANY_BASES", "max": 16})
     );
-    let wire = kb_client::stdio::tool_error(err.protocol_code(), err.protocol_details());
+    let wire = kb_client::error::tool_error(err.protocol_code(), err.protocol_details());
     assert_eq!(
         wire["structuredContent"]["error"]["message"],
         kb_client::error::too_many_bases_message(16).expect("message")

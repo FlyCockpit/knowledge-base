@@ -128,9 +128,9 @@ pub struct Part {
 /// The most bytes of compact JSON a merged reply's `data` may take. The
 /// stdio result carries the envelope twice, as structured content and as
 /// text content (a JSON string whose escaping at most doubles it), so the
-/// result frame stays under [`kb_client::stdio::RESULT_MAX_BYTES`] with room
+/// result frame stays under [`kb_client::mcp::stdio::RESULT_MAX_BYTES`] with room
 /// for the JSON-RPC wrapper and the envelope.
-pub const REPLY_MAX_BYTES: usize = (kb_client::stdio::RESULT_MAX_BYTES - 64 * 1024) / 3;
+pub const REPLY_MAX_BYTES: usize = (kb_client::mcp::stdio::RESULT_MAX_BYTES - 64 * 1024) / 3;
 
 /// One accepted base row of one server, with the hits it may contribute
 /// (each already stamped, its rank its position + 1).
@@ -854,8 +854,11 @@ mod tests {
         let result = json!({"isError":false,"structuredContent":envelope,"content":[{"type":"text","text":envelope.to_string()}]});
         let frame = json!({"jsonrpc":"2.0","id":"i".repeat(128),"result":result});
         let size = frame.to_string().len();
-        assert!(size < kb_client::stdio::RESULT_MAX_BYTES, "{size}");
-        assert!(size > kb_client::stdio::RESULT_MAX_BYTES * 3 / 4, "{size}");
+        assert!(size < kb_client::mcp::stdio::RESULT_MAX_BYTES, "{size}");
+        assert!(
+            size > kb_client::mcp::stdio::RESULT_MAX_BYTES * 3 / 4,
+            "{size}"
+        );
     }
 
     #[test]

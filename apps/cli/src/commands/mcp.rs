@@ -1,8 +1,11 @@
 //! Explicit local/remote MCP; the launcher's selected principal is never input.
 use kb_client::{
     ErrorCode,
-    scope::{LiveAuthority, LiveSource, ToolScope},
-    stdio::{Advertised, serve_refused, serve_until},
+    mcp::{
+        catalog::Advertised,
+        scope::{LiveAuthority, LiveSource, ToolScope},
+        stdio::{serve_refused, serve_until},
+    },
     types::{KbId, Uuid},
 };
 use kb_local::{
@@ -51,7 +54,7 @@ pub struct Args {
         long,
         value_name = "GROUP|PRESET",
         value_delimiter = ',',
-        value_parser = kb_client::scope::parse_tool_selector
+        value_parser = kb_client::mcp::scope::parse_tool_selector
     )]
     pub tools: Vec<Vec<&'static str>>,
     /// The writes this connection may make: `dream` (only dreams: direct

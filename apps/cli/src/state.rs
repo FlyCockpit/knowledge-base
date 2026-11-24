@@ -4,7 +4,7 @@
 //! so a concurrent re-login cannot lose its new credential. No network under
 //! these locks. No disposable index or config file contains credentials.
 use anyhow::{Context, Result, bail};
-use kb_client::{authoring::AuthoringMode, origin::McpResource, types::SecretToken};
+use kb_client::{authoring::AuthoringMode, mcp::origin::McpResource, types::SecretToken};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -518,7 +518,7 @@ mod tests {
         let store = CredentialStore::new(root.clone());
         let resource = McpResource::parse(
             "https://kb.example",
-            kb_client::origin::TransportPolicy::HttpsOnly,
+            kb_client::mcp::origin::TransportPolicy::HttpsOnly,
         )
         .expect("resource");
         assert!(!root.parent().expect("data directory").exists());
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(temp_count(&root), 0);
         let resource = McpResource::parse(
             "https://kb.example",
-            kb_client::origin::TransportPolicy::HttpsOnly,
+            kb_client::mcp::origin::TransportPolicy::HttpsOnly,
         )
         .expect("resource");
         assert!(
@@ -572,7 +572,7 @@ mod tests {
         let store = CredentialStore::new(root.clone());
         let resource = McpResource::parse(
             "https://kb.example",
-            kb_client::origin::TransportPolicy::HttpsOnly,
+            kb_client::mcp::origin::TransportPolicy::HttpsOnly,
         )
         .expect("resource");
         let token = SecretToken::new("disposable-mode".into());
@@ -611,7 +611,7 @@ mod tests {
         let store = CredentialStore::new(root.clone());
         let resource = McpResource::parse(
             "https://kb.example",
-            kb_client::origin::TransportPolicy::HttpsOnly,
+            kb_client::mcp::origin::TransportPolicy::HttpsOnly,
         )
         .expect("resource");
         store
@@ -668,7 +668,7 @@ mod tests {
             let recovery = scope.spawn(move || {
                 let resource = McpResource::parse(
                     "https://other.example",
-                    kb_client::origin::TransportPolicy::HttpsOnly,
+                    kb_client::mcp::origin::TransportPolicy::HttpsOnly,
                 )
                 .expect("other resource");
                 started_tx.send(()).expect("started");
@@ -697,7 +697,7 @@ mod tests {
         let store = CredentialStore::new(root.into());
         let resource = McpResource::parse(
             "https://kb.example",
-            kb_client::origin::TransportPolicy::HttpsOnly,
+            kb_client::mcp::origin::TransportPolicy::HttpsOnly,
         )
         .expect("resource");
         let _lock = store.lock().expect("writer holds the production lock");

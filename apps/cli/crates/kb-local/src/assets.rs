@@ -10,6 +10,7 @@ use crate::{
     manifest,
     tree::ManifestEntry,
 };
+use kb_client::tools::{AssetsImport, AssetsList, AssetsPut};
 use kb_client::types::*;
 use rusqlite::Connection;
 use serde_json::{Value, json};

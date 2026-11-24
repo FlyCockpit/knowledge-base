@@ -10,7 +10,7 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use kb_client::error::{ConflictReason, InvalidReason};
-use kb_client::{ErrorCode, snapshot::content_hash, types::*};
+use kb_client::{ErrorCode, host::snapshot::content_hash, types::*};
 use rusqlite::{Connection, OptionalExtension};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};

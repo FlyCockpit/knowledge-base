@@ -63,7 +63,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use kb_client::ErrorCode;
-use kb_client::snapshot::content_hash;
+use kb_client::host::snapshot::content_hash;
 use kb_client::types::{KbId, KbPath, Sha};
 
 use crate::StoreError;
@@ -79,7 +79,7 @@ thread_local! {
     static OPERATION_CLOCK: std::cell::Cell<fn() -> Instant> = const { std::cell::Cell::new(Instant::now) };
 }
 
-thread_local! { static TRANSPORT_CONTROL: std::cell::RefCell<Option<kb_client::stdio::CallControl>> = const { std::cell::RefCell::new(None) }; }
+thread_local! { static TRANSPORT_CONTROL: std::cell::RefCell<Option<kb_client::mcp::stdio::CallControl>> = const { std::cell::RefCell::new(None) }; }
 // A test can park the pack feeder until the supervised indexer is killed.
 // Thread-local and one-shot, so parallel publications are unaffected.
 #[cfg(test)]
@@ -96,14 +96,14 @@ thread_local! {
 pub(crate) struct OperationDeadline(
     Option<Instant>,
     Option<Arc<AtomicBool>>,
-    Option<Option<kb_client::stdio::CallControl>>,
+    Option<Option<kb_client::mcp::stdio::CallControl>>,
     fn() -> Instant,
 );
 impl OperationDeadline {
     pub(crate) fn now() -> Instant {
         (OPERATION_CLOCK.get())()
     }
-    pub(crate) fn transport(control: kb_client::stdio::CallControl) -> Self {
+    pub(crate) fn transport(control: kb_client::mcp::stdio::CallControl) -> Self {
         let mut scope = Self::bounded(control.until(), control.work_flag());
         scope.2 = Some(TRANSPORT_CONTROL.replace(Some(control)));
         scope
@@ -2170,8 +2170,8 @@ mod stdio_publication_tests {
     };
     use kb_client::{
         decode_input,
-        stdio::{CallControl, serve},
-        types::{BasesCreate, ChangesApply, DocumentsGet},
+        mcp::stdio::{CallControl, serve},
+        tools::{BasesCreate, ChangesApply, DocumentsGet},
     };
     use serde_json::json;
     use std::{

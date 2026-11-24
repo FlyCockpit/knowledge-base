@@ -1,7 +1,7 @@
 //! CLI credential boundary fixture tests.
 #![allow(clippy::unwrap_used)] // Assertions and fixture setup.
 mod support;
-use kb_client::origin::{McpResource, TransportPolicy};
+use kb_client::mcp::origin::{McpResource, TransportPolicy};
 use serde_json::Value;
 use std::time::Duration;
 use support::{Server, cli, empty_credential_store, remote};
@@ -263,7 +263,7 @@ fn every_rpc_auth_request_sends_the_orpc_csrf_header() {
     });
     let resource = McpResource::parse(&server.origin, TransportPolicy::AllowLoopbackHttp).unwrap();
     let remote = kb::auth::Remote::new(resource, None).unwrap();
-    let key = kb_client::sealed::RecipientKey::from_bytes(
+    let key = kb_client::host::sealed::RecipientKey::from_bytes(
         kb_client::types::Uuid::parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap(),
         [7; 32],
     );

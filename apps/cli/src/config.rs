@@ -341,9 +341,9 @@ impl Config {
             "server" => {
                 if let Some(server) = &self.server {
                     if server.contains("://") {
-                        kb_client::origin::McpResource::parse(
+                        kb_client::mcp::origin::McpResource::parse(
                             server,
-                            kb_client::origin::TransportPolicy::AllowLoopbackHttp,
+                            kb_client::mcp::origin::TransportPolicy::AllowLoopbackHttp,
                         )?;
                     } else if !self.servers.contains_key(server) {
                         anyhow::bail!(
@@ -368,9 +368,9 @@ impl Config {
             }
             "loopback_http_opt_in" => {
                 if let Some(origin) = &self.loopback_http_opt_in {
-                    let resource = kb_client::origin::McpResource::parse(
+                    let resource = kb_client::mcp::origin::McpResource::parse(
                         origin,
-                        kb_client::origin::TransportPolicy::AllowLoopbackHttp,
+                        kb_client::mcp::origin::TransportPolicy::AllowLoopbackHttp,
                     )?;
                     if resource.origin() != origin || !origin.starts_with("http://") {
                         anyhow::bail!("invalid loopback_http_opt_in in config file");
@@ -396,9 +396,9 @@ fn check_server(name: &str, entry: &NamedServer) -> Result<()> {
             "invalid server name in the config file (names are 1-32 of a-z, 0-9 and -; fix it with `kb config remove-server` and `kb config add-server`)"
         );
     }
-    if kb_client::origin::McpResource::parse(
+    if kb_client::mcp::origin::McpResource::parse(
         &entry.url,
-        kb_client::origin::TransportPolicy::AllowLoopbackHttp,
+        kb_client::mcp::origin::TransportPolicy::AllowLoopbackHttp,
     )
     .is_err()
     {

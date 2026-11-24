@@ -10,7 +10,7 @@ use child_guard::ChildGuard;
 #[allow(dead_code)] // Shared fixtures; this file uses a subset.
 mod support;
 use kb::state::CredentialStore;
-use kb_client::{ErrorCode, McpResource, SecretToken, TransportPolicy, stdio::catalog};
+use kb_client::{ErrorCode, McpResource, SecretToken, TransportPolicy, mcp::catalog::catalog};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Write},
@@ -69,7 +69,7 @@ fn answer(wire: &str, scoped: bool) -> (u16, String, String) {
             let name = request["params"]["name"].as_str().unwrap();
             if name == "knowledge_documents_delete" {
                 // A domain error passes through unchanged.
-                let mut error = kb_client::stdio::tool_error(ErrorCode::NotFound, json!({}));
+                let mut error = kb_client::error::tool_error(ErrorCode::NotFound, json!({}));
                 error["resultType"] = json!("complete");
                 error
             } else {

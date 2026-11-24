@@ -3,7 +3,7 @@ use std::io::{Cursor, Read};
 use std::sync::{Arc, Barrier};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use kb_client::{snapshot::content_hash, types::Mime};
+use kb_client::{host::snapshot::content_hash, types::Mime};
 use kb_local::{Store, cas::publish_cas, mime::validate_media};
 
 #[path = "support/fixture.rs"]

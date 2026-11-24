@@ -2,7 +2,7 @@
 #[path = "../crates/kb-local/tests/support/child_guard.rs"]
 mod child_guard;
 use child_guard::ChildGuard;
-use kb_client::{decode_input, types::BasesCreate};
+use kb_client::{decode_input, tools::BasesCreate};
 use kb_local::Store;
 use std::{
     io::Write,
@@ -138,8 +138,9 @@ fn input_is_private_bounded_exact_utf8_and_control_is_not_a_tool() {
 #[test]
 #[ignore = "requires an isolated, unlocked Secret Service session"]
 fn isolated_native_cli_lifecycle_replays_and_preserves_symbolic_source() {
+    use kb_client::tools::{BasesCreate, DocumentsCreate};
     use kb_client::{
-        sealed::{RecipientKey, open_envelope},
+        host::sealed::{RecipientKey, open_envelope},
         types::*,
     };
     use kb_local::{

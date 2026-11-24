@@ -19,11 +19,11 @@ use std::process::Stdio;
 
 use kb_client::ErrorCode;
 use kb_client::schema::{Direction, validate};
-use kb_client::types::{
-    BasesCreate, BasesDelete, BasesGet, BasesList, BasesUpdate, DocumentsGet, DocumentsList, KbId,
-    Permission, Sha, Tool, WriteMode,
+use kb_client::tools::{
+    BasesCreate, BasesDelete, BasesGet, BasesList, BasesUpdate, DocumentsGet, DocumentsList, Tool,
 };
-use kb_client::{decode_input, snapshot::content_hash};
+use kb_client::types::{KbId, Permission, Sha, WriteMode};
+use kb_client::{decode_input, host::snapshot::content_hash};
 use kb_local::limits::{
     CREATES_PER_HOUR_PER_USER, CURSOR_TTL_SECS, LocalLimits, OWNED_LIVE_KBS_PER_USER, PAGE_DEFAULT,
     PAGE_MAX,
@@ -2121,7 +2121,7 @@ fn create_disk_floor_error_exact_admission_and_replay() {
     let receipt = store
         .create_kb(&store.owner(), raw_create("disk"))
         .expect("exact floor plus reservation");
-    let upload = input::<kb_client::types::UploadBegin>(json!({"kbId":receipt.kb_id,
+    let upload = input::<kb_client::tools::UploadBegin>(json!({"kbId":receipt.kb_id,
         "idempotencyKey":"admit-disk-pending-0000","kind":"markdown","size":1,
         "contentHash":content_hash(b"x"),"mime":"text/markdown"}));
     store
@@ -2149,7 +2149,7 @@ fn create_disk_floor_error_exact_admission_and_replay() {
 
 #[test]
 fn document_and_raw_commit_share_admission_with_metadata() {
-    use kb_client::types::{DocumentsCreate, DocumentsUpdate};
+    use kb_client::tools::{DocumentsCreate, DocumentsUpdate};
     let root = temp_root("admit-shared-admission");
     let store = Store::open(&root).expect("open");
     let owner = store.owner();
@@ -2256,7 +2256,7 @@ fn document_and_raw_commit_share_admission_with_metadata() {
         ),
         ErrorCode::StorageUnavailable
     );
-    let upload = input::<kb_client::types::UploadBegin>(
+    let upload = input::<kb_client::tools::UploadBegin>(
         json!({"kbId":kb,"idempotencyKey":"admit-disk-upload-0000","kind":"markdown","size":1,"contentHash":content_hash(b"x"),"mime":"text/markdown"}),
     );
     assert_eq!(

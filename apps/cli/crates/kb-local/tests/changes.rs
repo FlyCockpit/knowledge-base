@@ -30,9 +30,12 @@ use std::time::{Duration, Instant};
 use kb_client::ErrorCode;
 use kb_client::decode_input;
 use kb_client::schema::{Direction, validate};
+use kb_client::tools::{
+    BasesCreate, ChangesApply, DocumentsCreate, DocumentsDelete, DocumentsGet, DocumentsUpdate,
+    Tool,
+};
 use kb_client::types::{
-    ApplyKind, ApplyResult, BasesCreate, ChangesApply, ChangesApplyInput, DocumentsCreate,
-    DocumentsDelete, DocumentsGet, DocumentsUpdate, KbId, KbPath, Permission, PrStatus, Sha, Tool,
+    ApplyKind, ApplyResult, ChangesApplyInput, KbId, KbPath, Permission, PrStatus, Sha,
 };
 use kb_local::{LocalPrincipal, Phase, PrincipalKind, Stage, Store, StoreError};
 use serde_json::{Value, json};

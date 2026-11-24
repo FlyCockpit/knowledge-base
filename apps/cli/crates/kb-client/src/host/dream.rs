@@ -39,12 +39,13 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use crate::client::{CallControl, ClientError, McpClient};
 use crate::error::{ErrorCode, ErrorDetails, KbError};
+use crate::tools::{BasesGet, ChangesApply};
 use crate::types::{
-    ApplyKind, ApplyResult, BasesGet, ChangesApply, ChangesApplyInput, ChangesMode, DreamMetadata,
-    DreamModel, DreamUpsert, IdempotencyKey, KbId, KbRef, Sha, True, Uuid,
+    ApplyKind, ApplyResult, ChangesApplyInput, ChangesMode, DreamMetadata, DreamModel, DreamUpsert,
+    IdempotencyKey, KbId, KbRef, Sha, True, Uuid,
 };
+use crate::{CallControl, ClientError, McpClient};
 
 /// Cockpit `ConceptUpsert`: `{id, type, title, body, citations, provenance}`.
 pub type ConceptUpsert = DreamUpsert;

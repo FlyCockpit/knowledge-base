@@ -83,7 +83,7 @@ impl Default for ProviderControl {
     }
 }
 impl ProviderControl {
-    pub(crate) fn transport(c: &kb_client::stdio::CallControl) -> Self {
+    pub(crate) fn transport(c: &kb_client::mcp::stdio::CallControl) -> Self {
         Self {
             cancel: c.work_token(),
             cancelled: c.work_flag(),

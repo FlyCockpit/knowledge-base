@@ -9,7 +9,7 @@ use child_guard::ChildGuard;
 mod support;
 use kb::state::CredentialStore;
 use kb_client::{
-    origin::{McpResource, TransportPolicy},
+    mcp::origin::{McpResource, TransportPolicy},
     types::SecretToken,
 };
 use std::fs;

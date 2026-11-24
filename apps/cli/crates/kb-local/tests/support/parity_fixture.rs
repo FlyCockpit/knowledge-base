@@ -2,11 +2,9 @@
 //! SQLite, crypto, egress and stdio are the production implementations.
 #[path = "scratch_git.rs"]
 mod scratch_git;
+use kb_client::tools::BasesCreate;
 use kb_client::{
-    decode_input,
-    sealed::RecipientKey,
-    stdio::{serve, tool_error},
-    types::*,
+    decode_input, error::tool_error, host::sealed::RecipientKey, mcp::stdio::serve, types::*,
 };
 use kb_local::{
     PrincipalKind, Store, StoreError,

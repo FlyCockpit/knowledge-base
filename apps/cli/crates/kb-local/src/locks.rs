@@ -1376,7 +1376,7 @@ mod tests {
         let kb = store
             .bases_create(
                 &store.owner(),
-                kb_client::decode_input::<kb_client::types::BasesCreate>(serde_json::json!({
+                kb_client::decode_input::<kb_client::tools::BasesCreate>(serde_json::json!({
                     "name": "Fixture", "slug": "startup-registry", "description": "Startup recovery fixture",
                     "idempotencyKey": "create-startup-registry"
                 }))
@@ -1388,9 +1388,9 @@ mod tests {
         let upload = store
             .upload_begin(
                 &store.owner(),
-                kb_client::decode_input::<kb_client::types::UploadBegin>(serde_json::json!({
+                kb_client::decode_input::<kb_client::tools::UploadBegin>(serde_json::json!({
                     "kbId": kb, "kind": "markdown", "mime": "text/markdown", "size": 1,
-                    "contentHash": kb_client::snapshot::content_hash(b"x"),
+                    "contentHash": kb_client::host::snapshot::content_hash(b"x"),
                     "idempotencyKey": "upload-startup-registry"
                 }))
                 .expect("fixture"),

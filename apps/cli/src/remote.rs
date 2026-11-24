@@ -22,8 +22,12 @@ use kb_client::{
     CallControl, ClientError, ClientOptions, Credential, Deadline, ErrorCode, KbError, McpClient,
     McpResource, ToolName,
     authoring::AuthoringMode,
-    scope::{Refusal, ToolScope},
-    stdio::{Advertised, serve_routed_until, serve_until, tool_error},
+    error::tool_error,
+    mcp::{
+        catalog::Advertised,
+        scope::{Refusal, ToolScope},
+        stdio::{serve_routed_until, serve_until},
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -38,7 +42,7 @@ use std::{
 
 /// Calls one server of a multi-server connection may have in flight, below
 /// the stdio limit, so a hung server cannot hold every slot.
-const SERVER_IN_FLIGHT: usize = kb_client::stdio::MAX_IN_FLIGHT - 1;
+const SERVER_IN_FLIGHT: usize = kb_client::mcp::stdio::MAX_IN_FLIGHT - 1;
 /// Each server's own instructions in the combined text, and all of them.
 const SERVER_INSTRUCTIONS_MAX_BYTES: usize = 4 * 1024;
 const INSTRUCTIONS_MAX_BYTES: usize = 16 * 1024;
@@ -541,7 +545,7 @@ fn run_many(
                         advertised
                     };
                     let advertised = narrow(advertised, scope.as_ref());
-                    if advertised.names().is_empty() {
+                    if advertised.is_empty() {
                         notices.push(format!(
                             "Server `{label}` ({}) lists no tool this connection may use and is left out.",
                             shown_origin(one.resource.origin())
@@ -641,7 +645,7 @@ fn route(
     name: ToolName,
     label: &str,
     input: Value,
-    control: kb_client::stdio::CallControl,
+    control: kb_client::mcp::stdio::CallControl,
 ) -> Value {
     let Some(up) = upstreams.iter().find(|up| up.label == label) else {
         return tool_error(
@@ -727,7 +731,7 @@ fn search_everywhere(
     members: &[Member],
     handle: &tokio::runtime::Handle,
     input: &Value,
-    control: &kb_client::stdio::CallControl,
+    control: &kb_client::mcp::stdio::CallControl,
 ) -> Value {
     let requested = crate::federated::requested_kb_ids(input);
     let query = input["query"].clone();
@@ -843,7 +847,7 @@ fn search_everywhere(
                 let reply = slot
                     .0
                     .client
-                    .call::<kb_client::types::SearchAll>(&input, &call)
+                    .call::<kb_client::tools::SearchAll>(&input, &call)
                     .await;
                 // The slot is given back as the call settles.
                 drop(slot);

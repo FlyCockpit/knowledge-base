@@ -23,9 +23,10 @@ use std::process::Stdio;
 
 use kb_client::ErrorCode;
 use kb_client::schema::{Direction, validate};
+use kb_client::tools::{BasesCreate, ChangesApply, DocumentsGet, Tool};
 use kb_client::types::{
-    ApplyKind, ApplyResult, BasesCreate, ChangesApply, ChangesApplyInput, DocumentsGet,
-    DreamMetadata, DreamUpsert, KbId, Permission, Sha, Tool, Uuid,
+    ApplyKind, ApplyResult, ChangesApplyInput, DreamMetadata, DreamUpsert, KbId, Permission, Sha,
+    Uuid,
 };
 use kb_local::{LocalPrincipal, PrincipalKind, Stage, Store, StoreError, dream, sensitive_text};
 use serde_json::{Value, json};

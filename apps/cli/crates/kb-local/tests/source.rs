@@ -7,7 +7,7 @@ mod fixture;
 
 use fixture::{Fixture, sha, with_required};
 use kb_client::ErrorCode;
-use kb_client::snapshot::{content_hash, git_blob_sha};
+use kb_client::host::snapshot::{content_hash, git_blob_sha};
 use kb_local::git_read::{GitError, GitRepo, SourceError, read_document};
 use kb_local::markdown::YamlValue;
 

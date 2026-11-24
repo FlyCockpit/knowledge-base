@@ -106,7 +106,7 @@ pub fn runtime_identity() -> &'static str {
 }
 fn derive_runtime_identity(pin: &str, inventory: &str) -> Result<String, serde_json::Error> {
     let pin: RuntimePin = serde_json::from_str(pin)?;
-    let inventory = kb_client::snapshot::content_hash(inventory.as_bytes());
+    let inventory = kb_client::host::snapshot::content_hash(inventory.as_bytes());
     let text = serde_json::json!([
         "CLI_EMBEDDING_RUNTIME",
         pin.release,
@@ -116,7 +116,7 @@ fn derive_runtime_identity(pin: &str, inventory: &str) -> Result<String, serde_j
         inventory.as_str(),
     ])
     .to_string();
-    Ok(kb_client::snapshot::content_hash(text.as_bytes()).to_string())
+    Ok(kb_client::host::snapshot::content_hash(text.as_bytes()).to_string())
 }
 pub(crate) fn data() -> Result<Descriptors, StoreError> {
     serde_json::from_str(DATA).map_err(|_| unavailable())

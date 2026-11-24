@@ -1,7 +1,10 @@
 //! Spec-first MCP framing, admission and cancellation over real duplex pipes.
 use kb_client::{
     ToolName,
-    stdio::{CallControl, catalog, serve},
+    mcp::{
+        catalog::catalog,
+        stdio::{CallControl, serve},
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -154,7 +157,7 @@ async fn cancellation_eof_and_concurrency_are_bounded() {
             std::thread::sleep(Duration::from_millis(2));
         }
         count.fetch_sub(1, Ordering::SeqCst);
-        kb_client::stdio::tool_error(kb_client::ErrorCode::Cancelled, json!({}))
+        kb_client::error::tool_error(kb_client::ErrorCode::Cancelled, json!({}))
     }));
     let (cr, mut cw) = tokio::io::split(client);
     let mut cr = BufReader::new(cr);
@@ -379,18 +382,21 @@ async fn invalid_tool_input_never_enters_domain_io() {
 
 #[tokio::test]
 async fn local_scope_lists_its_subset_and_refuses_before_the_handler() {
-    use kb_client::{scope::ToolScope, stdio::Advertised, types::KbId};
+    use kb_client::{
+        mcp::{catalog::Advertised, scope::ToolScope},
+        types::KbId,
+    };
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
     const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbb";
     let scope = ToolScope::new(&["read"], false, Some(&[KbId::parse(A).expect("id")]));
-    let authority = kb_client::scope::LiveAuthority::owner(Some(vec![A.to_owned()]));
+    let authority = kb_client::mcp::scope::LiveAuthority::owner(Some(vec![A.to_owned()]));
     let advertised = Advertised::scoped(scope, &authority).expect("catalog");
     let expected = advertised.tools();
     let (client, server) = tokio::io::duplex(1024 * 1024);
     let (sr, sw) = tokio::io::split(server);
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    let work = tokio::spawn(kb_client::stdio::serve_until(
+    let work = tokio::spawn(kb_client::mcp::stdio::serve_until(
         sr,
         sw,
         advertised,
@@ -456,14 +462,14 @@ async fn local_scope_lists_its_subset_and_refuses_before_the_handler() {
 
 /// A fake store: authority and staged upload kinds the test changes live.
 struct FakeSource {
-    authority: std::sync::Mutex<kb_client::scope::LiveAuthority>,
+    authority: std::sync::Mutex<kb_client::mcp::scope::LiveAuthority>,
     reads: AtomicUsize,
 }
-impl kb_client::scope::LiveSource for FakeSource {
+impl kb_client::mcp::scope::LiveSource for FakeSource {
     fn authority(
         &self,
-        _: &kb_client::scope::ToolScope,
-    ) -> Result<kb_client::scope::LiveAuthority, kb_client::ErrorCode> {
+        _: &kb_client::mcp::scope::ToolScope,
+    ) -> Result<kb_client::mcp::scope::LiveAuthority, kb_client::ErrorCode> {
         Ok(self.authority.lock().expect("fixture").clone())
     }
     fn staged_upload_kind(
@@ -479,8 +485,10 @@ impl kb_client::scope::LiveSource for FakeSource {
 #[tokio::test]
 async fn live_lists_follow_authority_and_stored_checks_precede_the_handler() {
     use kb_client::{
-        scope::{LiveAuthority, ToolScope},
-        stdio::Advertised,
+        mcp::{
+            catalog::Advertised,
+            scope::{LiveAuthority, ToolScope},
+        },
         types::KbId,
     };
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -499,7 +507,7 @@ async fn live_lists_follow_authority_and_stored_checks_precede_the_handler() {
     let (sr, sw) = tokio::io::split(server);
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    let work = tokio::spawn(kb_client::stdio::serve_until(
+    let work = tokio::spawn(kb_client::mcp::stdio::serve_until(
         sr,
         sw,
         advertised,
@@ -610,7 +618,7 @@ async fn initialize_answers_own_revision_for_other_requested_versions() {
 }
 #[test]
 fn version_diagnostic_names_both_versions_and_escapes_input() {
-    use kb_client::stdio::version_diagnostic;
+    use kb_client::mcp::stdio::version_diagnostic;
     assert_eq!(version_diagnostic("2026-07-28"), None);
     let note = version_diagnostic("2025-06-18").expect("mismatch");
     assert!(note.contains("\"2025-06-18\"") && note.contains("2026-07-28"));

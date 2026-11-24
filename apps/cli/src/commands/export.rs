@@ -4,7 +4,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
-use kb_client::export::{
+use kb_client::host::export::{
     ExportError, cancel_export, download_export, export_status, start_export, wait_for_export,
 };
 use kb_client::types::{

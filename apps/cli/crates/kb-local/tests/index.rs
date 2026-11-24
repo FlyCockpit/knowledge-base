@@ -5,6 +5,7 @@ mod model_admission;
 mod model_host;
 #[path = "support/index_fixture.rs"]
 mod support;
+use kb_client::tools::{EmbeddingProfileGet, EmbeddingProfileSet, IndexStatusGet};
 use kb_client::types::*;
 use kb_local::{StoreError, index::BuildStage};
 use rusqlite::Connection;

@@ -4,7 +4,7 @@ use kb_client::error::{
     ConflictReason, ErrorCode, ErrorDetails, InvalidReason, KbError, ToolError,
     invalid_input_details_value, is_field_pointer,
 };
-use kb_client::types::{KnowledgeSearch, ToolName};
+use kb_client::tools::{KnowledgeSearch, ToolName};
 use kb_client::{decode_envelope, encode_error_envelope};
 use serde_json::{Value, json};
 
@@ -127,7 +127,7 @@ fn invalid_argument_bounds_round_trip() {
 fn too_many_bases_names_its_limit_on_stdio_and_remote_decode() {
     for max in [1, 16, 64] {
         let details = json!({"reason": "TOO_MANY_BASES", "max": max});
-        let result = kb_client::stdio::tool_error(ErrorCode::InvalidArgument, details.clone());
+        let result = kb_client::error::tool_error(ErrorCode::InvalidArgument, details.clone());
         let wire = &result["structuredContent"]["error"];
         let error = ToolError::from_value(wire).unwrap();
         assert_eq!(
@@ -153,7 +153,7 @@ fn too_many_bases_names_its_limit_on_stdio_and_remote_decode() {
 #[test]
 fn oversized_batches_explain_commit_boundaries_on_stdio_and_remote_decode() {
     let details = json!({"reason":"TOO_MANY_CHANGES", "field":"/changes", "max":32});
-    let result = kb_client::stdio::tool_error(ErrorCode::InvalidArgument, details);
+    let result = kb_client::error::tool_error(ErrorCode::InvalidArgument, details);
     let error = ToolError::from_value(&result["structuredContent"]["error"]).unwrap();
     assert!(
         error

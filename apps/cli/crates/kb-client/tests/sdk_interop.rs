@@ -9,10 +9,10 @@
 
 use std::time::{Duration, Instant};
 
-use kb_client::dream::{DreamChangeSet, DreamOutcome, apply_dream};
+use kb_client::host::dream::{DreamChangeSet, DreamOutcome, apply_dream};
+use kb_client::tools::{BasesGet, BasesList, DocumentsCreate, DocumentsGet, IndexStatusGet};
 use kb_client::types::{
-    BasesGet, BasesList, DocCitation, DocumentsCreate, DocumentsGet, DreamModel, DreamProvenance,
-    DreamUpsert, IdempotencyKey, IndexStatusGet, KbId, Uuid,
+    DocCitation, DreamModel, DreamProvenance, DreamUpsert, IdempotencyKey, KbId, Uuid,
 };
 use kb_client::{
     CallControl, CancellationToken, ClientError, ClientOptions, Credential, Deadline, ErrorCode,

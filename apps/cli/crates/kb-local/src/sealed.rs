@@ -13,10 +13,9 @@ use crate::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kb_client::{
     ErrorCode,
-    sealed::{SealedReference, create_envelope, system_time, validate_recipient_public_key},
-    types::{
-        IsoInstant, KbId, Permission, SealedResolve, SealedResolveInput, SealedResolveOutput, Uuid,
-    },
+    host::sealed::{SealedReference, create_envelope, system_time, validate_recipient_public_key},
+    tools::SealedResolve,
+    types::{IsoInstant, KbId, Permission, SealedResolveInput, SealedResolveOutput, Uuid},
 };
 use ring::{
     aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey},

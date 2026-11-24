@@ -13,6 +13,7 @@
 //! recovery. Only newer desired work (SUPERSEDED), a build error or three
 //! no-progress watchdog stalls in a row (FAILED) end a generation.
 use crate::{LocalPrincipal, Store, StoreError, locks, paths, state};
+use kb_client::tools::{EmbeddingProfileGet, EmbeddingProfileSet, IndexRebuild, IndexStatusGet};
 use kb_client::types::*;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -474,7 +475,7 @@ impl Store {
         let d = crate::qwen::descriptor(&b.model_id)?;
         // The native runtime is part of the vector space (server
         // `builtinModelIdentity`): a CLI that runs another one re-embeds.
-        let fingerprint = kb_client::snapshot::content_hash(
+        let fingerprint = kb_client::host::snapshot::content_hash(
             json(&(
                 &d,
                 b.context_tokens,
@@ -798,13 +799,13 @@ impl Store {
     ) -> Result<ProfileSetOutput, StoreError> {
         crate::bases::check_input::<EmbeddingProfileSet>(&input)?;
         let input = EmbeddingProfileSetInput {
-            provider_id: input.provider_id.canonical(),
+            provider_id: kb_client::schema::canonical_provider_ref(&input.provider_id),
             ..input
         };
         // Input-only checks here; the built-in's mutable state is resolved
         // in `index_request`, after the receipt lookup, so a replay always
         // returns its recorded result (ROOT 4).
-        let target = match input.provider_id.provider_id() {
+        let target = match kb_client::schema::registered_provider_id(&input.provider_id) {
             Some(id) => ProfileTarget::Provider(
                 id,
                 input.revision.ok_or_else(|| {

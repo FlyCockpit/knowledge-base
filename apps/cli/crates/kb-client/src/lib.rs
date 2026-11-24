@@ -1,60 +1,76 @@
 //! Reusable kb/1 protocol contract for knowledge-base MCP clients.
 //!
-//! * [`types`] — closed camelCase input/output types for every catalog tool,
-//!   the pinned [`ToolName`] catalog and the [`Tool`] trait.
-//! * [`schema`] — evaluator for the canonical TypeScript-generated JSON Schema
-//!   artifact, embedded at compile time; the same verdicts as the server.
+//! Layers, each using only the ones below it:
+//!
+//! * [`host`] — Cockpit host adapter seams: [`host::attachment`] identity,
+//!   [`host::snapshot`] verified immutable retrieval, the one-call atomic
+//!   [`host::dream`] apply, host-only [`host::sealed`] resolution and bounded
+//!   verified [`host::export`] retrieval with a receipt bound to the preparing
+//!   client.
+//! * [`mcp`] — the MCP transports: [`mcp::stdio`] (the bounded newline server)
+//!   and [`mcp::client`] (the origin-bound [`McpClient`]) over
+//!   [`mcp::protocol`] (the explicit MCP 2026-07-28 stateless HTTP profile),
+//!   [`mcp::catalog`] (what a session advertises), [`mcp::scope`] (a local
+//!   session's tool groups, read-only flag, write mode and KB selection, with
+//!   the server's discovery and authorization rules) and [`mcp::origin`]
+//!   (canonical `/mcp` resources, KB locators and origin-bound credentials).
+//! * [`envelope`] — the MCP per-request `_meta` envelope.
+//! * [`tools`] — the pinned [`ToolName`] catalog, the [`Tool`] trait and each
+//!   tool's write-mode need; the codec below ([`encode_input`] /
+//!   [`decode_envelope`]) runs every value through it.
 //! * [`error`] — the closed error union, protocol violations, cancellation and
 //!   deadlines.
-//! * [`origin`] — canonical `/mcp` resources, KB locators and origin-bound
-//!   credentials.
-//! * [`protocol`] / [`client`] — the explicit MCP 2026-07-28 stateless HTTP
-//!   profile and the origin-bound [`McpClient`].
+//! * [`schema`] — evaluator for the canonical TypeScript-generated JSON Schema
+//!   artifact, embedded at compile time; the same verdicts as the server.
+//! * [`authoring`] — write modes (`dream` / `edit` / `both`) and the document
+//!   provenance rules dreams follow.
+//! * [`types`] — closed camelCase input/output value types.
+//! * `format` / `path` — lexical identifier, instant and integer formats and
+//!   kb path rules.
 //!
-//! * [`attachment`] / [`snapshot`] / [`dream`] / [`sealed`] — Cockpit host
-//!   adapter seams: attachment identity, verified immutable retrieval, the
-//!   one-call atomic dream apply and host-only sealed resolution.
-//!
-//! * [`scope`] — a local session's tool groups, read-only flag, write mode
-//!   and KB selection, with the server's discovery and authorization rules.
-//! * [`authoring`] — write modes (`dream` / `edit` / `both`), each tool's
-//!   write-mode need and the document provenance rules dreams follow.
-//!
-//! * [`export`] — bounded verified ZIP retrieval with a receipt bound to the
-//!   preparing client for acknowledgement after durable host-side save.
-//!
-//! This crate has no CLI or UI dependency. Other transports (local stdio)
-//! build on [`encode_input`] / [`decode_envelope`].
+//! This crate has no CLI or UI dependency.
 
-pub mod attachment;
 pub mod authoring;
-pub mod client;
-pub mod dream;
 pub mod envelope;
 pub mod error;
-pub mod export;
-pub mod origin;
+mod format;
 mod path;
-pub mod protocol;
 pub mod schema;
-pub mod scope;
-pub mod sealed;
-pub mod snapshot;
-pub mod stdio;
+pub mod tools;
 pub mod types;
 
-use serde::Serialize;
-use serde_json::{Map, Value};
+/// MCP transports and the tool lists they advertise.
+pub mod mcp {
+    pub mod catalog;
+    pub mod client;
+    pub mod origin;
+    pub mod protocol;
+    pub mod scope;
+    pub mod stdio;
+}
+
+/// Cockpit host adapter seams over [`crate::McpClient`].
+pub mod host {
+    pub mod attachment;
+    pub mod dream;
+    pub mod export;
+    pub mod sealed;
+    pub mod snapshot;
+}
 
 pub use error::{CancellationToken, Deadline, ErrorCode, KbError, ProtocolError, ToolError};
 pub use path::{PATH_MAX_BYTES, PATH_MAX_SEGMENTS, PathIssue, casefold_path_key, check_kb_path};
-pub use types::{SecretToken, Tool, ToolName};
+pub use tools::{Tool, ToolName};
+pub use types::SecretToken;
 
-pub use client::{CallControl, ClientError, McpClient};
-pub use origin::{Credential, KbLocator, McpResource, OriginError, TransportPolicy};
-pub use protocol::{
-    ClientOptions, MCP_PROFILE, REQUEST_MAX_BYTES, RESPONSE_MAX_BYTES, ServerDiscovery,
+pub use mcp::client::{CallControl, McpClient};
+pub use mcp::origin::{Credential, KbLocator, McpResource, OriginError, TransportPolicy};
+pub use mcp::protocol::{
+    ClientError, ClientOptions, MCP_PROFILE, REQUEST_MAX_BYTES, RESPONSE_MAX_BYTES, ServerDiscovery,
 };
+
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use schema::Direction;
 
@@ -62,7 +78,7 @@ use schema::Direction;
 pub const PROTOCOL_VERSION: &str = "kb/1";
 
 fn serialize<T: Serialize>(value: &T, direction: Direction) -> Result<Value, KbError> {
-    serde_json::to_value(value).map_err(|_| violation(direction, types::typed_violation()))
+    serde_json::to_value(value).map_err(|_| violation(direction, tools::typed_violation()))
 }
 
 fn violation(direction: Direction, violation: schema::SchemaViolation) -> KbError {
@@ -87,14 +103,14 @@ pub fn encode_input<T: Tool>(input: &T::Input) -> Result<Value, KbError> {
 pub fn decode_input<T: Tool>(value: Value) -> Result<T::Input, KbError> {
     let value = validated::<T>(value, Direction::Input)?;
     serde_json::from_value(schema::normalize_integers(value))
-        .map_err(|_| violation(Direction::Input, types::typed_violation()))
+        .map_err(|_| violation(Direction::Input, tools::typed_violation()))
 }
 
 /// Validate and type a tool's `data` payload.
 pub fn decode_output<T: Tool>(value: Value) -> Result<T::Output, KbError> {
     let value = validated::<T>(value, Direction::Output)?;
     serde_json::from_value(schema::normalize_integers(value))
-        .map_err(|_| violation(Direction::Output, types::typed_violation()))
+        .map_err(|_| violation(Direction::Output, tools::typed_violation()))
 }
 
 /// Serialize a typed output, enforcing the contract (local backends).

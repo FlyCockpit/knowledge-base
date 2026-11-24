@@ -14,6 +14,7 @@ use crate::{
     locks,
     structured::{StructuredDocument, StructuredFilters, match_structured_document},
 };
+use kb_client::tools::{KnowledgeSearch, StructuredSearch, Tool};
 use kb_client::{CancellationToken, ErrorCode, types::*};
 use rusqlite::{Connection, params};
 use serde_json::json;
@@ -46,7 +47,7 @@ impl Default for SearchControl {
     }
 }
 impl SearchControl {
-    pub(crate) fn transport(c: &kb_client::stdio::CallControl) -> Self {
+    pub(crate) fn transport(c: &kb_client::mcp::stdio::CallControl) -> Self {
         Self {
             token: c.work_token(),
             cancelled: c.work_flag(),
@@ -378,7 +379,7 @@ impl Store {
         // A managed store has one human user. CONFIG/TEST credentials narrow
         // authority, never create new rate windows or cross-KB permit pools.
         let actor = self.owner.actor_key();
-        let hash = kb_client::snapshot::content_hash(actor.as_bytes());
+        let hash = kb_client::host::snapshot::content_hash(actor.as_bytes());
         let mut permit = None;
         for slot in 0..QUERIES_IN_FLIGHT {
             if let Some(held) = locks::try_named_model_lock(
