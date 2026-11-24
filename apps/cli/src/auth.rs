@@ -174,7 +174,7 @@ impl Remote {
             .no_proxy()
             .timeout(Duration::from_secs(10));
         if let Some(proxy) = proxy {
-            validate_proxy(proxy)?;
+            crate::config::validate_proxy(proxy)?;
             builder = builder.proxy(
                 reqwest::Proxy::all(proxy)
                     .map_err(|_| anyhow::anyhow!("invalid configured proxy"))?,
@@ -363,21 +363,6 @@ async fn read_response(
         bytes.extend_from_slice(&chunk);
     }
     Ok((status, bytes))
-}
-pub fn validate_proxy(input: &str) -> Result<()> {
-    let url =
-        reqwest::Url::parse(input).map_err(|_| anyhow::anyhow!("invalid configured proxy"))?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-    {
-        bail!("proxy must be an HTTP(S) origin without credentials");
-    }
-    Ok(())
 }
 #[derive(Clone, Copy)]
 pub enum InputPolicy {

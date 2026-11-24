@@ -18,7 +18,7 @@ use serde::Serialize;
 use tempfile::NamedTempFile;
 
 use crate::{
-    auth::{self, ServerArgs},
+    auth::ServerArgs,
     config::Config,
     exit::{CodedError, ExitCode},
     output,
@@ -160,7 +160,7 @@ pub fn run(args: &Args) -> Result<()> {
         ..ClientOptions::default()
     };
     let client = if let Some(proxy) = config.proxy.as_deref() {
-        auth::validate_proxy(proxy)?;
+        crate::config::validate_proxy(proxy)?;
         McpClient::new_with_proxy(
             resource,
             credential,

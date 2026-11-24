@@ -249,7 +249,7 @@ fn progress(model: &str) -> impl FnMut(u64, u64) {
 
 pub fn run(a: &Args) -> Result<()> {
     let config = Config::load()?;
-    let host = crate::paths::model_host(&config)?;
+    let host = crate::paths::model_host(config.models_dir.as_deref())?;
     let cache = host.cache();
     let root = a.root.resolve(&config);
     match &a.command {

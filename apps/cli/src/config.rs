@@ -52,6 +52,24 @@ pub struct Config {
     pub servers: std::collections::BTreeMap<String, NamedServer>,
 }
 
+/// A configured `proxy` must be a bare HTTP(S) origin: no credentials, path,
+/// query or fragment.
+pub fn validate_proxy(input: &str) -> Result<()> {
+    let url =
+        reqwest::Url::parse(input).map_err(|_| anyhow::anyhow!("invalid configured proxy"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        anyhow::bail!("proxy must be an HTTP(S) origin without credentials");
+    }
+    Ok(())
+}
+
 /// One `[servers.<name>]` entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -361,7 +379,7 @@ impl Config {
             }
             "proxy" => {
                 if let Some(proxy) = &self.proxy {
-                    crate::auth::validate_proxy(proxy)?;
+                    validate_proxy(proxy)?;
                 }
             }
             _ => unreachable!("unknown config key `{key}`"),

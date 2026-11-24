@@ -162,7 +162,7 @@ fn run_local(
     .with_authoring(args.write_mode);
     let model = Arc::new(ModelRuntime::new(
         &store,
-        crate::paths::model_host(config)?,
+        crate::paths::model_host(config.models_dir.as_deref())?,
     )?);
     // Record preflight through the same once-per-reason diagnostic
     // state as a later connection failure.
