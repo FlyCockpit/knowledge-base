@@ -49,6 +49,40 @@ const documentListItemSchema = closed({
   size: safeIntSchema.min(0),
 });
 
+/** Why a background export build ended FAILED. */
+export const EXPORT_FAILURE_CODES = [
+  "DEADLINE_EXCEEDED",
+  "INTERRUPTED",
+  "QUOTA_EXCEEDED",
+  "ACCESS_DENIED",
+  "REVISION_NOT_FOUND",
+  "INVALID_CONTENT",
+  "STORAGE_UNAVAILABLE",
+] as const;
+export type ExportFailureCode = (typeof EXPORT_FAILURE_CODES)[number];
+
+/** A background export job. Bytes are downloadable only while `state` is "ready". */
+export const exportJobSchema = closed({
+  operationId: uuidSchema,
+  transferId: uuidSchema,
+  kind: z.enum(["assets", "whole"]),
+  rev: shaSchema,
+  state: z.enum(["pending", "building", "ready", "failed", "cancelled", "expired"]),
+  /** Content bytes written of the total (null until the inventory is known). */
+  progress: closed({
+    doneBytes: safeIntSchema.min(0),
+    totalBytes: safeIntSchema.min(0).nullable(),
+  }),
+  size: safeIntSchema.min(0).nullable(),
+  contentHash: hashSchema.nullable(),
+  expiresAt: isoSchema.nullable(),
+  error: closed({
+    code: z.enum(EXPORT_FAILURE_CODES),
+    message: z.string().min(1).max(200),
+  }).nullable(),
+  mime: z.literal("application/zip"),
+});
+
 export const kbReadToolSchemas = {
   knowledge_bases_list: {
     input: pageInputSchema,
@@ -198,15 +232,15 @@ export const kbReadToolSchemas = {
         idempotencyKey: keySchema,
       }),
     ),
-    output: closed({
-      operationId: uuidSchema,
-      transferId: uuidSchema,
-      rev: shaSchema,
-      size: safeIntSchema.min(0),
-      contentHash: hashSchema,
-      expiresAt: isoSchema,
-      mime: z.literal("application/zip"),
-    }),
+    output: exportJobSchema,
+  },
+  knowledge_export_status: {
+    input: kbBaseInputSchema.merge(closed({ transferId: uuidSchema })),
+    output: exportJobSchema,
+  },
+  knowledge_export_cancel: {
+    input: kbBaseInputSchema.merge(closed({ transferId: uuidSchema })),
+    output: exportJobSchema,
   },
   knowledge_transfer_read: {
     input: kbBaseInputSchema.merge(

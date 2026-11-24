@@ -47,11 +47,21 @@ Download assets-only or whole-KB ZIP from the UI or `kb export`. Whole includes
 Markdown and that revision's assets; clone uses the [Git URL](./git.md) for full
 Markdown history. ZIP paths are normalized/disjoint, with at most 8192 entries
 and 256 MiB uncompressed; a 200 MiB export is supported. One active export per
-user, two per server, 120 s generation deadline; preparation starts a 15-minute
-expiry. `knowledge_export_prepare` pins a revision, size/hash and transfer ID;
-`knowledge_transfer_read` returns at most 196608 raw bytes per reauthorized frame
-for the preparing actor. Verify the full size/hash and durably save before
-`knowledge_export_complete` acknowledges it and immediately releases the slot:
+user, two per server. Exports are background jobs owned by the server:
+`knowledge_export_prepare` (web: `kbExports.prepare`) pins a revision and returns
+the job at once (`pending`, then `building` with byte progress); no request waits
+for the ZIP. Poll `knowledge_export_status` until it is `ready` (size, hash and a
+15-minute download expiry are then set) or `failed` (a stable `error.code`:
+`DEADLINE_EXCEEDED` after the 30-minute build deadline, `INTERRUPTED` after a
+server restart or a lapsed 30 s build lease, `QUOTA_EXCEEDED`, `ACCESS_DENIED`,
+`REVISION_NOT_FOUND`, `INVALID_CONTENT`, `STORAGE_UNAVAILABLE`).
+`knowledge_export_cancel` cancels a pending or building job or discards a ready
+one. Repeating a start with the same key, or for the same KB, kind and revision
+while that job is pending, building or ready, returns the same job; only the
+preparing actor sees its status or bytes. `knowledge_transfer_read` returns at
+most 196608 raw bytes per reauthorized frame for the preparing actor. Verify the
+full size/hash and durably save before `knowledge_export_complete` acknowledges
+it and immediately releases the slot:
 
 ```json kb/1 knowledge_export_complete input
 {

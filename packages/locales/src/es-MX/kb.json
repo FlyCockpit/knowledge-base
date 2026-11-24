@@ -205,7 +205,32 @@
     "error": "No se pudo preparar la descarga. Inténtalo de nuevo.",
     "cloneTitle": "Clonar con Git",
     "copyClone": "Copiar URL de clonación",
-    "cloneHint": "Git pide un usuario y una contraseña. Usa cualquier usuario y un token de acceso personal con permiso de lectura como contraseña. Nunca pongas el token en la URL."
+    "cloneHint": "Git pide un usuario y una contraseña. Usa cualquier usuario y un token de acceso personal con permiso de lectura como contraseña. Nunca pongas el token en la URL.",
+    "preparingProgress": "Preparando el ZIP… {{percent}}%",
+    "progressLabel": "Progreso de la exportación",
+    "keepsRunning": "El servidor sigue preparándolo aunque cierres esta página. Vuelve para descargarlo.",
+    "cancel": "Cancelar exportación",
+    "ready": "El ZIP está listo para descargar ({{size}} bytes).",
+    "download": "Descargar ZIP",
+    "discard": "Descartar",
+    "retry": "Intentar de nuevo",
+    "tryAgain": "Intentar de nuevo",
+    "cancelled": "Exportación cancelada.",
+    "capacity": "Otra exportación todavía se está preparando o espera a ser descargada. Descárgala o descártala primero, o espera a que caduque.",
+    "lookupFailed": "No se pudo comprobar si hay una exportación anterior.",
+    "job": "{{kind}} en la revisión {{rev}}",
+    "kindAssets": "ZIP de recursos",
+    "kindWhole": "ZIP de toda la base de conocimiento",
+    "failure": {
+      "DEADLINE_EXCEEDED": "La exportación tardó más que su límite de tiempo. Inténtalo de nuevo.",
+      "INTERRUPTED": "El servidor se reinició o se detuvo mientras preparaba la exportación. Inténtalo de nuevo.",
+      "QUOTA_EXCEEDED": "Esta base de conocimiento supera los límites de exportación.",
+      "ACCESS_DENIED": "Tu acceso de lectura terminó mientras se preparaba la exportación.",
+      "REVISION_NOT_FOUND": "Esta revisión ya no está disponible.",
+      "INVALID_CONTENT": "Esta revisión contiene contenido que no se puede exportar.",
+      "STORAGE_UNAVAILABLE": "El almacenamiento no estuvo disponible mientras se preparaba la exportación. Inténtalo de nuevo."
+    },
+    "cancelFailed": "No se pudo cancelar la exportación. Inténtalo de nuevo."
   },
   "pr": {
     "loadFailed": "No se pudo cargar esta solicitud de cambios.",

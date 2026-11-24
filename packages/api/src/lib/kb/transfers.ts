@@ -277,7 +277,8 @@ export async function completeExport(
         );
         if (!row || row.kbId !== input.kbId || row.actorKey !== actorKeyFor(actor.principal))
           throw notFound();
-        if (row.state === "WRITING") throw new KbDomainError("CONFLICT", "Export is not ready");
+        if (row.state === "PENDING" || row.state === "WRITING")
+          throw new KbDomainError("CONFLICT", "Export is not ready");
         await query(
           `UPDATE "export_artifact" SET state=CASE WHEN "downloadCompletedAt" IS NOT NULL THEN 'DOWNLOADED'::"ExportArtifactState" ELSE 'ABORTED'::"ExportArtifactState" END WHERE id=$1::uuid AND state='READY'`,
           [row.id],

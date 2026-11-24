@@ -4,7 +4,8 @@ import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { preflightExportEntries, writeExportZip } from "./exports";
+import { exportDescriptor, preflightExportEntries, writeExportZip } from "./exports";
+import { kbReadToolSchemas } from "./protocol/reads";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -129,5 +130,62 @@ describe("bounded ZIP", () => {
     ).rejects.toThrow();
     expect((await file.stat()).mode & 0o200).not.toBe(0);
     await file.close();
+  });
+});
+
+describe("export job descriptor", () => {
+  const row = {
+    id: "00000000-0000-4000-8000-000000000001",
+    kbId: "a".repeat(24),
+    actorKey: "user:u",
+    kind: "whole",
+    rev: "b".repeat(40),
+    size: 100,
+    contentHash: `sha256:${"c".repeat(64)}`,
+    expiresAt: new Date(Date.now() + 60_000),
+    failureCode: null,
+    progressBytes: 40,
+    totalBytes: 80,
+  };
+  const valid = (job: ReturnType<typeof exportDescriptor>) =>
+    kbReadToolSchemas.knowledge_export_status.output.parse(job);
+  it("maps every row state onto the wire job and hides bytes until ready", () => {
+    const cases = [
+      ["PENDING", "pending"],
+      ["WRITING", "building"],
+      ["READY", "ready"],
+      ["FAILED", "failed"],
+      ["CANCELLED", "cancelled"],
+      ["ABORTED", "expired"],
+      ["DOWNLOADED", "expired"],
+    ] as const;
+    for (const [state, wire] of cases) {
+      const job = valid(
+        exportDescriptor({
+          ...row,
+          state,
+          failureCode: state === "FAILED" ? "QUOTA_EXCEEDED" : null,
+        }),
+      );
+      expect(job.state, state).toBe(wire);
+      if (wire === "ready") {
+        expect(job).toMatchObject({ size: 100, contentHash: row.contentHash, error: null });
+        expect(job.progress).toEqual({ doneBytes: 80, totalBytes: 80 });
+      } else {
+        expect(job).toMatchObject({ size: null, contentHash: null, expiresAt: null });
+      }
+      if (wire === "failed")
+        expect(job.error).toEqual({ code: "QUOTA_EXCEEDED", message: expect.any(String) });
+      else expect(job.error).toBeNull();
+    }
+  });
+  it("a READY row past its expiry is expired; an unknown failure code is STORAGE_UNAVAILABLE", () => {
+    expect(
+      valid(exportDescriptor({ ...row, state: "READY", expiresAt: new Date(Date.now() - 1) }))
+        .state,
+    ).toBe("expired");
+    expect(
+      valid(exportDescriptor({ ...row, state: "FAILED", failureCode: "SOMETHING_ELSE" })).error,
+    ).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
   });
 });

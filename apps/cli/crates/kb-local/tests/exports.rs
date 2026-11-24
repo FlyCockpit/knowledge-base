@@ -83,7 +83,7 @@ impl Setup {
         kind: &str,
         key: &str,
         rev: Option<&Sha>,
-    ) -> Result<ExportPrepareOutput, StoreError> {
+    ) -> Result<ExportJob, StoreError> {
         let mut v = json!({"kbId":self.kb,"kind":kind,"idempotencyKey":key});
         if let Some(r) = rev {
             v["rev"] = json!(r);
@@ -241,7 +241,7 @@ fn zip_entries(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     assert_eq!(at, end);
     out
 }
-fn reconstruct(t: &Setup, p: &LocalPrincipal, o: &ExportPrepareOutput) -> Vec<u8> {
+fn reconstruct(t: &Setup, p: &LocalPrincipal, o: &ExportJob) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut at = 0;
     loop {
@@ -249,7 +249,7 @@ fn reconstruct(t: &Setup, p: &LocalPrincipal, o: &ExportPrepareOutput) -> Vec<u8
             .read(p, &o.transfer_id, at, None)
             .expect("fixture operation");
         assert_eq!(f.offset, at);
-        assert_eq!(f.content_hash, o.content_hash);
+        assert_eq!(Some(&f.content_hash), o.content_hash.as_ref());
         let b = STANDARD.decode(&f.bytes_base64).expect("fixture operation");
         assert_eq!(STANDARD.encode(&b), f.bytes_base64);
         assert!(!b.is_empty() && b.len() <= 196608);
@@ -260,8 +260,8 @@ fn reconstruct(t: &Setup, p: &LocalPrincipal, o: &ExportPrepareOutput) -> Vec<u8
             break;
         }
     }
-    assert_eq!(at, o.size);
-    assert_eq!(content_hash(&bytes), o.content_hash);
+    assert_eq!(at, o.size.expect("ready"));
+    assert_eq!(Some(content_hash(&bytes)), o.content_hash);
     bytes
 }
 #[test]
@@ -496,6 +496,140 @@ fn every_frame_and_receipt_rechecks_actor_kb_live_read_and_expiry() {
     assert!(!t.artifact(&o.transfer_id).exists());
 }
 #[test]
+fn status_and_cancel_report_the_job_and_only_to_its_actor() {
+    let t = Setup::new("status");
+    let p = t.principal();
+    let thief = t.principal();
+    t.s.advance_clock_for_tests(0);
+    let o = t
+        .prepare(&p, "whole", "status-export-0000", None)
+        .expect("fixture operation");
+    // Local preparation is synchronous: the started job is already ready.
+    assert_eq!(o.state, ExportState::Ready);
+    assert_eq!(o.kind, ExportKind::Whole);
+    assert_eq!(o.progress.total_bytes, Some(o.progress.done_bytes));
+    assert!(o.error.is_none() && o.expires_at.is_some());
+    let status = |who: &LocalPrincipal, id: &Uuid| {
+        let job = t.s.export_status(who, handle(&t.kb, id));
+        if let Ok(job) = &job {
+            wire::<ExportStatus>(job);
+        }
+        job
+    };
+    assert_eq!(status(&p, &o.transfer_id).expect("fixture operation"), o);
+    code(status(&thief, &o.transfer_id), ErrorCode::NotFound);
+    code(
+        t.s.export_cancel(&thief, handle(&t.kb, &o.transfer_id)),
+        ErrorCode::NotFound,
+    );
+    assert_eq!(t.active(), 1);
+    let cancelled =
+        t.s.export_cancel(&p, handle(&t.kb, &o.transfer_id))
+            .expect("fixture operation");
+    wire::<ExportCancel>(&cancelled);
+    assert_eq!(cancelled.state, ExportState::Cancelled);
+    assert!(cancelled.size.is_none() && cancelled.content_hash.is_none());
+    assert_eq!(t.active(), 0);
+    assert!(!t.artifact(&o.transfer_id).exists());
+    code(t.read(&p, &o.transfer_id, 0, None), ErrorCode::NotFound);
+    // Cancelling again returns the same finished state.
+    assert_eq!(
+        t.s.export_cancel(&p, handle(&t.kb, &o.transfer_id))
+            .expect("fixture operation"),
+        cancelled
+    );
+    assert_eq!(
+        status(&p, &o.transfer_id).expect("fixture operation"),
+        cancelled
+    );
+
+    // A downloaded (acknowledged) or expired job reports `expired`.
+    let o = t
+        .prepare(&p, "assets", "status-export-0001", None)
+        .expect("fixture operation");
+    reconstruct(&t, &p, &o);
+    t.s.export_complete(&p, handle(&t.kb, &o.transfer_id))
+        .expect("fixture operation");
+    let done = status(&p, &o.transfer_id).expect("fixture operation");
+    assert_eq!(done.state, ExportState::Expired);
+    let o = t
+        .prepare(&p, "assets", "status-export-0002", None)
+        .expect("fixture operation");
+    t.s.advance_clock_for_tests(900);
+    assert_eq!(
+        status(&p, &o.transfer_id).expect("fixture operation").state,
+        ExportState::Expired
+    );
+}
+#[test]
+fn key_replay_and_same_scope_reuse_return_the_current_job_never_a_second_build() {
+    let t = Setup::new("reuse");
+    let p = t.principal();
+    let o = t
+        .prepare(&p, "whole", "reuse-export-key-01", None)
+        .expect("fixture operation");
+    // A new key for the same KB/kind/revision becomes an alias of that job,
+    // checked before the one-per-actor capacity.
+    let alias = t
+        .prepare(&p, "whole", "reuse-export-key-02", None)
+        .expect("fixture operation");
+    assert_eq!(alias, o);
+    assert_eq!(t.active(), 1);
+    let count = || -> i64 {
+        Connection::open(t.s.paths().state_db())
+            .expect("fixture operation")
+            .query_row("SELECT count(*) FROM export_artifacts", [], |r| r.get(0))
+            .expect("fixture operation")
+    };
+    assert_eq!(count(), 1);
+    // The alias keeps its own request: a different request is a mismatch.
+    code(
+        t.prepare(&p, "assets", "reuse-export-key-02", None),
+        ErrorCode::IdempotencyMismatch,
+    );
+    let cancelled =
+        t.s.export_cancel(&p, handle(&t.kb, &o.transfer_id))
+            .expect("fixture operation");
+    assert_eq!(cancelled.state, ExportState::Cancelled);
+    // Both keys now replay the cancelled job; neither builds again.
+    for key in ["reuse-export-key-01", "reuse-export-key-02"] {
+        assert_eq!(
+            t.prepare(&p, "whole", key, None)
+                .expect("fixture operation"),
+            cancelled
+        );
+    }
+    assert_eq!(count(), 1);
+    // A fresh key starts a new job once the old one is finished.
+    let fresh = t
+        .prepare(&p, "whole", "reuse-export-key-03", None)
+        .expect("fixture operation");
+    assert_ne!(fresh.transfer_id, o.transfer_id);
+    assert_eq!(count(), 2);
+}
+#[test]
+fn status_reports_the_live_expiry_after_eof_grace() {
+    let t = Setup::new("grace");
+    // A future epoch keeps the real background sweep out of this fixture.
+    t.s.set_cursor_clock_for_tests(4_102_444_800);
+    let p = t.s.owner();
+    let o = t
+        .prepare(&p, "whole", "grace-export-key-01", None)
+        .expect("fixture operation");
+    t.s.advance_clock_for_tests(840);
+    reconstruct(&t, &p, &o);
+    let live =
+        t.s.export_status(&p, handle(&t.kb, &o.transfer_id))
+            .expect("fixture operation");
+    assert_eq!(live.state, ExportState::Ready);
+    // Created at t, EOF at t+840 s: readable until t+1440 s, not t+900 s.
+    let (before, after) = (
+        o.expires_at.expect("ready").as_str().to_owned(),
+        live.expires_at.expect("ready").as_str().to_owned(),
+    );
+    assert!(after > before, "{before} -> {after}");
+}
+#[test]
 fn random_offsets_retries_and_eof_ack_grace_hold_slots_without_extension() {
     let t = Setup::new("frames");
     // Control expiry from creation, before slow fixture I/O or frame checks.
@@ -507,7 +641,12 @@ fn random_offsets_retries_and_eof_ack_grace_hold_slots_without_extension() {
         .prepare(&p, "whole", "frames-export-0000", None)
         .expect("fixture operation");
     let bytes = reconstruct(&t, &p, &o);
-    for (offset, max) in [(0, 1), (196607, 196608), (196608, 11), (o.size - 1, 1)] {
+    for (offset, max) in [
+        (0, 1),
+        (196607, 196608),
+        (196608, 11),
+        (o.size.expect("ready") - 1, 1),
+    ] {
         let f = t
             .read(&p, &o.transfer_id, offset, Some(max))
             .expect("fixture operation");
@@ -519,10 +658,10 @@ fn random_offsets_retries_and_eof_ack_grace_hold_slots_without_extension() {
             .read(&p, &o.transfer_id, offset, Some(max))
             .expect("fixture operation");
         assert_eq!(f.bytes_base64, retry.bytes_base64);
-        assert_eq!(f.eof, f.next_offset == o.size);
+        assert_eq!(f.eof, f.next_offset == o.size.expect("ready"));
     }
     for (offset, max) in [
-        (o.size, Some(1)),
+        (o.size.expect("ready"), Some(1)),
         (u64::MAX, None),
         (0, Some(0)),
         (0, Some(196609)),
@@ -532,13 +671,20 @@ fn random_offsets_retries_and_eof_ack_grace_hold_slots_without_extension() {
             ErrorCode::InvalidArgument,
         );
     }
+    // The same KB/kind/revision reuses the job; another scope is refused.
+    assert_eq!(
+        t.prepare(&p, "whole", "second-export-0000", None)
+            .expect("fixture operation")
+            .transfer_id,
+        o.transfer_id
+    );
     code(
-        t.prepare(&p, "whole", "second-export-0000", None),
+        t.prepare(&p, "assets", "second-export-0001", None),
         ErrorCode::QuotaExceeded,
     );
     assert_eq!(t.active(), 1);
     t.s.advance_clock_for_tests(580);
-    t.read(&p, &o.transfer_id, o.size - 1, Some(1))
+    t.read(&p, &o.transfer_id, o.size.expect("ready") - 1, Some(1))
         .expect("fixture operation");
     t.s.advance_clock_for_tests(22);
     code(t.read(&p, &o.transfer_id, 0, None), ErrorCode::NotFound);
@@ -571,7 +717,7 @@ fn store_concurrency_is_two_and_one_per_actor_even_after_restart() {
         s.export_prepare(
             &p,
             input::<ExportPrepare>(
-                json!({"kbId":t.kb,"kind":"assets","idempotencyKey":"slot-d-export-0000"}),
+                json!({"kbId":t.kb,"kind":"whole","idempotencyKey":"slot-d-export-0000"}),
             ),
         ),
         ErrorCode::QuotaExceeded,
@@ -660,10 +806,20 @@ fn cancellation_deadline_and_failure_cleanup_have_stable_receipts() {
         code(o, ErrorCode::Cancelled);
         assert_eq!(t.active(), 0);
         assert!(!t.artifact(&id.expect("fixture operation")).exists());
-        code(
-            t.prepare(&t.s.owner(), "whole", "cancel-export-0000", None),
-            ErrorCode::Cancelled,
-        );
+        // A key replay reports the stopped job, never an error: one cut short
+        // before READY failed; one aborted after READY was built is expired.
+        let replay = t
+            .prepare(&t.s.owner(), "whole", "cancel-export-0000", None)
+            .expect("fixture operation");
+        if stage == ExportStage::Ready {
+            assert_eq!(replay.state, ExportState::Expired);
+        } else {
+            assert_eq!(replay.state, ExportState::Failed);
+            assert_eq!(
+                replay.error.map(|e| e.code),
+                Some(ExportFailureCode::Interrupted)
+            );
+        }
         assert!(
             t.prepare(&t.s.owner(), "whole", "after-cancel-00000", None)
                 .is_ok()
@@ -762,7 +918,9 @@ fn restart_replay_discards_partial_artifacts_and_keeps_ready_receipt() {
             s.export_complete(&s.owner(), handle(&kb, &id))
                 .expect("fixture operation");
         } else {
-            code(replay, ErrorCode::Cancelled);
+            let replay = replay.expect("fixture operation");
+            assert_eq!(replay.transfer_id, id);
+            assert_eq!(replay.state, ExportState::Failed);
             assert!(!path.exists());
             let count: i64 = Connection::open(s.paths().state_db())
                 .expect("fixture operation")
@@ -932,18 +1090,23 @@ fn parked_child() {
     }
     std::fs::write(bin.join("release"), b"go").expect("fixture operation");
     if writing {
-        code(
-            s.export_prepare(
+        // A key replay reports the stopped job with its reason, never an error.
+        let replay = s
+            .export_prepare(
                 &s.owner(),
                 input::<ExportPrepare>(
                     json!({"kbId":kb,"kind":"whole","idempotencyKey":"parked-export-0000"}),
                 ),
-            ),
-            if timeout {
-                ErrorCode::DeadlineExceeded
+            )
+            .expect("replay of a stopped job");
+        assert_eq!(replay.state, ExportState::Failed);
+        assert_eq!(
+            replay.error.map(|e| e.code),
+            Some(if timeout {
+                ExportFailureCode::DeadlineExceeded
             } else {
-                ErrorCode::Cancelled
-            },
+                ExportFailureCode::Interrupted
+            })
         );
     }
     assert!(
@@ -1484,7 +1647,7 @@ fn disk_admission_preserves_floor_overhead_pending_bytes_and_exact_limits() {
             &mut |_, _| Ok(()),
         )
         .unwrap();
-    assert_eq!(o.size, 22);
+    assert_eq!(o.size.expect("ready"), 22);
     t.complete(&o.transfer_id);
     let bytes = pdf(128);
     t.s.upload_begin(&t.s.owner(),input::<UploadBegin>(json!({"kbId":t.kb,"kind":"asset","mime":"application/pdf","size":bytes.len(),"contentHash":content_hash(&bytes),"idempotencyKey":"disk-upload-00000"}))).unwrap();
@@ -1541,7 +1704,7 @@ fn exact_256_mib_assets_fit_with_exact_zip_disk_reservation() {
             &mut |_, _| Ok(()),
         )
         .unwrap();
-    assert_eq!(out.size, ARCHIVE);
+    assert_eq!(out.size.expect("ready"), ARCHIVE);
     assert_eq!(
         std::fs::metadata(t.artifact(&out.transfer_id))
             .unwrap()

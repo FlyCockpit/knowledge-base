@@ -7,7 +7,10 @@ import { pathToFileURL } from "node:url";
 import { casBlobPath, createDiskBlobStore } from "@knowledge-base/api/lib/kb/blob-store-disk";
 import { credentialQuery } from "@knowledge-base/api/lib/kb/credential-query";
 import {
+  awaitExportBuild,
+  cancelExport,
   EXPORT_LIMITS,
+  exportStatus,
   prepareExport,
   reclaimExports,
   startExportLifecycle,
@@ -29,13 +32,16 @@ import {
   commit,
   fixture,
   frames,
+  gatedStore,
   prisma,
+  readyExport,
   registerExportHooks,
   released,
   request,
   root,
   runtime,
   s3Sources,
+  settledExport,
   user,
 } from "./export-fixture";
 
@@ -138,6 +144,11 @@ function observeGrace(hook: (update: () => Promise<number>) => Promise<number>):
   };
 }
 
+/** A runtime whose blob frame reads wait on `gate` (the build holds there). */
+function held(gate: (signal: AbortSignal) => Promise<void>): KbRuntimeConfig {
+  return { ...runtime, blobStore: gatedStore(runtime.blobStore, gate) };
+}
+
 describe("exports real Git/CAS/SQL", () => {
   for (const kind of ["signal", "shutdown"] as const) {
     preparedCase(`${kind} joins actual row/file cleanup before failure`, async () => {
@@ -145,7 +156,7 @@ describe("exports real Git/CAS/SQL", () => {
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
         const lifecycle = await startExportLifecycle(runtime);
-        const descriptor = await prepareExport(runtime, base.actor, request(pinned));
+        const descriptor = await readyExport(runtime, base.actor, request(pinned));
         const entered = barrier();
         const resume = barrier();
         const controlled = {
@@ -209,7 +220,7 @@ describe("exports real Git/CAS/SQL", () => {
           resume.release();
           await Promise.all([refused, stopping]);
           await clean(descriptor.transferId);
-          const next = await prepareExport(runtime, base.actor, request(pinned));
+          const next = await readyExport(runtime, base.actor, request(pinned));
           await completeExport(runtime, base.actor, {
             kbId: base.kbId,
             transferId: next.transferId,
@@ -226,7 +237,7 @@ describe("exports real Git/CAS/SQL", () => {
     const base = await fixture();
     return async () => {
       const lifecycle = await startExportLifecycle(runtime);
-      const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
+      const descriptor = await readyExport(runtime, base.actor, request(base, "assets"));
       const entered = barrier();
       const resume = barrier();
       let first = true;
@@ -286,7 +297,7 @@ describe("exports real Git/CAS/SQL", () => {
         data: { kbId: other.kbId, userId: member.id, bits: ["read"] },
       });
       return async () => {
-        const descriptor = await prepareExport(runtime, actor, request(base, "assets"));
+        const descriptor = await readyExport(runtime, actor, request(base, "assets"));
         const entered = barrier();
         const resume = barrier();
         const controlled =
@@ -374,7 +385,7 @@ describe("exports real Git/CAS/SQL", () => {
                 })
               ).downloadCompletedAt,
             ).toBeNull();
-            const next = await prepareExport(runtime, actor, request(other, "assets"));
+            const next = await readyExport(runtime, actor, request(other, "assets"));
             await completeExport(runtime, actor, { kbId: other.kbId, transferId: next.transferId });
           }
         } finally {
@@ -388,7 +399,7 @@ describe("exports real Git/CAS/SQL", () => {
     "a stale wall-clock sweep cannot reclaim EOF grace committed after row contention",
     async () => {
       const base = await fixture();
-      const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
+      const descriptor = await readyExport(runtime, base.actor, request(base, "assets"));
       return async () => {
         const selected = barrier();
         const resumeSweep = barrier();
@@ -505,7 +516,7 @@ describe("exports real Git/CAS/SQL", () => {
     "inverse: reclamation commits before unlink; a later EOF cannot resurrect the artifact",
     async () => {
       const base = await fixture();
-      const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
+      const descriptor = await readyExport(runtime, base.actor, request(base, "assets"));
       return async () => {
         const entered = barrier();
         const resume = barrier();
@@ -634,7 +645,7 @@ describe("exports real Git/CAS/SQL", () => {
         new Request(`${runtime.canonicalOrigin}/mcp`, { headers: { authorization } }),
       );
       return async () => {
-        const descriptor = await prepareExport(runtime, actor, request(pinned));
+        const descriptor = await readyExport(runtime, actor, request(pinned));
         const mounted = createKbExportRoutes({
           runtime: () => runtime,
           bearer,
@@ -680,7 +691,7 @@ describe("exports real Git/CAS/SQL", () => {
         new Request(`${runtime.canonicalOrigin}/mcp`, { headers: { authorization } }),
       );
       return async () => {
-        const descriptor = await prepareExport(runtime, actor, request(pinned));
+        const descriptor = await readyExport(runtime, actor, request(pinned));
         const mounted = createKbExportRoutes({
           runtime: () => runtime,
           bearer,
@@ -721,7 +732,7 @@ describe("exports real Git/CAS/SQL", () => {
   preparedCase("empty assets ZIP is a valid empty archive", async () => {
     const base = await fixture();
     return async () => {
-      const descriptor = await prepareExport(runtime, base.actor, request(base, "assets"));
+      const descriptor = await readyExport(runtime, base.actor, request(base, "assets"));
       expect(descriptor.size).toBe(22);
       execFileSync("python3", [
         "-c",
@@ -740,7 +751,7 @@ describe("exports real Git/CAS/SQL", () => {
     const pinned = await commit(base, [await asset(base)]);
     const input = request(pinned);
     return async () => {
-      const descriptor = await prepareExport(runtime, base.actor, input);
+      const descriptor = await readyExport(runtime, base.actor, input);
       expect(descriptor.rev).toBe(pinned.rev);
       await commit(pinned, [], "# Later\n");
       expect(await prepareExport(runtime, base.actor, input)).toEqual(descriptor);
@@ -765,7 +776,7 @@ describe("exports real Git/CAS/SQL", () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
-        const descriptor = await prepareExport(runtime, base.actor, request(pinned));
+        const descriptor = await readyExport(runtime, base.actor, request(pinned));
         const bytes = await frames(base, descriptor.transferId);
         expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(
           descriptor.contentHash,
@@ -791,20 +802,30 @@ describe("exports real Git/CAS/SQL", () => {
     const base = await fixture();
     const pinned = await commit(base, [await asset(base)]);
     return async () => {
+      // Different scopes race for the one per-user slot: one is admitted.
       const racing = await Promise.allSettled([
         prepareExport(runtime, base.actor, request(pinned)),
-        prepareExport(runtime, base.actor, request(pinned)),
+        prepareExport(runtime, base.actor, request(pinned, "assets")),
       ]);
       const admitted = racing.filter((r) => r.status === "fulfilled");
       const refused = racing.filter((r) => r.status === "rejected");
       expect(admitted).toHaveLength(1);
       expect(refused).toHaveLength(1);
       expect((refused[0] as PromiseRejectedResult).reason).toMatchObject({ code: "RATE_LIMITED" });
-      const first = (
+      const started = (
         admitted[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof prepareExport>>>
       ).value;
+      await awaitExportBuild(started.transferId);
+      const first = await exportStatus(runtime, base.actor, {
+        kbId: base.kbId,
+        transferId: started.transferId,
+      });
+      expect(first.state).toBe("ready");
+      const other = first.kind === "whole" ? ("assets" as const) : ("whole" as const);
       // While the artifact is ready and not yet acknowledged, the slot is held.
-      await expect(prepareExport(runtime, base.actor, request(pinned))).rejects.toMatchObject({
+      await expect(
+        prepareExport(runtime, base.actor, request(pinned, other)),
+      ).rejects.toMatchObject({
         code: "RATE_LIMITED",
       });
       // A partial download (not EOF) keeps the slot too.
@@ -813,9 +834,16 @@ describe("exports real Git/CAS/SQL", () => {
         transferId: first.transferId,
         offset: 0,
       });
-      await expect(prepareExport(runtime, base.actor, request(pinned))).rejects.toMatchObject({
+      await expect(
+        prepareExport(runtime, base.actor, request(pinned, other)),
+      ).rejects.toMatchObject({
         code: "RATE_LIMITED",
       });
+      // The same scope is not a second build: it returns the held job.
+      expect(
+        (await prepareExport(runtime, base.actor, request(pinned, first.kind))).transferId,
+      ).toBe(first.transferId);
+      expect(await prisma.exportArtifact.count({ where: { kbId: base.kbId } })).toBe(1);
     };
   });
   preparedCase(
@@ -824,7 +852,7 @@ describe("exports real Git/CAS/SQL", () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
-        const first = await prepareExport(runtime, base.actor, request(pinned));
+        const first = await readyExport(runtime, base.actor, request(pinned));
         const bytes = await frames(base, first.transferId);
         expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(
           first.contentHash,
@@ -856,9 +884,9 @@ describe("exports real Git/CAS/SQL", () => {
         expect(after.expiresAt).toEqual(graced.expiresAt);
         // The slot is still held during grace, and a periodic sweep keeps it.
         await reclaimExports(runtime);
-        await expect(prepareExport(runtime, base.actor, request(pinned))).rejects.toMatchObject({
-          code: "RATE_LIMITED",
-        });
+        await expect(
+          prepareExport(runtime, base.actor, request(pinned, "assets")),
+        ).rejects.toMatchObject({ code: "RATE_LIMITED" });
         expect(existsSync(artifactPath(first.transferId))).toBe(true);
       };
     },
@@ -874,7 +902,7 @@ describe("exports real Git/CAS/SQL", () => {
       // Browser-route download to completion starts grace; it does not delete.
       const otherKb = await fixture();
       return async () => {
-        const first = await prepareExport(runtime, base.actor, request(pinned));
+        const first = await readyExport(runtime, base.actor, request(pinned));
         const response = await downloadExport(runtime, base.actor, {
           kbId: base.kbId,
           transferId: first.transferId,
@@ -913,7 +941,7 @@ describe("exports real Git/CAS/SQL", () => {
         ).resolves.toEqual({ transferId: first.transferId, released: true });
         await released(first.transferId, "DOWNLOADED");
         // The next export is admitted at once.
-        const second = await prepareExport(runtime, base.actor, request(pinned));
+        const second = await readyExport(runtime, base.actor, request(pinned));
         // Acknowledging before the download completed releases too (the client gave up).
         await completeExport(runtime, base.actor, {
           kbId: base.kbId,
@@ -921,7 +949,7 @@ describe("exports real Git/CAS/SQL", () => {
         });
         await released(second.transferId, "ABORTED");
         // Unknown ids and a wrong KB are refused.
-        const third = await prepareExport(runtime, base.actor, request(pinned));
+        const third = await readyExport(runtime, base.actor, request(pinned));
         await expect(
           completeExport(runtime, base.actor, { kbId: otherKb.kbId, transferId: third.transferId }),
         ).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -949,7 +977,7 @@ describe("exports real Git/CAS/SQL", () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
-        const first = await prepareExport(runtime, base.actor, request(pinned));
+        const first = await readyExport(runtime, base.actor, request(pinned));
         await frames(base, first.transferId);
         const row = await prisma.exportArtifact.findUniqueOrThrow({
           where: { id: first.transferId },
@@ -965,11 +993,11 @@ describe("exports real Git/CAS/SQL", () => {
         // At grace expiry the sweep releases and deletes it, as a completed download.
         await reclaimExports(runtime, { now: new Date(graceEnd + 1000) });
         await released(first.transferId, "DOWNLOADED");
-        await prepareExport(runtime, base.actor, request(pinned)).then((next) =>
+        await readyExport(runtime, base.actor, request(pinned)).then((next) =>
           completeExport(runtime, base.actor, { kbId: base.kbId, transferId: next.transferId }),
         );
         // Crash safety: grace is durable state, so a restart sweep after expiry reclaims it.
-        const second = await prepareExport(runtime, base.actor, request(pinned));
+        const second = await readyExport(runtime, base.actor, request(pinned));
         await frames(base, second.transferId);
         const secondRow = await prisma.exportArtifact.findUniqueOrThrow({
           where: { id: second.transferId },
@@ -986,7 +1014,7 @@ describe("exports real Git/CAS/SQL", () => {
     const base = await fixture();
     const pinned = await commit(base, [await asset(base)]);
     return async () => {
-      const first = await prepareExport(runtime, base.actor, request(pinned));
+      const first = await readyExport(runtime, base.actor, request(pinned));
       await frames(base, first.transferId);
       // The artifact file is lost during grace: the next read aborts and releases at once.
       await unlink(artifactPath(first.transferId));
@@ -998,7 +1026,7 @@ describe("exports real Git/CAS/SQL", () => {
         }),
       ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
       await clean(first.transferId);
-      await prepareExport(runtime, base.actor, request(pinned));
+      await readyExport(runtime, base.actor, request(pinned));
     };
   });
   for (const failure of ["missing", "corrupt", "lineage", "collision"] as const) {
@@ -1017,7 +1045,15 @@ describe("exports real Git/CAS/SQL", () => {
             where: { kbId_hash: { kbId: base.kbId, hash: entry.hash } },
           });
         const input = request(pinned);
-        await expect(prepareExport(runtime, base.actor, input)).rejects.toThrow();
+        const job = await settledExport(runtime, base.actor, input);
+        expect(job).toMatchObject({
+          state: "failed",
+          size: null,
+          contentHash: null,
+          expiresAt: null,
+          // Manifest/source validation refuses all four as unavailable content.
+          error: { code: "STORAGE_UNAVAILABLE" },
+        });
         const row = await prisma.exportArtifact.findUniqueOrThrow({
           where: {
             actorKey_kbId_idempotencyKey: {
@@ -1027,7 +1063,8 @@ describe("exports real Git/CAS/SQL", () => {
             },
           },
         });
-        await clean(row.id);
+        expect(row.id).toBe(job.transferId);
+        await released(row.id, "FAILED");
         await expect(
           readTransfer(runtime, base.actor, { kbId: base.kbId, transferId: row.id, offset: 0 }),
         ).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -1040,11 +1077,11 @@ describe("exports real Git/CAS/SQL", () => {
       const [a, b, c] = await Promise.all([fixture(), fixture(), fixture()]);
       const input = request(a);
       return async () => {
-        const first = await prepareExport(runtime, a.actor, input);
-        await expect(prepareExport(runtime, a.actor, request(a))).rejects.toMatchObject({
+        const first = await readyExport(runtime, a.actor, input);
+        await expect(prepareExport(runtime, a.actor, request(a, "assets"))).rejects.toMatchObject({
           code: "RATE_LIMITED",
         });
-        await prepareExport(runtime, b.actor, request(b));
+        await readyExport(runtime, b.actor, request(b));
         await expect(prepareExport(runtime, c.actor, request(c))).rejects.toMatchObject({
           code: "RATE_LIMITED",
         });
@@ -1055,9 +1092,12 @@ describe("exports real Git/CAS/SQL", () => {
         });
         await reclaimExports(runtime);
         await clean(first.transferId);
-        await prepareExport(runtime, c.actor, request(c));
-        await expect(prepareExport(runtime, a.actor, input)).rejects.toMatchObject({
-          code: "CONFLICT",
+        await readyExport(runtime, c.actor, request(c));
+        // A released receipt still replays, as an expired job (never a rebuild).
+        expect(await prepareExport(runtime, a.actor, input)).toMatchObject({
+          transferId: first.transferId,
+          state: "expired",
+          size: null,
         });
       };
     },
@@ -1073,7 +1113,7 @@ describe("exports real Git/CAS/SQL", () => {
       const memberActor = { principal: { kind: "browser" as const, userId: member.id } };
       const input = request(pinned);
       return async () => {
-        const descriptor = await prepareExport(runtime, memberActor, input);
+        const descriptor = await readyExport(runtime, memberActor, input);
         await expect(
           readTransfer(runtime, base.actor, {
             kbId: base.kbId,
@@ -1108,7 +1148,7 @@ describe("exports real Git/CAS/SQL", () => {
       const base = await fixture();
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
-        const descriptor = await prepareExport(runtime, base.actor, request(pinned));
+        const descriptor = await readyExport(runtime, base.actor, request(pinned));
         const stream = await downloadExport(runtime, base.actor, {
           kbId: base.kbId,
           transferId: descriptor.transferId,
@@ -1118,91 +1158,92 @@ describe("exports real Git/CAS/SQL", () => {
         await reader.read();
         await reader.cancel();
         await clean(descriptor.transferId);
-        const next = await prepareExport(runtime, base.actor, request(pinned));
+        const next = await readyExport(runtime, base.actor, request(pinned));
+        // A building row a dead server process left behind.
         await prisma.exportArtifact.update({
           where: { id: next.transferId },
-          data: { state: "WRITING" },
+          data: {
+            state: "WRITING",
+            leaseOwner: "dead-host:1:gone",
+            leaseUntil: new Date(Date.now() + 60_000),
+          },
         });
         const lifecycle = await startExportLifecycle(runtime);
-        await clean(next.transferId);
+        await released(next.transferId, "FAILED");
+        expect(
+          await exportStatus(runtime, base.actor, { kbId: base.kbId, transferId: next.transferId }),
+        ).toMatchObject({ state: "failed", error: { code: "INTERRUPTED" } });
         await lifecycle.stop();
       };
     },
   );
   preparedCase(
-    "shutdown joins a reserved preparation and releases its durable intent before returning",
+    "shutdown joins a running build and releases its durable intent before returning",
     async () => {
       const base = await fixture();
+      const pinned = await commit(base, [await asset(base)]);
       return async () => {
         const lifecycle = await startExportLifecycle(runtime);
-        let entered!: () => void;
-        let release!: () => void;
-        const reserved = new Promise<void>((resolve) => {
-          entered = resolve;
+        const entered = barrier();
+        const resume = barrier();
+        const controlled = held(async () => {
+          entered.release();
+          await resume.wait;
         });
-        const resume = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        let first = true;
-        const controlled: KbRuntimeConfig = {
-          ...runtime,
-          coordinator: {
-            async run(options) {
-              const result = await runtime.coordinator.run(options);
-              if (first) {
-                first = false;
-                entered();
-                await resume;
-              }
-              return result;
-            },
-          },
-        };
-        const input = request(base);
-        const preparing = prepareExport(controlled, base.actor, input);
-        const rejected = expect(preparing).rejects.toMatchObject({ code: "CANCELLED" });
-        await reserved;
-        const stopping = lifecycle.stop();
-        release();
-        await rejected;
-        await stopping;
-        const row = await prisma.exportArtifact.findUniqueOrThrow({
-          where: {
-            actorKey_kbId_idempotencyKey: {
-              actorKey: `user:${base.actor.principal.userId}`,
+        const input = request(pinned);
+        const started = await prepareExport(controlled, base.actor, input);
+        expect(["pending", "building"]).toContain(started.state);
+        try {
+          await entered.wait;
+          expect(existsSync(artifactPath(started.transferId))).toBe(true);
+          let stopped = false;
+          const stopping = lifecycle.stop().then(() => {
+            stopped = true;
+          });
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(stopped).toBe(false);
+          resume.release();
+          await stopping;
+          // stop() returned only after the build ended and its file/quota were released.
+          await released(started.transferId, "FAILED");
+          expect(
+            await exportStatus(runtime, base.actor, {
               kbId: base.kbId,
-              idempotencyKey: input.idempotencyKey,
-            },
-          },
-        });
-        await clean(row.id);
+              transferId: started.transferId,
+            }),
+          ).toMatchObject({ state: "failed", error: { code: "INTERRUPTED" } });
+        } finally {
+          resume.release();
+          await lifecycle.stop().catch(() => undefined);
+        }
       };
     },
   );
-  preparedCase("shutdown retains preparation ownership through final reclamation", async () => {
+  preparedCase("shutdown retains build ownership through final reclamation", async () => {
     const base = await fixture();
+    const pinned = await commit(base, [await asset(base)]);
     return async () => {
       const lifecycle = await startExportLifecycle(runtime);
+      const building = barrier();
+      const resumeBuild = barrier();
       const entered = barrier();
       const resume = barrier();
       let id: string | undefined;
       const controlled: KbRuntimeConfig = {
-        ...runtime,
+        ...held(async () => {
+          building.release();
+          await resumeBuild.wait;
+        }),
         prisma: new Proxy(prisma, {
           get(target, key, receiver) {
             if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
             return new Proxy(target.exportArtifact, {
               get(model, method, modelReceiver) {
-                if (method === "findUniqueOrThrow")
-                  return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
-                    const row = await model.findUniqueOrThrow(args);
-                    id = row.id;
-                    throw new Error("Injected final receipt read failure");
-                  };
                 if (method === "findMany")
                   return async (args: Prisma.ExportArtifactFindManyArgs) => {
                     const rows = await model.findMany(args);
-                    if (rows.some((row) => row.id === id)) {
+                    // Hold the build's own final reclamation of its failed row.
+                    if (rows.some((row) => row.id === id && row.state === "FAILED")) {
                       entered.release();
                       await resume.wait;
                     }
@@ -1214,128 +1255,105 @@ describe("exports real Git/CAS/SQL", () => {
           },
         }),
       };
-      const preparing = prepareExport(controlled, base.actor, request(base, "assets"));
-      const rejected = expect(preparing).rejects.toBeDefined();
-      await entered.wait;
+      const started = await prepareExport(controlled, base.actor, request(pinned, "assets"));
+      id = started.transferId;
+      await building.wait;
+      const stopping = lifecycle.stop();
       let stopped = false;
-      const stopping = lifecycle.stop().then(() => {
+      void stopping.then(() => {
         stopped = true;
       });
       try {
+        resumeBuild.release();
+        await entered.wait;
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(stopped).toBe(false);
         resume.release();
-        await Promise.all([rejected, stopping]);
-        if (!id) throw new Error("Missing real preparation receipt");
-        await clean(id);
+        await stopping;
+        await released(id, "FAILED");
       } finally {
+        resumeBuild.release();
         resume.release();
-        await Promise.allSettled([rejected, stopping]);
+        await Promise.allSettled([stopping]);
       }
     };
   });
-  preparedCase("failed producer final return preserves a replay's delivered EOF", async () => {
+  preparedCase("cancel after a delivered EOF preserves the completed download", async () => {
     const base = await fixture();
     return async () => {
-      let id: string | undefined;
-      let delivered: Awaited<ReturnType<typeof readTransfer>> | undefined;
-      const controlled: KbRuntimeConfig = {
-        ...runtime,
-        prisma: new Proxy(prisma, {
-          get(target, key, receiver) {
-            if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
-            return new Proxy(target.exportArtifact, {
-              get(model, method, modelReceiver) {
-                if (method !== "findUniqueOrThrow")
-                  return Reflect.get(model, method, modelReceiver);
-                return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
-                  const row = await model.findUniqueOrThrow(args);
-                  id = row.id;
-                  delivered = await readTransfer(runtime, base.actor, {
-                    kbId: base.kbId,
-                    transferId: row.id,
-                    offset: 0,
-                  });
-                  throw new Error("Injected original producer return failure");
-                };
-              },
-            });
-          },
-        }),
-      };
-      await expect(
-        prepareExport(controlled, base.actor, request(base, "assets")),
-      ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
-      if (!id || !delivered) throw new Error("Missing delivered replay frame");
+      const job = await readyExport(runtime, base.actor, request(base, "assets"));
+      const delivered = await readTransfer(runtime, base.actor, {
+        kbId: base.kbId,
+        transferId: job.transferId,
+        offset: 0,
+      });
       expect(delivered.eof).toBe(true);
-      const completed = await prisma.exportArtifact.findUniqueOrThrow({ where: { id } });
+      // The download already completed: cancel does not discard it.
+      expect(
+        await cancelExport(runtime, base.actor, { kbId: base.kbId, transferId: job.transferId }),
+      ).toMatchObject({ state: "ready" });
+      const completed = await prisma.exportArtifact.findUniqueOrThrow({
+        where: { id: job.transferId },
+      });
       expect(completed.state).toBe("READY");
       expect(completed.downloadCompletedAt).not.toBeNull();
-      expect(existsSync(artifactPath(id))).toBe(true);
+      expect(existsSync(artifactPath(job.transferId))).toBe(true);
       expect(
-        await readTransfer(runtime, base.actor, { kbId: base.kbId, transferId: id, offset: 0 }),
+        await readTransfer(runtime, base.actor, {
+          kbId: base.kbId,
+          transferId: job.transferId,
+          offset: 0,
+        }),
       ).toEqual(delivered);
-      await completeExport(runtime, base.actor, { kbId: base.kbId, transferId: id });
-      await released(id, "DOWNLOADED");
+      await completeExport(runtime, base.actor, { kbId: base.kbId, transferId: job.transferId });
+      await released(job.transferId, "DOWNLOADED");
     };
   });
   preparedCase(
-    "replay cancellation joins its still-returning producer before cleanup",
+    "a replay during a build returns the same job; cancel joins the build before cleanup",
     async () => {
       const base = await fixture();
+      const pinned = await commit(base, [await asset(base)]);
       return async () => {
         const entered = barrier();
         const resume = barrier();
-        const input = request(base, "assets");
-        const controlled: KbRuntimeConfig = {
-          ...runtime,
-          prisma: new Proxy(prisma, {
-            get(target, key, receiver) {
-              if (key !== "exportArtifact") return Reflect.get(target, key, receiver);
-              return new Proxy(target.exportArtifact, {
-                get(model, method, modelReceiver) {
-                  if (method !== "findUniqueOrThrow")
-                    return Reflect.get(model, method, modelReceiver);
-                  return async (args: Prisma.ExportArtifactFindUniqueOrThrowArgs) => {
-                    const row = await model.findUniqueOrThrow(args);
-                    entered.release();
-                    await resume.wait;
-                    return row;
-                  };
-                },
-              });
-            },
-          }),
-        };
-        const preparing = prepareExport(controlled, base.actor, input);
-        const cancelled = expect(preparing).rejects.toMatchObject({ code: "CANCELLED" });
-        await entered.wait;
-        const replay = await prepareExport(runtime, base.actor, input);
-        const abort = new AbortController();
-        const { body } = await downloadExport(runtime, base.actor, {
-          kbId: base.kbId,
-          transferId: replay.transferId,
-          signal: abort.signal,
+        let joined = false;
+        const input = request(pinned);
+        const controlled = held(async (signal) => {
+          entered.release();
+          // The build ignores cancellation until released, like a slow read.
+          await resume.wait;
+          joined = true;
+          signal.throwIfAborted();
         });
-        const reader = body.getReader();
-        abort.abort();
-        let observed = false;
-        const refused = expect(
-          reader.read().finally(() => {
-            observed = true;
-          }),
-        ).rejects.toMatchObject({ name: "AbortError" });
+        const started = await prepareExport(controlled, base.actor, input);
         try {
-          await cancelled; // Actual reaper found and cancelled the original owner.
+          await entered.wait;
+          const replay = await prepareExport(runtime, base.actor, input);
+          expect(replay.transferId).toBe(started.transferId);
+          expect(replay.state).toBe("building");
+          // A different key for the same KB/kind/revision is the same job too.
+          const sameScope = await prepareExport(runtime, base.actor, request(pinned));
+          expect(sameScope.transferId).toBe(started.transferId);
+          expect(await prisma.exportArtifact.count({ where: { kbId: base.kbId } })).toBe(1);
+          const cancelling = cancelExport(runtime, base.actor, {
+            kbId: base.kbId,
+            transferId: started.transferId,
+          });
           await new Promise<void>((resolve) => setTimeout(resolve, 250));
-          expect(observed).toBe(false);
-          expect(existsSync(artifactPath(replay.transferId))).toBe(true);
+          expect(joined).toBe(false);
           resume.release();
-          await refused;
-          await clean(replay.transferId);
+          expect(await cancelling).toMatchObject({ state: "cancelled", size: null });
+          expect(joined).toBe(true);
+          await released(started.transferId, "CANCELLED");
+          expect(
+            await prisma.auditEvent.count({
+              where: { opId: started.transferId, action: "export_prepare" },
+            }),
+          ).toBe(0);
         } finally {
           resume.release();
-          await Promise.allSettled([cancelled, refused]);
+          await awaitExportBuild(started.transferId);
         }
       };
     },
@@ -1347,7 +1365,7 @@ describe("exports real Git/CAS/SQL", () => {
       const pinned = await commit(base, [await asset(base)]);
       return async () => {
         const lifecycle = await startExportLifecycle(runtime);
-        const descriptor = await prepareExport(runtime, base.actor, request(pinned));
+        const descriptor = await readyExport(runtime, base.actor, request(pinned));
         const entered = barrier();
         const resume = barrier();
         const failing: KbRuntimeConfig = {
@@ -1420,13 +1438,30 @@ describe("exports real Git/CAS/SQL", () => {
       };
     },
   );
-  preparedCase("a preparation deadline cannot publish a late result", async () => {
+  preparedCase("a build deadline cannot publish a late result", async () => {
     const base = await fixture();
-    const input = request(base);
+    const pinned = await commit(base, [await asset(base)]);
     return async () => {
-      await expect(
-        prepareExport(runtime, base.actor, input, { deadlineMs: 0 }),
-      ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+      const resume = barrier();
+      const controlled = held(async () => {
+        await resume.wait;
+      });
+      try {
+        const started = await prepareExport(controlled, base.actor, request(pinned), {
+          deadlineMs: 300,
+        });
+        expect(["pending", "building"]).toContain(started.state);
+        await awaitExportBuild(started.transferId);
+        expect(
+          await exportStatus(runtime, base.actor, {
+            kbId: base.kbId,
+            transferId: started.transferId,
+          }),
+        ).toMatchObject({ state: "failed", error: { code: "DEADLINE_EXCEEDED" } });
+        await released(started.transferId, "FAILED");
+      } finally {
+        resume.release();
+      }
       expect(
         await prisma.exportArtifact.count({ where: { kbId: base.kbId, state: "READY" } }),
       ).toBe(0);
@@ -1442,12 +1477,14 @@ describe("exports real Git/CAS/SQL", () => {
           await expect(
             prepareExport(runtime, base.actor, { ...request(base), rev }),
           ).rejects.toMatchObject({ code: "NOT_FOUND" });
+        // The request signal cancels admission only: nothing is recorded.
         const abort = new AbortController();
         abort.abort();
         await expect(
           prepareExport(runtime, base.actor, request(base), { signal: abort.signal }),
         ).rejects.toMatchObject({ code: "CANCELLED" });
-        const descriptor = await prepareExport(runtime, base.actor, request(base));
+        expect(await prisma.exportArtifact.count({ where: { kbId: base.kbId } })).toBe(0);
+        const descriptor = await readyExport(runtime, base.actor, request(base));
         await prisma.exportArtifact.update({
           where: { id: descriptor.transferId },
           data: { expiresAt: new Date(0) },
@@ -1472,7 +1509,7 @@ it("prepares S3 ZIP sources without admitting/touching cache and refuses a corru
   await commit(base, [entry]);
   const f = await s3Sources([entry]);
   try {
-    const descriptor = await prepareExport(f.runtime, base.actor, request(base, "assets"));
+    const descriptor = await readyExport(f.runtime, base.actor, request(base, "assets"));
     expect((await frames(base, descriptor.transferId)).length).toBeGreaterThan(entry.size);
     await completeExport(f.runtime, base.actor, {
       kbId: base.kbId,
@@ -1480,9 +1517,9 @@ it("prepares S3 ZIP sources without admitting/touching cache and refuses a corru
     });
     expect(await prisma.assetCacheEntry.count({ where: { cacheId: f.binding.cacheId } })).toBe(0);
     f.http.corruptGets(true);
-    await expect(
-      prepareExport(f.runtime, base.actor, request(base, "assets")),
-    ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+    const corrupt = await settledExport(f.runtime, base.actor, request(base, "assets"));
+    expect(corrupt).toMatchObject({ state: "failed", error: { code: "STORAGE_UNAVAILABLE" } });
+    await released(corrupt.transferId, "FAILED");
     expect(await prisma.exportArtifact.count({ where: { kbId: base.kbId, state: "READY" } })).toBe(
       0,
     );

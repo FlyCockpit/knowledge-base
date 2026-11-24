@@ -28,6 +28,8 @@ Each tool belongs to the tool groups a connection can be granted. A tool with se
 | knowledge_assets_import | assets | assets.mutateAsset(import) | kbAssets.import | changes_apply |
 | knowledge_assets_list | assets | assets.listAssets | kbAssets.list | read-only |
 | knowledge_export_prepare | export | exports.prepareExport | kbExports.prepare | read-only KB; export_prepare artifact |
+| knowledge_export_status | export | exports.exportStatus | kbExports.status | read-only |
+| knowledge_export_cancel | export | exports.cancelExport | kbExports.cancel | read-only KB; cancels the actor's own export job |
 | knowledge_transfer_read | export | transfers.readTransfer | kbExports.read | read-only |
 | knowledge_export_complete | export | transfers.completeExport | kbExports.complete | read-only KB; releases the actor's own export artifact |
 | knowledge_index_status | index_admin | index-status.getIndexProfile | kbIndex.status | read-only |
@@ -58,6 +60,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | embeddingProviders.probe | human provider credentials |
 | embeddingProviders.revoke | human provider credentials |
 | health.check | public liveness |
+| kbExports.latest | human export resume after a reload (web only) |
 | kbIndex.chunkCeiling | instance administration |
 | kbIndex.setChunkCeiling | instance administration |
 | kbIndex.setChunkLimit | human index settings (web only) |

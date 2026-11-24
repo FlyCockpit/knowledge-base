@@ -117,6 +117,8 @@ export const KB_TOOL_NAMES = [
   "knowledge_assets_import",
   "knowledge_assets_list",
   "knowledge_export_prepare",
+  "knowledge_export_status",
+  "knowledge_export_cancel",
   "knowledge_transfer_read",
   "knowledge_export_complete",
   "knowledge_index_status",
@@ -328,7 +330,25 @@ export const KB_TOOL_CATALOG: Record<KbToolName, KbToolCatalogEntry> = {
     name: "knowledge_export_prepare",
     groups: ["export"],
     description:
-      'Prepare a ZIP export: kind "whole" for documents and assets, or "assets" for assets only. Returns a transferId to read with knowledge_transfer_read and release with knowledge_export_complete.',
+      'Start a ZIP export in the background: kind "whole" for documents and assets, or "assets" for assets only. Returns the job at once (state "pending" or "building"); poll knowledge_export_status until it is "ready", then read it with knowledge_transfer_read and release it with knowledge_export_complete. Repeating the same request returns the same job.',
+    minimumAccess: { kind: "permission", bit: "read" },
+    requiredMcpScope: "mcp:read",
+    readOnly: true,
+  },
+  knowledge_export_status: {
+    name: "knowledge_export_status",
+    groups: ["export"],
+    description:
+      'Read the state of your export job: "pending", "building" (with byte progress), "ready" (size, contentHash and expiresAt are set), "failed" (error says why), "cancelled" or "expired".',
+    minimumAccess: { kind: "permission", bit: "read" },
+    requiredMcpScope: "mcp:read",
+    readOnly: true,
+  },
+  knowledge_export_cancel: {
+    name: "knowledge_export_cancel",
+    groups: ["export"],
+    description:
+      "Cancel your export job while it is pending or building, or discard it once ready. Cancelling a finished job is a no-op that returns its state.",
     minimumAccess: { kind: "permission", bit: "read" },
     requiredMcpScope: "mcp:read",
     readOnly: true,
@@ -636,6 +656,16 @@ export const KB_TOOL_BINDINGS: Record<
     domain: "exports.prepareExport",
     rpc: "kbExports.prepare",
     audit: "read-only KB; export_prepare artifact",
+  },
+  knowledge_export_status: {
+    domain: "exports.exportStatus",
+    rpc: "kbExports.status",
+    audit: "read-only",
+  },
+  knowledge_export_cancel: {
+    domain: "exports.cancelExport",
+    rpc: "kbExports.cancel",
+    audit: "read-only KB; cancels the actor's own export job",
   },
   knowledge_transfer_read: {
     domain: "transfers.readTransfer",

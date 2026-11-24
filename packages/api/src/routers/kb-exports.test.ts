@@ -3,14 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mockDeep } from "vitest-mock-extended";
 import type { Context } from "../context";
 import { KbDomainError } from "../lib/kb/errors";
-import { prepareExport } from "../lib/kb/exports";
+import { cancelExport, exportStatus, latestExport, prepareExport } from "../lib/kb/exports";
 import { completeExport, readTransfer } from "../lib/kb/transfers";
 import { kbExportsRouter } from "./kb-exports";
 
 vi.mock("@knowledge-base/db", async () => ({
   default: (await import("vitest-mock-extended")).mockDeep(),
 }));
-vi.mock("../lib/kb/exports", () => ({ prepareExport: vi.fn() }));
+vi.mock("../lib/kb/exports", () => ({
+  prepareExport: vi.fn(),
+  exportStatus: vi.fn(),
+  latestExport: vi.fn(),
+  cancelExport: vi.fn(),
+}));
 vi.mock("../lib/kb/transfers", () => ({ readTransfer: vi.fn(), completeExport: vi.fn() }));
 vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({}) }));
 const state = vi.hoisted(() => ({ budget: vi.fn() }));
@@ -38,7 +43,7 @@ describe("export router boundary", () => {
     expect(readTransfer).not.toHaveBeenCalled();
     expect(state.budget).not.toHaveBeenCalled();
   });
-  it("binds the live session actor, preserves pinned input, and passes request cancellation", async () => {
+  it("binds the live session actor, preserves pinned input, and passes admission cancellation", async () => {
     const signal = new AbortController().signal;
     const pinned = { ...input, rev: "b".repeat(40) };
     await client().prepare(pinned, { signal });
@@ -92,6 +97,37 @@ describe("export router boundary", () => {
     });
     vi.mocked(completeExport).mockRejectedValue(new KbDomainError("NOT_FOUND", "Not found"));
     await expect(client().complete({ kbId, transferId })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+  it("status, latest and cancel bind the session actor and map denials", async () => {
+    const browser = { principal: { kind: "browser", userId: "owner" } };
+    for (const [name, call] of [
+      ["status", () => client(false).status({ kbId, transferId })],
+      ["latest", () => client(false).latest({ kbId })],
+      ["cancel", () => client(false).cancel({ kbId, transferId })],
+    ] as const) {
+      await expect(call(), name).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    }
+    expect(exportStatus).not.toHaveBeenCalled();
+    expect(latestExport).not.toHaveBeenCalled();
+    expect(cancelExport).not.toHaveBeenCalled();
+    await client().status({ kbId, transferId });
+    expect(exportStatus).toHaveBeenCalledWith({}, browser, { kbId, transferId });
+    vi.mocked(latestExport).mockResolvedValue(null);
+    await expect(client().latest({ kbId })).resolves.toBeNull();
+    expect(latestExport).toHaveBeenCalledWith({}, browser, { kbId });
+    await client().cancel({ kbId, transferId });
+    expect(cancelExport).toHaveBeenCalledWith({}, browser, { kbId, transferId });
+    await expect(client().status({ kbId, transferId, extra: 1 } as never)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    vi.mocked(exportStatus).mockRejectedValue(new KbDomainError("NOT_FOUND", "Export not found"));
+    await expect(client().status({ kbId, transferId })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    vi.mocked(cancelExport).mockRejectedValue(new KbDomainError("NOT_FOUND", "Export not found"));
+    await expect(client().cancel({ kbId, transferId })).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
   });

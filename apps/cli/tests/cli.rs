@@ -297,6 +297,62 @@ fn unknown_command_is_a_usage_error() {
 }
 
 #[test]
+fn export_flag_combinations_are_usage_errors_before_any_request() {
+    let tmp = tempfile::tempdir().unwrap();
+    let kb = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    let id = "00000000-0000-4000-8000-000000000001";
+    for args in [
+        // A download needs a destination.
+        vec!["export", "--kb", kb],
+        vec!["export", "--kb", kb, "--transfer", id],
+        // Status/cancel act on an existing job.
+        vec!["export", "--kb", kb, "--status"],
+        vec!["export", "--kb", kb, "--cancel"],
+        // Starting without waiting saves nothing.
+        vec!["export", "--kb", kb, "--no-wait", "--output", "x.zip"],
+        // An existing job has its own scope.
+        vec![
+            "export",
+            "--kb",
+            kb,
+            "--transfer",
+            id,
+            "--kind",
+            "assets",
+            "--output",
+            "x.zip",
+        ],
+        vec![
+            "export",
+            "--kb",
+            kb,
+            "--transfer",
+            id,
+            "--status",
+            "--cancel",
+        ],
+        vec![
+            "export",
+            "--kb",
+            kb,
+            "--output",
+            "x.zip",
+            "--wait-timeout",
+            "0",
+        ],
+    ] {
+        cli(tmp.path()).args(&args).assert().code(2);
+    }
+    cli(tmp.path())
+        .args(["export", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--no-wait"))
+        .stdout(predicate::str::contains("--transfer"))
+        .stdout(predicate::str::contains("--wait-timeout"));
+}
+
+#[test]
 fn version_prints_package_version() {
     let tmp = tempfile::tempdir().unwrap();
     cli(tmp.path())

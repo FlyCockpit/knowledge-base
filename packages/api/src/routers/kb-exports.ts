@@ -1,7 +1,8 @@
 import { ORPCError } from "@orpc/server";
 import { protectedProcedure } from "../index";
 import { mapKbDomainError } from "../lib/kb/bases";
-import { prepareExport } from "../lib/kb/exports";
+import { cancelExport, exportStatus, latestExport, prepareExport } from "../lib/kb/exports";
+import { kbBaseInputSchema } from "../lib/kb/protocol/common";
 import { kbReadToolSchemas } from "../lib/kb/protocol/reads";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { completeExport, readTransfer } from "../lib/kb/transfers";
@@ -48,6 +49,41 @@ export const kbExportsRouter = {
           { principal: { kind: "browser", userId: context.session!.user.id } },
           input,
           { signal },
+        ),
+      ),
+    ),
+  /** The requester's own job; another user's id is NOT_FOUND. */
+  status: protectedProcedure
+    .input(kbReadToolSchemas.knowledge_export_status.input)
+    .handler(({ context, input }) =>
+      run(context.session!.user.id, () =>
+        exportStatus(
+          getKbRuntime(),
+          { principal: { kind: "browser", userId: context.session!.user.id } },
+          input,
+        ),
+      ),
+    ),
+  /** The requester's most recent job for this KB (a reopened page resumes it). */
+  latest: protectedProcedure
+    .input(kbBaseInputSchema)
+    .handler(({ context, input }) =>
+      run(context.session!.user.id, () =>
+        latestExport(
+          getKbRuntime(),
+          { principal: { kind: "browser", userId: context.session!.user.id } },
+          input,
+        ),
+      ),
+    ),
+  cancel: protectedProcedure
+    .input(kbReadToolSchemas.knowledge_export_cancel.input)
+    .handler(({ context, input }) =>
+      run(context.session!.user.id, () =>
+        cancelExport(
+          getKbRuntime(),
+          { principal: { kind: "browser", userId: context.session!.user.id } },
+          input,
         ),
       ),
     ),

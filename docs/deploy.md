@@ -340,7 +340,7 @@ their own and are normally milliseconds):
 | Asset and Markdown uploads | chunked: 192 KiB raw chunks (512 KiB encoded request) from the browser, `knowledge_upload_write` calls within the MCP cap from `kb` and agents | 30 s per request |
 | Other `/rpc` and form requests | 10 MiB | body 30 s; searches 60 s, KB mutations 30 s |
 | Sign-up, password reset, email 2FA (and its relay preflight), invitations | 10 MiB | per SMTP attempt: 10 s setup, 10 s to send; 3 attempts (about 60 s worst case); preflight 10 s |
-| Export preparation (`kbExports.prepare`) | 10 MiB | 120 s to build the ZIP (at most 256 MiB of content) |
+| Export start and status (`kbExports.prepare` / `status` / `cancel`, MCP `knowledge_export_*`) | 10 MiB / MCP 1 MiB | admission only (milliseconds); the ZIP is built in the background, outside any request, within its own 30 min deadline (at most 256 MiB of content) |
 | Admin web-push broadcast (`push.send`) | 10 MiB | 10 s per device, 8 devices at a time; no overall cap |
 | Asset reads, export downloads | responses stream (no request body) | asset reads 120 s |
 
@@ -351,11 +351,12 @@ write timeout). An asset read from a cold S3 cache waits for the object before
 its first byte, up to the 120 s asset deadline, which is longer than the
 100 s budget. A cancelled read discards the partial cache fill, so a retry
 starts cold again; keep S3 latency low (or use disk assets) behind a tunnel.
-Export preparation runs inside the browser's request: a large export on slow
-storage can take longer than the read timeout; the browser then gets `524`,
-and the build is cancelled once the tunnel drops the connection. Local-disk
-exports normally finish in seconds; the finished ZIP then downloads as an
-ordinary streamed response. An admin push broadcast to many slow push services
+Exports never wait inside a request: starting one returns at once, the server
+builds the ZIP as a background job (it survives the browser closing), and the
+web app and `kb` poll its status with short requests, then download the
+finished ZIP as an ordinary streamed response. A build that outlasts its 30 min
+deadline, or that a server restart interrupts, ends failed with a clear reason
+and is started again. An admin push broadcast to many slow push services
 can outlast the timeout too; the broadcast still completes, only its summary
 reply is lost. Model downloads, mirrors and backups are outbound or run on the
 host, and offline restore is a one-shot command; none of them go through the

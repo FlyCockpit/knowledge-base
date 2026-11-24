@@ -10,7 +10,7 @@ First public release.
 - Per-KB OAuth, personal access token and device grants for the MCP data plane, with independent read, propose, write, review and manage permissions, and a dream, edit or both write mode on every write-capable grant. Instance admins have no implicit private KB access.
 - Atomic document changes, client-generated dreams, Git smart-HTTP pushes, reviewed pull requests and human-controlled one-way mirrors.
 - Hybrid full-text and vector search over rebuildable SQLite indexes, optional local CPU embedding models (llama.cpp v0.9.0 in both the worker and the `kb` CLI, so server and CLI vectors stay at parity) and OpenAI-compatible providers.
-- Historical content-addressed assets on disk or optional S3 authority, private revision-bound media reads and bounded ZIP exports.
+- Historical content-addressed assets on disk or optional S3 authority, private revision-bound media reads and bounded ZIP exports. Exports are server-owned background jobs: starting one returns at once, the web app and `kb export` show progress and can cancel, the job survives the browser closing, and a restart or its 30-minute deadline ends it with a clear reason, so no export waits inside one request (safe behind a Cloudflare Tunnel's 100 s budget).
 - Human-approved sealed values delivered only as recipient-encrypted envelopes to exact authorized consumers.
 - Offline encrypted backup bundles and fenced restore with authority revocation before admission.
 - Per-KB journal recovery: a KB whose recovery fails is quarantined as `REPAIR_REQUIRED` while the others recover, and a fault that looks host-wide quarantines nothing.

@@ -825,7 +825,8 @@ try{const permit=await startMaintenanceParticipant(process.env.DATABASE_URL,()=>
           "SELECT migration_name AS name, checksum FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name",
         );
         expect(bundle.metadata.migrationHistory.applied).toEqual(applied.rows);
-        expect(bundle.metadata.migrationHistory.contracts).toHaveLength(1);
+        // One runtime contract row per applied migration.
+        expect(bundle.metadata.migrationHistory.contracts).toHaveLength(applied.rows.length);
         expect(bundle.metadata.sourceCatalog.length).toBeGreaterThan(0);
         expect(bundle.metadata.heads[0]!.headSha).toBe(phase === "after" && !crashed ? next : old);
         const entry = bundle.files.find(

@@ -27,7 +27,7 @@ import {
 } from "@knowledge-base/api/lib/kb/documents-read";
 import { parseDreamChangesApplyRequest } from "@knowledge-base/api/lib/kb/dream";
 import { KbDomainError } from "@knowledge-base/api/lib/kb/errors";
-import { prepareExport } from "@knowledge-base/api/lib/kb/exports";
+import { cancelExport, exportStatus, prepareExport } from "@knowledge-base/api/lib/kb/exports";
 import lexicalOnlyText from "@knowledge-base/api/lib/kb/fixtures/lexical-only-warning.json" with {
   type: "json",
 };
@@ -71,6 +71,8 @@ import type { BearerAdmission } from "./context";
 const schemas = { ...kbReadToolSchemas, ...kbWriteToolSchemas };
 type Context = {
   runtime: KbRuntimeConfig;
+  /** The process-owned runtime, for work that outlives this request (export builds). */
+  processRuntime?: KbRuntimeConfig;
   actor: BearerAdmission;
   signal: AbortSignal;
   masterKey?: string;
@@ -365,7 +367,10 @@ const bindings: { [N in KbToolName]: Binding<N> } = {
     mutateAsset(c.runtime, c.actor.principal, "import", i, c.actor.verifier),
   knowledge_assets_list: (i, c) =>
     listAssets(c.runtime, c.actor.principal, i, c.actor.verifier, { signal: c.signal }),
-  knowledge_export_prepare: (i, c) => prepareExport(c.runtime, c.actor, i, { signal: c.signal }),
+  knowledge_export_prepare: (i, c) =>
+    prepareExport(c.runtime, c.actor, i, { signal: c.signal, buildRuntime: c.processRuntime }),
+  knowledge_export_status: (i, c) => exportStatus(c.runtime, c.actor, i),
+  knowledge_export_cancel: (i, c) => cancelExport(c.runtime, c.actor, i),
   knowledge_transfer_read: (i, c) => readTransfer(c.runtime, c.actor, i),
   knowledge_export_complete: (i, c) => completeExport(c.runtime, c.actor, i),
   knowledge_index_status: async (i, c) => (await getIndexProfile(c.runtime, c.actor, i.kbId)).index,
@@ -496,6 +501,7 @@ export async function dispatchTool<N extends KbToolName>(
     const data = await bindings[name](input, {
       ...ctx,
       runtime: requestRuntime(ctx.runtime, ctx.signal),
+      processRuntime: ctx.runtime,
     });
     ctx.signal.throwIfAborted();
     await ctx.actor.recheck();

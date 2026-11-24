@@ -417,7 +417,13 @@ describe("kb/1 protocol catalog", () => {
         "knowledge_assets_import",
         "knowledge_assets_list",
       ],
-      export: ["knowledge_export_prepare", "knowledge_transfer_read", "knowledge_export_complete"],
+      export: [
+        "knowledge_export_prepare",
+        "knowledge_export_status",
+        "knowledge_export_cancel",
+        "knowledge_transfer_read",
+        "knowledge_export_complete",
+      ],
       pull_requests: [
         "knowledge_pull_requests_list",
         "knowledge_pull_requests_get",

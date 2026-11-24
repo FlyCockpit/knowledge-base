@@ -1,6 +1,7 @@
 /** Packaged deployment acceptance: runtime code comes only from built images. */
 import { execFile } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -101,6 +102,15 @@ async function id(role: string) {
 async function inImage(role: string, script: string) {
   return docker(["exec", await id(role), "node", "--input-type=module", "-e", script]);
 }
+/** Instances report the newest migration folder as their schema level. */
+const SCHEMA_LEVEL = readdirSync(resolve(import.meta.dirname, "../../../db/prisma/migrations"), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort()
+  .at(-1);
+
 async function eventually(check: () => Promise<boolean>, message: string, timeout = 60_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -419,7 +429,8 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
           (
             await db.query(
               "applier",
-              `SELECT count(*)::int AS n FROM _knowledge_base_instance WHERE schema_level='0_init' AND ready_at IS NOT NULL`,
+              `SELECT count(*)::int AS n FROM _knowledge_base_instance WHERE schema_level=$1 AND ready_at IS NOT NULL`,
+              [SCHEMA_LEVEL],
             )
           ).rows[0]?.n === 2,
         "Server and worker did not become ready",
@@ -701,10 +712,22 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
     });
     expect(media.status).toBe(200);
     expect(Buffer.from(await media.arrayBuffer())).toEqual(png);
-    const exported = await tool<{ transferId: string; size: number }>(
+    // The export builds in the background; poll its status until ready.
+    const exported = await tool<{ transferId: string; state: string }>(
       owner.secret,
       "knowledge_export_prepare",
       { kbId, kind: "whole", idempotencyKey: key() },
+    );
+    expect(["pending", "building", "ready"]).toContain(exported.state);
+    await eventually(
+      async () =>
+        (
+          await tool<{ state: string }>(owner.secret, "knowledge_export_status", {
+            kbId,
+            transferId: exported.transferId,
+          })
+        ).state === "ready",
+      "export did not become ready",
     );
     const zip = await tool<{ bytesBase64: string; eof: boolean }>(
       owner.secret,

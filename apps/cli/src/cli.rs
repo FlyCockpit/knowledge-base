@@ -61,7 +61,8 @@ pub enum Command {
     Login(crate::commands::login::Args),
     /// Revoke this server's PAT and clear its local credential.
     Logout(crate::commands::logout::Args),
-    /// Download, verify and acknowledge a remote knowledge-base ZIP.
+    /// Start, wait for, download, verify and acknowledge a remote knowledge-base ZIP
+    /// (prepared in the background on the server).
     Export(crate::commands::export::Args),
     /// Inspect the configuration file and resolved paths.
     Config(crate::commands::config::Args),

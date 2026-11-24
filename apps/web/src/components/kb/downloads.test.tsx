@@ -7,8 +7,21 @@ import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { gitCloneUrl, KbDownloadsView } from "@/components/kb/downloads";
+import type { ExportJob } from "@/hooks/use-kb-export";
 
 const KB = "e".repeat(24);
+const job = (overrides: Partial<ExportJob> = {}): ExportJob => ({
+  transferId: "0b4f7c3e-1f2a-4b3c-8d4e-5f6a7b8c9d0e",
+  kind: "whole",
+  rev: "abcdef1234".padEnd(40, "0"),
+  state: "building",
+  progress: { doneBytes: 50, totalBytes: 200 },
+  size: null,
+  contentHash: null,
+  expiresAt: null,
+  error: null,
+  ...overrides,
+});
 
 const i18n = createInstance();
 beforeAll(async () => {
@@ -28,8 +41,15 @@ function render(overrides: Partial<ComponentProps<typeof KbDownloadsView>> = {})
     <I18nextProvider i18n={i18n}>
       <KbDownloadsView
         cloneUrl={gitCloneUrl("https://kb.example.com", KB)}
-        state={{ status: "idle" }}
+        view={{ status: "idle", lookupFailed: false }}
+        startError={null}
+        starting={false}
+        cancelling={false}
+        cancelFailed={false}
         onExport={() => {}}
+        onCancel={() => {}}
+        onDownload={() => {}}
+        onRetryLookup={() => {}}
         {...overrides}
       />
     </I18nextProvider>,
@@ -66,22 +86,89 @@ describe("KbDownloadsView", () => {
     expect(out.match(/<button\b/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("disables both downloads while one is being prepared and announces it", () => {
-    const out = render({ state: { status: "preparing", kind: "assets" } });
-    expect(out).toContain("Preparing the ZIP");
+  it("shows a preparing job's progress, keeps starts disabled and offers cancel", () => {
+    const out = render({ view: { status: "preparing", job: job(), percent: 25 } });
+    expect(out).toContain("Whole knowledge base ZIP at revision abcdef1");
+    expect(out).toContain("Preparing the ZIP… 25%");
+    expect(out).toContain('role="progressbar"');
+    expect(out).toContain('aria-valuenow="25"');
     expect(out).toContain('role="status"');
+    expect(out).toContain("Cancel export");
+    expect(out).toContain("keeps preparing it if you close this page");
     expect(out.match(/<button[^>]*disabled=""/g)?.length).toBe(2);
   });
 
-  it("shows expired and error states visibly", () => {
-    expect(render({ state: { status: "expired", kind: "whole" } })).toMatch(
+  it("a failed cancel is reported inline and the cancel button stays available to retry", () => {
+    const view = { status: "preparing", job: job(), percent: 25 } as const;
+    expect(render({ view })).not.toContain("Could not cancel the export");
+    const out = render({ view, cancelFailed: true });
+    expect(out).toContain('role="alert"');
+    expect(out).toContain("Could not cancel the export. Try again.");
+    expect(out).toContain("Cancel export");
+    // The two start buttons stay disabled; cancel itself is enabled for the retry.
+    expect(out.match(/<button[^>]*disabled=""/g)?.length).toBe(2);
+  });
+
+  it("an unknown total shows indeterminate progress", () => {
+    const out = render({
+      view: { status: "preparing", job: job({ state: "pending" }), percent: null },
+    });
+    expect(out).toContain("Preparing the ZIP…");
+    expect(out).not.toContain("aria-valuenow");
+  });
+
+  it("a ready job is downloaded only by an explicit button, and can be discarded", () => {
+    const ready = job({ state: "ready", size: 42, contentHash: `sha256:${"0".repeat(64)}` });
+    const out = render({ view: { status: "ready", job: ready, download: null } });
+    expect(out).toContain("The ZIP is ready to download (42 bytes).");
+    expect(out).toContain("Download ZIP");
+    expect(out).toContain("Discard");
+    expect(out.match(/<button[^>]*disabled=""/g) ?? []).toHaveLength(0);
+    const done = render({
+      view: { status: "ready", job: ready, download: { status: "done", size: 42 } },
+    });
+    expect(done).toContain("Download ready (42 bytes).");
+    expect(done).not.toContain("Download ZIP");
+    expect(
+      render({ view: { status: "ready", job: ready, download: { status: "expired" } } }),
+    ).toMatch(/role="alert"[^>]*>[^<]*expired/);
+  });
+
+  it("a failed job names the reason and offers a retry", () => {
+    const out = render({
+      view: {
+        status: "failed",
+        job: job({
+          state: "failed",
+          error: { code: "DEADLINE_EXCEEDED", message: "server text" },
+        }),
+      },
+    });
+    expect(out).toMatch(/role="alert"[^>]*>The export took longer than its time limit/);
+    expect(out).toContain("Try again");
+    // An unknown code falls back to a generic storage message, never server text.
+    const unknown = render({
+      view: {
+        status: "failed",
+        job: job({ state: "failed", error: { code: "SOMETHING_NEW", message: "server text" } }),
+      },
+    });
+    expect(unknown).toContain("Storage was unavailable");
+    expect(unknown).not.toContain("server text");
+  });
+
+  it("shows cancelled, expired, capacity and lookup states", () => {
+    expect(render({ view: { status: "cancelled", job: job({ state: "cancelled" }) } })).toContain(
+      "Export cancelled.",
+    );
+    expect(render({ view: { status: "expired", job: job({ state: "expired" }) } })).toMatch(
       /role="alert"[^>]*>[^<]*expired/,
     );
-    expect(render({ state: { status: "error", kind: "whole" } })).toContain(
-      "Couldn&#x27;t prepare the download",
+    expect(render({ startError: "capacity" })).toContain("Another export is still being prepared");
+    expect(render({ startError: "other" })).toContain("Couldn&#x27;t prepare the download");
+    expect(render({ view: { status: "idle", lookupFailed: true } })).toContain(
+      "Couldn&#x27;t check for an earlier export.",
     );
-    expect(render({ state: { status: "done", kind: "whole", size: 42 } })).toContain(
-      "Download ready (42 bytes).",
-    );
+    expect(render({ view: { status: "loading" } })).toContain("kb-downloads-loading");
   });
 });

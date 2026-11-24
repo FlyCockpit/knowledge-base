@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import type { Context } from "@knowledge-base/api/context";
 import { credentialQuery } from "@knowledge-base/api/lib/kb/credential-query";
-import { prepareExport } from "@knowledge-base/api/lib/kb/exports";
 import { configureKbRuntime } from "@knowledge-base/api/lib/kb/runtime";
 import { readTransfer } from "@knowledge-base/api/lib/kb/transfers";
 import { mintPersonalToken } from "@knowledge-base/api/lib/mcp-token-access";
@@ -20,6 +19,7 @@ import {
   commit,
   fixture,
   prisma,
+  readyExport,
   registerExportHooks,
   request,
   runtime,
@@ -66,7 +66,7 @@ async function setup(transport: "rpc" | "zip" | "mcp") {
           );
         })()
       : undefined;
-  const descriptor = await prepareExport(runtime, actor ?? browser, request(pinned));
+  const descriptor = await readyExport(runtime, actor ?? browser, request(pinned));
   const session = mockDeep<NonNullable<Context["session"]>>();
   session.user.id = member.id;
   session.user.twoFactorEnabled = true;

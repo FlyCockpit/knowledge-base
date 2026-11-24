@@ -3596,6 +3596,190 @@
         "type": "object"
       }
     },
+    "knowledge_export_cancel": {
+      "catalog": {
+        "description": "Cancel your export job while it is pending or building, or discard it once ready. Cancelling a finished job is a no-op that returns its state.",
+        "groups": [
+          "export"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_export_cancel",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "transferId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "DEADLINE_EXCEEDED",
+                      "INTERRUPTED",
+                      "QUOTA_EXCEEDED",
+                      "ACCESS_DENIED",
+                      "REVISION_NOT_FOUND",
+                      "INVALID_CONTENT",
+                      "STORAGE_UNAVAILABLE"
+                    ],
+                    "type": "string"
+                  },
+                  "message": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+                "type": "string",
+                "x-kb-iso-utc-instant": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "assets",
+              "whole"
+            ],
+            "type": "string"
+          },
+          "mime": {
+            "const": "application/zip",
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "progress": {
+            "additionalProperties": false,
+            "properties": {
+              "doneBytes": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "totalBytes": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "doneBytes",
+              "totalBytes"
+            ],
+            "type": "object"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "building",
+              "ready",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "transferId",
+          "kind",
+          "rev",
+          "state",
+          "progress",
+          "size",
+          "contentHash",
+          "expiresAt",
+          "error",
+          "mime"
+        ],
+        "type": "object"
+      }
+    },
     "knowledge_export_complete": {
       "catalog": {
         "description": "Release a prepared export after you finish reading it.",
@@ -3651,7 +3835,7 @@
     },
     "knowledge_export_prepare": {
       "catalog": {
-        "description": "Prepare a ZIP export: kind \"whole\" for documents and assets, or \"assets\" for assets only. Returns a transferId to read with knowledge_transfer_read and release with knowledge_export_complete.",
+        "description": "Start a ZIP export in the background: kind \"whole\" for documents and assets, or \"assets\" for assets only. Returns the job at once (state \"pending\" or \"building\"); poll knowledge_export_status until it is \"ready\", then read it with knowledge_transfer_read and release it with knowledge_export_complete. Repeating the same request returns the same job.",
         "groups": [
           "export"
         ],
@@ -3701,13 +3885,68 @@
         "additionalProperties": false,
         "properties": {
           "contentHash": {
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "DEADLINE_EXCEEDED",
+                      "INTERRUPTED",
+                      "QUOTA_EXCEEDED",
+                      "ACCESS_DENIED",
+                      "REVISION_NOT_FOUND",
+                      "INVALID_CONTENT",
+                      "STORAGE_UNAVAILABLE"
+                    ],
+                    "type": "string"
+                  },
+                  "message": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "expiresAt": {
-            "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
-            "type": "string",
-            "x-kb-iso-utc-instant": true
+            "anyOf": [
+              {
+                "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+                "type": "string",
+                "x-kb-iso-utc-instant": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "assets",
+              "whole"
+            ],
+            "type": "string"
           },
           "mime": {
             "const": "application/zip",
@@ -3717,14 +3956,59 @@
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
             "type": "string"
           },
+          "progress": {
+            "additionalProperties": false,
+            "properties": {
+              "doneBytes": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "totalBytes": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "doneBytes",
+              "totalBytes"
+            ],
+            "type": "object"
+          },
           "rev": {
             "pattern": "^[0-9a-f]{40}$",
             "type": "string"
           },
           "size": {
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "building",
+              "ready",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
           },
           "transferId": {
             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -3734,10 +4018,198 @@
         "required": [
           "operationId",
           "transferId",
+          "kind",
           "rev",
+          "state",
+          "progress",
           "size",
           "contentHash",
           "expiresAt",
+          "error",
+          "mime"
+        ],
+        "type": "object"
+      }
+    },
+    "knowledge_export_status": {
+      "catalog": {
+        "description": "Read the state of your export job: \"pending\", \"building\" (with byte progress), \"ready\" (size, contentHash and expiresAt are set), \"failed\" (error says why), \"cancelled\" or \"expired\".",
+        "groups": [
+          "export"
+        ],
+        "minimumAccess": {
+          "bit": "read",
+          "kind": "permission"
+        },
+        "name": "knowledge_export_status",
+        "readOnly": true,
+        "requiredMcpScope": "mcp:read"
+      },
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kbId": {
+            "pattern": "^[a-z0-9]{24,32}$",
+            "type": "string"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kbId",
+          "transferId"
+        ],
+        "type": "object"
+      },
+      "output": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "DEADLINE_EXCEEDED",
+                      "INTERRUPTED",
+                      "QUOTA_EXCEEDED",
+                      "ACCESS_DENIED",
+                      "REVISION_NOT_FOUND",
+                      "INVALID_CONTENT",
+                      "STORAGE_UNAVAILABLE"
+                    ],
+                    "type": "string"
+                  },
+                  "message": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "pattern": "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?Z$",
+                "type": "string",
+                "x-kb-iso-utc-instant": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "assets",
+              "whole"
+            ],
+            "type": "string"
+          },
+          "mime": {
+            "const": "application/zip",
+            "type": "string"
+          },
+          "operationId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "progress": {
+            "additionalProperties": false,
+            "properties": {
+              "doneBytes": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "totalBytes": {
+                "anyOf": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "doneBytes",
+              "totalBytes"
+            ],
+            "type": "object"
+          },
+          "rev": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "building",
+              "ready",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "transferId": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "transferId",
+          "kind",
+          "rev",
+          "state",
+          "progress",
+          "size",
+          "contentHash",
+          "expiresAt",
+          "error",
           "mime"
         ],
         "type": "object"

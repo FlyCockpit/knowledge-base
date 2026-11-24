@@ -786,13 +786,7 @@ function DownloadDialog({ kbId, rev }: { kbId: string; rev: string }) {
             <DialogTitle>{t("document.downloadTitle")}</DialogTitle>
             <DialogDescription>{t("document.downloadDescription")}</DialogDescription>
           </DialogHeader>
-          <KbDownloads
-            kbId={kbId}
-            rev={rev}
-            origin={env.VITE_SERVER_URL}
-            prepare={orpc.kbExports.prepare.mutationOptions()}
-            complete={orpc.kbExports.complete.mutationOptions()}
-          />
+          <KbDownloads kbId={kbId} rev={rev} origin={env.VITE_SERVER_URL} />
         </DialogContent>
       </Dialog>
     </>

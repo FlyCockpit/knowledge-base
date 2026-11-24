@@ -205,7 +205,32 @@
     "error": "Couldn't prepare the download. Try again.",
     "cloneTitle": "Clone with Git",
     "copyClone": "Copy clone URL",
-    "cloneHint": "Git asks for a username and password. Use any username and a personal access token with read access as the password. Never put the token in the URL."
+    "cloneHint": "Git asks for a username and password. Use any username and a personal access token with read access as the password. Never put the token in the URL.",
+    "preparingProgress": "Preparing the ZIP… {{percent}}%",
+    "progressLabel": "Export progress",
+    "keepsRunning": "The server keeps preparing it if you close this page. Come back to download it.",
+    "cancel": "Cancel export",
+    "ready": "The ZIP is ready to download ({{size}} bytes).",
+    "download": "Download ZIP",
+    "discard": "Discard",
+    "retry": "Try again",
+    "tryAgain": "Try again",
+    "cancelled": "Export cancelled.",
+    "capacity": "Another export is still being prepared or waiting to be downloaded. Download or discard it first, or wait for it to expire.",
+    "lookupFailed": "Couldn't check for an earlier export.",
+    "job": "{{kind}} at revision {{rev}}",
+    "kindAssets": "Assets ZIP",
+    "kindWhole": "Whole knowledge base ZIP",
+    "failure": {
+      "DEADLINE_EXCEEDED": "The export took longer than its time limit. Try again.",
+      "INTERRUPTED": "The server restarted or stopped while preparing the export. Try again.",
+      "QUOTA_EXCEEDED": "This knowledge base is larger than the export limits allow.",
+      "ACCESS_DENIED": "Your read access ended while the export was being prepared.",
+      "REVISION_NOT_FOUND": "This revision is no longer available.",
+      "INVALID_CONTENT": "This revision contains content that can't be exported.",
+      "STORAGE_UNAVAILABLE": "Storage was unavailable while preparing the export. Try again."
+    },
+    "cancelFailed": "Could not cancel the export. Try again."
   },
   "pr": {
     "loadFailed": "Couldn't load this pull request.",

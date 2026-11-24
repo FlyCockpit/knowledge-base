@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prismaAssetQuery } from "@knowledge-base/api/lib/kb/asset-authz";
+import { awaitExportBuild } from "@knowledge-base/api/lib/kb/exports";
 import { minimalPng, sha256Buffer } from "@knowledge-base/api/lib/kb/fixtures/media-bytes";
 import { startTestIndexReader } from "@knowledge-base/api/lib/kb/index-file/testing";
 import { QWEN_ARTIFACT } from "@knowledge-base/api/lib/kb/model-artifact";
@@ -820,19 +821,28 @@ describe("complete rich corpus", () => {
       refs.map((r, i) => ({ ...r, uploadId: control[i] })),
       true,
     );
-    const prepared = await call(
-      "knowledge_export_prepare",
-      refs.map((r) => ({ ...r, kind: "assets", idempotencyKey: key() })),
-    );
+    // The server answers a start at once and builds in the background;
+    // kb-local builds in-process and answers ready. Settle the server job,
+    // then its keyed replay and kb-local's first answer are the same ready job.
+    const prepareArgs = refs.map((r) => ({ ...r, kind: "assets", idempotencyKey: key() }));
+    const started = await remote("knowledge_export_prepare", prepareArgs[0]!);
+    expect(started.isError, JSON.stringify(started.structuredContent)).toBe(false);
+    const startedJob = started.structuredContent.data as { transferId: string; state: string };
+    expect(["pending", "building", "ready"]).toContain(startedJob.state);
+    await awaitExportBuild(startedJob.transferId);
+    const prepared = await call("knowledge_export_prepare", prepareArgs);
+    expect(prepared[0]!.state).toBe("ready");
     const ids = prepared.map((v) => v.transferId);
+    const refsWith = () => refs.map((r, i) => ({ ...r, transferId: ids[i] }));
+    await call("knowledge_export_status", refsWith());
     await call(
       "knowledge_transfer_read",
       refs.map((r, i) => ({ ...r, transferId: ids[i], offset: 0 })),
     );
-    await call(
-      "knowledge_export_complete",
-      refs.map((r, i) => ({ ...r, transferId: ids[i] })),
-    );
+    await call("knowledge_export_complete", refsWith());
+    // Cancelling a released job is a no-op that reports it expired.
+    const cancelled = await call("knowledge_export_cancel", refsWith());
+    expect(cancelled[0]!.state).toBe("expired");
   }, 120000);
   it("every typed refusal reason matches across transports", async () => {
     const reason = async (name: string, args: Record<string, unknown>[], details: unknown) => {

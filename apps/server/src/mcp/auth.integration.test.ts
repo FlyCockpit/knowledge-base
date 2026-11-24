@@ -229,7 +229,7 @@ describe("real OAuth resource I/O", () => {
           const body = (await response.json()) as { error?: unknown; result: { tools: unknown[] } };
           expect(body.error).toBeUndefined();
           // The fixture grant holds read and export; discovery lists them plus KB lookup.
-          if (method === "tools/list") expect(body.result.tools).toHaveLength(8);
+          if (method === "tools/list") expect(body.result.tools).toHaveLength(10);
         }
       } finally {
         await endpoint.close();

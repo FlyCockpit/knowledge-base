@@ -30,6 +30,7 @@ import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
 import { runDurableDispatcherCycle } from "@knowledge-base/api/lib/kb/dispatch";
 import type { Embedder } from "@knowledge-base/api/lib/kb/embedder";
 import { KbDomainError } from "@knowledge-base/api/lib/kb/errors";
+import { awaitExportBuild } from "@knowledge-base/api/lib/kb/exports";
 import * as media from "@knowledge-base/api/lib/kb/fixtures/media-bytes";
 import { startTestIndexReader } from "@knowledge-base/api/lib/kb/index-file/testing";
 import { liveKbCreateReceiptBody } from "@knowledge-base/api/lib/kb/kb-lifecycle-intent";
@@ -2243,12 +2244,21 @@ describe("SDK HTTP MCP real domain data plane", () => {
     });
     it("prepares the exact whole snapshot export", () => {
       return runOwnedMcpAction(async () => {
-        archive = await context.c.call("knowledge_export_prepare", {
+        const started = await context.c.call("knowledge_export_prepare", {
           kbId: context.kb.id,
           kind: "whole",
           idempotencyKey: key(),
           rev: head,
         });
+        // The build runs in the background, owned by the server, not this request.
+        expect(["pending", "building", "ready"]).toContain(started.state);
+        await awaitExportBuild(started.transferId);
+        const status = await context.c.call("knowledge_export_status", {
+          kbId: context.kb.id,
+          transferId: started.transferId,
+        });
+        expect(status).toMatchObject({ transferId: started.transferId, state: "ready", rev: head });
+        archive = { transferId: status.transferId, contentHash: status.contentHash! };
       });
     });
     it("reads ZIP bytes with the prepared snapshot content hash", () => {
@@ -3513,6 +3523,8 @@ describe("SDK HTTP MCP real domain data plane", () => {
           await pending;
         }
         expect(await prisma.stagedUpload.count({ where: { kbId: kb.id } })).toBe(0);
+        // A cancelled export start records no job at all.
+        expect(await prisma.exportArtifact.count({ where: { kbId: kb.id } })).toBe(0);
       }
     },
   );

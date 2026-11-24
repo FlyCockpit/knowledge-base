@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getHeapSpaceStatistics } from "node:v8";
-import { prepareExport } from "@knowledge-base/api/lib/kb/exports";
 import { completeExport, readTransfer } from "@knowledge-base/api/lib/kb/transfers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -12,6 +11,8 @@ import {
   commit,
   fixture,
   prisma,
+  type ReadyExportJob,
+  readyExport,
   registerExportHooks,
   released,
   request,
@@ -29,7 +30,7 @@ const SELF =
     : "packages/test-utils/src/kb/exports-rss.integration.test.ts";
 
 type Base = Awaited<ReturnType<typeof fixture>>;
-type Descriptor = Awaited<ReturnType<typeof prepareExport>>;
+type Descriptor = ReadyExportJob;
 
 /**
  * A streaming client: reads every frame, decodes each frame's base64 text as
@@ -103,16 +104,17 @@ describe("exports RSS bound (isolated process)", () => {
     peak = Math.max(peak, process.memoryUsage().rss);
     expect(peak - baseline).toBeLessThan(160 * 1024 * 1024);
   };
-  it("prepares a cold 200 MiB export within the product deadline with bounded RSS", async () => {
-    // No warm-up export. Fixture creation is setup; this 120s
-    // deadline belongs to prepare, not to 1000 subsequent client requests.
+  it("builds a cold 200 MiB export in the background with bounded RSS", async () => {
+    // No warm-up export. Fixture creation is setup; the build has its own
+    // background deadline and no request waits on it; this 120s test bound
+    // only keeps the case finite.
     globalThis.gc?.();
     baseline = process.memoryUsage().rss;
     peak = baseline;
     sample = setInterval(() => {
       peak = Math.max(peak, process.memoryUsage().rss);
     }, 5);
-    descriptor = await prepareExport(
+    descriptor = await readyExport(
       remote?.runtime ?? runtime,
       base.actor,
       request(pinned, "assets"),

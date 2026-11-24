@@ -440,8 +440,18 @@ kb export --kb abcdefghijklmnopqrstuvwx --output /private/knowledge.zip
 kb export --kb abcdefghijklmnopqrstuvwx --kind assets --output /private/assets.zip --json
 ```
 
-`--rev` pins a commit, `--idempotency-key` recovers the identical prepare.
-Bounded frame retries use the same offset; verify size/SHA-256, fsync a new
+The server builds the ZIP as a background job (at most 30 minutes); `kb export`
+starts it, polls its status with a bounded backoff (1 s growing to 5 s, progress
+on stderr) for at most `--wait-timeout` seconds (default 2100), then downloads
+it. `--no-wait` only starts it and prints the transfer ID; `--transfer <ID>`
+attaches to a started job (`--status` prints it, `--cancel` cancels or discards
+it, `--output` waits and downloads it). A timed-out wait exits non-zero and
+prints the `--transfer` command that resumes it; failed, cancelled or expired
+jobs exit non-zero with the server's reason.
+
+`--rev` pins a commit, `--idempotency-key` returns the same job (as does a
+repeated start of the same KB, kind and revision while one is pending, building
+or ready). Bounded frame retries use the same offset; verify size/SHA-256, fsync a new
 private destination (existing files refused), then acknowledge with the preparing
 PAT. `acknowledged:false` means the ZIP is valid locally but server completion
 is uncertain; its ten-minute EOF grace reclaims the slot. See [assets](./assets.md).

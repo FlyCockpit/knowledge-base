@@ -151,64 +151,154 @@ test("hostile Markdown never executes or requests an attacker URL", async ({ pag
   await expect(doc).toContainText("External image not loaded");
 });
 
-test("download and clone controls work by keyboard; ZIP is the exact artifact", async ({
+/** The requester's job, read through the production status procedure. */
+async function exportJob(page: Page, transferId: string) {
+  const response = await page.request.post(`${fx.origin}/rpc/kbExports/status`, {
+    data: { json: { kbId: fx.kbId, transferId } },
+  });
+  expect(response.ok()).toBe(true);
+  return (await response.json()).json as {
+    state: string;
+    size: number | null;
+    contentHash: string | null;
+  };
+}
+
+/** Starts an export and waits for the background job to become downloadable. */
+async function startAndAwaitReady(page: Page, name: string) {
+  const started = page.waitForResponse(
+    (response) => response.url().includes("/rpc/kbExports/prepare") && response.ok(),
+  );
+  await page.getByRole("button", { name }).click();
+  const job = (await (await started).json()).json as { transferId: string; state: string };
+  expect(["pending", "building", "ready"]).toContain(job.state);
+  // The build is the server's; the panel polls status until it is ready.
+  await expect(page.getByRole("button", { name: "Download ZIP" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId("kb-downloads")).toContainText("ready to download");
+  return job.transferId;
+}
+
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+]) {
+  test.describe(`at ${viewport.width}px`, () => {
+    test.use({ viewport });
+    test("prepare runs in the background; download and clone controls work by keyboard; ZIP is the exact artifact", async ({
+      page,
+      context,
+    }) => {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: fx.origin,
+      });
+      const completed: unknown[] = [];
+      page.on("response", async (response) => {
+        if (response.url().includes("/rpc/kbExports/complete") && response.ok())
+          completed.push((await response.json()).json);
+      });
+      await page.goto(viewer(fx.mediaPath, fx.oldRev));
+      await ready(page);
+
+      // Media controls are reachable by keyboard focus.
+      for (const selector of [
+        "video[aria-label='Fixture clip']",
+        "audio[aria-label='Fixture sound']",
+      ]) {
+        await page.locator(selector).focus();
+        await expect(page.locator(selector)).toBeFocused();
+      }
+
+      const whole = page.getByRole("button", { name: "Download whole knowledge base (ZIP)" });
+      const started = page.waitForResponse(
+        (response) => response.url().includes("/rpc/kbExports/prepare") && response.ok(),
+      );
+      // Starts stay disabled while the panel checks for an earlier job; a
+      // disabled button cannot take focus, so wait for the lookup first.
+      await expect(whole).toBeEnabled();
+      await whole.focus();
+      await expect(whole).toBeFocused();
+      await page.keyboard.press("Enter");
+      const transferId = ((await (await started).json()).json as { transferId: string }).transferId;
+      const downloadButton = page.getByRole("button", { name: "Download ZIP" });
+      await expect(downloadButton).toBeVisible({ timeout: 30_000 });
+      // Nothing downloads until the user asks for it.
+      const job = await exportJob(page, transferId);
+      expect(job.state).toBe("ready");
+      await downloadButton.focus();
+      const downloadPromise = page.waitForEvent("download");
+      await page.keyboard.press("Enter");
+      const download = await downloadPromise;
+      const bytes = await readFile((await download.path())!);
+      expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+      expect(bytes.length).toBe(job.size);
+      expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(job.contentHash);
+      await expect(page.getByRole("status")).toContainText("Download ready");
+      // The verified download is acknowledged, which releases the export.
+      await expect.poll(() => completed).toEqual([{ transferId, released: true }]);
+      const state = await page.request.get(
+        `${fx.origin}/fixture/export-state?transferId=${transferId}`,
+      );
+      expect(await state.json()).toEqual({ state: "DOWNLOADED", released: true });
+      await expect(whole).toBeEnabled();
+
+      // Clone URL: copyable by keyboard, never carries a secret.
+      const cloneUrl = `${fx.origin}/git/${fx.kbId}.git`;
+      const copy = page.getByRole("button", { name: "Copy clone URL" });
+      await copy.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(cloneUrl);
+      await expect(page.getByTestId("kb-downloads")).toContainText(cloneUrl);
+      await expect(page.getByTestId("kb-downloads")).toContainText("as the password");
+      expect(cloneUrl).not.toContain("@");
+      expect(await page.getByTestId("kb-downloads").innerText()).not.toMatch(/kbp_|token=/);
+      // No horizontal overflow at this width.
+      const overflow = await page
+        .getByTestId("kb-downloads")
+        .evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  });
+}
+
+test("a job survives closing the page: a new page resumes it and downloads it", async ({
   page,
   context,
 }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: fx.origin });
-  const prepared: { contentHash: string; size: number; transferId: string }[] = [];
-  const completed: unknown[] = [];
-  page.on("response", async (response) => {
-    if (response.url().includes("/rpc/kbExports/prepare") && response.ok())
-      prepared.push((await response.json()).json);
-    if (response.url().includes("/rpc/kbExports/complete") && response.ok())
-      completed.push((await response.json()).json);
-  });
   await page.goto(viewer(fx.mediaPath, fx.oldRev));
   await ready(page);
-
-  // Media controls are reachable by keyboard focus.
-  for (const selector of [
-    "video[aria-label='Fixture clip']",
-    "audio[aria-label='Fixture sound']",
-  ]) {
-    await page.locator(selector).focus();
-    await expect(page.locator(selector)).toBeFocused();
-  }
-
-  const whole = page.getByRole("button", { name: "Download whole knowledge base (ZIP)" });
-  await whole.focus();
-  await expect(whole).toBeFocused();
-  const downloadPromise = page.waitForEvent("download");
-  await page.keyboard.press("Enter");
-  const download = await downloadPromise;
-  const bytes = await readFile((await download.path())!);
-  expect(prepared).toHaveLength(1);
-  expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
-  expect(bytes.length).toBe(prepared[0]!.size);
-  expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(
-    prepared[0]!.contentHash,
-  );
-  await expect(page.getByRole("status")).toContainText("Download ready");
-  // The verified download is acknowledged, which releases the export.
+  const transferId = await startAndAwaitReady(page, "Download assets (ZIP)");
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.goto(viewer(fx.mediaPath, fx.oldRev));
+  await ready(reopened);
+  await expect(reopened.getByTestId("kb-downloads")).toContainText("Assets ZIP at revision");
+  const download = reopened.waitForEvent("download");
+  await reopened.getByRole("button", { name: "Download ZIP" }).click();
+  await download;
+  await expect(reopened.getByRole("status")).toContainText("Download ready");
   await expect
-    .poll(() => completed)
-    .toEqual([{ transferId: prepared[0]!.transferId, released: true }]);
-  const state = await page.request.get(
-    `${fx.origin}/fixture/export-state?transferId=${prepared[0]!.transferId}`,
-  );
-  expect(await state.json()).toEqual({ state: "DOWNLOADED", released: true });
+    .poll(async () =>
+      (
+        await reopened.request.get(`${fx.origin}/fixture/export-state?transferId=${transferId}`)
+      ).json(),
+    )
+    .toEqual({ state: "DOWNLOADED", released: true });
+});
 
-  // Clone URL: copyable by keyboard, never carries a secret.
-  const cloneUrl = `${fx.origin}/git/${fx.kbId}.git`;
-  const copy = page.getByRole("button", { name: "Copy clone URL" });
-  await copy.focus();
-  await page.keyboard.press("Enter");
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(cloneUrl);
-  await expect(page.getByTestId("kb-downloads")).toContainText(cloneUrl);
-  await expect(page.getByTestId("kb-downloads")).toContainText("as the password");
-  expect(cloneUrl).not.toContain("@");
-  expect(await page.getByTestId("kb-downloads").innerText()).not.toMatch(/kbp_|token=/);
+test("a ready job can be discarded; it is released and a new one can start", async ({ page }) => {
+  await page.goto(viewer(fx.mediaPath, fx.oldRev));
+  await ready(page);
+  const transferId = await startAndAwaitReady(page, "Download whole knowledge base (ZIP)");
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByRole("status")).toContainText("Export cancelled.");
+  const state = await page.request.get(
+    `${fx.origin}/fixture/export-state?transferId=${transferId}`,
+  );
+  expect(await state.json()).toEqual({ state: "CANCELLED", released: true });
+  // The slot is free again.
+  await startAndAwaitReady(page, "Download assets (ZIP)");
 });
 
 test("saved ZIP stays done while production acknowledgement stalls; deadline and grace release it", async ({
@@ -216,11 +306,6 @@ test("saved ZIP stays done while production acknowledgement stalls; deadline and
 }) => {
   await page.goto(viewer(fx.mediaPath, fx.oldRev));
   await ready(page);
-  let transferId = "";
-  page.on("response", async (response) => {
-    if (response.url().includes("/rpc/kbExports/prepare") && response.ok())
-      transferId = (await response.json()).json.transferId;
-  });
   let release!: () => void;
   const hold = new Promise<void>((done) => {
     release = done;
@@ -232,11 +317,12 @@ test("saved ZIP stays done while production acknowledgement stalls; deadline and
     await hold;
     await route.fulfill({ json: { json: { released: true } } }).catch(() => {});
   });
+  const transferId = await startAndAwaitReady(page, "Download whole knowledge base (ZIP)");
   const download = page.waitForEvent("download");
-  const whole = page.getByRole("button", { name: "Download whole knowledge base (ZIP)" });
-  await whole.click();
+  await page.getByRole("button", { name: "Download ZIP" }).click();
   await download;
   await expect(page.getByRole("status")).toContainText("Download ready", { timeout: 3000 });
+  const whole = page.getByRole("button", { name: "Download whole knowledge base (ZIP)" });
   await expect(whole).toBeEnabled();
   await failed; // The real RPCLink's five-second deadline aborts the stalled request.
   release();
@@ -297,14 +383,16 @@ test("ACK deadline owns its fetch while a simultaneous production read succeeds"
 test("an expired transfer fails visibly and saves nothing", async ({ page }) => {
   await page.goto(viewer(fx.mediaPath, fx.oldRev));
   await ready(page);
-  const revoke = await page.request.post(`${fx.origin}/fixture/revoke-next-export`);
-  expect(revoke.ok()).toBe(true);
+  await startAndAwaitReady(page, "Download assets (ZIP)");
+  // The ready artifact expires server-side while the panel still shows it.
+  const expire = await page.request.post(`${fx.origin}/fixture/reset-exports`);
+  expect(expire.ok()).toBe(true);
   let downloads = 0;
   page.on("download", () => {
     downloads += 1;
   });
   const artifact = page.waitForResponse((r) => r.url().includes("/kb-exports/"));
-  await page.getByRole("button", { name: "Download assets (ZIP)" }).click();
+  await page.getByRole("button", { name: "Download ZIP" }).click();
   const refused = await artifact;
   expect(refused.status()).toBe(404);
   assertSandboxHeaders(refused.headers());

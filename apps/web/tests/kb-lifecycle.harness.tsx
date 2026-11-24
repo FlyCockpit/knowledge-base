@@ -6,10 +6,8 @@ import { createInstance } from "i18next";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
-import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument, MarkdownView } from "@/components/kb/markdown-view";
 import { PrAssetDeltaRow, PrRenderedPair } from "@/components/kb/pr-diff";
-import type { ExportPrepared, ExportPrepareInput } from "@/hooks/use-kb-export";
 
 const KB = "a".repeat(24);
 const asset = {
@@ -27,28 +25,6 @@ await i18n.init({
   interpolation: { escapeValue: false },
   react: { useSuspense: false },
 });
-const prepare = {
-  mutationKey: ["lifecycle", "prepare"],
-  async mutationFn(input: ExportPrepareInput): Promise<ExportPrepared> {
-    const response = await fetch("/lifecycle/prepare", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-    if (!response.ok) throw new Error("prepare failed");
-    return response.json();
-  },
-};
-const complete = {
-  mutationKey: ["lifecycle", "complete"],
-  async mutationFn(input: { kbId: string; transferId: string }) {
-    const response = await fetch("/lifecycle/complete", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-    if (!response.ok) throw new Error("complete failed");
-    return response.json();
-  },
-};
 function Lifecycle() {
   const [selection, setSelection] = useState("A");
   const [mounted, setMounted] = useState(true);
@@ -82,15 +58,7 @@ function Lifecycle() {
       </button>
       <p data-testid="selection">{selection}</p>
       {mounted &&
-        (mode === "export" ? (
-          <KbDownloads
-            kbId={KB}
-            rev={rev}
-            origin={location.origin}
-            prepare={prepare}
-            complete={complete}
-          />
-        ) : mode === "preview" ? (
+        (mode === "preview" ? (
           <MarkdownView
             markdown={markdown}
             context={{ lang: "en-US", kbId: KB, rev, documentPath: doc.path, assets, draft: true }}

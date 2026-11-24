@@ -447,6 +447,16 @@ CREATE TABLE export_artifacts (
 CREATE UNIQUE INDEX export_actor_slot ON export_artifacts(actor_key) WHERE state IN ('WRITING','READY');
 CREATE INDEX export_active ON export_artifacts(state,expires_ms) WHERE state IN ('WRITING','READY');
 CREATE INDEX export_cleanup ON export_artifacts(retry_ms,id) WHERE state IN ('ABORTED','DOWNLOADED') AND reclaimed=0;
+-- A start with a new key that reused a same-scope job: replaying that key
+-- returns the same job (even once cancelled), never a second build.
+CREATE TABLE export_aliases (
+  actor_key TEXT NOT NULL,
+  kb_id TEXT NOT NULL REFERENCES kbs(id) ON DELETE RESTRICT,
+  idempotency_key TEXT NOT NULL,
+  request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+  export_id TEXT NOT NULL REFERENCES export_artifacts(id) ON DELETE RESTRICT,
+  PRIMARY KEY(actor_key,kb_id,idempotency_key)
+) STRICT;
 CREATE TABLE export_frames (
   export_id TEXT NOT NULL REFERENCES export_artifacts(id) ON DELETE RESTRICT,
   frame INTEGER NOT NULL CHECK (frame BETWEEN 0 AND 1411),

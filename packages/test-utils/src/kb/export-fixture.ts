@@ -16,10 +16,19 @@ import { createAssetPublicationState } from "@knowledge-base/api/lib/kb/asset-pu
 import { createAssetStorageLifecycle } from "@knowledge-base/api/lib/kb/asset-storage-lifecycle";
 import { createAssetCacheTransactions } from "@knowledge-base/api/lib/kb/asset-storage-state";
 import { runLockedOperation } from "@knowledge-base/api/lib/kb/authority-lock";
+import type { BlobStore } from "@knowledge-base/api/lib/kb/blob-store";
 import { casBlobPath, createDiskBlobStore } from "@knowledge-base/api/lib/kb/blob-store-disk";
 import { assetS3Key, createS3BlobStore } from "@knowledge-base/api/lib/kb/blob-store-s3";
 import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
-import { reclaimExports } from "@knowledge-base/api/lib/kb/exports";
+import {
+  awaitExportBuild,
+  type ExportActor,
+  type ExportInput,
+  type ExportJob,
+  exportStatus,
+  prepareExport,
+  reclaimExports,
+} from "@knowledge-base/api/lib/kb/exports";
 import { kbBareRepoPath } from "@knowledge-base/api/lib/kb/git-read";
 import { writeInitialMainCommit, writeStagedObjects } from "@knowledge-base/api/lib/kb/git-write";
 import { createMemoryRatePort } from "@knowledge-base/api/lib/kb/limits";
@@ -206,7 +215,10 @@ export async function frames(base: ExportBase, id: string) {
   }
 }
 /** The artifact is gone and its slot and quota are released, in the given terminal state. */
-export async function released(id: string, state: "ABORTED" | "DOWNLOADED") {
+export async function released(
+  id: string,
+  state: "ABORTED" | "DOWNLOADED" | "FAILED" | "CANCELLED",
+) {
   const row = await prisma.exportArtifact.findUniqueOrThrow({ where: { id } });
   expect(row.state).toBe(state);
   expect(row.reclaimedAt).not.toBeNull();
@@ -304,4 +316,70 @@ export async function s3Sources(entries: AssetManifestEntry[]) {
     await http.close();
     throw error;
   }
+}
+
+/** Starts a background export, joins its build, and returns its final job. */
+export async function settledExport(
+  config: KbRuntimeConfig,
+  actor: ExportActor,
+  input: ExportInput,
+  options?: Parameters<typeof prepareExport>[3],
+): Promise<ExportJob> {
+  const job = await prepareExport(config, actor, input, options);
+  await awaitExportBuild(job.transferId);
+  return exportStatus(config, actor, { kbId: input.kbId, transferId: job.transferId });
+}
+export type ReadyExportJob = ExportJob & { size: number; contentHash: string; expiresAt: string };
+/** `settledExport` that must end ready: the old synchronous descriptor. */
+export async function readyExport(
+  config: KbRuntimeConfig,
+  actor: ExportActor,
+  input: ExportInput,
+  options?: Parameters<typeof prepareExport>[3],
+): Promise<ReadyExportJob> {
+  const job = await settledExport(config, actor, input, options);
+  expect(job.state, JSON.stringify(job.error)).toBe("ready");
+  return job as ReadyExportJob;
+}
+/** Every blob frame read first awaits `gate` (abort-aware), so a build can be held or slowed. */
+export function gatedStore(
+  store: BlobStore,
+  gate: (signal: AbortSignal) => Promise<void>,
+): BlobStore {
+  return {
+    backend: store.backend,
+    publishVerified: (input) => store.publishVerified(input),
+    assertDurable: (input) => store.assertDurable(input),
+    async open(input) {
+      const reader = await store.open(input);
+      return {
+        get verified() {
+          return reader.verified;
+        },
+        preflight: (check) => reader.preflight(check),
+        async readFrame(offset, length) {
+          await gate(input.signal);
+          return reader.readFrame(offset, length);
+        },
+        complete: () => reader.complete(),
+        close: () => reader.close(),
+        sampleDownload: reader.sampleDownload && (() => reader.sampleDownload!()),
+      };
+    },
+  };
+}
+/** An abort-aware sleep for slowed sources. */
+export function pause(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
 }

@@ -102,7 +102,6 @@ pub(crate) fn artifact_path(paths: &StorePaths, id: &str) -> Result<PathBuf, Sto
     paths.check_no_follow(&path)?;
     Ok(path)
 }
-type ExistingReceipt = (String, String, String, Option<String>, Option<String>, u64);
 struct Entry {
     path: String,
     size: u64,
@@ -186,7 +185,7 @@ impl Store {
         &self,
         p: &LocalPrincipal,
         input: ExportPrepareInput,
-    ) -> Result<ExportPrepareOutput, StoreError> {
+    ) -> Result<ExportJob, StoreError> {
         self.export_prepare_controlled(p, input, &ExportControl::default(), &mut |_, _| Ok(()))
     }
     /// Observer is a fault/crash seam; production uses no observer. Caller
@@ -198,7 +197,7 @@ impl Store {
         input: ExportPrepareInput,
         c: &ExportControl,
         observe: &mut dyn FnMut(ExportStage, &Uuid) -> Result<(), StoreError>,
-    ) -> Result<ExportPrepareOutput, StoreError> {
+    ) -> Result<ExportJob, StoreError> {
         check_input::<ExportPrepare>(&input)?;
         c.check()?;
         let _deadline =
@@ -211,27 +210,77 @@ impl Store {
             self.authorize(p, &input.kb_id, Permission::Read)?;
             self.active_record(&input.kb_id)?;
             let request = serde_json::to_string(&input).map_err(|_| unavailable())?;
-            let existing:Option<ExistingReceipt>=self.conn.query_row("SELECT id,request_json,state,response_json,failure_code,expires_ms FROM export_artifacts WHERE actor_key=?1 AND kb_id=?2 AND idempotency_key=?3",(p.actor_key(),input.kb_id.as_str(),input.idempotency_key.as_str()),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,crate::uploads::unsigned(r,5)?))).optional()?;
-            if let Some((_, prior, state, response, failure, expires)) = existing {
+            // A key replay (original or alias) returns the job as it is now:
+            // ready (its recorded receipt), or failed/cancelled/expired.
+            let existing: Option<(String, String)> = self
+                .conn
+                .query_row(
+                    "SELECT id,request_json FROM export_artifacts WHERE actor_key=?1 AND kb_id=?2 AND idempotency_key=?3 UNION ALL SELECT export_id,request_json FROM export_aliases WHERE actor_key=?1 AND kb_id=?2 AND idempotency_key=?3 LIMIT 1",
+                    (p.actor_key(), input.kb_id.as_str(), input.idempotency_key.as_str()),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((id, prior)) = existing {
                 if prior != request {
                     return Err(StoreError::IdempotencyMismatch);
                 }
-                if state == "ABORTED" {
-                    return Err(StoreError::OperationAborted(
-                        failure
-                            .as_deref()
-                            .unwrap_or("CANCELLED")
-                            .parse()
-                            .map_err(|_| unavailable())?,
-                    ));
-                }
-                if state != "READY" || expires <= self.now_ms() {
-                    return Err(StoreError::Conflict("export is not available".into()));
-                }
                 c.check()?;
                 self.authorize(p, &input.kb_id, Permission::Read)?;
-                return serde_json::from_str(response.as_deref().ok_or_else(unavailable)?)
-                    .map_err(|_| unavailable());
+                let id = Uuid::parse(&id).map_err(|_| unavailable())?;
+                let row = self.job_row(
+                    p,
+                    &TransferRef {
+                        kb_id: input.kb_id.clone(),
+                        transfer_id: id.clone(),
+                    },
+                )?;
+                return self.job_of(&id, row);
+            }
+            let (repo, rev) = self
+                .pinned_revision(p, &input.kb_id, input.rev.as_ref())
+                .or_else(|e| OperationDeadline::check().and(Err(e)))?;
+            // The same KB, kind and revision while that job is still
+            // downloadable: this key becomes its alias (one build, one slot).
+            let same: Option<String> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id,request_json FROM export_artifacts WHERE actor_key=?1 AND kb_id=?2 AND rev=?3 AND (state='WRITING' OR (state='READY' AND expires_ms>?4)) ORDER BY rowid DESC",
+                )?;
+                let rows = stmt
+                    .query_map(
+                        (
+                            p.actor_key(),
+                            input.kb_id.as_str(),
+                            rev.as_str(),
+                            self.now_ms() as i64,
+                        ),
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut found = None;
+                for (id, json) in rows {
+                    let prior: ExportPrepareInput =
+                        serde_json::from_str(&json).map_err(|_| unavailable())?;
+                    if prior.kind == input.kind {
+                        found = Some(id);
+                        break;
+                    }
+                }
+                found
+            };
+            if let Some(id) = same {
+                self.conn.execute(
+                    "INSERT INTO export_aliases(actor_key,kb_id,idempotency_key,request_json,export_id) VALUES (?1,?2,?3,?4,?5)",
+                    (p.actor_key(), input.kb_id.as_str(), input.idempotency_key.as_str(), request.as_str(), id.as_str()),
+                )?;
+                let id = Uuid::parse(&id).map_err(|_| unavailable())?;
+                let row = self.job_row(
+                    p,
+                    &TransferRef {
+                        kb_id: input.kb_id.clone(),
+                        transfer_id: id.clone(),
+                    },
+                )?;
+                return self.job_of(&id, row);
             }
             let counts:(i64,i64)=self.conn.query_row("SELECT count(*),coalesce(sum(actor_key=?1),0) FROM export_artifacts WHERE state IN ('WRITING','READY')",[p.actor_key()],|r|Ok((r.get(0)?,r.get(1)?)))?;
             if counts.0 >= 2 || counts.1 >= 1 {
@@ -243,9 +292,6 @@ impl Store {
                 input.kb_id.as_str(),
                 self.now_ms(),
             )?;
-            let (repo, rev) = self
-                .pinned_revision(p, &input.kb_id, input.rev.as_ref())
-                .or_else(|e| OperationDeadline::check().and(Err(e)))?;
             let entries = inventory(self, &input.kb_id, &repo, &rev, input.kind, c)
                 .or_else(|e| OperationDeadline::check().and(Err(e)))?;
             // Continuous producer ownership reserves the complete STORE archive
@@ -276,7 +322,7 @@ impl Store {
             let id = new_uuid_v4()?;
             let expires = self.now_ms() + EXPORT_TTL_MS;
             self.conn.execute("INSERT INTO export_artifacts(id,kb_id,actor_key,idempotency_key,request_json,rev,expires_ms,state) VALUES (?1,?2,?3,?4,?5,?6,?7,'WRITING')",rusqlite::params![id.as_str(),input.kb_id.as_str(),p.actor_key(),input.idempotency_key.as_str(),request,rev.as_str(),expires as i64])?;
-            let result: Result<ExportPrepareOutput, StoreError> = (|| {
+            let result: Result<ExportJob, StoreError> = (|| {
                 observe(ExportStage::Reserved, &id)?;
                 c.check()?;
                 let path = artifact_path(&self.paths, id.as_str())?;
@@ -302,14 +348,25 @@ impl Store {
                 observe(ExportStage::Durable, &id)?;
                 c.check()?;
                 let (size, hash, frames) = seal(&mut file, c)?;
-                let out = ExportPrepareOutput {
+                // Local preparation is synchronous: the job is ready at once.
+                let content: u64 = entries.iter().map(|e| e.size).sum();
+                let out = ExportJob {
                     operation_id: id.clone(),
                     transfer_id: id.clone(),
+                    kind: input.kind,
                     rev,
-                    size,
-                    content_hash: hash,
-                    expires_at: IsoInstant::parse(&format_utc(expires / 1000))
-                        .map_err(|_| unavailable())?,
+                    state: ExportState::Ready,
+                    progress: ExportProgress {
+                        done_bytes: content,
+                        total_bytes: Some(content),
+                    },
+                    size: Some(size),
+                    content_hash: Some(hash),
+                    expires_at: Some(
+                        IsoInstant::parse(&format_utc(expires / 1000))
+                            .map_err(|_| unavailable())?,
+                    ),
+                    error: None,
                     mime: ZipMime,
                 };
                 self.authorize(p, &input.kb_id, Permission::Read)?;
@@ -321,7 +378,7 @@ impl Store {
                         (id.as_str(), n as i64, h),
                     )?;
                 }
-                tx.execute("UPDATE export_artifacts SET state='READY',size=?2,content_hash=?3,response_json=?4 WHERE id=?1 AND state='WRITING'",(id.as_str(),size as i64,out.content_hash.as_str(),serde_json::to_string(&out).map_err(|_|unavailable())?))?;
+                tx.execute("UPDATE export_artifacts SET state='READY',size=?2,content_hash=?3,response_json=?4 WHERE id=?1 AND state='WRITING'",(id.as_str(),size as i64,out.content_hash.as_ref().map(|h| h.as_str()),serde_json::to_string(&out).map_err(|_|unavailable())?))?;
                 tx.commit()?;
                 observe(ExportStage::Ready, &id)?;
                 c.check()?;
@@ -350,6 +407,158 @@ impl Store {
 // deadline/cancellation/drain boundary as Git. No new unsafe/dependency scope.
 fn available_disk(repo: &GitRepo, path: &Path) -> Result<u64, StoreError> {
     crate::limits::measure_disk(path, |command, cap| repo.run_command(command, cap))
+}
+
+/// `failure_code` of an export its owner cancelled or discarded.
+pub(crate) const OWNER_CANCELLED: &str = "OWNER_CANCELLED";
+
+/// The server's user-facing text for each failure code (`exports.ts`).
+fn failure_message(code: ExportFailureCode) -> &'static str {
+    match code {
+        ExportFailureCode::DeadlineExceeded => "The export took longer than its time limit.",
+        ExportFailureCode::Interrupted => {
+            "The server restarted or stopped while preparing the export. Start it again."
+        }
+        ExportFailureCode::QuotaExceeded => "The export is larger than the export limits allow.",
+        ExportFailureCode::AccessDenied => {
+            "Read access to this knowledge base ended while preparing the export."
+        }
+        ExportFailureCode::RevisionNotFound => "The revision is not available.",
+        ExportFailureCode::InvalidContent => {
+            "The revision contains content that cannot be exported."
+        }
+        ExportFailureCode::StorageUnavailable => {
+            "Storage was unavailable while preparing the export."
+        }
+    }
+}
+
+fn failure_of(code: Option<&str>) -> ExportFailureCode {
+    match code {
+        Some("DEADLINE_EXCEEDED") => ExportFailureCode::DeadlineExceeded,
+        Some("CANCELLED") => ExportFailureCode::Interrupted,
+        Some("QUOTA_EXCEEDED") => ExportFailureCode::QuotaExceeded,
+        Some("INVALID_ARGUMENT") => ExportFailureCode::InvalidContent,
+        Some("FORBIDDEN" | "UNAUTHORIZED" | "NOT_FOUND") => ExportFailureCode::AccessDenied,
+        _ => ExportFailureCode::StorageUnavailable,
+    }
+}
+
+type JobRow = (String, String, String, Option<String>, Option<String>, u64);
+
+impl Store {
+    fn job_row(&self, p: &LocalPrincipal, input: &TransferRef) -> Result<JobRow, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT request_json,rev,state,response_json,failure_code,expires_ms FROM export_artifacts WHERE id=?1 AND kb_id=?2 AND actor_key=?3",
+                (input.transfer_id.as_str(), input.kb_id.as_str(), p.actor_key()),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        crate::uploads::unsigned(r, 5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)
+    }
+
+    /// The job as the protocol reports it: the recorded ready receipt while it
+    /// is downloadable, else its terminal state.
+    fn job_of(&self, id: &Uuid, row: JobRow) -> Result<ExportJob, StoreError> {
+        let (request, rev, state, response, failure, expires) = row;
+        if state == "READY" && expires > self.now_ms() {
+            let mut job: ExportJob =
+                serde_json::from_str(response.as_deref().ok_or_else(unavailable)?)
+                    .map_err(|_| unavailable())?;
+            // EOF grace moves the live expiry; the receipt reports the row's.
+            job.expires_at =
+                Some(IsoInstant::parse(&format_utc(expires / 1000)).map_err(|_| unavailable())?);
+            return Ok(job);
+        }
+        let request: ExportPrepareInput =
+            serde_json::from_str(&request).map_err(|_| unavailable())?;
+        let built: Option<ExportJob> = match response.as_deref() {
+            Some(json) => Some(serde_json::from_str(json).map_err(|_| unavailable())?),
+            None => None,
+        };
+        let total = built.as_ref().and_then(|job| job.progress.total_bytes);
+        let (state, error) = match (state.as_str(), failure.as_deref()) {
+            ("WRITING", _) => (ExportState::Building, None),
+            ("ABORTED", Some(OWNER_CANCELLED)) => (ExportState::Cancelled, None),
+            // It never became ready: the build failed (or a restart cut it short).
+            ("ABORTED", code) if built.is_none() => {
+                let code = failure_of(code);
+                (
+                    ExportState::Failed,
+                    Some(ExportFailure {
+                        code,
+                        message: failure_message(code).to_owned(),
+                    }),
+                )
+            }
+            _ => (ExportState::Expired, None),
+        };
+        Ok(ExportJob {
+            operation_id: id.clone(),
+            transfer_id: id.clone(),
+            kind: request.kind,
+            rev: Sha::parse(&rev).map_err(|_| unavailable())?,
+            state,
+            progress: ExportProgress {
+                done_bytes: if state == ExportState::Expired {
+                    total.unwrap_or(0)
+                } else {
+                    0
+                },
+                total_bytes: total,
+            },
+            size: None,
+            content_hash: None,
+            expires_at: None,
+            error,
+            mime: ZipMime,
+        })
+    }
+
+    pub fn export_status(
+        &self,
+        p: &LocalPrincipal,
+        input: TransferRef,
+    ) -> Result<ExportJob, StoreError> {
+        check_input::<ExportStatus>(&input)?;
+        let _guard = self.lock_write(std::slice::from_ref(&input.kb_id))?;
+        self.authorize(p, &input.kb_id, Permission::Read)?;
+        self.active_record(&input.kb_id)?;
+        let row = self.job_row(p, &input)?;
+        self.job_of(&input.transfer_id, row)
+    }
+
+    /// Discards a ready export that was not fully read (local preparation is
+    /// synchronous, so nothing is ever still building); any other job is
+    /// returned unchanged.
+    pub fn export_cancel(
+        &self,
+        p: &LocalPrincipal,
+        input: TransferRef,
+    ) -> Result<ExportJob, StoreError> {
+        check_input::<ExportCancel>(&input)?;
+        let _guard = self.lock_write(std::slice::from_ref(&input.kb_id))?;
+        self.authorize(p, &input.kb_id, Permission::Read)?;
+        self.active_record(&input.kb_id)?;
+        self.job_row(p, &input)?;
+        self.conn.execute(
+            "UPDATE export_artifacts SET state='ABORTED',failure_code=?2 WHERE id=?1 AND state='READY' AND completed_ms IS NULL",
+            (input.transfer_id.as_str(), OWNER_CANCELLED),
+        )?;
+        sweep(&self.conn, &self.paths, self.now_ms(), false)?;
+        let row = self.job_row(p, &input)?;
+        self.job_of(&input.transfer_id, row)
+    }
 }
 
 pub(crate) fn abort(conn: &Connection, id: &str, code: ErrorCode) -> Result<(), StoreError> {

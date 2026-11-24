@@ -116,15 +116,21 @@ describe.each([
         }
         const response = await endpoint.fetch(request);
         const wire = (await response.clone().json()) as {
-          result?: { structuredContent?: { data?: { transferId?: string; eof?: boolean } } };
+          result?: {
+            structuredContent?: {
+              data?: { transferId?: string; eof?: boolean; state?: string };
+            };
+          };
         };
         const data = wire.result?.structuredContent?.data;
         if (name === "knowledge_export_prepare" && data?.transferId) {
           transferId = data.transferId;
-          artifactBytes = readFileSync(artifactPath(transferId));
           if (mode === "revoked")
             await revokePersonalToken(configured, base.actor.principal.userId, mintedId);
         }
+        // The background build's sealed bytes, once the job reports ready.
+        if (data?.transferId === transferId && data.state === "ready" && !artifactBytes)
+          artifactBytes = readFileSync(artifactPath(transferId));
         if (mode === "lost-eof" && data?.eof && !lost) {
           lost = true;
           // Real EOF/grace committed, but close the socket before its reply.
@@ -203,7 +209,12 @@ describe.each([
         else expect(readFileSync(output, "utf8")).toBe("existing destination");
         expect(completed).toBe(0);
         const row = await prisma.exportArtifact.findUniqueOrThrow({ where: { id: transferId } });
-        expect(row.state).toBe("READY");
+        if (mode === "revoked") {
+          // Revoked right after the start: the background build either
+          // finished first (READY, never read) or failed its live recheck.
+          expect(["READY", "FAILED"]).toContain(row.state);
+          if (row.state === "FAILED") expect(row.failureCode).toBe("ACCESS_DENIED");
+        } else expect(row.state).toBe("READY");
         if (mode === "revoked") expect(row.downloadCompletedAt).toBeNull();
         else expect(row.downloadCompletedAt).not.toBeNull();
         return;

@@ -4179,6 +4179,118 @@
       },
       "validOutputVariants": []
     },
+    "knowledge_export_cancel": {
+      "invalidInputs": [
+        {
+          "label": "unknown-field",
+          "value": {
+            "extra": 1,
+            "kbId": "abcdefghijklmnopqrstuvwx",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "null-kbId",
+          "value": {
+            "kbId": null,
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "invalidOutputs": [
+        {
+          "label": "absent-nullable-contentHash",
+          "value": {
+            "error": {
+              "code": "DEADLINE_EXCEEDED",
+              "message": "The export took longer than its time limit."
+            },
+            "expiresAt": null,
+            "kind": "whole",
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 10
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": null,
+            "state": "failed",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "null-kind",
+          "value": {
+            "contentHash": null,
+            "error": {
+              "code": "DEADLINE_EXCEEDED",
+              "message": "The export took longer than its time limit."
+            },
+            "expiresAt": null,
+            "kind": null,
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 10
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": null,
+            "state": "failed",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "unknown-field",
+          "value": {
+            "contentHash": null,
+            "error": {
+              "code": "DEADLINE_EXCEEDED",
+              "message": "The export took longer than its time limit."
+            },
+            "expiresAt": null,
+            "extra": true,
+            "kind": "whole",
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 10
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": null,
+            "state": "failed",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "validInput": {
+        "kbId": "abcdefghijklmnopqrstuvwx",
+        "transferId": "00000000-0000-4000-8000-000000000001"
+      },
+      "validInputVariants": [],
+      "validOutput": {
+        "contentHash": null,
+        "error": {
+          "code": "DEADLINE_EXCEEDED",
+          "message": "The export took longer than its time limit."
+        },
+        "expiresAt": null,
+        "kind": "whole",
+        "mime": "application/zip",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "progress": {
+          "doneBytes": 0,
+          "totalBytes": 10
+        },
+        "rev": "0000000000000000000000000000000000000000",
+        "size": null,
+        "state": "failed",
+        "transferId": "00000000-0000-4000-8000-000000000001"
+      },
+      "validOutputVariants": []
+    },
     "knowledge_export_complete": {
       "invalidInputs": [
         {
@@ -4247,39 +4359,59 @@
       ],
       "invalidOutputs": [
         {
-          "label": "null-contentHash",
+          "label": "absent-nullable-contentHash",
           "value": {
-            "contentHash": null,
-            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "error": null,
+            "expiresAt": null,
+            "kind": "whole",
             "mime": "application/zip",
             "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 4096,
+              "totalBytes": null
+            },
             "rev": "0000000000000000000000000000000000000000",
-            "size": 0,
+            "size": null,
+            "state": "building",
             "transferId": "00000000-0000-4000-8000-000000000001"
           }
         },
         {
-          "label": "unsafe-size",
+          "label": "null-kind",
           "value": {
-            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "contentHash": null,
+            "error": null,
+            "expiresAt": null,
+            "kind": null,
             "mime": "application/zip",
             "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 4096,
+              "totalBytes": null
+            },
             "rev": "0000000000000000000000000000000000000000",
-            "size": 9007199254740992,
+            "size": null,
+            "state": "building",
             "transferId": "00000000-0000-4000-8000-000000000001"
           }
         },
         {
           "label": "unknown-field",
           "value": {
-            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "contentHash": null,
+            "error": null,
+            "expiresAt": null,
             "extra": true,
+            "kind": "whole",
             "mime": "application/zip",
             "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 4096,
+              "totalBytes": null
+            },
             "rev": "0000000000000000000000000000000000000000",
-            "size": 0,
+            "size": null,
+            "state": "building",
             "transferId": "00000000-0000-4000-8000-000000000001"
           }
         }
@@ -4291,12 +4423,138 @@
       },
       "validInputVariants": [],
       "validOutput": {
-        "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        "expiresAt": "2026-01-15T12:30:00.000Z",
+        "contentHash": null,
+        "error": null,
+        "expiresAt": null,
+        "kind": "whole",
         "mime": "application/zip",
         "operationId": "00000000-0000-4000-8000-000000000001",
+        "progress": {
+          "doneBytes": 4096,
+          "totalBytes": null
+        },
+        "rev": "0000000000000000000000000000000000000000",
+        "size": null,
+        "state": "building",
+        "transferId": "00000000-0000-4000-8000-000000000001"
+      },
+      "validOutputVariants": []
+    },
+    "knowledge_export_status": {
+      "invalidInputs": [
+        {
+          "label": "unknown-field",
+          "value": {
+            "extra": 1,
+            "kbId": "abcdefghijklmnopqrstuvwx",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "null-kbId",
+          "value": {
+            "kbId": null,
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "invalidOutputs": [
+        {
+          "label": "absent-nullable-error",
+          "value": {
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "kind": "assets",
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 0
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": 0,
+            "state": "ready",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "null-kind",
+          "value": {
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "error": null,
+            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "kind": null,
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 0
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": 0,
+            "state": "ready",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "unsafe-size",
+          "value": {
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "error": null,
+            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "kind": "assets",
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 0
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": 9007199254740992,
+            "state": "ready",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        },
+        {
+          "label": "unknown-field",
+          "value": {
+            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "error": null,
+            "expiresAt": "2026-01-15T12:30:00.000Z",
+            "extra": true,
+            "kind": "assets",
+            "mime": "application/zip",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "progress": {
+              "doneBytes": 0,
+              "totalBytes": 0
+            },
+            "rev": "0000000000000000000000000000000000000000",
+            "size": 0,
+            "state": "ready",
+            "transferId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "validInput": {
+        "kbId": "abcdefghijklmnopqrstuvwx",
+        "transferId": "00000000-0000-4000-8000-000000000001"
+      },
+      "validInputVariants": [],
+      "validOutput": {
+        "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "error": null,
+        "expiresAt": "2026-01-15T12:30:00.000Z",
+        "kind": "assets",
+        "mime": "application/zip",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "progress": {
+          "doneBytes": 0,
+          "totalBytes": 0
+        },
         "rev": "0000000000000000000000000000000000000000",
         "size": 0,
+        "state": "ready",
         "transferId": "00000000-0000-4000-8000-000000000001"
       },
       "validOutputVariants": []

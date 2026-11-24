@@ -106,6 +106,26 @@ kb export --kb <knowledge-base-id> --output knowledge-base.zip
 kb export --kb <knowledge-base-id> --kind assets --output assets.zip --json
 ```
 
+The server prepares the ZIP as a background job (up to 30 minutes), so no
+single request has to outlive a proxy timeout. `kb export` starts the job,
+polls its status with a bounded backoff (1 s growing to 5 s; progress goes to
+stderr) for at most `--wait-timeout` seconds (default 2100), then downloads it.
+A repeated start with the same `--idempotency-key`, or of the same KB, kind
+and revision while one is still pending, building or ready, returns the same
+job. To start without waiting and come back later:
+
+```sh
+kb export --kb <knowledge-base-id> --no-wait            # prints `<transfer-id> pending`
+kb export --kb <knowledge-base-id> --transfer <transfer-id> --status
+kb export --kb <knowledge-base-id> --transfer <transfer-id> --output knowledge-base.zip
+kb export --kb <knowledge-base-id> --transfer <transfer-id> --cancel
+```
+
+If the wait bound passes, the command exits non-zero and prints the
+`--transfer` command that resumes it; the export keeps building on the server.
+A failed, cancelled or expired job exits non-zero with the server's reason; an
+unknown or another user's transfer ID exits 3.
+
 `--rev <sha>` pins a revision. The client reads bounded MCP frames, retries
 lost frame replies with the same offset, and verifies the exact size and
 SHA-256 before publishing the private temporary file. Existing destinations

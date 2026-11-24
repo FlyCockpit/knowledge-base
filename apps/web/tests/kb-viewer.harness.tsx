@@ -14,6 +14,8 @@ import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument, type KbViewerDocument } from "@/components/kb/markdown-view";
 import type { ExportCompleteInput } from "@/hooks/use-kb-export";
 import { orpc } from "@/utils/orpc";
+// The real stylesheet, so layout assertions (no overflow at 390 px) measure the shipped CSS.
+import "../../../packages/ui/src/styles/globals.css";
 
 // Transport regression: invoke two real procedures in the same batch window.
 Object.assign(window, {
@@ -68,13 +70,7 @@ createRoot(window.document.getElementById("root")!).render(
         ) : (
           <>
             <KbRenderedDocument lang="en-US" kbId={kbId} document={document} />
-            <KbDownloads
-              kbId={kbId}
-              rev={document.commitSha}
-              origin={window.location.origin}
-              prepare={orpc.kbExports.prepare.mutationOptions()}
-              complete={orpc.kbExports.complete.mutationOptions()}
-            />
+            <KbDownloads kbId={kbId} rev={document.commitSha} origin={window.location.origin} />
           </>
         )}
       </main>

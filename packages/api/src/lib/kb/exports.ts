@@ -2,13 +2,17 @@ import { type ChildProcess, execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, fsyncSync } from "node:fs";
 import { type FileHandle, open, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { crc32 } from "node:zlib";
+import type { ExportArtifactState, Prisma } from "@knowledge-base/db/client";
 import { logInternalError } from "@knowledge-base/env/log";
+import { createGrantCredentialVerifier } from "../mcp-token-access";
 import { assetValidationContext, prismaAssetQuery } from "./asset-authz";
 import { recordAuditEvent } from "./audit";
 import { runLockedOperation } from "./authority-lock";
 import { authorizedAssetStream } from "./authorized-stream";
 import { closePrivateTmpChain, openPrivateTmpDir, procChild } from "./cas-fd";
+import { credentialQuery } from "./credential-query";
 import { authorizeDocumentRead } from "./documents-read";
 import { KbDomainError } from "./errors";
 import { hardenedGitEnv, kbBareRepoPath, readBlobsAsync } from "./git-read";
@@ -17,22 +21,30 @@ import { hardenedGitEnv, kbBareRepoPath, readBlobsAsync } from "./git-read";
 const EXPORT_BLOB_BATCH = 256;
 
 import { chargeKbMutation } from "./limits";
+import { getOperationLease, type LockQuery } from "./lock";
 import { parseAssetManifest, validateManifestDocument } from "./manifest";
 import { canonicalRequestHash } from "./operation-intent";
 import { normalizeKbPath, registerPathWithPrefixes, type SeenPathEntry } from "./paths";
 import { prismaAuthorityStore, sqlAuthorityStore } from "./permissions";
 import { actorKeyFor, type CredentialVerifier, type Principal } from "./principal";
-import { kbReadToolSchemas } from "./protocol/reads";
+import { kbBaseInputSchema } from "./protocol/common";
+import { EXPORT_FAILURE_CODES, type ExportFailureCode, kbReadToolSchemas } from "./protocol/reads";
 import { releaseQuota, reserveQuota, statfsDiskMeter } from "./quota";
 import type { KbRuntimeConfig } from "./runtime";
 
 export const EXPORT_LIMITS = {
   entries: 8192,
   bytes: 256 * 1024 * 1024,
-  deadlineMs: 120_000,
+  /** A background build's own bound. No request waits on it. */
+  buildDeadlineMs: 30 * 60_000,
+  /** A READY artifact stays downloadable this long after it became ready. */
   ttlMs: 900_000,
   /** After the last frame is first served, frames stay readable this long. */
   graceMs: 600_000,
+  /** A running build renews its lease every `heartbeatMs`; a lapsed lease is swept. */
+  leaseMs: 30_000,
+  heartbeatMs: 5_000,
+  sweepMs: 60_000,
 } as const;
 const MAX_ARTIFACT_BYTES = EXPORT_LIMITS.bytes + EXPORT_LIMITS.entries * (1024 + 92) + 22;
 export type ExportActor = { principal: Principal; verifier?: CredentialVerifier };
@@ -44,6 +56,7 @@ export type ExportInput = {
 };
 type Entry = { path: string; size: number; blob?: string; hash?: string };
 const unavailable = () => new KbDomainError("STORAGE_UNAVAILABLE", "Export unavailable");
+/** This process's running builds, by export id. */
 const active = new Map<
   string,
   { abort: AbortController; done: Promise<unknown>; preparing: boolean }
@@ -128,29 +141,17 @@ export function preflightExportEntries(entries: readonly Entry[]): number {
 
 async function inventory(
   runtime: KbRuntimeConfig,
-  input: ExportInput & { rev: string },
+  input: { kbId: string; kind: "assets" | "whole"; rev: string },
   signal: AbortSignal,
 ) {
   const repo = kbBareRepoPath(runtime.reposDir, input.kbId);
-  const tips = (
-    await git(repo, ["for-each-ref", "--format=%(objectname)", "refs/heads"], signal, 64 * 1024)
-  )
-    .toString()
-    .trim()
-    .split("\n");
-  let reachable = false;
-  for (const tip of tips) {
-    if (!/^[0-9a-f]{40}$/.test(tip)) continue;
-    try {
-      await git(repo, ["merge-base", "--is-ancestor", input.rev, tip], signal);
-      reachable = true;
-      break;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && [1, 128].includes(Number(error.code))))
-        throw error;
-    }
+  try {
+    await assertReachable(repo, input.rev, signal);
+  } catch (error) {
+    if (error instanceof KbDomainError && error.code === "NOT_FOUND")
+      throw Object.assign(new Error("Revision not found"), { code: "REVISION_NOT_FOUND" });
+    throw error;
   }
-  if (!reachable) throw new KbDomainError("NOT_FOUND", "Revision not found");
   const raw = await git(repo, ["ls-tree", "-r", "-l", "-z", input.rev], signal, 8 * 1024 * 1024);
   const entries: Entry[] = [];
   for (const record of new TextDecoder("utf-8", { fatal: true }).decode(raw).split("\0")) {
@@ -283,304 +284,646 @@ export async function writeExportZip(
   };
 }
 
-export function exportDescriptor(row: {
+type ExportRow = {
   id: string;
+  kbId: string;
+  actorKey: string;
+  kind: string;
   rev: string;
+  state: ExportArtifactState;
   size: number | null;
   contentHash: string | null;
   expiresAt: Date;
-}) {
-  if (row.size === null || row.contentHash === null) throw unavailable();
+  failureCode: string | null;
+  progressBytes: number;
+  totalBytes: number | null;
+};
+const exportRowSelect = {
+  id: true,
+  kbId: true,
+  actorKey: true,
+  kind: true,
+  rev: true,
+  state: true,
+  size: true,
+  contentHash: true,
+  expiresAt: true,
+  failureCode: true,
+  progressBytes: true,
+  totalBytes: true,
+} satisfies Prisma.ExportArtifactSelect;
+
+/** Fixed, user-safe text per failure code; the server log carries any cause. */
+const FAILURE_MESSAGES: Record<ExportFailureCode, string> = {
+  DEADLINE_EXCEEDED: "The export took longer than its time limit.",
+  INTERRUPTED: "The server restarted or stopped while preparing the export. Start it again.",
+  QUOTA_EXCEEDED: "The export is larger than the export limits allow.",
+  ACCESS_DENIED: "Read access to this knowledge base ended while preparing the export.",
+  REVISION_NOT_FOUND: "The revision is not available.",
+  INVALID_CONTENT: "The revision contains content that cannot be exported.",
+  STORAGE_UNAVAILABLE: "Storage was unavailable while preparing the export.",
+};
+
+function failureCode(code: string | null): ExportFailureCode {
+  return (EXPORT_FAILURE_CODES as readonly string[]).includes(code ?? "")
+    ? (code as ExportFailureCode)
+    : "STORAGE_UNAVAILABLE";
+}
+
+/** The wire job: bytes are described (size, hash, expiry) only while downloadable. */
+export function exportDescriptor(row: ExportRow, now = Date.now()) {
+  const ready = row.state === "READY" && row.expiresAt.getTime() > now;
+  if (ready && (row.size === null || row.contentHash === null)) throw unavailable();
+  const state = ready
+    ? ("ready" as const)
+    : row.state === "PENDING"
+      ? ("pending" as const)
+      : row.state === "WRITING"
+        ? ("building" as const)
+        : row.state === "FAILED"
+          ? ("failed" as const)
+          : row.state === "CANCELLED"
+            ? ("cancelled" as const)
+            : ("expired" as const);
+  const code = state === "failed" ? failureCode(row.failureCode) : null;
   return {
     operationId: row.id,
     transferId: row.id,
+    kind: row.kind === "assets" ? ("assets" as const) : ("whole" as const),
     rev: row.rev,
-    size: row.size,
-    contentHash: row.contentHash,
-    expiresAt: row.expiresAt.toISOString(),
+    state,
+    progress: {
+      doneBytes: ready ? (row.totalBytes ?? row.progressBytes) : row.progressBytes,
+      totalBytes: row.totalBytes,
+    },
+    size: ready ? row.size : null,
+    contentHash: ready ? row.contentHash : null,
+    expiresAt: ready ? row.expiresAt.toISOString() : null,
+    error: code ? { code, message: FAILURE_MESSAGES[code] } : null,
     mime: "application/zip" as const,
   };
 }
+export type ExportJob = ReturnType<typeof exportDescriptor>;
 
-/** Short authority transaction is the single admission/receipt/quota serialization point.
- * Generation has one owner; no SQL lock is held across Git or ZIP I/O. */
+/** This server process: the owner every running build's lease names. */
+const LEASE_OWNER = `${hostname()}:${process.pid}:${randomUUID()}`;
+
+/** Maps a build error to its durable failure code. */
+function classifyFailure(error: unknown): ExportFailureCode {
+  const code =
+    error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "";
+  if (code === "DEADLINE_EXCEEDED") return "DEADLINE_EXCEEDED";
+  if (code === "INTERRUPTED") return "INTERRUPTED";
+  if (code === "QUOTA_EXCEEDED") return "QUOTA_EXCEEDED";
+  if (code === "INVALID_ARGUMENT") return "INVALID_CONTENT";
+  if (code === "REVISION_NOT_FOUND") return "REVISION_NOT_FOUND";
+  if (["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"].includes(code)) return "ACCESS_DENIED";
+  return "STORAGE_UNAVAILABLE";
+}
+
+async function assertReachable(repo: string, rev: string, signal: AbortSignal) {
+  const tips = (
+    await git(repo, ["for-each-ref", "--format=%(objectname)", "refs/heads"], signal, 64 * 1024)
+  )
+    .toString()
+    .trim()
+    .split("\n");
+  for (const tip of tips) {
+    if (!/^[0-9a-f]{40}$/.test(tip)) continue;
+    try {
+      await git(repo, ["merge-base", "--is-ancestor", rev, tip], signal);
+      return;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && [1, 128].includes(Number(error.code))))
+        throw error;
+    }
+  }
+  throw new KbDomainError("NOT_FOUND", "Revision not found");
+}
+
+/**
+ * Starts (or returns) a background export job. The short authority
+ * transaction is the single admission/receipt/quota serialization point; the
+ * build itself is owned by this server process, never by the request, and
+ * no SQL lock is held across Git or ZIP I/O. The request signal only cancels
+ * admission: once the receipt commits, the job runs to READY, FAILED or
+ * CANCELLED on its own bounded deadline. A repeated start (same key, or the
+ * same KB/kind/revision while that job is pending, building or ready) returns
+ * the existing job, never a second build.
+ */
 export async function prepareExport(
   runtime: KbRuntimeConfig,
   actor: ExportActor,
   raw: ExportInput,
-  options: { signal?: AbortSignal; deadlineMs?: number } = {},
-) {
+  options: {
+    signal?: AbortSignal;
+    deadlineMs?: number;
+    /** Process-owned runtime for the build when `runtime` is bound to the request. */
+    buildRuntime?: KbRuntimeConfig;
+  } = {},
+): Promise<ExportJob> {
   const input = kbReadToolSchemas.knowledge_export_prepare.input.parse(raw);
+  // The request signal cancels admission only, as a domain CANCELLED.
+  const admission = new AbortController();
+  const cancel = () => admission.abort(new KbDomainError("CANCELLED", "Export cancelled"));
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) cancel();
+  const signal = admission.signal;
+  try {
+    return await admitAndStart(
+      runtime,
+      options.buildRuntime ?? runtime,
+      actor,
+      input,
+      signal,
+      options.deadlineMs,
+    );
+  } finally {
+    options.signal?.removeEventListener("abort", cancel);
+  }
+}
+
+async function admitAndStart(
+  runtime: KbRuntimeConfig,
+  buildRuntime: KbRuntimeConfig,
+  actor: ExportActor,
+  input: ExportInput,
+  signal: AbortSignal,
+  deadlineMs: number | undefined,
+): Promise<ExportJob> {
   const actorKey = actorKeyFor(actor.principal);
   const auth = exportAuthority(runtime, actor, input.kbId);
   const id = randomUUID();
-  const abort = new AbortController();
-  const cancel = () => abort.abort(new KbDomainError("CANCELLED", "Export cancelled"));
-  options.signal?.addEventListener("abort", cancel, { once: true });
-  if (options.signal?.aborted) cancel();
-  const timer = setTimeout(
-    () => abort.abort(new KbDomainError("DEADLINE_EXCEEDED", "Export deadline exceeded")),
-    Math.min(options.deadlineMs ?? EXPORT_LIMITS.deadlineMs, EXPORT_LIMITS.deadlineMs),
+  await authorizeDocumentRead(auth);
+  signal.throwIfAborted();
+  // Reachability is cheap Git metadata: an unknown revision is refused at
+  // once instead of becoming a failed job.
+  if (input.rev)
+    await assertReachable(kbBareRepoPath(runtime.reposDir, input.kbId), input.rev, signal);
+  // Never wait for another job's producer to drain: its own cleanup reclaims it.
+  await reclaimExports(runtime, { join: false });
+  const buildMs = Math.min(
+    deadlineMs ?? EXPORT_LIMITS.buildDeadlineMs,
+    EXPORT_LIMITS.buildDeadlineMs,
   );
-  timer.unref();
-  const work = async () => {
-    let owned = false;
-    try {
-      await authorizeDocumentRead(auth);
-      abort.signal.throwIfAborted();
-      await reclaimExports(runtime);
-      const row = await runtime.coordinator.run({
-        opId: id,
-        kind: "authority",
-        run: ({ lease }) =>
-          lease.transaction(async (query) => {
-            abort.signal.throwIfAborted();
-            await authorizeDocumentRead({ ...auth, store: sqlAuthorityStore(query) });
-            const requestHash = canonicalRequestHash(input);
-            const prior = await runtime.prisma.exportArtifact.findUnique({
-              where: {
-                actorKey_kbId_idempotencyKey: {
-                  actorKey,
-                  kbId: input.kbId,
-                  idempotencyKey: input.idempotencyKey,
-                },
-              },
-            });
-            if (prior) {
-              if (prior.requestHash !== requestHash)
-                throw new KbDomainError("IDEMPOTENCY_MISMATCH", "Idempotency mismatch");
-              if (prior.state !== "READY" || prior.expiresAt.getTime() <= Date.now())
-                throw new KbDomainError("CONFLICT", "Export is not available");
-              return prior;
-            }
-            const counts = await query<{ total: number; mine: number }>(
-              `SELECT count(*)::int AS total, count(*) FILTER (WHERE "actorUserIdSnapshot" = $1)::int AS mine FROM "export_artifact" WHERE state IN ('WRITING', 'READY')`,
-              [actor.principal.userId],
-            );
-            if (counts.rows[0]!.total >= 2 || counts.rows[0]!.mine >= 1)
-              throw new KbDomainError("RATE_LIMITED", "Export capacity reached");
-            const kb = await runtime.prisma.knowledgeBase.findUniqueOrThrow({
-              where: { id: input.kbId },
-              select: { headSha: true },
-            });
-            const rev = input.rev ?? kb.headSha;
-            if (!rev) throw unavailable();
-            await chargeKbMutation(runtime.ratePort, actorKey, input.kbId);
-            const expiresAt = new Date(Date.now() + EXPORT_LIMITS.ttlMs);
-            const quota = await reserveQuota(
-              { transactionQuery: query },
-              {
-                opId: id,
-                charges: [],
-                expiresAt,
-                heldForPublication: true,
-                disks: [
-                  {
-                    path: runtime.assetsDir,
-                    bytes: BigInt(MAX_ARTIFACT_BYTES),
-                    meter: statfsDiskMeter(runtime.assetsDir),
-                  },
-                ],
-              },
-            );
-            await query(
-              `INSERT INTO "export_artifact" (id, "kbId", "actorKey", "actorUserIdSnapshot", kind, "idempotencyKey", "requestHash", rev, "reservationIds", "expiresAt", "deadlineAt", state, "createdAt") VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'WRITING',now())`,
-              [
-                id,
-                input.kbId,
-                actorKey,
-                actor.principal.userId,
-                input.kind,
-                input.idempotencyKey,
-                requestHash,
-                rev,
-                quota.reservationIds,
-                expiresAt.toISOString(),
-                new Date(Date.now() + EXPORT_LIMITS.deadlineMs).toISOString(),
-              ],
-            );
-            return { id, rev };
-          }),
-      });
-      if (row.id !== id) {
-        abort.signal.throwIfAborted();
-        await authorizeDocumentRead(auth);
-        const receipt = await runtime.prisma.exportArtifact.findUniqueOrThrow({
-          where: { id: row.id },
-        });
-        await authorizeDocumentRead(auth);
-        if (receipt.state !== "READY" || receipt.expiresAt.getTime() <= Date.now())
-          throw new KbDomainError("CONFLICT", "Export is not available");
-        return exportDescriptor(receipt);
-      }
-      owned = true;
-      const entries = await inventory(runtime, { ...input, rev: row.rev }, abort.signal);
-      // Blobs are read in batches, in archive order (never one process per file).
-      const blobEntries = entries.filter(
-        (entry): entry is Entry & { blob: string } => "blob" in entry && !!entry.blob,
-      );
-      const position = new Map<unknown, number>(blobEntries.map((entry, index) => [entry, index]));
-      let batch: ReadonlyMap<string, Buffer> = new Map();
-      const blobOf = async (entry: Entry): Promise<Buffer> => {
-        const cached = batch.get(entry.blob!);
-        if (cached) return cached;
-        const start =
-          position.get(entry) ?? blobEntries.findIndex((next) => next.blob === entry.blob);
-        try {
-          batch = await readBlobsAsync(
-            kbBareRepoPath(runtime.reposDir, input.kbId),
-            blobEntries.slice(start, start + EXPORT_BLOB_BATCH).map((next) => next.blob),
-            { maxBytes: 2 * 1024 * 1024 },
-            { signal: abort.signal },
-          );
-        } catch (error) {
-          abort.signal.throwIfAborted();
-          throw error;
-        }
-        return batch.get(entry.blob!)!;
-      };
-      const source = async function* (entry: Entry) {
-        abort.signal.throwIfAborted();
-        await authorizeDocumentRead(auth);
-        if (entry.blob) {
-          yield await blobOf(entry);
-          return;
-        }
-        const { body } = await authorizedAssetStream({
-          ...auth,
-          query: prismaAssetQuery(runtime.prisma),
-          reposDir: runtime.reposDir,
-          blobStore: runtime.blobStore,
-          purpose: "internal",
-          rev: row.rev,
-          hash: entry.hash!,
-          range: null,
-          signal: abort.signal,
-        });
-        if (!body) throw unavailable();
-        const reader = body.getReader();
-        try {
-          for (;;) {
-            const value = await reader.read();
-            if (value.done) break;
-            yield value.value;
-          }
-        } finally {
-          await reader.cancel();
-          reader.releaseLock();
-        }
-      };
-      const sealed = await withExportFile(runtime.assetsDir, id, async (path) => {
-        abort.signal.throwIfAborted();
-        const file = await open(
-          path,
-          constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW,
-          0o600,
+  const admitted = await runtime.coordinator.run({
+    opId: id,
+    kind: "authority",
+    run: ({ lease }) =>
+      lease.transaction(async (query) => {
+        signal.throwIfAborted();
+        await authorizeDocumentRead({ ...auth, store: sqlAuthorityStore(query) });
+        const requestHash = canonicalRequestHash(input);
+        // A key names the job it started, or the live job it was reused for.
+        const {
+          rows: [prior],
+        } = await query<{ id: string; requestHash: string }>(
+          `SELECT id, "requestHash" FROM "export_artifact" WHERE "actorKey"=$1 AND "kbId"=$2 AND "idempotencyKey"=$3 UNION ALL SELECT "exportId" AS id, "requestHash" FROM "export_request_key" WHERE "actorKey"=$1 AND "kbId"=$2 AND "idempotencyKey"=$3 LIMIT 1`,
+          [actorKey, input.kbId, input.idempotencyKey],
         );
-        try {
-          return await writeExportZip(file, entries, source, abort.signal);
-        } finally {
-          await file.close();
+        if (prior) {
+          if (prior.requestHash !== requestHash)
+            throw new KbDomainError("IDEMPOTENCY_MISMATCH", "Idempotency mismatch");
+          return { id: prior.id, created: false };
         }
-      });
-      // File contents and containing directory are durable before READY is committed.
-      const chain = openPrivateTmpDir(runtime.assetsDir);
+        const kb = await runtime.prisma.knowledgeBase.findUniqueOrThrow({
+          where: { id: input.kbId },
+          select: { headSha: true },
+        });
+        const rev = input.rev ?? kb.headSha;
+        if (!rev) throw unavailable();
+        // The same scope while one is pending, building or still downloadable.
+        const {
+          rows: [same],
+        } = await query<{ id: string }>(
+          `SELECT id FROM "export_artifact" WHERE "actorKey"=$1 AND "kbId"=$2 AND kind=$3 AND rev=$4 AND "reclaimedAt" IS NULL AND (state IN ('PENDING','WRITING') OR (state='READY' AND "expiresAt">now())) ORDER BY "createdAt" DESC LIMIT 1`,
+          [actorKey, input.kbId, input.kind, rev],
+        );
+        if (same) {
+          // From now on this key replays the reused job, whatever its state.
+          await query(
+            `INSERT INTO "export_request_key" (id, "actorKey", "kbId", "idempotencyKey", "requestHash", "exportId", "createdAt") VALUES ($1::uuid,$2,$3,$4,$5,$6::uuid,now())`,
+            [randomUUID(), actorKey, input.kbId, input.idempotencyKey, requestHash, same.id],
+          );
+          return { id: same.id, created: false };
+        }
+        const counts = await query<{ total: number; mine: number }>(
+          `SELECT count(*)::int AS total, count(*) FILTER (WHERE "actorUserIdSnapshot" = $1)::int AS mine FROM "export_artifact" WHERE state IN ('PENDING', 'WRITING', 'READY')`,
+          [actor.principal.userId],
+        );
+        if (counts.rows[0]!.total >= 2 || counts.rows[0]!.mine >= 1)
+          throw new KbDomainError("RATE_LIMITED", "Export capacity reached");
+        await chargeKbMutation(runtime.ratePort, actorKey, input.kbId);
+        const deadlineAt = new Date(Date.now() + buildMs);
+        const quota = await reserveQuota(
+          { transactionQuery: query },
+          {
+            opId: id,
+            charges: [],
+            expiresAt: deadlineAt,
+            heldForPublication: true,
+            disks: [
+              {
+                path: runtime.assetsDir,
+                bytes: BigInt(MAX_ARTIFACT_BYTES),
+                meter: statfsDiskMeter(runtime.assetsDir),
+              },
+            ],
+          },
+        );
+        // Until READY sets the download window, the receipt cannot expire
+        // before its build deadline does.
+        await query(
+          `INSERT INTO "export_artifact" (id, "kbId", "actorKey", "actorUserIdSnapshot", kind, "idempotencyKey", "requestHash", rev, "reservationIds", "expiresAt", "deadlineAt", state, "leaseOwner", "leaseUntil", "createdAt") VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'PENDING',$12,now() + ($13::int * interval '1 millisecond'),now())`,
+          [
+            id,
+            input.kbId,
+            actorKey,
+            actor.principal.userId,
+            input.kind,
+            input.idempotencyKey,
+            requestHash,
+            rev,
+            quota.reservationIds,
+            new Date(deadlineAt.getTime() + EXPORT_LIMITS.ttlMs).toISOString(),
+            deadlineAt.toISOString(),
+            LEASE_OWNER,
+            EXPORT_LIMITS.leaseMs,
+          ],
+        );
+        return { id, created: true, rev, deadlineAt };
+      }),
+  });
+  if (admitted.created)
+    startBuild(buildRuntime, actor, {
+      id,
+      kbId: input.kbId,
+      kind: input.kind,
+      rev: admitted.rev!,
+      deadlineAt: admitted.deadlineAt!,
+    });
+  return exportStatus(runtime, actor, { kbId: input.kbId, transferId: admitted.id });
+}
+
+/** The requester's job (same actor, same KB, live read), else NOT_FOUND. */
+export async function exportStatus(
+  runtime: KbRuntimeConfig,
+  actor: ExportActor,
+  raw: { kbId: string; transferId: string },
+): Promise<ExportJob> {
+  const input = kbReadToolSchemas.knowledge_export_status.input.parse(raw);
+  await authorizeDocumentRead(exportAuthority(runtime, actor, input.kbId));
+  const row = await runtime.prisma.exportArtifact.findUnique({
+    where: { id: input.transferId },
+    select: exportRowSelect,
+  });
+  if (!row || row.kbId !== input.kbId || row.actorKey !== actorKeyFor(actor.principal))
+    throw new KbDomainError("NOT_FOUND", "Export not found");
+  return exportDescriptor(row);
+}
+
+/** How long a finished job stays visible to `latestExport`. */
+const LATEST_WINDOW_MS =
+  EXPORT_LIMITS.buildDeadlineMs + EXPORT_LIMITS.ttlMs + EXPORT_LIMITS.graceMs;
+
+/** The requester's most recent job for this KB, so a reopened page can resume it. */
+export async function latestExport(
+  runtime: KbRuntimeConfig,
+  actor: ExportActor,
+  raw: { kbId: string },
+): Promise<ExportJob | null> {
+  const input = kbBaseInputSchema.parse(raw);
+  await authorizeDocumentRead(exportAuthority(runtime, actor, input.kbId));
+  const row = await runtime.prisma.exportArtifact.findFirst({
+    where: {
+      actorKey: actorKeyFor(actor.principal),
+      kbId: input.kbId,
+      createdAt: { gt: new Date(Date.now() - LATEST_WINDOW_MS) },
+    },
+    orderBy: { createdAt: "desc" },
+    select: exportRowSelect,
+  });
+  return row ? exportDescriptor(row) : null;
+}
+
+/**
+ * Cancels a pending/building job, or discards a ready one. The terminal state
+ * commits under authority -> artifact row before the build is stopped and its
+ * file reclaimed; a job that already finished is returned unchanged.
+ */
+export async function cancelExport(
+  runtime: KbRuntimeConfig,
+  actor: ExportActor,
+  raw: { kbId: string; transferId: string },
+): Promise<ExportJob> {
+  const input = kbReadToolSchemas.knowledge_export_cancel.input.parse(raw);
+  const auth = exportAuthority(runtime, actor, input.kbId);
+  await runtime.coordinator.run({
+    opId: randomUUID(),
+    kind: "authority",
+    run: ({ lease }) =>
+      lease.transaction(async (query) => {
+        await authorizeDocumentRead({ ...auth, store: sqlAuthorityStore(query), query });
+        const {
+          rows: [row],
+        } = await query<{ kbId: string; actorKey: string }>(
+          `SELECT "kbId", "actorKey" FROM "export_artifact" WHERE id=$1::uuid FOR UPDATE`,
+          [input.transferId],
+        );
+        if (!row || row.kbId !== input.kbId || row.actorKey !== actorKeyFor(actor.principal))
+          throw new KbDomainError("NOT_FOUND", "Export not found");
+        await query(
+          `UPDATE "export_artifact" SET state='CANCELLED', "leaseOwner"=NULL, "leaseUntil"=NULL WHERE id=$1::uuid AND "reclaimedAt" IS NULL AND (state IN ('PENDING','WRITING') OR (state='READY' AND "downloadCompletedAt" IS NULL))`,
+          [input.transferId],
+        );
+      }),
+  });
+  active.get(input.transferId)?.abort.abort(new KbDomainError("CANCELLED", "Export cancelled"));
+  await reclaimExports(runtime);
+  return exportStatus(runtime, actor, input);
+}
+
+/** Joins this process's build of `id` (tests and shutdown); resolves when it settles. */
+export async function awaitExportBuild(id: string): Promise<void> {
+  await active.get(id)?.done.catch(() => undefined);
+}
+
+function startBuild(
+  runtime: KbRuntimeConfig,
+  actor: ExportActor,
+  job: { id: string; kbId: string; kind: "assets" | "whole"; rev: string; deadlineAt: Date },
+) {
+  const abort = new AbortController();
+  const entry = { abort, done: Promise.resolve() as Promise<unknown>, preparing: true };
+  // Registered before prepare returns, so a cancel or shutdown always finds it.
+  active.set(job.id, entry);
+  entry.done = buildExport(runtime, jobActor(runtime, actor, abort.signal), job, abort).catch(
+    (error: unknown) => {
+      logInternalError("kb.export-build", error, { opId: job.id });
+    },
+  );
+}
+
+/**
+ * The build outlives the request, so it never reuses a request-bound
+ * credential verifier (that one closes with its HTTP request). A token
+ * principal is rechecked against its live grant generation, tombstones, user
+ * and stored ACL on every authorization, exactly as a lock-session recheck
+ * does; under a held authority lease it reads on that lease's session.
+ */
+function jobActor(runtime: KbRuntimeConfig, actor: ExportActor, signal: AbortSignal): ExportActor {
+  if (actor.principal.kind !== "token") return { principal: actor.principal };
+  const sql = credentialQuery(runtime.connectionString);
+  const bound = (query: LockQuery) => createGrantCredentialVerifier(query);
+  const verifier: CredentialVerifier = {
+    inspect: (principal) => {
+      const lease = getOperationLease();
+      return lease
+        ? bound(lease.query).inspect(principal)
+        : sql(signal, (query) => bound(query).inspect(principal));
+    },
+    grantBits: (principal, kbId) => {
+      const lease = getOperationLease();
+      return lease
+        ? bound(lease.query).grantBits!(principal, kbId)
+        : sql(signal, (query) => bound(query).grantBits!(principal, kbId));
+    },
+    forQuery: (query) => (getOperationLease() ? bound(query) : verifier),
+  };
+  return { principal: actor.principal, verifier };
+}
+
+async function buildExport(
+  runtime: KbRuntimeConfig,
+  actor: ExportActor,
+  job: { id: string; kbId: string; kind: "assets" | "whole"; rev: string; deadlineAt: Date },
+  abort: AbortController,
+) {
+  const { id } = job;
+  const auth = exportAuthority(runtime, actor, job.kbId);
+  const actorKey = actorKeyFor(actor.principal);
+  let progress = 0;
+  const deadline = setTimeout(
+    () => abort.abort(new KbDomainError("DEADLINE_EXCEEDED", "Export deadline exceeded")),
+    Math.max(0, job.deadlineAt.getTime() - Date.now()),
+  );
+  deadline.unref();
+  // The lease is this process's claim on the job; a heartbeat that finds the
+  // row no longer ours (cancelled, swept) stops the build.
+  let beat = Promise.resolve();
+  const heartbeat = setInterval(() => {
+    beat = beat
+      .then(async () => {
+        const renewed = await runtime.prisma.$executeRawUnsafe(
+          `UPDATE "export_artifact" SET "leaseUntil"=now() + ($3::int * interval '1 millisecond'), "progressBytes"=$4 WHERE id=$1::uuid AND "leaseOwner"=$2 AND state IN ('PENDING','WRITING')`,
+          id,
+          LEASE_OWNER,
+          EXPORT_LIMITS.leaseMs,
+          progress,
+        );
+        if (renewed !== 1) abort.abort(new KbDomainError("CANCELLED", "Export no longer owned"));
+      })
+      .catch((error: unknown) => logInternalError("kb.export-heartbeat", error, { opId: id }));
+  }, EXPORT_LIMITS.heartbeatMs);
+  heartbeat.unref();
+  try {
+    const started = await runtime.prisma.$executeRawUnsafe(
+      `UPDATE "export_artifact" SET state='WRITING' WHERE id=$1::uuid AND state='PENDING' AND "leaseOwner"=$2`,
+      id,
+      LEASE_OWNER,
+    );
+    if (started !== 1) return;
+    await authorizeDocumentRead(auth);
+    abort.signal.throwIfAborted();
+    const entries = await inventory(runtime, job, abort.signal);
+    const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
+    await runtime.prisma.exportArtifact.updateMany({
+      where: { id, leaseOwner: LEASE_OWNER, state: "WRITING" },
+      data: { totalBytes },
+    });
+    // Blobs are read in batches, in archive order (never one process per file).
+    const blobEntries = entries.filter(
+      (entry): entry is Entry & { blob: string } => "blob" in entry && !!entry.blob,
+    );
+    const position = new Map<unknown, number>(blobEntries.map((entry, index) => [entry, index]));
+    let batch: ReadonlyMap<string, Buffer> = new Map();
+    const blobOf = async (entry: Entry): Promise<Buffer> => {
+      const cached = batch.get(entry.blob!);
+      if (cached) return cached;
+      const start =
+        position.get(entry) ?? blobEntries.findIndex((next) => next.blob === entry.blob);
       try {
-        fsyncSync(chain.tmpFd);
-      } finally {
-        closePrivateTmpChain(chain);
+        batch = await readBlobsAsync(
+          kbBareRepoPath(runtime.reposDir, job.kbId),
+          blobEntries.slice(start, start + EXPORT_BLOB_BATCH).map((next) => next.blob),
+          { maxBytes: 2 * 1024 * 1024 },
+          { signal: abort.signal },
+        );
+      } catch (error) {
+        abort.signal.throwIfAborted();
+        throw error;
       }
-      await runtime.coordinator.run({
-        opId: randomUUID(),
-        kind: "authority",
-        run: ({ lease }) =>
-          lease.transaction(async (query) => {
-            await authorizeDocumentRead({ ...auth, store: sqlAuthorityStore(query) });
-            abort.signal.throwIfAborted();
-            const result = await query(
-              `UPDATE "export_artifact" SET state='READY', size=$2, "contentHash"=$3, "fileIdentity"=$4, "frameHashes"=$5 WHERE id=$1::uuid AND state='WRITING' AND "expiresAt">now() AND "deadlineAt">now() RETURNING "reservationIds"`,
-              [id, sealed.size, sealed.contentHash, sealed.fileIdentity, sealed.frameHashes],
-            );
-            if (result.rowCount !== 1) throw unavailable();
-            const receipt = await query<{ reservationIds: string[] }>(
-              `SELECT "reservationIds" FROM "export_artifact" WHERE id=$1::uuid`,
-              [id],
-            );
-            await releaseQuota({ transactionQuery: query }, receipt.rows[0]!.reservationIds);
-            await recordAuditEvent(query, {
-              opId: id,
-              action: "export_prepare",
-              outcome: "SUCCESS",
-              actorKey,
-              actorUserIdSnapshot: actor.principal.userId,
-              kbId: input.kbId,
-              revision: row.rev,
-            });
-          }),
-      });
+      return batch.get(entry.blob!)!;
+    };
+    const content = async function* (entry: Entry) {
       abort.signal.throwIfAborted();
       await authorizeDocumentRead(auth);
-      return exportDescriptor(
-        await runtime.prisma.exportArtifact.findUniqueOrThrow({ where: { id } }),
-      );
-    } catch (error) {
-      if (owned)
-        await runtime.prisma.exportArtifact.updateMany({
-          // A replay may already have delivered EOF or acknowledged this READY
-          // receipt while its original producer's final return was in flight.
-          where: { id, state: { in: ["WRITING", "READY"] }, downloadCompletedAt: null },
-          data: { state: "ABORTED" },
-        });
-      if (
-        error instanceof KbDomainError ||
-        (error instanceof Error &&
-          "code" in error &&
-          ["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "RATE_LIMITED", "QUOTA_EXCEEDED"].includes(
-            String(error.code),
-          ))
-      )
-        throw error;
-      throw unavailable();
-    } finally {
-      // Retain shutdown ownership through reclamation. The reaper may reclaim
-      // this artifact once preparation has left its file/publication phase.
-      const entry = active.get(id);
-      if (entry) entry.preparing = false;
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", cancel);
-      try {
-        if (owned) await reclaimExports(runtime);
-      } finally {
-        active.delete(id);
+      if (entry.blob) {
+        yield await blobOf(entry);
+        return;
       }
+      const { body } = await authorizedAssetStream({
+        ...auth,
+        query: prismaAssetQuery(runtime.prisma),
+        reposDir: runtime.reposDir,
+        blobStore: runtime.blobStore,
+        purpose: "internal",
+        rev: job.rev,
+        hash: entry.hash!,
+        range: null,
+        signal: abort.signal,
+      });
+      if (!body) throw unavailable();
+      const reader = body.getReader();
+      try {
+        for (;;) {
+          const value = await reader.read();
+          if (value.done) break;
+          yield value.value;
+        }
+      } finally {
+        await reader.cancel();
+        reader.releaseLock();
+      }
+    };
+    const source = async function* (entry: Entry) {
+      for await (const chunk of content(entry)) {
+        progress += chunk.byteLength;
+        yield chunk;
+      }
+    };
+    const sealed = await withExportFile(runtime.assetsDir, id, async (path) => {
+      abort.signal.throwIfAborted();
+      const file = await open(
+        path,
+        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        return await writeExportZip(file, entries, source, abort.signal);
+      } finally {
+        await file.close();
+      }
+    });
+    // File contents and containing directory are durable before READY is committed.
+    const chain = openPrivateTmpDir(runtime.assetsDir);
+    try {
+      fsyncSync(chain.tmpFd);
+    } finally {
+      closePrivateTmpChain(chain);
     }
-  };
-  const done = work();
-  active.set(id, { abort, done, preparing: true });
-  // Return cancellation promptly even if an underlying database read is slow.
-  // The owned work remains registered until its I/O joins and cleanup completes;
-  // every subsequent file/publication boundary checks this same abort signal.
-  const cancelled = new Promise<never>((_, reject) => {
-    if (abort.signal.aborted) reject(abort.signal.reason);
-    else abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true });
-  });
-  return Promise.race([done, cancelled]);
+    await runtime.coordinator.run({
+      opId: randomUUID(),
+      kind: "authority",
+      run: ({ lease }) =>
+        lease.transaction(async (query) => {
+          await authorizeDocumentRead({ ...auth, store: sqlAuthorityStore(query) });
+          abort.signal.throwIfAborted();
+          // The download window starts when the bytes are ready.
+          const result = await query(
+            `UPDATE "export_artifact" SET state='READY', size=$2, "contentHash"=$3, "fileIdentity"=$4, "frameHashes"=$5, "progressBytes"=$6, "expiresAt"=now() + ($8::int * interval '1 millisecond'), "leaseOwner"=NULL, "leaseUntil"=NULL WHERE id=$1::uuid AND state='WRITING' AND "leaseOwner"=$7 AND "deadlineAt">clock_timestamp() RETURNING "reservationIds"`,
+            [
+              id,
+              sealed.size,
+              sealed.contentHash,
+              sealed.fileIdentity,
+              sealed.frameHashes,
+              totalBytes,
+              LEASE_OWNER,
+              EXPORT_LIMITS.ttlMs,
+            ],
+          );
+          if (result.rowCount !== 1) {
+            abort.signal.throwIfAborted();
+            if (Date.now() >= job.deadlineAt.getTime())
+              throw new KbDomainError("DEADLINE_EXCEEDED", "Export deadline exceeded");
+            throw unavailable();
+          }
+          const receipt = await query<{ reservationIds: string[] }>(
+            `SELECT "reservationIds" FROM "export_artifact" WHERE id=$1::uuid`,
+            [id],
+          );
+          await releaseQuota({ transactionQuery: query }, receipt.rows[0]!.reservationIds);
+          await recordAuditEvent(query, {
+            opId: id,
+            action: "export_prepare",
+            outcome: "SUCCESS",
+            actorKey,
+            actorUserIdSnapshot: actor.principal.userId,
+            kbId: job.kbId,
+            revision: job.rev,
+          });
+          // `now()` is this transaction's start: recheck the deadline (and the
+          // build's signal) on the wall clock as the last step before commit,
+          // so a publication stalled past the deadline rolls back.
+          const { rowCount: inTime } = await query(
+            `SELECT 1 FROM "export_artifact" WHERE id=$1::uuid AND "deadlineAt">clock_timestamp()`,
+            [id],
+          );
+          abort.signal.throwIfAborted();
+          if (inTime !== 1)
+            throw new KbDomainError("DEADLINE_EXCEEDED", "Export deadline exceeded");
+        }),
+    });
+  } catch (error) {
+    const reason = abort.signal.aborted ? abort.signal.reason : error;
+    const code = classifyFailure(reason);
+    // A cancelled or swept job is already terminal; only our own lease fails.
+    await runtime.prisma.exportArtifact.updateMany({
+      where: { id, leaseOwner: LEASE_OWNER, state: { in: ["PENDING", "WRITING"] } },
+      data: { state: "FAILED", failureCode: code, leaseOwner: null, leaseUntil: null },
+    });
+    if (code === "STORAGE_UNAVAILABLE" && !abort.signal.aborted)
+      logInternalError("kb.export-build", error, { opId: id });
+  } finally {
+    clearTimeout(deadline);
+    clearInterval(heartbeat);
+    await beat;
+    // Retain shutdown ownership through reclamation. The reaper may reclaim
+    // this artifact once preparation has left its file/publication phase.
+    const entry = active.get(id);
+    if (entry) entry.preparing = false;
+    try {
+      await reclaimExports(runtime);
+    } finally {
+      active.delete(id);
+    }
+  }
 }
 
 /**
  * Startup runs before admission; periodic reclamation is keyset bounded and retries failed unlinks.
+ * It is also the stale-job sweep: a pending/building job whose lease lapsed
+ * (its process died or stopped renewing) or whose deadline passed ends FAILED
+ * (`INTERRUPTED` / `DEADLINE_EXCEEDED`), so no job stays building forever.
  * An unacknowledged completed download is reclaimed when its grace window
  * (stored as `expiresAt`) passes; it ends DOWNLOADED, never ABORTED. `now` is
  * injectable for tests only; production always sweeps at the wall clock.
  */
 export async function reclaimExports(
   runtime: KbRuntimeConfig,
-  options: { restart?: boolean; now?: Date } = {},
+  /** `join: false` aborts a live producer without waiting for it (admission). */
+  options: { restart?: boolean; now?: Date; join?: boolean } = {},
 ) {
+  // The server is the only process that builds exports and its role fence
+  // admits one at a time: at startup no earlier process's build is alive.
   if (options.restart)
     await runtime.prisma.exportArtifact.updateMany({
-      where: { state: "WRITING" },
-      data: { state: "ABORTED" },
+      where: {
+        state: { in: ["PENDING", "WRITING"] },
+        OR: [{ leaseOwner: null }, { leaseOwner: { not: LEASE_OWNER } }],
+      },
+      data: { state: "FAILED", failureCode: "INTERRUPTED", leaseOwner: null, leaseUntil: null },
     });
   let cursor = "";
   const cutoff = options.now ?? new Date();
@@ -590,10 +933,11 @@ export async function reclaimExports(
         ...(cursor ? { id: { gt: cursor } } : {}),
         reclaimedAt: null,
         OR: [
-          { state: "ABORTED" },
-          { state: "DOWNLOADED" },
+          { state: { in: ["ABORTED", "DOWNLOADED", "FAILED", "CANCELLED"] } },
           { expiresAt: { lte: cutoff } },
-          { state: "WRITING", deadlineAt: { lte: cutoff } },
+          { state: { in: ["PENDING", "WRITING"] }, deadlineAt: { lte: cutoff } },
+          { state: { in: ["PENDING", "WRITING"] }, leaseUntil: { lte: cutoff } },
+          { state: { in: ["PENDING", "WRITING"] }, leaseUntil: null },
         ],
       },
       orderBy: { id: "asc" },
@@ -618,7 +962,7 @@ export async function reclaimExports(
             // cannot roll a deleted artifact back to readable READY state.
             const reserved = await lease.transaction(async (query) => {
               const { rowCount } = await query(
-                `UPDATE "export_artifact" SET state=CASE WHEN state='DOWNLOADED' OR (state='READY' AND "downloadCompletedAt" IS NOT NULL) THEN 'DOWNLOADED'::"ExportArtifactState" ELSE 'ABORTED'::"ExportArtifactState" END WHERE id=$1::uuid AND "reclaimedAt" IS NULL AND (state IN ('ABORTED','DOWNLOADED') OR "expiresAt"<=$2 OR (state='WRITING' AND "deadlineAt"<=$2))`,
+                `UPDATE "export_artifact" SET state=CASE WHEN state IN ('PENDING','WRITING') THEN 'FAILED'::"ExportArtifactState" WHEN state IN ('FAILED','CANCELLED') THEN state WHEN state='DOWNLOADED' OR (state='READY' AND "downloadCompletedAt" IS NOT NULL) THEN 'DOWNLOADED'::"ExportArtifactState" ELSE 'ABORTED'::"ExportArtifactState" END, "failureCode"=CASE WHEN state IN ('PENDING','WRITING') THEN CASE WHEN "deadlineAt"<=$2 THEN 'DEADLINE_EXCEEDED' ELSE 'INTERRUPTED' END ELSE "failureCode" END, "leaseOwner"=NULL, "leaseUntil"=NULL WHERE id=$1::uuid AND "reclaimedAt" IS NULL AND (state IN ('ABORTED','DOWNLOADED','FAILED','CANCELLED') OR "expiresAt"<=$2 OR (state IN ('PENDING','WRITING') AND ("deadlineAt"<=$2 OR "leaseUntil" IS NULL OR "leaseUntil"<=$2)))`,
                 [row.id, cutoff],
               );
               return rowCount === 1;
@@ -626,7 +970,7 @@ export async function reclaimExports(
             if (!reserved) return;
             const preparing = active.get(row.id);
             if (preparing?.preparing) {
-              preparing.abort.abort(new KbDomainError("CANCELLED", "Export expired"));
+              preparing.abort.abort(new KbDomainError("CANCELLED", "Export reclaimed"));
               // Return the owner, never its promise: joining under this authority
               // lease would deadlock its finally path's own reclamation.
               return { done: preparing.done };
@@ -637,7 +981,7 @@ export async function reclaimExports(
               const {
                 rows: [current],
               } = await query<{ reservationIds: string[] }>(
-                `SELECT "reservationIds" FROM "export_artifact" WHERE id=$1::uuid AND state IN ('ABORTED','DOWNLOADED') AND "reclaimedAt" IS NULL FOR UPDATE`,
+                `SELECT "reservationIds" FROM "export_artifact" WHERE id=$1::uuid AND state IN ('ABORTED','DOWNLOADED','FAILED','CANCELLED') AND "reclaimedAt" IS NULL FOR UPDATE`,
                 [row.id],
               );
               if (!current) return;
@@ -661,6 +1005,7 @@ export async function reclaimExports(
             });
           },
         });
+        if (preparingOwner && options.join === false) break;
         if (preparingOwner) await preparingOwner.done.catch(() => undefined);
         // Retry after the owner leaves active: its cleanup may have failed, and
         // a terminal caller must not report reclamation before a successful retry.
@@ -679,13 +1024,14 @@ export async function startExportLifecycle(runtime: KbRuntimeConfig) {
       .catch((error: unknown) => {
         logInternalError("kb.export-reclaim", error);
       });
-  }, 60_000);
+  }, EXPORT_LIMITS.sweepMs);
   timer.unref();
   return {
     async stop() {
       clearInterval(timer);
+      // A stopping server's builds end FAILED (INTERRUPTED); the user restarts them.
       for (const entry of active.values())
-        entry.abort.abort(new KbDomainError("CANCELLED", "Server stopping"));
+        entry.abort.abort(Object.assign(new Error("Server stopping"), { code: "INTERRUPTED" }));
       const drainingDownloads = [...downloads].map((download) => download.stop());
       await Promise.allSettled([...active.values()].map((e) => e.done));
       const results = await Promise.allSettled(drainingDownloads);

@@ -105,16 +105,27 @@ model KbAssetLineage {
   @@map("kb_asset_lineage")
 }
 
+/// Background export job and artifact lifecycle:
+/// PENDING -> WRITING (building) -> READY, or FAILED / CANCELLED.
 enum ExportArtifactState {
+  /// Building: the server-owned job holds `leaseOwner` until `leaseUntil`.
   WRITING
   READY
+  /// A READY artifact that was discarded or expired unread; deleted.
   ABORTED
   /// The download completed and was acknowledged (or its grace window
   /// expired); the artifact is deleted and its slot released.
   DOWNLOADED
+  /// Admitted (slot and disk reserved); the build has not started yet.
+  PENDING
+  /// The build stopped; `failureCode` says why. Any partial file is deleted.
+  FAILED
+  /// The requester cancelled it (or discarded it before downloading).
+  CANCELLED
 }
 
-/// Private immutable ZIP and indefinite prepare receipt. Actor identity is a retained snapshot.
+/// Background export job, its private immutable ZIP and indefinite prepare receipt.
+/// Actor identity is a retained snapshot.
 model ExportArtifact {
   id                  String              @id @db.Uuid
   kbId                String
@@ -140,11 +151,40 @@ model ExportArtifact {
   /// slot held) until the client acknowledges or the window expires.
   downloadCompletedAt DateTime?           @db.Timestamptz(3)
   createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  /// Stable reason a build ended FAILED (for example `DEADLINE_EXCEEDED`).
+  failureCode         String?
+  /// Content bytes written so far, of `totalBytes` (known after inventory).
+  progressBytes       Int                 @default(0)
+  totalBytes          Int?
+  /// Server process that owns the running build, and its heartbeat lease.
+  /// A build whose lease lapses is failed by the stale-job sweep.
+  leaseOwner          String?
+  leaseUntil          DateTime?           @db.Timestamptz(3)
+
+  requestKeys ExportRequestKey[]
 
   @@unique([actorKey, kbId, idempotencyKey])
+  @@index([actorKey, kbId, createdAt])
   @@index([state, expiresAt])
   @@index([reclaimedAt, id])
   @@map("export_artifact")
+}
+
+/// A start whose key differed from the job it reused (same KB, kind and
+/// revision while that job was live): the key replays that job from now on.
+model ExportRequestKey {
+  id             String         @id @default(uuid()) @db.Uuid
+  actorKey       String
+  kbId           String
+  idempotencyKey String
+  requestHash    String
+  exportId       String         @db.Uuid
+  export         ExportArtifact @relation(fields: [exportId], references: [id], onDelete: Cascade)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@unique([actorKey, kbId, idempotencyKey])
+  @@index([exportId])
+  @@map("export_request_key")
 }
 
 // S3 cache metadata is byte ownership, never authorization or a blob catalog.

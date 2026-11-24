@@ -100,6 +100,8 @@ export const SUITES = {
       "packages/test-utils/src/kb/exports-rss.integration.test.ts",
       "packages/test-utils/src/kb/exports-s3-rss.integration.test.ts",
       "packages/test-utils/src/kb/exports.integration.test.ts",
+      "packages/test-utils/src/kb/exports-jobs.integration.test.ts",
+      "packages/test-utils/src/kb/exports-proxy.integration.test.ts",
       "packages/test-utils/src/kb/exports-cli.integration.test.ts",
       "packages/api/src/lib/kb/transfers.integration.test.ts",
       "packages/api/src/lib/kb/exports.test.ts",

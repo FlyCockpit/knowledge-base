@@ -670,7 +670,6 @@ export async function createKbBrowserFixture(options: {
       (await createRoutes("kb-export-routes.ts", "createKbExportRoutes"))(routeOptions) as never,
     );
 
-    let revokeNextExport = false;
     const fixture = new Hono();
     fixture.use("*", async (c, next) => {
       const auth = await session(c.req.raw.headers);
@@ -742,7 +741,6 @@ export async function createKbBrowserFixture(options: {
     });
     // Server policy allows one live export per user; each spec starts without one.
     fixture.post("/fixture/reset-exports", async (c) => {
-      revokeNextExport = false;
       await prisma.exportArtifact.updateMany({
         where: { reclaimedAt: null },
         data: { expiresAt: new Date(0) },
@@ -751,10 +749,6 @@ export async function createKbBrowserFixture(options: {
       return c.json({ ok: true });
     });
     fixture.get("/fixture/attacker-hits", (c) => c.json({ hits: attacker.hits() }));
-    fixture.post("/fixture/revoke-next-export", (c) => {
-      revokeNextExport = true;
-      return c.json({ ok: true });
-    });
 
     // ---- PR endpoints: the session user's principal, production PR services ----
     const principalOf = async (headers: Headers) => ({
@@ -1422,18 +1416,6 @@ export async function createKbBrowserFixture(options: {
         prefix: "/rpc",
         context,
       });
-      if (
-        matched &&
-        response?.ok &&
-        revokeNextExport &&
-        c.req.path.startsWith("/rpc/kbExports/prepare")
-      ) {
-        revokeNextExport = false;
-        await prisma.exportArtifact.updateMany({
-          where: { actorKey: `user:${owner.id}`, state: "READY", reclaimedAt: null },
-          data: { expiresAt: new Date(0) },
-        });
-      }
       return matched && response ? response : c.json({ error: "NOT_FOUND" }, 404);
     });
     // Fresh real principals and PRs per lifetime/retry scenario. No shared

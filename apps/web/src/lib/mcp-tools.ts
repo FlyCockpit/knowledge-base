@@ -142,6 +142,20 @@ export const MCP_TOOLS: readonly {
     editOnly: false,
   },
   {
+    name: "knowledge_export_status",
+    groups: ["export"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
+    name: "knowledge_export_cancel",
+    groups: ["export"],
+    readOnly: true,
+    kbBits: ["read"],
+    editOnly: false,
+  },
+  {
     name: "knowledge_transfer_read",
     groups: ["export"],
     readOnly: true,

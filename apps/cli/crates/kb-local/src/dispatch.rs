@@ -250,6 +250,8 @@ async fn dispatch_with_io_observed(
             KnowledgeAssetsList => call!(AssetsList, assets_list),
             KnowledgeTransferRead => call!(TransferRead, transfer_read),
             KnowledgeExportComplete => call!(ExportComplete, export_complete),
+            KnowledgeExportStatus => call!(ExportStatus, export_status),
+            KnowledgeExportCancel => call!(ExportCancel, export_cancel),
             KnowledgeIndexStatus => call!(IndexStatusGet, index_status_get),
             KnowledgeIndexRebuild => call!(IndexRebuild, index_rebuild),
             KnowledgeEmbeddingProfileGet => call!(EmbeddingProfileGet, embedding_profile_get),

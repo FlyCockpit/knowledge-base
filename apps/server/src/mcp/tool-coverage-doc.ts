@@ -34,6 +34,7 @@ const humanOnly = {
   "kbMirror.disconnect": "human mirror control",
   "kbMirror.activate": "human mirror control",
   "kbMirror.push": "human mirror control",
+  "kbExports.latest": "human export resume after a reload (web only)",
   "kbIndex.settings": "human index settings (web only)",
   "kbIndex.setQuantization": "human index settings (web only)",
   "kbIndex.setChunkLimit": "human index settings (web only)",

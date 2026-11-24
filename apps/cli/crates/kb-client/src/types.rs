@@ -524,6 +524,38 @@ pub enum ExportKind {
     Whole,
 }
 
+/// Background export job state. Bytes are downloadable only while `Ready`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportState {
+    Pending,
+    Building,
+    Ready,
+    Failed,
+    Cancelled,
+    Expired,
+}
+
+impl ExportState {
+    /// True while the job can still become ready.
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Pending | Self::Building)
+    }
+}
+
+/// Why a background export build ended `failed`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExportFailureCode {
+    DeadlineExceeded,
+    Interrupted,
+    QuotaExceeded,
+    AccessDenied,
+    RevisionNotFound,
+    InvalidContent,
+    StorageUnavailable,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReviewDecision {
@@ -1043,9 +1075,17 @@ tool_structs! {
     ExportPrepareInput {
         kb_id: req KbId, rev: opt Sha, kind: req ExportKind, idempotency_key: req IdempotencyKey,
     }
-    ExportPrepareOutput {
-        operation_id: req Uuid, transfer_id: req Uuid, rev: req Sha, size: req u64,
-        content_hash: req ContentHash, expires_at: req IsoInstant, mime: req ZipMime,
+    /// Content bytes written of the total (`None` until the inventory is known).
+    ExportProgress { done_bytes: req u64, total_bytes: null u64 }
+    /// Why a job failed: a stable code and the server's user-facing message.
+    ExportFailure { code: req ExportFailureCode, message: req String }
+    /// A background export job (`knowledge_export_prepare`/`_status`/`_cancel`).
+    /// `size`, `content_hash` and `expires_at` are set only while `ready`.
+    ExportJob {
+        operation_id: req Uuid, transfer_id: req Uuid, kind: req ExportKind, rev: req Sha,
+        state: req ExportState, progress: req ExportProgress, size: null u64,
+        content_hash: null ContentHash, expires_at: null IsoInstant, error: null ExportFailure,
+        mime: req ZipMime,
     }
     TransferReadInput { kb_id: req KbId, transfer_id: req Uuid, offset: req u64, max_bytes: opt u64 }
     TransferReadOutput {
@@ -1243,7 +1283,11 @@ catalog! {
     KnowledgeAssetsList => AssetsList, "knowledge_assets_list", true,
         AssetsListInput, Page<AssetRef>;
     KnowledgeExportPrepare => ExportPrepare, "knowledge_export_prepare", true,
-        ExportPrepareInput, ExportPrepareOutput;
+        ExportPrepareInput, ExportJob;
+    KnowledgeExportStatus => ExportStatus, "knowledge_export_status", true,
+        TransferRef, ExportJob;
+    KnowledgeExportCancel => ExportCancel, "knowledge_export_cancel", true,
+        TransferRef, ExportJob;
     KnowledgeTransferRead => TransferRead, "knowledge_transfer_read", true,
         TransferReadInput, TransferReadOutput;
     KnowledgeExportComplete => ExportComplete, "knowledge_export_complete", true,

@@ -107,6 +107,26 @@ async fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     Some(body)
 }
 
+/// A loopback server that accepts and reads requests but never answers, so a
+/// call can only end at its own deadline (without blocking a runtime thread).
+pub async fn stalled_server() -> ToolServer {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test fixture");
+    let port = listener.local_addr().expect("test fixture").port();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let _ = read_request(&mut stream).await;
+            held.push(stream);
+        }
+    });
+    ToolServer {
+        base: format!("http://127.0.0.1:{port}"),
+        calls: Arc::new(Mutex::new(Vec::new())),
+    }
+}
+
 pub async fn tool_server(
     handler: impl Fn(&str, &Value, usize) -> Value + Send + Sync + 'static,
 ) -> ToolServer {

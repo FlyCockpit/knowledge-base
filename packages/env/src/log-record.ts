@@ -106,6 +106,8 @@ export const LOG_SITES = {
   "kb.index-reader": ["warn", "index reader thread lost; replacing it"],
   "kb.search": ["error", "search read failed"],
   "kb.export-reclaim": ["error", "export reclamation failed"],
+  "kb.export-build": ["error", "background export build failed"],
+  "kb.export-heartbeat": ["warn", "export build lease renewal failed; retried at the next beat"],
   "kb.retention": ["warn", "index directory entry skipped by retention"],
   "kb.retention-row": ["error", "retention row rolled back; it is selected again on the next run"],
   "kb.retention-cleanup": [
