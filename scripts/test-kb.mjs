@@ -495,7 +495,10 @@ export const SUITES = {
     requireDocker: true,
   },
   bootstrap: {
-    include: ["packages/auth/src/bootstrap.integration.test.ts"],
+    include: [
+      "packages/auth/src/bootstrap.integration.test.ts",
+      "packages/auth/src/signup-response.integration.test.ts",
+    ],
     services: ["postgres"],
   },
   consent: {

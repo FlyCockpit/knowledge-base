@@ -14,12 +14,17 @@ import { admin, genericOAuth, twoFactor } from "better-auth/plugins";
 import { defaultAc, userAc } from "better-auth/plugins/admin/access";
 import { assertOrdinaryAccountDeletionAllowed } from "./account-deletion-policy.js";
 import { authLogger } from "./auth-logger";
-import { createBootstrapDatabaseAdapter, rejectImpersonatedSession } from "./bootstrap.js";
+import {
+  createBootstrapDatabaseAdapter,
+  isBootstrapComplete,
+  rejectImpersonatedSession,
+} from "./bootstrap.js";
 import { resolveDevicePlugins } from "./device-approval";
 import { resolveMcpPlugins } from "./mcp-plugins.js";
 import { knowledgeBaseAdminPermissions } from "./roles";
 import { createSessionCacheVersion } from "./session-authority";
 import { resolveSignupLocale } from "./signup-locale.js";
+import { markUserCreatedInRequest, neutralSignUpResponse } from "./signup-response.js";
 import { TWO_FACTOR_ALLOW_PASSWORDLESS_ENROLLMENT } from "./two-factor-policy.js";
 import { ADMIN_CREATE_USER_PATH } from "./user-columns.js";
 import { withVerificationCallback } from "./verification-callback.js";
@@ -360,6 +365,8 @@ export const auth = betterAuth({
           }),
         ]
       : []),
+    // Last, so its sign-up after-hook gives the final body (signup-response.ts).
+    neutralSignUpResponse({ isBootstrapComplete: () => isBootstrapComplete(prisma) }),
   ],
   databaseHooks: {
     user: {
@@ -376,6 +383,9 @@ export const auth = betterAuth({
             data: { ...user, locale, ...(adminCreated ? { emailVerified: false } : {}) },
           };
         },
+        // While sign-up is disabled, the sign-up after-hook lets a 200 stand
+        // only when this fired (signup-response.ts).
+        after: async () => markUserCreatedInRequest(),
       },
       delete: {
         before: async (user) => {

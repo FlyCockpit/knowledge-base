@@ -162,12 +162,11 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
             ? t("auth:errors.accountAlreadyRegistered")
             : friendly(result.error, t("auth:errors.couldNotCreateAccount")),
         );
-        // Better-Auth's database hook rejects signup-disabled attempts with a
-        // plain Error, which the sign-up route converts to this generic 422 —
-        // the same response for every address, member or not, so reading it
-        // reveals nothing about whether an admin already exists (see
-        // apps/server/src/signup-gate.ts). Dev-only, and guarded here (not in
-        // a shared util) so the hint string tree-shakes out of prod bundles.
+        // A signup-disabled attempt gets this generic 422 — the same response
+        // for every address, registered, admin or not, so reading it reveals
+        // nothing (packages/auth/src/signup-response.ts). Dev-only, and
+        // guarded here (not in a shared util) so the hint string tree-shakes
+        // out of prod bundles.
         if (import.meta.env.DEV && result.error?.code === "FAILED_TO_CREATE_USER") {
           toast.error(t("auth:errors.signupDisabledDevHint"));
         }

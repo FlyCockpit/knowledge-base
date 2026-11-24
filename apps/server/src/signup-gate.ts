@@ -16,12 +16,12 @@ import type { Context, Next } from "hono";
 //     every address.
 //   - With pass-through, every input class yields identical responses for
 //     member and non-member addresses: same 400s for invalid input, same
-//     generic 200 for already-registered emails, same 422 for a blocked
-//     signup (both pay the password-hash cost before the adapter rejects, so
-//     timing is normalized too). The only divergence is a VALID new-admin
-//     signup succeeding — which inherently creates an account and emails the
-//     owner, and whose pre-claim window is mitigated by
-//     requireEmailVerification + password reset (unchanged).
+//     neutral 200 for every sign-up that is let through, same 422 for a
+//     blocked one, registered or not (packages/auth/src/signup-response.ts).
+//     The only divergence is a VALID new-admin signup succeeding — which
+//     inherently creates an account and emails the owner, and whose pre-claim
+//     window is mitigated by requireEmailVerification + password reset
+//     (unchanged).
 export function adminBootstrapMarker(adminEmail: string | undefined) {
   return async function adminBootstrapMarkerMiddleware(c: Context, next: Next) {
     if (!adminEmail) return next();
