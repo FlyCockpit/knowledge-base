@@ -9,6 +9,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod exit;
+pub mod federated;
 pub mod local;
 pub mod logging;
 pub mod output;

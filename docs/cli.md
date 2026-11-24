@@ -189,17 +189,81 @@ servers.
 
 - **Addressing.** The pair `(server, kbId)` identifies a knowledge base. A kbId
   that one server has shown (its `kbId` enum, a KB list/get/create/update
-  result, or a `knowledge_search_all` row other than `not_found`) and the named
-  server has not is refused locally (`FORBIDDEN`), so one
+  result, or a row other than `not_found` in a `knowledge_search_all` call
+  that named that server) and the named server has not is refused locally
+  (`FORBIDDEN`), so one
   server's KB, path or sealed ciphertext request never reaches another. This
-  holds for every element of `knowledge_search_all`'s `kbIds`: one such ID
-  refuses the whole call. That tool searches one server per call; a call
-  without `kbIds` searches every base the named server lets this credential
-  read.
+  holds for every element of `knowledge_search_all`'s `kbIds` when the call
+  names a `server`: one such ID refuses the whole call, and a call without
+  `kbIds` searches every base the named server lets this credential read.
   Otherwise each server's live grant decides, as with one server (its `kbId`
   enum is a startup snapshot, so a KB created since is still usable).
-  A missing `server` is `INVALID_ARGUMENT` (`MISSING_ARGUMENT` at `/server`); a
-  server of the connection that does not list the tool is `-32602 Unknown tool`.
+  A missing `server` is `INVALID_ARGUMENT` (`MISSING_ARGUMENT` at `/server`),
+  except for `knowledge_search_all` (below); a server of the connection that
+  does not list the tool is `-32602 Unknown tool`.
+- **Search across servers.** `knowledge_search_all` is the one tool whose
+  `server` is optional. Naming one forwards the call to that server and returns
+  its own reply unchanged. Without it, the call searches every server of the
+  connection that lists the tool and has not opted out, all at once, in
+  selection order. It is listed on every multi-server connection whose
+  `--tools` allow it, even when no server listed it at startup (an older
+  server, one that was down), so such a call still answers with each server's
+  status; a call naming a server that does not list it stays `-32602 Unknown
+  tool`. **The query text is sent to each of those servers**, so a
+  question meant for one knowledge base reaches every participating instance.
+  Opt a server out with `search_all = false` in its
+  `[servers.<name>]` entry (`kb config add-server <name> <url>
+  --no-search-all`); a call that names it still reaches it. The input is the
+  tool's own (`query`, `kbIds?`, `limitPerBase?`). Each `kbIds` element goes
+  only to the participating servers that have shown it (see Addressing); one
+  none of them has shown is sent nowhere and gets a row with `server: null`
+  and status `not_found`, and a server none of the IDs goes to is not asked.
+  Without `kbIds` each server searches its own "all" (its `TOO_MANY_BASES`
+  limit applies per server). Each server is sent `limitPerBase =
+  min(limitPerBase (default 4), max(1, floor(100 / servers asked)))`, all
+  share the call's one deadline and cancellation (a server's own HTTP search
+  ends about 25 s into its 30 s request limit), and each call takes one of
+  that server's 3 in-flight slots: a server already at 3 is `busy` and gets
+  no call. Every server call is joined before the reply.
+
+  Replies are untrusted. Only one that validates against the pinned
+  `knowledge_search_all` output schema is used; the CLI then drops rows for
+  bases that server was not sent (when `kbIds` were given), hits of a base the
+  same reply does not mark `ok` or `lexical_only`, and hits past the per-base
+  limit, renumbers each base's ranks, and stamps every hit, base row and
+  server row with `server` itself (a server's own label is never read). A
+  base a server was sent but gave no row for gets a row of that server with
+  status `unavailable`. A reply without `server` teaches no kbId: without
+  `kbIds` each server's rows are only its own claim, so they never decide
+  where a later named call may go (named calls and the KB tools above do).
+  `results` interleaves by rank over the (server, base) pairs in server order
+  and then each server's row order — every base's first hit, then every
+  second — never by score: top hits from each base, not one relevance order.
+  At most 100 hits; the rank-ordered tail is cut and each row's `hitCount`
+  recomputed. The merged reply also has a byte budget (about 2.6 MiB of
+  JSON, a third of the 8 MiB stdio result, which carries it twice): what the
+  rows leave is split equally between the servers whose replies are merged,
+  and a server whose hits exceed its share keeps its top-ranked ones (every
+  base's first hit before any second), with `truncated: true` on its server
+  row and `hitCount` counting what is kept. One server's large hits never
+  crowd out another's. The reply (advertised as the tool's output schema, alongside a
+  single server's shape) is `{results: [hit + rank + server], order:
+  "rank_interleaved", limitPerBase, knowledgeBases: [row + server],
+  servers: [{server, status, code, max, retryAfterSeconds, baseCount,
+  truncated}]}`.
+  `servers` lists each participating server that was asked, plus participants
+  that do not list the tool or were left out at startup; its `status` is `ok`,
+  `unavailable` (down, timed out by transport, or a reply that failed
+  validation), `unsupported` (does not list the tool), `logged_out` (no or a
+  refused credential), `too_many_bases` (with the server's `max`),
+  `rate_limited` (with `retryAfterSeconds` when the server gave one),
+  `deadline`, `busy` or `error` (with the server's `code`). A requested base
+  of a failed server gets a row (`unavailable`, `rate_limited` or `deadline`).
+  A server failure never fails the call; only invalid input or cancellation
+  does. Snippets are quoted data from each base's authors. A local store root
+  and remote servers cannot share one `kb mcp` connection (`--root` and
+  `--server` select one or the other), so this searches remote servers only;
+  run `knowledge_search_all` on a local connection for local bases.
 - **Instructions.** One text: the server list and these rules, notices for
   servers left out, then each server's own instructions quoted line by line
   (`> `; every CR, CRLF and Unicode line separator becomes a quoted line break),
@@ -208,7 +272,10 @@ servers.
   reading each stored credential). A server with no
   stored credential, unreachable, or with an incompatible catalog is reported on
   stderr and in the instructions and left out for the session; the shape stays
-  multi-server. If none verifies, `kb mcp` fails with the first one's error.
+  multi-server. If none verifies, `kb mcp` fails with the first one's error;
+  this holds for the search across servers too: a server left out at startup
+  is not retried during the session, so a session with no usable server would
+  have nothing to search.
 - **Failures.** A server that drops fails only its own calls
   (`STORAGE_UNAVAILABLE`); a lost mutation reply is an unknown outcome on that
   server only (retry there with the same idempotency key). Each server has at

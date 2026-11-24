@@ -140,6 +140,9 @@ struct Routing {
     tools: Vec<Vec<String>>,
     /// Per tool some server hides by its write mode: those servers' labels.
     hidden: Vec<(ToolName, Vec<String>)>,
+    /// The one tool whose `server` may be omitted ([`Advertised::federate`]):
+    /// such a call reaches the handler without a server.
+    federated: Option<ToolName>,
 }
 /// The argument a multi-server connection adds to every tool.
 pub const SERVER_ARGUMENT: &str = "server";
@@ -326,9 +329,61 @@ impl Advertised {
             labels,
             tools: routes,
             hidden: hidden_routes,
+            federated: None,
         });
         advertised.hidden = hidden;
         Ok(advertised)
+    }
+    /// Make `name` the federated tool of a multi-server list: its `server`
+    /// becomes optional, a call without it reaches the routed handler with no
+    /// server (the host then searches every server itself), its description
+    /// is `description`, and its output schema accepts either one server's
+    /// own reply (the pinned output, what a call naming a server gets back
+    /// unchanged) or `output` (the host's federated reply). A list no server
+    /// of which lists `name` gains it from the pinned catalog with no
+    /// `server` property (nothing to name): a call without `server` still
+    /// reaches the handler, which reports each server's status, while a call
+    /// naming a server is answered as an unlisted tool, as before. A
+    /// single-server list is returned unchanged.
+    pub fn federate(
+        mut self,
+        name: ToolName,
+        description: &str,
+        output: Value,
+    ) -> Result<Self, schema::SchemaViolation> {
+        let Some(routing) = self.routing.as_mut() else {
+            return Ok(self);
+        };
+        let (input, pinned) = schema::tool_schemas(name.as_str())?;
+        let at = match self.names.iter().position(|listed| *listed == name) {
+            Some(at) => at,
+            None => {
+                // Catalog order, as `union` lists.
+                let order = |tool: &ToolName| ToolName::ALL.iter().position(|n| n == tool);
+                let at = self
+                    .names
+                    .iter()
+                    .position(|listed| order(listed) > order(&name))
+                    .unwrap_or(self.names.len());
+                self.names.insert(at, name);
+                self.tools.insert(at, tool_row(name, description, input)?);
+                routing.tools.insert(at, Vec::new());
+                self.hidden.retain(|hid| *hid != name);
+                at
+            }
+        };
+        let row = &mut self.tools[at];
+        if let Some(required) = row["inputSchema"]["required"].as_array_mut() {
+            required.retain(|key| key != SERVER_ARGUMENT);
+        }
+        row["description"] = json!(description);
+        row["outputSchema"]["properties"]["data"] = json!({"anyOf":[pinned, output]});
+        routing.federated = Some(name);
+        Ok(self)
+    }
+    /// The federated tool of a multi-server list ([`Self::federate`]).
+    pub fn federated(&self) -> Option<ToolName> {
+        self.routing.as_ref().and_then(|routing| routing.federated)
     }
     /// The server labels of a multi-server list; `None` for one server.
     pub fn routes(&self) -> Option<&[String]> {
@@ -337,10 +392,11 @@ impl Advertised {
             .map(|routing| routing.labels.as_slice())
     }
     /// A multi-server call's `server`: removed from `arguments` and returned
-    /// when it names a server listing `name`. `Err(None)` when it names a
+    /// when it names a server listing `name`; `Ok(None)` when it is omitted
+    /// from a call of the federated tool. `Err(None)` when it names a
     /// server of this connection that does not list the tool (answered like
-    /// an unlisted tool), `Err(Some(details))` when it is missing or not a
-    /// server of this connection.
+    /// an unlisted tool), `Err(Some(details))` when it is missing (from any
+    /// other tool) or not a server of this connection.
     fn take_route(
         &self,
         name: ToolName,
@@ -364,6 +420,7 @@ impl Advertised {
             return Err(Some(json!({"reason":"SCHEMA"})));
         };
         match object.remove(SERVER_ARGUMENT) {
+            None if listing.is_some() && routing.federated == Some(name) => Ok(None),
             None => Err(Some(json!({"reason":"MISSING_ARGUMENT","field":field}))),
             Some(Value::String(label))
                 if listing.is_some_and(|l| l.contains(&label))
@@ -608,7 +665,7 @@ where
     serve_admitted(
         reader,
         writer,
-        Admission::Open(advertised),
+        Admission::Open(Box::new(advertised)),
         move |name, _, input, control| handler(name, input, control),
         shutdown,
     )
@@ -616,7 +673,8 @@ where
 }
 /// [`serve_until`] for a multi-server list ([`Advertised::union`]): the
 /// handler also gets the call's `server` label, already checked against the
-/// servers listing the tool and removed from the arguments.
+/// servers listing the tool and removed from the arguments; `None` only for a
+/// call of the federated tool ([`Advertised::federate`]) that names no server.
 pub async fn serve_routed_until<R, W, F, S>(
     reader: R,
     writer: W,
@@ -627,20 +685,21 @@ pub async fn serve_routed_until<R, W, F, S>(
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
-    F: Fn(ToolName, &str, Value, CallControl) -> Value + Send + Sync + 'static,
+    F: Fn(ToolName, Option<&str>, Value, CallControl) -> Value + Send + Sync + 'static,
     S: std::future::Future<Output = ()>,
 {
-    if advertised.routing.is_none() {
+    let Some(federated) = advertised.routing.as_ref().map(|routing| routing.federated) else {
         return Err(io::Error::other(
             "a routed session needs a multi-server list",
         ));
-    }
+    };
     serve_admitted(
         reader,
         writer,
-        Admission::Open(advertised),
+        Admission::Open(Box::new(advertised)),
         move |name, route: Option<String>, input, control| match route {
-            Some(label) => handler(name, &label, input, control),
+            Some(label) => handler(name, Some(&label), input, control),
+            None if federated == Some(name) => handler(name, None, input, control),
             None => tool_error(ErrorCode::Internal, json!({})),
         },
         shutdown,
@@ -676,7 +735,8 @@ where
 /// Whether this stdio session serves at all, decided once at startup and
 /// applied to every request before method routing.
 enum Admission {
-    Open(Advertised),
+    // Boxed: a session's list is large beside a refusal.
+    Open(Box<Advertised>),
     Refused { code: ErrorCode, message: String },
 }
 async fn serve_admitted<R, W, F, S>(
@@ -954,6 +1014,141 @@ mod tests {
         assert_eq!(
             single,
             result(json!(7), tool_error(ErrorCode::QuotaExceeded, json!({})))
+        );
+    }
+
+    #[test]
+    fn only_the_federated_tool_may_omit_its_server() {
+        let local = Advertised::local().expect("catalog");
+        let union = Advertised::union(&[("a", &local), ("b", &local)]).expect("union");
+        let own = json!({"type":"object","required":["servers"]});
+        let federated = union
+            .clone()
+            .federate(ToolName::KnowledgeSearchAll, "Everywhere.", own.clone())
+            .expect("federate");
+        assert_eq!(union.federated(), None);
+        assert_eq!(federated.federated(), Some(ToolName::KnowledgeSearchAll));
+        let rows = federated.tools();
+        let row = |name: &str| {
+            rows.as_array()
+                .expect("rows")
+                .iter()
+                .find(|row| row["name"] == name)
+                .expect("row")
+                .clone()
+        };
+        let all = row("knowledge_search_all");
+        assert_eq!(all["description"], "Everywhere.");
+        assert_eq!(all["inputSchema"]["required"], json!(["query"]));
+        assert_eq!(
+            all["inputSchema"]["properties"][SERVER_ARGUMENT]["enum"],
+            json!(["a", "b"])
+        );
+        let (_, pinned) = schema::tool_schemas("knowledge_search_all").expect("pinned");
+        assert_eq!(
+            all["outputSchema"]["properties"]["data"],
+            json!({"anyOf":[pinned, own]})
+        );
+        // Every other tool keeps `server` required and its pinned text.
+        let one = row("knowledge_search");
+        assert!(
+            one["inputSchema"]["required"]
+                .as_array()
+                .expect("required")
+                .contains(&json!(SERVER_ARGUMENT))
+        );
+        let route = |advertised: &Advertised, name: ToolName, mut args: Value| {
+            advertised.take_route(name, &mut args)
+        };
+        let query = json!({"query":"q"});
+        assert_eq!(
+            route(&federated, ToolName::KnowledgeSearchAll, query.clone()),
+            Ok(None)
+        );
+        assert_eq!(
+            route(
+                &federated,
+                ToolName::KnowledgeSearchAll,
+                json!({"query":"q","server":"b"})
+            ),
+            Ok(Some("b".to_owned()))
+        );
+        let missing = Err(Some(json!({"reason":"MISSING_ARGUMENT","field":"/server"})));
+        assert_eq!(
+            route(&federated, ToolName::KnowledgeSearch, query.clone()),
+            missing
+        );
+        assert_eq!(
+            route(&union, ToolName::KnowledgeSearchAll, query.clone()),
+            missing
+        );
+        // One server: nothing to federate.
+        assert_eq!(
+            local
+                .clone()
+                .federate(ToolName::KnowledgeSearchAll, "x", own)
+                .expect("unchanged"),
+            local
+        );
+    }
+
+    #[test]
+    fn a_federated_tool_no_server_lists_is_still_advertised_from_the_pinned_catalog() {
+        let old = Advertised::local()
+            .expect("catalog")
+            .retain(|name| name != ToolName::KnowledgeSearchAll);
+        let union = Advertised::union(&[("a", &old), ("b", &old)]).expect("union");
+        assert!(!union.advertises(ToolName::KnowledgeSearchAll));
+        let own = json!({"type":"object","required":["servers"]});
+        let federated = union
+            .federate(ToolName::KnowledgeSearchAll, "Everywhere.", own.clone())
+            .expect("federate");
+        assert_eq!(federated.federated(), Some(ToolName::KnowledgeSearchAll));
+        // Listed in catalog order, as if a server had listed it.
+        let order: Vec<ToolName> = ToolName::ALL
+            .iter()
+            .copied()
+            .filter(|name| federated.advertises(*name))
+            .collect();
+        assert_eq!(federated.names(), order.as_slice());
+        let rows = federated.tools();
+        let all = rows
+            .as_array()
+            .expect("rows")
+            .iter()
+            .find(|row| row["name"] == "knowledge_search_all")
+            .expect("row")
+            .clone();
+        assert_eq!(all["description"], "Everywhere.");
+        assert_eq!(all["inputSchema"]["required"], json!(["query"]));
+        assert!(
+            all["inputSchema"]["properties"]
+                .get(SERVER_ARGUMENT)
+                .is_none()
+        );
+        let (_, pinned) = schema::tool_schemas("knowledge_search_all").expect("pinned");
+        assert_eq!(
+            all["outputSchema"]["properties"]["data"],
+            json!({"anyOf":[pinned, own]})
+        );
+        assert!(federated.callable(ToolName::KnowledgeSearchAll));
+        // Without `server` it reaches the handler; naming a server that does
+        // not list it is an unlisted tool, as before.
+        let mut args = json!({"query":"q"});
+        assert_eq!(
+            federated.take_route(ToolName::KnowledgeSearchAll, &mut args),
+            Ok(None)
+        );
+        let mut args = json!({"query":"q","server":"a"});
+        assert_eq!(
+            federated.take_route(ToolName::KnowledgeSearchAll, &mut args),
+            Err(None)
+        );
+        // Every other tool still routes to its own servers.
+        let mut args = json!({"server":"b"});
+        assert_eq!(
+            federated.take_route(ToolName::KnowledgeBasesList, &mut args),
+            Ok(Some("b".to_owned()))
         );
     }
 

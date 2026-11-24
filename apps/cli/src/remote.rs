@@ -12,9 +12,14 @@
 //! nothing is narrowed (and one server's bytes are unchanged). A
 //! dream-only server lists no always-edit tool, and a call the mode does not
 //! allow is refused locally with the server's `WRITE_MODE` details.
-use crate::{auth::Selected, config::Config, state::CredentialStore};
+use crate::{
+    auth::Selected,
+    config::Config,
+    federated::{Failure, Part, ServerStatus},
+    state::CredentialStore,
+};
 use kb_client::{
-    CallControl, ClientError, ClientOptions, Credential, Deadline, ErrorCode, McpClient,
+    CallControl, ClientError, ClientOptions, Credential, Deadline, ErrorCode, KbError, McpClient,
     McpResource, ToolName,
     authoring::AuthoringMode,
     scope::{Refusal, ToolScope},
@@ -266,6 +271,101 @@ struct Upstream {
     known: Mutex<HashSet<String>>,
     uploads: Uploads,
     in_flight: AtomicUsize,
+    /// It takes part in a `knowledge_search_all` without `server` (config
+    /// `search_all`, default on).
+    search_all: bool,
+}
+
+/// One of the server's in-flight calls, given back when dropped (also when
+/// the call is cancelled, times out or its task unwinds).
+struct Slot(Arc<Upstream>);
+impl Slot {
+    /// A slot of `up`, or `None` when it already has its most calls in flight.
+    fn take(up: &Arc<Upstream>) -> Option<Self> {
+        if up.in_flight.fetch_add(1, Ordering::AcqRel) >= SERVER_IN_FLIGHT {
+            up.in_flight.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Self(up.clone()))
+    }
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Every selected server in selection order, for the federated search: a
+/// verified one, or one left out at startup with the status it shows.
+enum Member {
+    Up(Arc<Upstream>),
+    Out {
+        label: String,
+        search_all: bool,
+        failure: Failure,
+    },
+}
+
+/// The federated status of a server left out at startup.
+fn left_out_failure(error: &anyhow::Error) -> Failure {
+    if error.downcast_ref::<NoCredential>().is_some() {
+        return Failure::new(ServerStatus::LoggedOut, Some(ErrorCode::Forbidden));
+    }
+    match error.downcast_ref::<ClientError>() {
+        Some(ClientError::IncompatibleCatalog | ClientError::UnsupportedProfile) => {
+            Failure::new(ServerStatus::Unsupported, None)
+        }
+        Some(error) => failure_of(error),
+        None => Failure::new(ServerStatus::Unavailable, Some(ErrorCode::Internal)),
+    }
+}
+
+/// The federated status of one server's failed `knowledge_search_all`. A
+/// cancelled call is not a server status (the whole call is cancelled).
+fn failure_of(error: &ClientError) -> Failure {
+    use kb_client::error::{ErrorDetails, InvalidReason};
+    match error {
+        ClientError::Kb(KbError::Tool(tool)) => match (tool.code(), tool.details()) {
+            (
+                ErrorCode::InvalidArgument,
+                ErrorDetails::InvalidArgument {
+                    reason: InvalidReason::TooManyBases,
+                    max,
+                    ..
+                },
+            ) => Failure {
+                max: *max,
+                ..Failure::new(ServerStatus::TooManyBases, Some(ErrorCode::InvalidArgument))
+            },
+            (ErrorCode::RateLimited, details) => Failure {
+                retry_after_seconds: match details {
+                    ErrorDetails::RateLimited {
+                        retry_after_seconds,
+                    } => Some(*retry_after_seconds),
+                    _ => None,
+                },
+                ..Failure::new(ServerStatus::RateLimited, Some(ErrorCode::RateLimited))
+            },
+            (ErrorCode::DeadlineExceeded, _) => {
+                Failure::new(ServerStatus::Deadline, Some(ErrorCode::DeadlineExceeded))
+            }
+            (code, _) => Failure::new(ServerStatus::Error, Some(code)),
+        },
+        ClientError::Kb(KbError::DeadlineExceeded) => {
+            Failure::new(ServerStatus::Deadline, Some(ErrorCode::DeadlineExceeded))
+        }
+        ClientError::Unauthorized
+        | ClientError::InvalidCredential
+        | ClientError::Forbidden
+        | ClientError::CredentialMismatch => {
+            Failure::new(ServerStatus::LoggedOut, Some(ErrorCode::Forbidden))
+        }
+        ClientError::HttpStatus(429) => {
+            Failure::new(ServerStatus::RateLimited, Some(ErrorCode::RateLimited))
+        }
+        // Down, unreachable, or a reply that is not the pinned shape.
+        other => Failure::new(ServerStatus::Unavailable, Some(error_code(other))),
+    }
 }
 
 /// The kinds of the uploads this session began on one server. Under a
@@ -423,6 +523,7 @@ fn run_many(
             outcomes[at] = Some(verified);
         }
         let mut upstreams = Vec::new();
+        let mut members = Vec::new();
         let mut instructions = Vec::new();
         let mut notices = Vec::new();
         let mut first_error = None;
@@ -446,11 +547,16 @@ fn run_many(
                             shown_origin(one.resource.origin())
                         ));
                         stderr_line(&format!("kb mcp: server `{label}` lists no usable tool; left out"));
+                        members.push(Member::Out {
+                            label: label.clone(),
+                            search_all: one.search_all,
+                            failure: Failure::new(ServerStatus::Unsupported, None),
+                        });
                         continue;
                     }
                     instructions.push((label.clone(), one.resource.origin().to_owned(), advertised.instructions().map(str::to_owned)));
                     let known = kb_ids_listed(&advertised);
-                    upstreams.push(Arc::new(Upstream {
+                    let up = Arc::new(Upstream {
                         label: label.clone(),
                         client,
                         advertised,
@@ -459,7 +565,10 @@ fn run_many(
                         known: Mutex::new(known),
                         uploads: Uploads::default(),
                         in_flight: AtomicUsize::new(0),
-                    }));
+                        search_all: one.search_all,
+                    });
+                    members.push(Member::Up(up.clone()));
+                    upstreams.push(up);
                 }
                 Err(error) => {
                     let reason = left_out_reason(&error).replace("<name>", label);
@@ -468,6 +577,11 @@ fn run_many(
                         "Server `{label}` ({}) is not available in this session: {reason}.",
                         shown_origin(one.resource.origin())
                     ));
+                    members.push(Member::Out {
+                        label: label.clone(),
+                        search_all: one.search_all,
+                        failure: left_out_failure(&error),
+                    });
                     first_error.get_or_insert(error);
                 }
             }
@@ -479,13 +593,41 @@ fn run_many(
             .iter()
             .map(|up| (up.label.as_str(), &up.advertised))
             .collect();
-        let advertised = Advertised::union(&parts)
-            .map_err(|_| anyhow::anyhow!("the pinned tool catalog is unavailable"))?
-            .with_instructions(Some(combined_instructions(&labels, &selected, &notices, &instructions)));
+        // `knowledge_search_all` without `server` searches every server that
+        // takes part, under the CLI's own description and output schema. It
+        // is listed even when no server verified at startup lists it (an
+        // older server, one that is down), so such a call still reports each
+        // server's status; only `--tools` leaving search out drops it.
+        let catalog = |_| anyhow::anyhow!("the pinned tool catalog is unavailable");
+        let union = Advertised::union(&parts).map_err(catalog)?;
+        let searchable = scope
+            .as_ref()
+            .is_none_or(|scope| scope.permits(ToolName::KnowledgeSearchAll));
+        let advertised = if searchable {
+            union
+                .federate(
+                    ToolName::KnowledgeSearchAll,
+                    crate::federated::DESCRIPTION,
+                    crate::federated::output_schema(&labels).map_err(catalog)?,
+                )
+                .map_err(catalog)?
+        } else {
+            union
+        };
+        let federated = advertised.federated().is_some();
+        let advertised = advertised.with_instructions(Some(combined_instructions(
+            &labels,
+            &selected,
+            &notices,
+            &instructions,
+            federated,
+        )));
         let shutdown = shutdown()?;
         let upstreams = Arc::new(upstreams);
-        serve_routed_until(tokio::io::stdin(), tokio::io::stdout(), advertised, move |name, label, input, control| {
-            route(&upstreams, &handle, name, label, input, control)
+        let members = Arc::new(members);
+        serve_routed_until(tokio::io::stdin(), tokio::io::stdout(), advertised, move |name, label, input, control| match label {
+            Some(label) => route(&upstreams, &handle, name, label, input, control),
+            None => search_everywhere(&members, &handle, &input, &control),
         }, shutdown).await?;
         Ok::<_, anyhow::Error>(())
     })
@@ -572,6 +714,178 @@ fn route(
             tool_error(error_code(&error), json!({}))
         }
     }
+}
+
+/// `knowledge_search_all` without `server`, after stdio checked the input
+/// against the pinned schema: every server that takes part (lists the tool,
+/// not opted out with `search_all = false`) is called at once under the
+/// call's one deadline and cancel token, each in one of its in-flight slots,
+/// and their validated replies are merged ([`crate::federated::merge`]). A
+/// server's failure is its own status; only cancellation fails the call.
+/// Every call is joined before the reply, so nothing outlives it.
+fn search_everywhere(
+    members: &[Member],
+    handle: &tokio::runtime::Handle,
+    input: &Value,
+    control: &kb_client::stdio::CallControl,
+) -> Value {
+    let requested = crate::federated::requested_kb_ids(input);
+    let query = input["query"].clone();
+    // Opted-out servers take no part and are not listed.
+    let taking: Vec<&Member> = members
+        .iter()
+        .filter(|member| match member {
+            Member::Up(up) => up.search_all,
+            Member::Out { search_all, .. } => *search_all,
+        })
+        .collect();
+    let lists = |up: &Upstream| up.advertised.advertises(ToolName::KnowledgeSearchAll);
+    // Each requested ID goes only to the searching servers that have shown
+    // it; one none of them has shown goes nowhere.
+    let sends: Vec<Option<Vec<String>>> = taking
+        .iter()
+        .map(|member| match (member, &requested) {
+            (Member::Up(up), Some(ids)) if lists(up) => {
+                let known = up
+                    .known
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                Some(
+                    ids.iter()
+                        .filter(|id| known.contains(*id))
+                        .cloned()
+                        .collect(),
+                )
+            }
+            _ => None,
+        })
+        .collect();
+    let unrouted: Vec<String> = requested
+        .iter()
+        .flatten()
+        .filter(|id| !sends.iter().flatten().any(|sent| sent.contains(id)))
+        .cloned()
+        .collect();
+    // A searching server none of the requested IDs goes to is not asked.
+    let asked = |member: &Member, sent: &Option<Vec<String>>| match member {
+        Member::Up(up) => lists(up) && sent.as_ref().is_none_or(|sent| !sent.is_empty()),
+        Member::Out { .. } => false,
+    };
+    let called = taking
+        .iter()
+        .zip(&sends)
+        .filter(|(member, sent)| asked(member, sent))
+        .count();
+    let limit = kb_client::types::search_all_limit_per_base(
+        input.get("limitPerBase").and_then(Value::as_u64),
+        called,
+    );
+    let mut parts = Vec::new();
+    let mut calls = Vec::new();
+    for (member, sent) in taking.iter().zip(sends) {
+        let up = match member {
+            Member::Out { label, failure, .. } => {
+                parts.push(Part {
+                    label: label.clone(),
+                    sent: None,
+                    outcome: Err(*failure),
+                });
+                continue;
+            }
+            Member::Up(up) => up,
+        };
+        if !lists(up) {
+            parts.push(Part {
+                label: up.label.clone(),
+                sent: None,
+                outcome: Err(Failure::new(ServerStatus::Unsupported, None)),
+            });
+            continue;
+        }
+        if !asked(member, &sent) {
+            continue;
+        }
+        let mut arguments = json!({"query": query, "limitPerBase": limit});
+        if let Some(ids) = &sent {
+            arguments["kbIds"] = json!(ids);
+        }
+        // `--tools`, as for a call that names the server.
+        let refusal = up.scope.as_ref().and_then(|scope| {
+            admit(scope, &up.uploads, ToolName::KnowledgeSearchAll, &arguments).err()
+        });
+        let typed = serde_json::from_value::<kb_client::types::SearchAllInput>(arguments);
+        let failure = match (refusal, typed) {
+            (Some(refusal), _) => Failure::new(ServerStatus::Error, Some(refusal.code)),
+            // Never: the input already passed the pinned schema.
+            (None, Err(_)) => Failure::new(ServerStatus::Error, Some(ErrorCode::Internal)),
+            // A server already at its cap is not called.
+            (None, Ok(typed)) => match Slot::take(up) {
+                Some(slot) => {
+                    calls.push((parts.len(), slot, typed));
+                    // Until its reply replaces it.
+                    Failure::new(ServerStatus::Unavailable, Some(ErrorCode::Internal))
+                }
+                None => Failure::new(ServerStatus::Busy, Some(ErrorCode::StorageUnavailable)),
+            },
+        };
+        parts.push(Part {
+            label: up.label.clone(),
+            sent,
+            outcome: Err(failure),
+        });
+    }
+    let call = CallControl::new(Deadline::at(control.until()), control.work_token());
+    let replies = handle.block_on(async {
+        let mut set = tokio::task::JoinSet::new();
+        for (at, slot, input) in calls {
+            let call = call.clone();
+            set.spawn(async move {
+                let reply = slot
+                    .0
+                    .client
+                    .call::<kb_client::types::SearchAll>(&input, &call)
+                    .await;
+                // The slot is given back as the call settles.
+                drop(slot);
+                (at, reply)
+            });
+        }
+        let mut replies = Vec::new();
+        // Every call is awaited; a task that failed keeps its `unavailable`.
+        while let Some(joined) = set.join_next().await {
+            if let Ok(reply) = joined {
+                replies.push(reply);
+            }
+        }
+        replies
+    });
+    let mut cancelled = control.is_cancelled();
+    for (at, reply) in replies {
+        parts[at].outcome = match reply {
+            Ok(output) => Ok(output),
+            Err(ClientError::Kb(KbError::Cancelled)) => {
+                cancelled = true;
+                continue;
+            }
+            Err(error) => {
+                let failure = failure_of(&error);
+                if failure.status == ServerStatus::LoggedOut {
+                    tracing::warn!(server = %parts[at].label, "server refused the stored credential; run `kb login --server {}`", parts[at].label);
+                }
+                Err(failure)
+            }
+        };
+    }
+    if cancelled {
+        return tool_error(ErrorCode::Cancelled, json!({}));
+    }
+    // A federated reply teaches no kbId: without `kbIds` each server's rows
+    // are its own claim, and a hostile server learning a base first would
+    // have later named calls of that base refused on the server that holds
+    // it. Named calls and the KB tools stay the sources of known IDs.
+    let data = crate::federated::merge(&parts, &unrouted, limit);
+    let envelope = json!({"schemaVersion": kb_client::PROTOCOL_VERSION, "data": data});
+    json!({"isError":false,"structuredContent":envelope,"content":[{"type":"text","text":envelope.to_string()}]})
 }
 
 /// Every KB ID a call names: `kbId`, `source.kbId` and each element of
@@ -666,6 +980,7 @@ fn combined_instructions(
     selected: &[Selected],
     notices: &[String],
     servers: &[(String, String, Option<String>)],
+    federated: bool,
 ) -> String {
     const MARK: &str = "\n> [truncated]";
     let list = labels
@@ -678,6 +993,9 @@ fn combined_instructions(
     let mut text = format!(
         "This connection serves several knowledge-base servers: {list}. Every tool call names its `server`. Every ID in a result (knowledge bases, revisions, proposals, uploads, transfers) belongs to the server that returned it and is valid only there; a knowledge base ID shown by one server is refused on another."
     );
+    if federated {
+        text.push_str(" The one exception: knowledge_search_all without `server` sends its query to every server that takes part and names each hit's server.");
+    }
     for notice in notices {
         text.push('\n');
         text.push_str(notice);
@@ -762,6 +1080,131 @@ mod tests {
     use kb_client::TransportPolicy;
 
     #[test]
+    fn a_servers_slots_are_bounded_and_given_back_when_a_call_is_dropped() {
+        let resource =
+            McpResource::parse("https://a.example", TransportPolicy::HttpsOnly).expect("origin");
+        let credential = Credential::new(
+            resource.clone(),
+            kb_client::SecretToken::new("disposable-slot-canary".into()),
+        );
+        let client =
+            McpClient::new(resource, credential, ClientOptions::default()).expect("client");
+        let up = Arc::new(Upstream {
+            label: "a".into(),
+            client: Arc::new(client),
+            advertised: Advertised::local().expect("catalog"),
+            read_only: false,
+            scope: None,
+            known: Mutex::new(HashSet::new()),
+            uploads: Uploads::default(),
+            in_flight: AtomicUsize::new(0),
+            search_all: true,
+        });
+        let held: Vec<Slot> = (0..SERVER_IN_FLIGHT)
+            .map(|_| Slot::take(&up).expect("free slot"))
+            .collect();
+        assert!(Slot::take(&up).is_none(), "busy at its cap");
+        assert_eq!(up.in_flight.load(Ordering::Acquire), SERVER_IN_FLIGHT);
+        // A call cut off by its deadline or cancellation drops its slot.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("runtime");
+        drop(held);
+        let slot = Slot::take(&up).expect("given back");
+        runtime.block_on(async {
+            let call = async move {
+                let _slot = slot;
+                std::future::pending::<()>().await;
+            };
+            let cut = tokio::time::timeout(Duration::from_millis(1), call).await;
+            assert!(cut.is_err());
+        });
+        assert_eq!(up.in_flight.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn a_failed_search_maps_to_its_server_status() {
+        use kb_client::{
+            ToolError,
+            error::{ErrorDetails, InvalidReason},
+        };
+        let tool = |code, details| {
+            ClientError::Kb(KbError::Tool(ToolError::new(code, details).expect("valid")))
+        };
+        let too_many = failure_of(&tool(
+            ErrorCode::InvalidArgument,
+            ErrorDetails::InvalidArgument {
+                reason: InvalidReason::TooManyBases,
+                field: None,
+                min: None,
+                max: Some(16),
+            },
+        ));
+        assert_eq!(
+            (too_many.status, too_many.code, too_many.max),
+            (
+                ServerStatus::TooManyBases,
+                Some(ErrorCode::InvalidArgument),
+                Some(16)
+            )
+        );
+        let limited = failure_of(&tool(
+            ErrorCode::RateLimited,
+            ErrorDetails::RateLimited {
+                retry_after_seconds: 9,
+            },
+        ));
+        assert_eq!(
+            (limited.status, limited.retry_after_seconds),
+            (ServerStatus::RateLimited, Some(9))
+        );
+        for (error, status, code) in [
+            (
+                ClientError::Kb(KbError::DeadlineExceeded),
+                ServerStatus::Deadline,
+                Some(ErrorCode::DeadlineExceeded),
+            ),
+            (
+                tool(ErrorCode::NotFound, ErrorDetails::Empty),
+                ServerStatus::Error,
+                Some(ErrorCode::NotFound),
+            ),
+            (
+                ClientError::Unauthorized,
+                ServerStatus::LoggedOut,
+                Some(ErrorCode::Forbidden),
+            ),
+            (
+                ClientError::HttpStatus(429),
+                ServerStatus::RateLimited,
+                Some(ErrorCode::RateLimited),
+            ),
+            (
+                ClientError::Transport,
+                ServerStatus::Unavailable,
+                Some(ErrorCode::StorageUnavailable),
+            ),
+            (
+                ClientError::MalformedResponse,
+                ServerStatus::Unavailable,
+                Some(ErrorCode::Internal),
+            ),
+        ] {
+            let failure = failure_of(&error);
+            assert_eq!((failure.status, failure.code), (status, code), "{error}");
+        }
+        assert_eq!(
+            left_out_failure(&anyhow::Error::new(NoCredential)).status,
+            ServerStatus::LoggedOut
+        );
+        assert_eq!(
+            left_out_failure(&anyhow::Error::new(ClientError::IncompatibleCatalog)).status,
+            ServerStatus::Unsupported
+        );
+    }
+
+    #[test]
     fn search_all_rows_teach_searched_ids_never_not_found_ones() {
         let data = json!({"knowledgeBases":[
             {"kbId":"aaaaaaaaaaaaaaaaaaaaaaaa","status":"ok"},
@@ -787,6 +1230,7 @@ mod tests {
             policy: TransportPolicy::HttpsOnly,
             read_only: false,
             write_mode: None,
+            search_all: true,
         }
     }
 
@@ -849,6 +1293,7 @@ mod tests {
                 ("a".into(), "https://a.example".into(), Some(forged.into())),
                 ("b".into(), "https://b.example".into(), Some(long)),
             ],
+            true,
         );
         let first_upstream = text
             .find("Instructions from server `a`")
@@ -903,7 +1348,7 @@ mod tests {
                 )
             })
             .collect();
-        let text = combined_instructions(&names, &servers, &[], &own);
+        let text = combined_instructions(&names, &servers, &[], &own, false);
         assert!(text.len() <= INSTRUCTIONS_MAX_BYTES, "{}", text.len());
         assert!(
             text.len() > INSTRUCTIONS_MAX_BYTES - 4096,
@@ -931,7 +1376,7 @@ mod tests {
             format!("https://{}.long-domain.example", names[0]),
             Some("y".repeat(64 * 1024)),
         )];
-        let text = combined_instructions(&names, &servers, &notices, &own);
+        let text = combined_instructions(&names, &servers, &notices, &own, true);
         assert!(text.len() <= INSTRUCTIONS_MAX_BYTES, "{}", text.len());
         assert!(text.ends_with("\n> [truncated]"));
     }
@@ -951,7 +1396,7 @@ mod tests {
             "https://a.example".to_owned(),
             Some("z".repeat(64 * 1024)),
         )];
-        let text = combined_instructions(&labels, &servers, &[notice], &own);
+        let text = combined_instructions(&labels, &servers, &[notice], &own, false);
         assert!(text.len() <= INSTRUCTIONS_MAX_BYTES, "{}", text.len());
         assert!(!text.contains(&host));
         assert!(text.contains(&format!(

@@ -65,6 +65,11 @@ enum Sub {
         /// (only dreams), `edit` (only direct edits) or `both`.
         #[arg(long, value_name = "MODE", value_parser = crate::auth::write_mode_parser())]
         write_mode: Option<kb_client::authoring::AuthoringMode>,
+        /// A multi-server `kb mcp`'s `knowledge_search_all` without `server`
+        /// leaves this server out (its config `search_all = false`): it is
+        /// never sent the query unless a call names it.
+        #[arg(long)]
+        no_search_all: bool,
     },
     /// Remove a named server (and its place in `mcp_servers`). Its stored
     /// credential is kept; `kb logout --server <name>` first revokes it.
@@ -146,6 +151,7 @@ pub fn run(args: &Args) -> Result<()> {
             allow_loopback_http,
             read_only,
             write_mode,
+            no_search_all,
         } => {
             if !crate::config::is_server_name(name) {
                 anyhow::bail!("a server name is 1-32 of a-z, 0-9 and -, not starting with -");
@@ -162,6 +168,7 @@ pub fn run(args: &Args) -> Result<()> {
                     && selected.resource.origin().starts_with("http://"),
                 read_only: *read_only,
                 write_mode: *write_mode,
+                search_all: !*no_search_all,
             };
             let config = Config::update(|config| {
                 config.servers.insert(name.clone(), entry.clone());

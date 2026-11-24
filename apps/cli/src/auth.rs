@@ -100,6 +100,8 @@ pub struct Selected {
     pub read_only: bool,
     /// The named entry's `write_mode`.
     pub write_mode: Option<AuthoringMode>,
+    /// The named entry's `search_all` (an unconfigured server takes part).
+    pub search_all: bool,
 }
 
 /// Resolve one `--server` value: anything containing `://` is a URL
@@ -144,6 +146,7 @@ pub fn select(
         policy,
         read_only: entry.is_some_and(|entry| entry.read_only),
         write_mode: entry.and_then(|entry| entry.write_mode),
+        search_all: entry.is_none_or(|entry| entry.search_all),
     })
 }
 

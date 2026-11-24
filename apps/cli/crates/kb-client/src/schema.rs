@@ -321,8 +321,9 @@ pub fn validate_request_meta(value: &Value) -> Result<(), SchemaViolation> {
     check(&artifact()?.request_meta, value, &mut String::new())
 }
 
-/// Whether `value` satisfies one schema node of the artifact.
-pub(crate) fn conforms(schema: &Value, value: &Value) -> bool {
+/// Whether `value` satisfies one schema node of the artifact (or a schema
+/// built from its nodes and known keywords, such as a federated output).
+pub fn conforms(schema: &Value, value: &Value) -> bool {
     check(schema, value, &mut String::new()).is_ok()
 }
 

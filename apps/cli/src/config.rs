@@ -69,6 +69,18 @@ pub struct NamedServer {
     /// `--write-mode`; absent narrows nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_mode: Option<kb_client::authoring::AuthoringMode>,
+    /// A multi-server `kb mcp`'s `knowledge_search_all` without `server`
+    /// searches this server too (and sends it the query). `false` opts it
+    /// out; a call that names it still reaches it.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub search_all: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+fn is_yes(value: &bool) -> bool {
+    *value
 }
 
 /// A server name (and the `server` argument value a multi-server `kb mcp`
@@ -447,6 +459,8 @@ pub const TEMPLATE: &str = r#"# kb configuration. Every setting is optional; unc
 # url = "https://kb.example.com"
 # read_only = false
 # write_mode = "dream"   # dream | edit | both: narrows `kb mcp` writes
+# search_all = true      # false: a multi-server `kb mcp` never sends this
+#                        # server the query of a search across all servers
 "#;
 
 /// Flush the directory entry created by the rename, so the config file itself
@@ -563,6 +577,21 @@ mod tests {
         .expect("parse");
         assert!(ok.validate().is_ok());
         assert!(ok.servers["work"].read_only);
+        // Cross-server search is on unless a server opts out, and the
+        // default is not written back.
+        assert!(ok.servers["work"].search_all && ok.servers["home-2"].search_all);
+        assert!(
+            !toml::to_string_pretty(&ok)
+                .expect("write")
+                .contains("search_all")
+        );
+        let opted: Config =
+            toml::from_str("[servers.lab]\nurl = \"https://kb.lab.example\"\nsearch_all = false\n")
+                .expect("parse");
+        assert!(!opted.servers["lab"].search_all);
+        let written = toml::to_string_pretty(&opted).expect("write");
+        assert!(written.contains("search_all = false"), "{written}");
+        assert_eq!(toml::from_str::<Config>(&written).expect("read"), opted);
         // Round trip through the writer keeps every value.
         let back: Config =
             toml::from_str(&toml::to_string_pretty(&ok).expect("write")).expect("read");
