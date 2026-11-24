@@ -38,6 +38,14 @@ pub struct StoreMetadata {
     owner_id: String,
 }
 
+impl crate::Store {
+    /// A side-effect-free metadata view of this open store (see
+    /// [`StoreMetadata::open`]).
+    pub fn metadata(&self) -> Result<StoreMetadata, StoreError> {
+        StoreMetadata::open(self.paths(), self.store_uuid())
+    }
+}
+
 impl StoreMetadata {
     /// Identity-checked, side-effect-free open of the launched store.
     pub fn open(paths: &StorePaths, store_uuid: &Uuid) -> Result<Self, StoreError> {

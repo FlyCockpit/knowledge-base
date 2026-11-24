@@ -85,8 +85,10 @@ impl Session {
         self.authoring = mode;
         self
     }
-    pub fn model(&self) -> &ModelRuntime {
-        &self.model
+    /// Why the session's embedding worker could not be started or reached,
+    /// once per reason.
+    pub fn unreported_start_failure(&self) -> Option<String> {
+        self.model.unreported_start_failure()
     }
     /// Run one admitted call to its reply. Call it off the runtime's own
     /// threads (the stdio loop runs handlers on its blocking pool).
@@ -104,7 +106,7 @@ impl Session {
             Ok(s) => s,
             Err(e) => return tool_error(e.protocol_code(), json!({})),
         };
-        s.attach_model_cache(self.model.host().cache().clone());
+        self.model.attach(&s);
         let egress = PinnedEgress::new(self.io.dns.as_ref(), self.io.http.as_ref());
         self.runtime.block_on(dispatch_with_io(
             &s,

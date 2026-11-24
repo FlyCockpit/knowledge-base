@@ -140,6 +140,37 @@ pub fn descriptor(id: &str) -> Result<ModelDescriptor, StoreError> {
         .ok_or_else(|| unsupported(id, None))
 }
 impl ModelDescriptor {
+    /// The weights' file name, only as the checked-in registry names it for
+    /// this model: never a path, never hidden.
+    pub(crate) fn checked_file_name(&self) -> Result<&str, StoreError> {
+        if descriptor(&self.model_id)?.file_name != self.file_name
+            || self.file_name.contains(['/', '\\'])
+            || self.file_name.starts_with('.')
+        {
+            return Err(unavailable());
+        }
+        Ok(&self.file_name)
+    }
+    /// The instruction prefix the model expects before `purpose`'s text.
+    pub fn prefix(&self, purpose: Purpose) -> &str {
+        match purpose {
+            Purpose::Query => &self.query_prefix,
+            Purpose::Document => &self.document_prefix,
+        }
+    }
+    /// The context's batch size for an input of `input_tokens` tokens:
+    /// a positive fixed size, or the whole input (`"full-input"`). `None`
+    /// when the registry value is neither.
+    pub(crate) fn batch_size(&self, input_tokens: usize) -> Option<u32> {
+        match &self.batch_tokens {
+            serde_json::Value::Number(v) => v
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .filter(|v| *v > 0),
+            serde_json::Value::String(v) if v == "full-input" => Some(input_tokens as u32),
+            _ => None,
+        }
+    }
     pub fn estimate_bytes(&self, n: u32) -> Result<u64, StoreError> {
         if !self.context_tiers.contains(&n) {
             return Err(unsupported(&self.model_id, Some(n)));
@@ -568,17 +599,35 @@ enum Failure {
 }
 impl ModelRuntime {
     pub fn new(store: &Store, host: ModelHost) -> Result<Self, StoreError> {
-        // Effective availability reads this host's cache.
-        store.attach_model_cache(host.cache().clone());
-        Ok(Self {
+        let runtime = Self {
             host,
             root: store.paths().root().into(),
             conns: Mutex::new(Vec::new()),
             candidate: None,
-        })
+        };
+        runtime.attach(store);
+        Ok(runtime)
     }
+    /// Effective built-in availability on `store` (this handle) reads this
+    /// runtime's model cache.
+    pub(crate) fn attach(&self, store: &Store) {
+        store.attach_model_host(&self.host);
+    }
+    /// The host this runtime starts and reaches its worker through (tests).
     pub fn host(&self) -> &ModelHost {
         &self.host
+    }
+    /// Preflight the worker's start: a reason it cannot start is recorded
+    /// through the same once-per-reason diagnostic state as a later
+    /// connection failure (see [`ModelRuntime::unreported_start_failure`]).
+    pub fn preflight(&self) -> Result<(), StoreError> {
+        self.host.startability().inspect_err(|e| {
+            self.host.record_start_failure(e.to_string());
+        })
+    }
+    /// Why the worker could not be started or reached, once per reason.
+    pub fn unreported_start_failure(&self) -> Option<String> {
+        self.host.unreported_start_failure()
     }
     fn state_valid(
         &self,
@@ -630,17 +679,7 @@ impl ModelRuntime {
             )));
         }
         // Fail early, with the fix, when the weights are not in the cache.
-        if self.host.cache().cached(&m)? != crate::model_download::CachedFile::Present {
-            return Err(StoreError::Explained(
-                kb_client::ErrorCode::IndexUnavailable,
-                format!(
-                    "model `{}` is not in the model cache `{}`; run `kb model download {}`",
-                    m.model_id,
-                    self.host.cache().dir().display(),
-                    m.model_id
-                ),
-            ));
-        }
+        self.host.require_cached(&m)?;
         let deadline = Instant::now() + config.timeout.min(Duration::from_secs(900));
         let _controller =
             crate::locks::named_model_lock_until(s.paths(), "model-config.lock", deadline)?;
@@ -1155,16 +1194,16 @@ pub fn native_engine() -> Result<Engine, StoreError> {
                     model,
                 ));
             }
-            let model = &loaded.as_ref().ok_or_else(unavailable)?.value;
+            let model = loaded
+                .as_ref()
+                .and_then(|r| r.serving(&m.model_id, artifact))
+                .ok_or_else(unavailable)?;
             // The shared worker outlives requests: reset the peak-RSS mark so
             // `peak_bytes` is this request's peak (Linux >= 4.0), not the
             // largest context any earlier client used.
             #[cfg(target_os = "linux")]
             let _ = fs::write("/proc/self/clear_refs", "5");
-            let prefix = match purpose {
-                Purpose::Query => &m.query_prefix,
-                Purpose::Document => &m.document_prefix,
-            };
+            let prefix = m.prefix(purpose);
             let probe_text = "hello ".repeat(n as usize);
             let text = if probe { probe_text.as_str() } else { text };
             let mut tokens =
@@ -1192,15 +1231,7 @@ pub fn native_engine() -> Result<Engine, StoreError> {
                     kb_client::ErrorCode::EmbeddingInputTooLong,
                 ));
             }
-            let batch_size = match &m.batch_tokens {
-                serde_json::Value::Number(v) => v
-                    .as_u64()
-                    .and_then(|v| u32::try_from(v).ok())
-                    .filter(|v| *v > 0)
-                    .ok_or_else(unavailable)?,
-                serde_json::Value::String(v) if v == "full-input" => tokens.len() as u32,
-                _ => return Err(unavailable()),
-            };
+            let batch_size = m.batch_size(tokens.len()).ok_or_else(unavailable)?;
             let pooling = match (m.pooling.as_str(), m.pooling_type) {
                 ("LAST", 3) => LlamaPoolingType::Last,
                 ("MEAN", 1) => LlamaPoolingType::Mean,
@@ -1264,7 +1295,7 @@ pub fn native_engine() -> Result<Engine, StoreError> {
 /// `kb embed-worker <args>`: run the shared native worker until idle.
 pub fn run_native_worker(args: impl Iterator<Item = std::ffi::OsString>) -> Result<(), StoreError> {
     let host = ModelHost::from_worker_args(std::env::current_exe().map_err(StoreError::Io)?, args)?;
-    crate::embed_service::serve(&host, native_engine()?)
+    host.serve(native_engine()?)
 }
 
 #[cfg(test)]

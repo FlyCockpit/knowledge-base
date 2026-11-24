@@ -629,21 +629,13 @@ impl Store {
         );
         // Admission is bounded only by the search's budget share. The adapter
         // enters the target-call boundary after credential/authority admission.
-        let raw = call.control.run(embed(profile, text, &call)).await;
+        let raw = call.run_admitted(embed(profile, text, &call)).await;
         // Same quantizer input as the build: u = f32(v / ‖v‖₂), the one
         // normalization of the raw query embedding; an invalid embedding is
         // the embedder failing.
-        let unit = match raw {
-            Ok(raw) => {
-                index_format::unit_vector(&raw, dims).map_err(|_| StoreError::EmbeddingFailed)
-            }
-            // The search share ran out during admission or a shortened call.
-            // It says nothing about the target; keep time for lexical fallback.
-            Err(StoreError::DeadlineExceeded) if call.control.check().is_err() => {
-                Err(StoreError::EmbeddingFailed)
-            }
-            Err(e) => Err(e),
-        };
+        let unit = raw.and_then(|raw| {
+            index_format::unit_vector(&raw, dims).map_err(|_| StoreError::EmbeddingFailed)
+        });
         let unit = match unit {
             Ok(unit) => {
                 ticket.succeed();
@@ -1296,7 +1288,7 @@ impl Store {
             builtin: runtime, ..
         } = io
         {
-            self.attach_model_cache(runtime.host().cache().clone());
+            runtime.attach(self);
         }
     }
     pub async fn search(

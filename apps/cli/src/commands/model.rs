@@ -250,7 +250,7 @@ fn progress(model: &str) -> impl FnMut(u64, u64) {
 pub fn run(a: &Args) -> Result<()> {
     let config = Config::load()?;
     let host = crate::paths::model_host(config.models_dir.as_deref())?;
-    let cache = host.cache();
+    let cache = &crate::paths::model_cache(config.models_dir.as_deref())?;
     let root = a.root.resolve(&config);
     match &a.command {
         Sub::List => {
@@ -310,7 +310,7 @@ pub fn run(a: &Args) -> Result<()> {
                 models_dir: cache.dir().to_path_buf(),
                 models,
                 state: store.as_ref().map(Store::model_state).transpose()?,
-                store: store.as_ref().map(|s| s.paths().root().to_path_buf()),
+                store: store.as_ref().map(|s| s.root().to_path_buf()),
                 worker: host.status(),
                 worker_alive: host.worker_alive(),
                 worker_error: None,

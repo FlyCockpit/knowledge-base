@@ -172,6 +172,22 @@ impl QueryEmbeddingControl {
             .get()
             .map_or(StoreError::EmbeddingFailed, EmbeddingPhase::expired)
     }
+    /// Run `future` (admission, then the target call through
+    /// [`QueryEmbeddingControl::run`]) under the admission budget. A deadline
+    /// that is the budget's own ran out during admission or a shortened call:
+    /// it says nothing about the target, so it is the embedder failing and
+    /// keeps time for the lexical fallback.
+    pub(crate) async fn run_admitted<T>(
+        &self,
+        future: impl std::future::Future<Output = Result<T, StoreError>>,
+    ) -> Result<T, StoreError> {
+        match self.control.run(future).await {
+            Err(StoreError::DeadlineExceeded) if self.control.check().is_err() => {
+                Err(StoreError::EmbeddingFailed)
+            }
+            result => result,
+        }
+    }
     pub(crate) fn control_remaining(&self) -> Duration {
         self.control.remaining()
     }

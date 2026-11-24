@@ -326,6 +326,12 @@ impl Pressure {
             || (self.packs.len() >= CONSOLIDATE_PACKS && plan_rollup(&self.packs, 0) >= 2)
     }
 
+    /// The smallest packs one rollup folds together with `loose_bytes` of
+    /// loose objects ([`plan_rollup`] over the measured packs).
+    pub(crate) fn rollup(&self, loose_bytes: u64) -> &[PackFile] {
+        &self.packs[..plan_rollup(&self.packs, loose_bytes)]
+    }
+
     /// The level a back-off compares against: unfrozen packs plus loose
     /// sample.
     pub(crate) fn level(&self) -> u64 {
@@ -761,7 +767,7 @@ pub(crate) fn consolidate_objects(
     }
     let loose = loose_objects(paths, &objects, CONSOLIDATE_MAX_LOOSE)?;
     let loose_bytes: u64 = loose.iter().map(|(_, b)| b).sum();
-    let roll = &pressure.packs[..plan_rollup(&pressure.packs, loose_bytes)];
+    let roll = pressure.rollup(loose_bytes);
     if roll.len() < 2 && loose.is_empty() {
         return Ok(NoWork);
     }

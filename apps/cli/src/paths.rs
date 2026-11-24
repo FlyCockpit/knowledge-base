@@ -86,6 +86,23 @@ pub fn runtime_dir() -> Result<PathBuf> {
     }
 }
 
+/// The owner-only cache for verified private copies of model files that
+/// are not safe to load in place.
+fn private_models_dir() -> Result<PathBuf> {
+    Ok(cache_dir()?.join("models"))
+}
+
+/// The per-user model cache the worker of [`model_host`] loads: the same
+/// [`models_dir`] of `configured_models` and private cache.
+pub fn model_cache(
+    configured_models: Option<&Path>,
+) -> Result<kb_local::model_download::ModelCache> {
+    Ok(kb_local::model_download::ModelCache::with_private(
+        models_dir(configured_models)?,
+        private_models_dir()?,
+    )?)
+}
+
 /// The shared embedding worker host for this user, reading models from
 /// [`models_dir`] of `configured_models`.
 pub fn model_host(configured_models: Option<&Path>) -> Result<kb_local::qwen::ModelHost> {
@@ -99,5 +116,5 @@ pub fn model_host(configured_models: Option<&Path>) -> Result<kb_local::qwen::Mo
         models_dir(configured_models)?,
         std::time::Duration::from_secs(900),
     )?
-    .with_private_cache(cache_dir()?.join("models"))?)
+    .with_private_cache(private_models_dir()?)?)
 }
