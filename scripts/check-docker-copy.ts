@@ -769,6 +769,7 @@ for (const file of DOCKERFILES) {
   const instructions = toolingRuntimeInstructions(text, packageJson.packageManager ?? "");
   if (!/pnpm[\s\S]*?\bdeploy\b/.test(instructions) || /\bnpm\s+install\b/.test(instructions))
     errors.push(
+      // pnpm-builtin:audited: names pnpm's own `deploy` command.
       `${file}: runtime tooling must use the lockfile-pinned pnpm deploy closure; floating npm install is forbidden.`,
     );
   for (const required of [

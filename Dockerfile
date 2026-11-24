@@ -216,6 +216,7 @@ RUN node --input-type=module -e 'import {createRequire} from "node:module";const
 # Startup/schema guards share a small import-pure domain with runtime admission.
 RUN node --input-type=module -e 'import {createRequire} from "node:module";const r=createRequire(import.meta.url);const e=createRequire(r.resolve("tsx/package.json"))("esbuild");await e.build({entryPoints:["packages/api/src/lib/kb/asset-storage-mode.ts"],bundle:true,platform:"node",format:"esm",outfile:"/app/asset-storage-admission.mjs"})'
 
+# pnpm-builtin:audited: `deploy` is pnpm's own command (a pruned production closure).
 RUN pnpm --filter @knowledge-base/db --config.inject-workspace-packages=true \
   --config.package-import-method=copy deploy --prod /app/schema-runtime \
   && rm -rf /app/schema-runtime/node_modules/.pnpm/typescript@* \
@@ -301,7 +302,7 @@ ENV NODE_ENV=production \
 ENV NODE_OPTIONS="--max-old-space-size=512"
 WORKDIR /app
 
-# Copy workspace config (needed for pnpm --filter at runtime)
+# Copy workspace config (pnpm --filter reads it at runtime)
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/

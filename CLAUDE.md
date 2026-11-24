@@ -149,7 +149,7 @@ Prisma Migrate owns schema history. Edit `packages/db/prisma/schema/`, generate 
 
 **Exact sanctioned occurrences:** `scripts/policy-checks.sh` pins complete-line SHA-256 and counts: the local-only `scripts/db/lib/scratch-db.mjs` database removal (exact checkout/shadow or random scratch name, localhost-only), and declarative hook deny prefixes in `scripts/claude-hooks/settings.json`. Never add a blanket file exemption. `destructive:audited` is only for scanner-proven inert mentions, never executing code.
 
-Safe alternatives: `pnpm db:migrate` + `pnpm db:migrate:apply` for schema changes; `pnpm db:seed` for guarded local seed; explicit `pnpm db:reset:local` for disposable local rebuild (it drops only a database carrying the disposable-local mark and refuses `EXPECTED_DB`; a person adopts an older one with `pnpm db:worktree --adopt`; agents never run `--adopt` or write the mark). See `pnpm doctor` for unreachable services.
+Safe alternatives: `pnpm db:migrate` + `pnpm db:migrate:apply` for schema changes; `pnpm db:seed` for guarded local seed; explicit `pnpm db:reset:local` for disposable local rebuild (it drops only a database carrying the disposable-local mark and refuses `EXPECTED_DB`; a person adopts an older one with `pnpm db:worktree --adopt`; agents never run `--adopt` or write the mark). See `pnpm doctor:app` for unreachable services.
 
 ### Agent Safety Rules
 
@@ -212,7 +212,7 @@ Dokploy on a VPS is the documented deployment target. Migrations, encrypted full
 
 When you change one of `Dockerfile` / `Dockerfile.worker`, check the other (Node/pnpm pin, COPY lists, entrypoint, system packages). The server image also runs one-shot `migrate`, `backup`, `backup-schedule`, `restore`, `hold-deletions` and `restore-drill` commands. Builder COPY lists must include every workspace member (`pnpm docker:check-copy`). Prod-deps is a subset — adding a runtime member there is still manual.
 
-Local HTTPS: `pnpm run setup` then `pnpm dev` serves `https://knowledge-base.localhost`.
+Local HTTPS: `pnpm setup:app` then `pnpm dev` serves `https://knowledge-base.localhost`.
 
 ## Migration and KB lifecycle locks
 

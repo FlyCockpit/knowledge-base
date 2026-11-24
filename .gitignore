@@ -76,7 +76,7 @@ temp
 /.playwright-cli/
 .firecrawl/
 
-# Claude Code project settings are personal. `pnpm run setup` (or
+# Claude Code project settings are personal. `pnpm setup:app` (or
 # `pnpm claude:hooks:install`) generates .claude/settings.json from the tracked
 # scripts/claude-hooks/settings.json; the hook rules themselves live in scripts/.
 .claude/

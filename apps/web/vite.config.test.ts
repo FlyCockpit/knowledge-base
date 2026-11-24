@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const WEB = new URL(".", import.meta.url).pathname;
 
 /** The developer's default `.env`: the template with its generated secrets
- * filled in, as `pnpm setup` writes it. */
+ * filled in, as `pnpm setup:app` writes it. */
 function defaultDevEnv(): Record<string, string> {
   const template = parseEnv(readFileSync(new URL("../../.env.example", import.meta.url), "utf8"));
   const env: Record<string, string> = {};

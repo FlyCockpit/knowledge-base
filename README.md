@@ -39,11 +39,11 @@ Prerequisites: Node.js 26.13.1+, Docker or Podman, and `portless` (`npm install 
 npm install --global corepack@0.36.0
 corepack enable pnpm
 pnpm install
-pnpm run setup
+pnpm setup:app
 pnpm dev
 ```
 
-`pnpm run setup` copies env examples, starts Postgres/Valkey/mailpit (`docker-compose.dev.yml`), and applies committed migrations. The app is then at **https://knowledge-base.localhost**.
+`pnpm setup:app` copies env examples, starts Postgres/Valkey/mailpit (`docker-compose.dev.yml`), and applies committed migrations. The app is then at **https://knowledge-base.localhost**.
 
 ## Installation
 

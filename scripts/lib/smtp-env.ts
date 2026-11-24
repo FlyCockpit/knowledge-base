@@ -4,7 +4,7 @@
  *
  * First login needs a mail sink: email verification is enforced on signup, so
  * without SMTP the developer can never click the verification link. The dev
- * compose stack ships a mailpit sink on localhost:1025, and `pnpm run setup`
+ * compose stack ships a mailpit sink on localhost:1025, and `pnpm setup:app`
  * activates these lines so day-one works with zero manual .env editing.
  *
  * No file I/O here — `scripts/setup.ts` owns reading/writing the file;

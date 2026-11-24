@@ -116,7 +116,7 @@ async function main() {
   // --adopt only marks; it never writes .env, so it works without one.
   if (!adopting && !existsSync(ENV_PATH)) {
     console.error(
-      "FATAL: this checkout has no .env yet. Run `pnpm run setup` (it creates .env and calls this).",
+      "FATAL: this checkout has no .env yet. Run `pnpm setup:app` (it creates .env and calls this).",
     );
     process.exit(1);
   }

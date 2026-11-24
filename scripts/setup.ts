@@ -20,9 +20,8 @@
  *
  * After this, `pnpm dev` is the only remaining step.
  *
- * Run: `pnpm run setup` (the explicit `run` form — `setup` is also a pnpm
- * builtin, and on some pnpm versions the bare `pnpm setup` invokes the builtin
- * instead of this script)
+ * Run: `pnpm setup:app` (not `setup`, a pnpm builtin that wins
+ * over a same-named script; `pnpm policy:script-names` keeps names clear of them)
  */
 
 import { spawnSync } from "node:child_process";
@@ -124,7 +123,7 @@ function ensureEnvFile() {
 //
 // apps/web/.env.example is all-optional (every VITE_ var is commented out),
 // so copying it verbatim is a safe, runnable default. Without this file the
-// web app still boots, but `pnpm run setup` creates it so the user does not
+// web app still boots, but `pnpm setup:app` creates it so the user does not
 // have to remember a manual step.
 // ---------------------------------------------------------------------------
 function ensureWebEnvFile() {
@@ -241,7 +240,7 @@ async function ensureAdminEmail() {
     log(
       "Skipping admin email setup (no interactive terminal). To finish: add " +
         "ADMIN_EMAIL=<your email> to .env yourself, or re-run " +
-        "`pnpm run setup --admin-email <you@example.com>`.",
+        "`pnpm setup:app --admin-email <you@example.com>`.",
     );
     return;
   } else {

@@ -4,7 +4,7 @@
  *
  * Exit code: 0 if all required checks pass, 1 otherwise.
  *
- * Run: `pnpm doctor`
+ * Run: `pnpm doctor:app`
  */
 
 // Load repo-root `.env` before `@knowledge-base/env/server` validation below.
@@ -169,7 +169,7 @@ function checkKbMasterKey() {
       name: "kb master key",
       status: "warn",
       detail: "KB_MASTER_KEY is unset — at-rest encryption stays unavailable",
-      hint: "Run `pnpm run setup` or `pnpm generate:secrets` to mint KB_MASTER_KEY for server and worker.",
+      hint: "Run `pnpm setup:app` or `pnpm generate:secrets` to mint KB_MASTER_KEY for server and worker.",
       required: false,
     });
     return;
@@ -222,7 +222,7 @@ function checkDatabase() {
       name: "database",
       status: "fail",
       detail: "DATABASE_URL is not set",
-      hint: "Set DATABASE_URL in .env or run `pnpm run setup`.",
+      hint: "Set DATABASE_URL in .env or run `pnpm setup:app`.",
       required: true,
     });
     return;
@@ -476,12 +476,12 @@ function checkNodeVersion() {
 // ---------------------------------------------------------------------------
 // Claude Code safety hooks (.claude/settings.json)
 // ---------------------------------------------------------------------------
-// `.claude/` is gitignored, so a fresh clone has no hook until `pnpm run setup`
+// `.claude/` is gitignored, so a fresh clone has no hook until `pnpm setup:app`
 // installs one. Warn rather than fail: the hook is a safety net for AI agents,
 // not a prerequisite for running the app.
 function checkClaudeHooks() {
   const status = claudeHooksStatus();
-  const remedy = "Run `pnpm run setup` (or `pnpm claude:hooks:install`) to install/merge them.";
+  const remedy = "Run `pnpm setup:app` (or `pnpm claude:hooks:install`) to install/merge them.";
   if (status.state === "ok") {
     record({
       name: "claude code hooks",

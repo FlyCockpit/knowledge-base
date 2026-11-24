@@ -402,6 +402,9 @@ jobs:
       - name: Agent docs size budget
         run: pnpm policy:agents-size
 
+      - name: Script names clear of pnpm built-ins
+        run: pnpm policy:script-names
+
       - name: Test colocation
         run: pnpm policy:test-colocation
 

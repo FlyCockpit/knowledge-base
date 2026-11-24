@@ -1,5 +1,5 @@
 {
-  "$comment": "Template for .claude/settings.json (installed by `pnpm run setup` / `pnpm claude:hooks:install`; .claude/ is gitignored). The PreToolUse hook blocks the AGENTS.md Dangerous Commands list at the tool boundary; the rules live in scripts/claude-hooks/pre-tool-use.mjs and are the authoritative gate. The permissions.deny list below is a coarse second layer covering the most destructive command prefixes. Re-running the installer merges anything missing into an existing settings file, and `pnpm doctor` warns when the installed copy has drifted from this one. Claude Code asks you to trust these hooks the first time \u2014 allow them.",
+  "$comment": "Template for .claude/settings.json (installed by `pnpm setup:app` / `pnpm claude:hooks:install`; .claude/ is gitignored). The PreToolUse hook blocks the AGENTS.md Dangerous Commands list at the tool boundary; the rules live in scripts/claude-hooks/pre-tool-use.mjs and are the authoritative gate. The permissions.deny list below is a coarse second layer covering the most destructive command prefixes. Re-running the installer merges anything missing into an existing settings file, and `pnpm doctor:app` warns when the installed copy has drifted from this one. Claude Code asks you to trust these hooks the first time \u2014 allow them.",
   "hooks": {
     "PreToolUse": [
       {

@@ -59,7 +59,7 @@ By making a contribution to this project, I certify that:
 
 ## Development setup
 
-The [README](./README.md#quick-start) covers Node.js 26.13.1+, the pinned pnpm version, local services and `pnpm dev`. The [CLI guide](./docs/cli.md) covers Rust and native build requirements. `pnpm doctor` diagnoses common local setup problems.
+The [README](./README.md#quick-start) covers Node.js 26.13.1+, the pinned pnpm version, local services and `pnpm dev`. The [CLI guide](./docs/cli.md) covers Rust and native build requirements. `pnpm doctor:app` diagnoses common local setup problems.
 
 ## Repository rules
 

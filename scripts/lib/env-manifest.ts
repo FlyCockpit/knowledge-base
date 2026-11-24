@@ -275,7 +275,7 @@ export const ENV_GROUPS: EnvGroup[] = [
     comment: [
       "REQUIRED if SIGNUP_ENABLED=true — Better-Auth enforces email verification",
       "on signup, and the server refuses to boot in production without it.",
-      "Local dev: `pnpm dev:services` starts a mailpit sink and `pnpm run setup`",
+      "Local dev: `pnpm dev:services` starts a mailpit sink and `pnpm setup:app`",
       "  fills these three lines automatically; read captured mail at",
       "  http://localhost:8025",
     ],
@@ -603,7 +603,7 @@ export const ENV_VARS: EnvVar[] = [
       "placeholder values in production. Rotating this invalidates every",
       "existing session — generate once per environment and keep it stable.",
       "",
-      "For LOCAL dev this is filled in for you by `pnpm run setup`; to mint one",
+      "For LOCAL dev this is filled in for you by `pnpm setup:app`; to mint one",
       "by hand use `pnpm generate:secret` and paste it below. For a PRODUCTION",
       "environment prefer `pnpm generate:secrets`, which generates this along",
       "with the rest of the block and validates the result.",

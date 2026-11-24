@@ -62,7 +62,7 @@ services:
 
   # Local mail sink — captures every outgoing email (signup verification,
   # password reset, 2FA codes) so the real flows work offline with zero
-  # credentials. `pnpm run setup` points .env at it (SMTP_HOST=localhost,
+  # credentials. `pnpm setup:app` points .env at it (SMTP_HOST=localhost,
   # SMTP_PORT=1025); read captured mail at http://localhost:8025. Set real
   # SMTP_* values in .env to send through a provider instead — the app
   # switches over with no other change.

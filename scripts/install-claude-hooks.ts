@@ -1,7 +1,7 @@
 /**
  * Install the project's Claude Code safety hooks into `.claude/settings.json`.
  *
- *   pnpm claude:hooks:install      (also runs as part of `pnpm run setup`)
+ *   pnpm claude:hooks:install      (also runs as part of `pnpm setup:app`)
  *
  * `.claude/` is personal and gitignored, so the template cannot ship the file
  * directly. The hook RULES are tracked in `scripts/claude-hooks/` and referenced
@@ -12,7 +12,7 @@
  * the developer put there, and only the missing PreToolUse hook entries and
  * `permissions.deny` prefixes are added. The one hard failure is a settings file
  * that is not valid JSON — the script will not guess at what the developer meant.
- * `pnpm doctor` reports when the installed file has drifted from the template.
+ * `pnpm doctor:app` reports when the installed file has drifted from the template.
  */
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -49,7 +49,7 @@ function entryReferencesHook(entry: HookEntry): boolean {
 /**
  * Merge the template's PreToolUse entries and deny prefixes into `settings`,
  * mutating it in place. Returns what was added, so both the installer and
- * `pnpm doctor` can describe the drift in the same words.
+ * `pnpm doctor:app` can describe the drift in the same words.
  */
 function mergeInto(settings: Settings, template: Settings): { hooks: string[]; deny: string[] } {
   const addedHooks: string[] = [];
@@ -122,7 +122,7 @@ function localSettingsStatus(): LocalSettingsStatus {
   return { state: "ok" };
 }
 
-/** Read-only inspection of `.claude/settings.json`, for `pnpm doctor`. */
+/** Read-only inspection of `.claude/settings.json`, for `pnpm doctor:app`. */
 export function claudeHooksStatus(): ClaudeHooksStatus {
   const local = localSettingsStatus();
   if (local.state === "invalid") return { state: "local-invalid", detail: local.detail };
