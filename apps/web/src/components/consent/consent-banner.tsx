@@ -3,12 +3,17 @@ import { useTranslation } from "react-i18next";
 
 import { useConsent } from "@/hooks/use-consent";
 
+import { reserveConsentInset } from "./consent-inset";
+
 /**
  * First-visit cookie banner. Mounted once from `__root.tsx` inside
  * `<ClientOnly>` so it is never server-rendered (no hydration mismatch, and
  * nothing in the SSR HTML depends on a per-visitor decision).
  *
- * Non-modal on purpose: it does not trap focus or block the page. What
+ * Non-modal on purpose: it does not trap focus or block the page. Nor does it
+ * cover it: it publishes its height (`reserveConsentInset`) and the shells
+ * reserve that much at the bottom, so `<main>` ends where the banner starts and
+ * nothing on the page (the auth pages' links above all) sits behind it. What
  * actually stops analytics from loading is the gate — `useAnalyticsConsent()`
  * calls `loadAnalytics()` only after a positive decision — not this UI.
  *
@@ -24,6 +29,7 @@ export function ConsentBanner() {
 
   return (
     <section
+      ref={reserveConsentInset}
       aria-label={t("banner.title")}
       // Stays below the modal layer (Dialog/Sheet/AlertDialog are z-50): an
       // open modal makes the page inert, so a banner drawn over it would hide
@@ -39,16 +45,32 @@ export function ConsentBanner() {
         paddingRight: "var(--safe-area-right)",
       }}
     >
-      <div className="mx-auto flex max-w-3xl flex-col gap-3 p-4">
-        <div className="space-y-1">
+      {/* Below `sm` the banner is one short line over two side-by-side
+          buttons (~92px above the BottomNav at 320px), so a first visit on a
+          phone still shows the page it opened; the full title and message
+          return from `sm` up. The section's aria-label carries the title at
+          every width. */}
+      <div className="mx-auto flex max-w-3xl flex-col gap-2 px-4 py-2.5 sm:gap-3 sm:p-4">
+        <p className="text-foreground text-xs/relaxed sm:hidden">{t("banner.short")}</p>
+        <div className="hidden space-y-1 sm:block">
           <p className="font-medium text-foreground text-sm">{t("banner.title")}</p>
           <p className="text-muted-foreground text-xs/relaxed">{t("banner.message")}</p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" size="touch" className="sm:min-w-40" onClick={reject}>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+          <Button
+            variant="outline"
+            size="touch"
+            className="min-w-0 max-sm:px-2 sm:min-w-40"
+            onClick={reject}
+          >
             {t("banner.reject")}
           </Button>
-          <Button variant="outline" size="touch" className="sm:min-w-40" onClick={accept}>
+          <Button
+            variant="outline"
+            size="touch"
+            className="min-w-0 max-sm:px-2 sm:min-w-40"
+            onClick={accept}
+          >
             {t("banner.accept")}
           </Button>
         </div>

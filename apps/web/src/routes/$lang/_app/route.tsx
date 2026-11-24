@@ -39,8 +39,14 @@ function AppShellLayout() {
       </a>
       <div
         className={cn(
-          "grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-0",
-          !mobileKeyboardOpen && "pb-[calc(3.5rem_+_var(--safe-area-bottom))]",
+          "grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-(--consent-clearance)",
+          // The bottom reserve: the cookie banner's clearance (index.css; 0
+          // without a banner) and, on phones with no keyboard up, at least the
+          // BottomNav's. The banner reaches down behind the BottomNav, so it
+          // is the larger while it shows.
+          mobileKeyboardOpen
+            ? "pb-(--consent-clearance)"
+            : "pb-[max(calc(3.5rem_+_var(--safe-area-bottom)),var(--consent-clearance))]",
         )}
         style={{
           paddingTop: "var(--safe-area-top)",

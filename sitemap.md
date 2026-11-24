@@ -58,7 +58,8 @@ audience (`public`, `authenticated`, `admin`) plus placement (`desktop`, `mobile
 - **Desktop**: Header main nav shows Home to everyone. Signed-in users also see Dashboard, Knowledge bases and Settings. Admins also see Admin.
 - **Mobile**: Bottom tab bar renders the same set as desktop.
 - **User menu**: Signed-out visitors get Sign In / Sign Up actions. Signed-in users get Settings; Admin appears only for admins.
-- **Cookie banner**: global UI, not a page. Mounted once in `__root.tsx`.
+- **Public header**: the public pages' nav row shows from `sm:` up; below it the app name links home.
+- **Cookie banner**: global UI, not a page. Mounted once in `__root.tsx`. It never covers the page: the shells reserve its height at the bottom (see `docs/ui.md`).
 
 ## Notes
 

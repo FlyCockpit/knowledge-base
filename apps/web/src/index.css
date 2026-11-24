@@ -1,1 +1,11 @@
 @import "@knowledge-base/ui/globals.css";
+
+/* What the first-visit cookie banner covers at the bottom of the viewport.
+   Every shell (app, public, the standalone device/OAuth pages) pads its bottom
+   by it, so the banner never lies over the page. The banner publishes
+   --consent-inset on <html> (components/consent/consent-inset.ts). The shells
+   are `h-svh` and do not shrink for the software keyboard, so the whole banner
+   height is reserved whether or not a keyboard is up. */
+:root {
+  --consent-clearance: var(--consent-inset, 0px);
+}

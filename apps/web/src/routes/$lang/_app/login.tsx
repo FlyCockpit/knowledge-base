@@ -317,7 +317,11 @@ function LoginPage() {
                     <span className="w-full border-t" />
                   </div>
                   <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-card px-2 text-muted-foreground">{t("auth:login.or")}</span>
+                    {/* The card is flat on phones (AuthCard), so the label
+                        masks the rule with the page's colour there. */}
+                    <span className="bg-card px-2 text-muted-foreground max-sm:bg-background">
+                      {t("auth:login.or")}
+                    </span>
                   </div>
                 </div>
               )}
@@ -337,7 +341,10 @@ function LoginPage() {
             </div>
           )}
           {signupEnabled && (
-            <div className="text-center">
+            // `max-sm:-mt-2`: on phones the link's 44px box may use half of the
+            // gap above it (its text sits 12px inside the box), which keeps it
+            // above a first visit's cookie banner at 320×568.
+            <div className="text-center max-sm:-mt-2">
               <Link
                 to="/$lang/signup"
                 params={{ lang }}
@@ -449,32 +456,42 @@ function SignInForm({
         )}
       </form.Field>
 
-      <form.Field name="password">
-        {(field) => (
-          <TextField
-            field={field}
-            label={t("auth:fields.password")}
-            type="password"
-            autoComplete="current-password"
-          />
-        )}
-      </form.Field>
+      {/* Phones: "Forgot password?" sits in the Password label's row, so
+          turning email on does not push the sign-up link below a first
+          visit's cookie banner at 320×568. Its 44px box fills the space from
+          the email input's bottom edge to the password input's top edge (the
+          6px `pt` makes that space 44px) and never overlaps either input; the
+          label is aligned to the box's bottom. From `sm` up it keeps its own
+          row under the field. DOM order is the same at every width: password,
+          then the link, then submit. */}
+      <div className={cn("relative space-y-4", showForgotPassword && "max-sm:pt-1.5")}>
+        <form.Field name="password">
+          {(field) => (
+            <TextField
+              field={field}
+              label={t("auth:fields.password")}
+              type="password"
+              autoComplete="current-password"
+            />
+          )}
+        </form.Field>
 
-      {showForgotPassword && (
-        <div className="text-right">
-          <Link
-            to="/$lang/forgot-password"
-            params={{ lang }}
-            search={{ redirectTo }}
-            className={cn(
-              buttonVariants({ variant: "link" }),
-              "min-h-[44px] px-0 text-sm text-muted-foreground",
-            )}
-          >
-            {t("auth:login.forgotPassword")}
-          </Link>
-        </div>
-      )}
+        {showForgotPassword && (
+          <div className="text-right max-sm:absolute max-sm:-top-4 max-sm:right-0 max-sm:mt-0">
+            <Link
+              to="/$lang/forgot-password"
+              params={{ lang }}
+              search={{ redirectTo }}
+              className={cn(
+                buttonVariants({ variant: "link" }),
+                "min-h-[44px] px-0 text-sm text-muted-foreground max-sm:h-11 max-sm:items-end max-sm:pb-[5px]",
+              )}
+            >
+              {t("auth:login.forgotPassword")}
+            </Link>
+          </div>
+        )}
+      </div>
 
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}

@@ -54,10 +54,11 @@ function McpConsentPage() {
   const router = useRouter();
   const rawSearch = useLocation({ select: () => router.history.location.search });
   // A bare route (outside the app shell), so it supplies its own landmark.
+  // Its bottom padding clears the cookie banner (index.css; 0 without one).
   return (
     <main
       data-scroll-restoration-id={MAIN_SCROLLER_ID}
-      className="relative h-svh min-w-0 overflow-y-auto overflow-x-clip overscroll-contain pt-[var(--safe-area-top)] pr-[var(--safe-area-right)] pb-[var(--safe-area-bottom)] pl-[var(--safe-area-left)] [scrollbar-gutter:stable]"
+      className="relative h-svh min-w-0 overflow-y-auto overflow-x-clip overscroll-contain pt-[var(--safe-area-top)] pr-[var(--safe-area-right)] pb-[max(var(--safe-area-bottom),var(--consent-clearance))] pl-[var(--safe-area-left)] [scrollbar-gutter:stable]"
     >
       <McpConsentFlow key={buildSignedOAuthQuery(rawSearch) ?? "unsigned"} rawSearch={rawSearch} />
     </main>

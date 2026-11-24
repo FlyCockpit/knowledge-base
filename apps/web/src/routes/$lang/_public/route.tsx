@@ -1,3 +1,4 @@
+import { buttonVariants } from "@knowledge-base/ui/components/button";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { AppBrand } from "@/components/app-brand";
@@ -16,7 +17,9 @@ function PublicLayout() {
       className="grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr]"
       style={{
         paddingTop: "var(--safe-area-top)",
-        paddingBottom: "var(--safe-area-bottom)",
+        // <main> ends where the cookie banner starts (index.css; 0 without a
+        // banner), and never inside the home-indicator inset.
+        paddingBottom: "max(var(--safe-area-bottom), var(--consent-clearance))",
         paddingLeft: "var(--safe-area-left)",
         paddingRight: "var(--safe-area-right)",
       }}
@@ -47,11 +50,13 @@ function PublicHeader() {
     <header>
       <div className="flex min-w-0 flex-row items-center gap-4 px-4 py-2">
         <AppBrand lang={lang} />
-        {/* Visible on every viewport — the public branch has no BottomNav, so
-            this scrollable row is the only navigation mobile visitors get. */}
+        {/* The public branch has no BottomNav, so from `sm:` up this
+            scrollable row is its navigation. Below `sm:` there is no room for
+            it next to the controls, and the brand already links home; hidden,
+            it costs no gap either. */}
         <nav
           aria-label={t("mainNav.ariaLabel")}
-          className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar"
+          className="hidden min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar sm:block"
         >
           <div className="flex w-max items-center gap-1">
             {items.map((item) => (
@@ -78,7 +83,9 @@ function PublicHeader() {
             to="/$lang/login"
             params={{ lang }}
             search={{ redirectTo: undefined }}
-            className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            // The app header's Sign In metrics (`touch`), filled: it is this
+            // page's entry point. Wider, it ran past the line at 320px.
+            className={buttonVariants({ size: "touch" })}
           >
             {t("userMenu.signIn")}
           </Link>

@@ -2,6 +2,7 @@
   "banner": {
     "title": "Cookies en este sitio",
     "message": "Las cookies esenciales mantienen este sitio funcionando: inicio de sesión, seguridad y tus preferencias guardadas. Con tu permiso también mediríamos cómo se usa el sitio para poder mejorarlo. Puedes cambiar de opinión cuando quieras.",
+    "short": "¿Nos permites medir cómo usas el sitio?",
     "accept": "Permitir análisis",
     "reject": "Rechazar análisis"
   },
