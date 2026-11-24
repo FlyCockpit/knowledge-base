@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DEFAULT_APP_NAME } from "./app-name.js";
 import { assetServerConfig } from "./asset-storage-config.js";
 import { logEvent } from "./log.js";
+import { Secret } from "./secret.js";
 import { env as sharedEnv } from "./shared.js";
 import { configIssue, onEnvValidationError } from "./validation-error.js";
 import { serverVars } from "./vars/server.js";
@@ -54,6 +55,10 @@ export const env = createEnv({
         guard("BETTER_AUTH_SECRET", "WEAK_SECRET");
       if (value.SSO_CLIENT_SECRET && isWeakSecret(value.SSO_CLIENT_SECRET.reveal()))
         guard("SSO_CLIENT_SECRET", "WEAK_SECRET");
+      // A key that already failed its own length check reaches this refinement
+      // unwrapped; that issue is reported by the schema, so only test a Secret.
+      if (value.SETUP_KEY instanceof Secret && isWeakSecret(value.SETUP_KEY.reveal()))
+        guard("SETUP_KEY", "WEAK_SECRET");
       if (value.FORCE_SSO && value.NODE_ENV === "production") {
         for (const setting of [
           "SSO_ENABLED",
@@ -124,4 +129,13 @@ if (!ADMIN_EMAIL && env.NODE_ENV === "production") {
   logEvent("server.config", { setting: "ADMIN_EMAIL", reason: "ADMIN_EMAIL_UNSET" });
 } else if (!ADMIN_EMAIL && !SIGNUP_ENABLED) {
   logEvent("server.config", { setting: "ADMIN_EMAIL", reason: "NO_BOOTSTRAP_ADMIN" });
+}
+
+// SETUP_KEY keeps the first-admin setup route open (apps/server/src/setup-routes.ts)
+// until bootstrap completes. It is a deploy-time credential, so every start says
+// to remove it; under FORCE_SSO the route refuses, since a password-only admin
+// could never sign in.
+if (env.SETUP_KEY) {
+  logEvent("server.config", { setting: "SETUP_KEY", reason: "SETUP_KEY_SET" });
+  if (FORCE_SSO) logEvent("server.config", { setting: "SETUP_KEY", reason: "SETUP_KEY_FORCE_SSO" });
 }

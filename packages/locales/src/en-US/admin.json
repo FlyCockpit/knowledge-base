@@ -64,6 +64,10 @@
     "retry": "Retry",
     "firstAccountAdmin": "<0>ADMIN_EMAIL</0> is not set, so the first account that signed up became the administrator. Set <0>ADMIN_EMAIL</0> to choose the administrator explicitly."
   },
+  "setupKeyBanner": {
+    "title": "Remove SETUP_KEY",
+    "message": "<0>SETUP_KEY</0> is still set on the server. It is only needed to create the first administrator. Remove it from the environment and redeploy."
+  },
   "settings": {
     "title": "Admin Settings",
     "description": "Organization-wide configuration.",

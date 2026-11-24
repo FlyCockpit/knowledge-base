@@ -9,6 +9,9 @@ const DEFAULT_HTTP_BODY_BYTES = 10 * 1024 * 1024;
 /** Bounded upload write frames (base64 + JSON envelope), well under MCP cap. */
 export const UPLOAD_WRITE_JSON_MAX_BYTES = 512 * 1024;
 
+/** `POST /api/setup/admin` (setup-routes.ts) carries a key and an address only. */
+export const SETUP_ADMIN_MAX_BODY_BYTES = 4 * 1024;
+
 /** oRPC encodes `kbUploads.write` as `/rpc/kbUploads/write` (and `/__batch__` variants). */
 function isKbUploadWriteRpcPath(pathname: string): boolean {
   const path = pathname.split("?")[0] ?? pathname;
@@ -22,6 +25,9 @@ export function maxBodyBytesForPath(pathname: string): number {
   }
   if (isKbUploadWriteRpcPath(path)) {
     return UPLOAD_WRITE_JSON_MAX_BYTES;
+  }
+  if (path === "/api/setup/admin") {
+    return SETUP_ADMIN_MAX_BODY_BYTES;
   }
   return DEFAULT_HTTP_BODY_BYTES;
 }

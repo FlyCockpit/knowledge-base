@@ -292,7 +292,8 @@ export async function lockBootstrapState(tx: BootstrapPrismaTx): Promise<Bootstr
   return { completedAt: row?.completedAt ?? null };
 }
 
-function currentPolicy(): BootstrapPolicy {
+/** The live bootstrap policy; the SETUP_KEY setup link (packages/api/src/lib/setup-admin.ts) decides with it too. */
+export function currentPolicy(): BootstrapPolicy {
   return {
     nodeEnv: env.NODE_ENV,
     adminEmail: ADMIN_EMAIL,

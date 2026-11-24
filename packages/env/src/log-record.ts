@@ -76,6 +76,10 @@ export const LOG_SITES = {
   "qwen.library": ["error", "native model library reported an error"],
   // Server features.
   "admin.remove-user": ["error", "account removal failed"],
+  // SETUP_KEY first-admin bootstrap: one record per attempt, outcome in `reason`.
+  "setup.first-admin": ["info", "first-admin setup link request"],
+  "setup.first-admin-claim": ["info", "first-admin setup link claim"],
+  "setup.first-admin.error": ["error", "first-admin setup failed"],
   "client-ip.proxy-hops": [
     "warn",
     "X-Forwarded-For from a private peer ignored because TRUST_PROXY_HOPS is 0; behind a reverse proxy every client shares one rate-limit bucket",

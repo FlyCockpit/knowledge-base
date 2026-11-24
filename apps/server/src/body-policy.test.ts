@@ -10,6 +10,7 @@ import {
   MCP_MAX_BODY_BYTES,
   maxBodyBytesForPath,
   readBodyWithLimit,
+  SETUP_ADMIN_MAX_BODY_BYTES,
   UPLOAD_WRITE_JSON_MAX_BYTES,
 } from "./body-policy.js";
 
@@ -68,6 +69,11 @@ describe("maxBodyBytesForPath", () => {
     expect(maxBodyBytesForPath("/rpc/kbUploads/write")).toBe(UPLOAD_WRITE_JSON_MAX_BYTES);
     expect(maxBodyBytesForPath("/rpc/kbUploads/write/__batch__")).toBe(UPLOAD_WRITE_JSON_MAX_BYTES);
     expect(UPLOAD_WRITE_JSON_MAX_BYTES).toBeLessThan(MCP_MAX_BODY_BYTES);
+  });
+
+  it("caps the first-admin setup route at 4 KiB", () => {
+    expect(maxBodyBytesForPath("/api/setup/admin")).toBe(SETUP_ADMIN_MAX_BODY_BYTES);
+    expect(SETUP_ADMIN_MAX_BODY_BYTES).toBe(4096);
   });
 });
 

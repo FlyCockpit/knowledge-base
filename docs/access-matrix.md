@@ -10,6 +10,7 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 
 - Better Auth `admin` plugin. `ADMIN_EMAIL` is one trimmed lowercase identity. First-admin selection and role assignment share a database transaction with user insert via the wrapped adapter.
 - After bootstrap completes, `ADMIN_EMAIL` never re-promotes a demoted user. Deleting the chosen user nulls the FK and never resets completion.
+- `SETUP_KEY` (optional) replaces only the verification email of that bootstrap. `POST /api/setup/admin` (key compared in constant time, per-IP fail-closed limiter, one audit record per attempt) stores a hashed one-time link and creates no user; `setup.claimFirstAdmin` spends it, creating the admin, its credential account and the `BootstrapState` completion in one transaction under the identity authority lock and the bootstrap row lock, with the same `decideUserCreate` policy. Both 404 while the key is unset, refuse under `FORCE_SSO` and once bootstrap is complete.
 - Public signup, admin invites, and private no-SMTP invitation links remain. Disabled public signup still accepts admin invitations.
 - The anonymous auth endpoints answer the same for a free and a registered address: `/sign-up/email` answers every success with the same `{"token":null,"user":null}` body, and while signup is disabled every address gets the same 422 `FAILED_TO_CREATE_USER` once bootstrap is complete, refused before the address is looked up (`packages/auth/src/signup-response.ts`). Resend-verification, password-reset requests and wrong-password sign-ins were already identical for unknown, verified and unverified addresses. Residual, accepted: with signup enabled a free address costs an account insert and the in-request verification mail (timing), and two concurrent sign-ups of one free address can race; both only reveal that an address *was* free through a sign-up that registers it and mails its owner, as does the intended 403 `EMAIL_NOT_VERIFIED` (plus re-send) for the right password on an unverified account. The first-user / `ADMIN_EMAIL` bootstrap creates its account by design.
 - Human-only: shares, transfer, credential/mirror/sealed enrollment. Those are not MCP tools. Invitation and transfer receipts reauthorize the live identity and current manage/owner rights before replay, without repeating effects or charging the mutation budget.
@@ -29,6 +30,8 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | Update locale | implemented | deny | allow | allow | `auth.updateLocale` |
 | Read client settings | implemented | deny | allow | allow | `settings.getAll` |
 | Admin setup banner | implemented | deny | allow | allow | `settings.adminSetupStatus` |
+| Remove-SETUP_KEY reminder | implemented | deny | deny | allow | `settings.setupKeyStatus` |
+| Claim first-admin setup link (SETUP_KEY set, bootstrap incomplete; the link token is the credential) | implemented | allow | allow | allow | `setup.claimFirstAdmin` |
 | Own notification preferences | implemented | deny | allow | allow | `settings.myNotificationPreferences` |
 | Update own notification preferences | implemented | deny | allow | allow | `settings.updateMyNotificationPreferences` |
 | Update instance settings | implemented | deny | deny | allow | `settings.update` |

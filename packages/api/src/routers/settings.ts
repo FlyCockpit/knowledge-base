@@ -5,11 +5,11 @@ import {
 import { isAdminRole } from "@knowledge-base/auth/roles";
 import { isForcedTwoFactorActivation } from "@knowledge-base/auth/two-factor-policy";
 import prisma from "@knowledge-base/db";
-import { ADMIN_EMAIL } from "@knowledge-base/env/server";
+import { ADMIN_EMAIL, env } from "@knowledge-base/env/server";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
-import { authenticatedProcedure, liveAdminOr404Procedure } from "../index";
+import { adminOr404Procedure, authenticatedProcedure, liveAdminOr404Procedure } from "../index";
 import { FORCE_2FA_SETTING_KEYS } from "../lib/two-factor-policy";
 
 // Leak-prevention boundary: only keys listed here are exposed to clients via getAll; future settings must be explicitly opted in.
@@ -51,6 +51,13 @@ export const settingsRouter = {
     });
     return { adminEmailsEmpty, adminExists: candidates.some((user) => isAdminRole(user.role)) };
   }),
+
+  /**
+   * Whether SETUP_KEY is still set, so admins see a reminder to remove it once
+   * the first admin exists (apps/server/src/setup-routes.ts). Admin-only: to
+   * anyone else it would only advertise an open bootstrap route.
+   */
+  setupKeyStatus: adminOr404Procedure.handler(() => ({ setupKeySet: env.SETUP_KEY !== undefined })),
 
   myNotificationPreferences: authenticatedProcedure.handler(async ({ context }) => {
     const user = await prisma.user.findUnique({

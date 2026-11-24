@@ -3,7 +3,7 @@ import { toast } from "@knowledge-base/ui/components/sileo";
 import { TextField } from "@knowledge-base/ui/components/text-field";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { useForm } from "@tanstack/react-form";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,6 +26,9 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
     // same reset token, with set-password wording. The router's JSON search
     // parser reads `invite=1` as the number 1 (and writes it back unquoted).
     invite: search.invite === 1 || search.invite === "1" ? (1 as const) : undefined,
+    // The SETUP_KEY first-admin link (packages/api/src/lib/setup-admin.ts):
+    // its token is spent by `setup.claimFirstAdmin`, not by Better-Auth.
+    setup: search.setup === 1 || search.setup === "1" ? (1 as const) : undefined,
   }),
   beforeLoad: async ({ context, params }) => {
     const decision = decideAnonymousOnlyRouteAccess(await getRouteSession());
@@ -47,7 +50,9 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
   head: ({ match }) =>
     pageHead(
       match.context.i18n.t(
-        match.search.invite === 1 ? "nav:titles.setPassword" : "nav:titles.resetPassword",
+        match.search.invite === 1 || match.search.setup === 1
+          ? "nav:titles.setPassword"
+          : "nav:titles.resetPassword",
       ),
     ),
   component: ResetPasswordPage,
@@ -55,8 +60,9 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
 
 function ResetPasswordPage() {
   const { lang } = Route.useParams();
-  const { token, error, invite } = Route.useSearch();
-  const isInvite = invite === 1;
+  const { token, error, invite, setup } = Route.useSearch();
+  const isSetup = setup === 1;
+  const isInvite = invite === 1 && !isSetup;
   const {
     isPending: configPending,
     isError: configError,
@@ -77,7 +83,36 @@ function ResetPasswordPage() {
       onRetry={() => refetchConfig()}
       fields={2}
     >
-      {done && isInvite ? (
+      {done && isSetup ? (
+        <AuthCard
+          title={t("auth:resetPassword.setupDoneTitle")}
+          description={t("auth:resetPassword.setupDoneDescription")}
+        >
+          <Link
+            to="/$lang/login"
+            params={{ lang }}
+            search={{ redirectTo: undefined }}
+            className={cn(buttonVariants(), "min-h-[44px] w-full")}
+          >
+            {t("auth:resetPassword.inviteSignIn")}
+          </Link>
+        </AuthCard>
+      ) : isInvalid && isSetup ? (
+        // A setup link is re-issued from the deploy, not by email.
+        <AuthCard
+          title={t("auth:resetPassword.setupInvalidTitle")}
+          description={t("auth:resetPassword.setupInvalidDescription")}
+        >
+          <Link
+            to="/$lang/login"
+            params={{ lang }}
+            search={{ redirectTo: undefined }}
+            className={cn(buttonVariants({ variant: "outline" }), "min-h-[44px] w-full")}
+          >
+            {t("auth:forgotPassword.backToLogin")}
+          </Link>
+        </AuthCard>
+      ) : done && isInvite ? (
         <AuthCard
           title={t("auth:resetPassword.inviteDoneTitle")}
           description={t("auth:resetPassword.inviteDoneDescription")}
@@ -126,15 +161,24 @@ function ResetPasswordPage() {
         </AuthCard>
       ) : (
         <AuthCard
-          title={isInvite ? t("auth:resetPassword.inviteTitle") : t("auth:resetPassword.title")}
+          title={
+            isSetup
+              ? t("auth:resetPassword.setupTitle")
+              : isInvite
+                ? t("auth:resetPassword.inviteTitle")
+                : t("auth:resetPassword.title")
+          }
           description={
-            isInvite
-              ? t("auth:resetPassword.inviteDescription")
-              : t("auth:resetPassword.description")
+            isSetup
+              ? t("auth:resetPassword.setupDescription")
+              : isInvite
+                ? t("auth:resetPassword.inviteDescription")
+                : t("auth:resetPassword.description")
           }
         >
           <ResetPasswordForm
             isInvite={isInvite}
+            isSetup={isSetup}
             token={token ?? ""}
             onTokenRejected={() => setTokenRejected(true)}
             onDone={() => setDone(true)}
@@ -145,22 +189,62 @@ function ResetPasswordPage() {
   );
 }
 
+/** `setup.claimFirstAdmin` refused the link itself (expired, replaced, used). */
+function isSetupLinkInvalid(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "SETUP_LINK_INVALID"
+  );
+}
+
 function ResetPasswordForm({
   isInvite,
+  isSetup,
   token,
   onTokenRejected,
   onDone,
 }: {
   isInvite: boolean;
+  isSetup: boolean;
   token: string;
   onTokenRejected: () => void;
   onDone: () => void;
 }) {
   const { t } = useTranslation(["auth", "validation"]);
+  // Errors are toasted below (a dead link also swaps in the invalid-link card),
+  // so the global mutation toast would only repeat them.
+  const { mutateAsync: claimSetupLink } = useMutation(
+    orpc.setup.claimFirstAdmin.mutationOptions({ meta: { skipGlobalErrorToast: true } }),
+  );
+
+  /** The SETUP_KEY link: spent by our own procedure. True when the admin exists. */
+  async function claimFirstAdmin(newPassword: string): Promise<boolean> {
+    try {
+      await claimSetupLink({ token, newPassword });
+      return true;
+    } catch (err) {
+      console.error("[reset-password.setup]", err);
+      if (isSetupLinkInvalid(err)) {
+        toast.error(t("auth:resetPassword.failed"));
+        onTokenRejected();
+        return false;
+      }
+      toast.error(friendly(err));
+      return false;
+    }
+  }
 
   const form = useForm({
     defaultValues: { newPassword: "", confirmPassword: "" },
     onSubmit: async ({ value }) => {
+      if (isSetup) {
+        if (!(await claimFirstAdmin(value.newPassword))) return;
+        toast.success(t("auth:resetPassword.setupSuccess"));
+        onDone();
+        return;
+      }
       const result = await authClient.resetPassword({
         newPassword: value.newPassword,
         token,
@@ -242,9 +326,11 @@ function ResetPasswordForm({
           >
             {isSubmitting
               ? t("auth:resetPassword.resetting")
-              : isInvite
-                ? t("auth:resetPassword.inviteSubmit")
-                : t("auth:resetPassword.submit")}
+              : isSetup
+                ? t("auth:resetPassword.setupSubmit")
+                : isInvite
+                  ? t("auth:resetPassword.inviteSubmit")
+                  : t("auth:resetPassword.submit")}
           </Button>
         )}
       </form.Subscribe>

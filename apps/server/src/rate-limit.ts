@@ -257,6 +257,37 @@ export const signupLimiter = new RateLimiterRedis({
   inMemoryBlockDuration: signupBudget.blockSeconds,
 });
 
+// First-admin setup limiter tunables. Code-only, like the signin-failure
+// triple: this guards one short-lived bootstrap route, not planned capacity.
+export const SETUP_POINTS = 5; // attempts per client IP …
+export const SETUP_WINDOW_SECONDS = 15 * 60; // … within this window …
+export const SETUP_BLOCK_SECONDS = 15 * 60; // … then block that IP this long.
+
+/**
+ * Setup limiter — `POST /api/setup/admin`, the SETUP_KEY first-admin bootstrap
+ * (setup-routes.ts). The route exists only while SETUP_KEY is set.
+ *
+ * 5 attempts / 15 min per client IP, 15-minute block. The operator needs one or
+ * two calls (a typo, an expired link re-minted); anything more is guessing.
+ * The key itself is ≥ 32 characters, so the limiter bounds noise and log
+ * volume rather than being what makes the key unguessable.
+ *
+ * IP-keyed only, deliberately no route-wide bucket: a shared bucket would let
+ * anyone lock the operator out of their own bootstrap with a few requests.
+ *
+ * Fail-closed with no `insuranceLimiter`, same rationale as `authLimiter`: the
+ * route checks a credential, so a Redis outage 503s it instead of unthrottling.
+ */
+export const setupLimiter = new RateLimiterRedis({
+  storeClient: redisConnection,
+  keyPrefix: "rl:setup",
+  points: SETUP_POINTS,
+  duration: SETUP_WINDOW_SECONDS,
+  blockDuration: SETUP_BLOCK_SECONDS,
+  inMemoryBlockOnConsumed: SETUP_POINTS + 1,
+  inMemoryBlockDuration: SETUP_BLOCK_SECONDS,
+});
+
 /**
  * Email-recipient limiter — caps how much mail a single ADDRESS can be sent
  * from the anonymous endpoints that accept a recipient in the request body

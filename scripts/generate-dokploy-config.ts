@@ -243,6 +243,9 @@ function environments(compose: boolean, project: string) {
         "BETTER_AUTH_SECRET",
         "BETTER_AUTH_URL",
         "ADMIN_EMAIL",
+        // Optional, no default: unset = the first-admin setup route is absent.
+        // Set only for the email-free bootstrap, then removed (docs/hosting.md).
+        "SETUP_KEY",
         "SIGNUP_ENABLED",
         "KB_MASTER_KEY",
       ]),

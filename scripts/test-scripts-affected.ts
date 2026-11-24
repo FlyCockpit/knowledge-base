@@ -164,6 +164,8 @@ export const RULES: readonly Rule[] = [
       "scripts/compose.sh",
       "scripts/deploy-check.mjs",
       "scripts/deploy-check.test.mjs",
+      "scripts/deploy-generate-admin.mjs",
+      "scripts/deploy-generate-admin.test.mjs",
       "scripts/dev-docker-down.sh",
       "scripts/dev-docker-logs.sh",
       "scripts/dev-docker.sh",

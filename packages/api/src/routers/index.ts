@@ -30,6 +30,7 @@ import { pushRouter } from "./push";
 import { queueRouter } from "./queue";
 import { searchRouter } from "./search";
 import { settingsRouter } from "./settings";
+import { setupRouter } from "./setup";
 import { usersRouter } from "./users";
 
 export const appRouter = {
@@ -69,6 +70,8 @@ export const appRouter = {
   }),
   auth: authRouter,
   settings: settingsRouter,
+  // First-admin setup link (SETUP_KEY) — lib/setup-admin.ts.
+  setup: setupRouter,
   push: pushRouter,
   queue: queueRouter,
   users: usersRouter,

@@ -668,6 +668,21 @@ export const ENV_VARS: EnvVar[] = [
     ],
   },
   {
+    key: "SETUP_KEY",
+    group: "admin",
+    source: "manual",
+    secret: true,
+    example: "",
+    comment: [
+      "First-admin bootstrap without email (optional; unset by default). While",
+      "set, `pnpm deploy:generate-admin` prints a one-time set-password link for",
+      "the bootstrap identity (ADMIN_EMAIL in production); opening it creates the",
+      "admin. Refused once bootstrap completes. 32 to 512 characters",
+      "(`pnpm generate:secret` makes one). REMOVE IT after the first admin has signed in;",
+      "admins see a warning until you do.",
+    ],
+  },
+  {
     key: "SIGNUP_ENABLED",
     group: "admin",
     source: "confirm",

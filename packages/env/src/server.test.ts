@@ -26,6 +26,7 @@ const BASE_ENV: EnvMap = {
   SSO_CLIENT_SECRET: undefined,
   SSO_ISSUER: undefined,
   FORCE_SSO: undefined,
+  SETUP_KEY: undefined,
   VAPID_PUBLIC_KEY: undefined,
   VAPID_PRIVATE_KEY: undefined,
   VAPID_SUBJECT: undefined,
@@ -292,6 +293,61 @@ describe("server env — resolveAppName", () => {
         errorCode: "INVALID_ENV",
       });
     }
+  });
+});
+
+describe("server env — SETUP_KEY", () => {
+  const STRONG_SETUP_KEY = "Hq7vT2mX9pL4wZ8cR1nB6yK3sD5fG0jA";
+
+  function reasonsFor(setting: string) {
+    return records.flatMap((record) =>
+      record.site === "server.config" && record.setting === setting ? [String(record.reason)] : [],
+    );
+  }
+
+  it("stays silent and undefined when unset", async () => {
+    const mod = await importServerEnv();
+    expect(mod.env.SETUP_KEY).toBeUndefined();
+    expect(reasonsFor("SETUP_KEY")).toEqual([]);
+  });
+
+  it("wraps a set key as a redacted secret and reminds to remove it", async () => {
+    const mod = await importServerEnv({ SETUP_KEY: STRONG_SETUP_KEY });
+    expect(mod.env.SETUP_KEY?.reveal()).toBe(STRONG_SETUP_KEY);
+    expect(String(mod.env.SETUP_KEY)).toBe("[redacted]");
+    expect(reasonsFor("SETUP_KEY")).toEqual(["SETUP_KEY_SET"]);
+  });
+
+  it("says the route refuses under FORCE_SSO", async () => {
+    await importServerEnv({ SETUP_KEY: STRONG_SETUP_KEY, FORCE_SSO: "true" });
+    expect(reasonsFor("SETUP_KEY")).toEqual(["SETUP_KEY_SET", "SETUP_KEY_FORCE_SSO"]);
+  });
+
+  it("rejects a key shorter than 32 characters", async () => {
+    await expect(importServerEnv({ SETUP_KEY: "short-key" })).rejects.toMatchObject({
+      code: "INVALID_ENV",
+    });
+  });
+
+  // One import per case: the guards run at import time (see the SSO cases).
+  const WEAK_KEY = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+  it("refuses a weak key in production", async () => {
+    await expect(
+      importServerEnv({
+        NODE_ENV: "production",
+        ADMIN_EMAIL: "admin@example.com",
+        SETUP_KEY: WEAK_KEY,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_ENV",
+      issues: [{ setting: "SETUP_KEY", reason: "WEAK_SECRET" }],
+    });
+  });
+
+  it("warns about a weak key in development", async () => {
+    await importServerEnv({ SETUP_KEY: WEAK_KEY });
+    expect(reasonsFor("SETUP_KEY")).toContain("WEAK_SECRET");
   });
 });
 

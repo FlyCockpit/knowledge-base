@@ -239,6 +239,7 @@ describe("appRouter surface", () => {
         "queue",
         "search",
         "settings",
+        "setup",
         "users",
       ].sort(),
     );

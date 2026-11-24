@@ -1,7 +1,7 @@
 import type { Session } from "@knowledge-base/auth";
 import { createRouterClient, ORPCError } from "@orpc/server";
 import type { MockInstance } from "vitest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Context } from "../context";
 import { settingsRouter } from "./settings";
@@ -15,8 +15,9 @@ vi.mock("@knowledge-base/db", async () => {
 });
 
 const adminEmailState = { value: undefined as string | undefined };
+const serverEnv = vi.hoisted(() => ({}) as { SETUP_KEY?: { reveal(): string } });
 vi.mock("@knowledge-base/env/server", () => ({
-  env: {},
+  env: serverEnv,
   get ADMIN_EMAIL() {
     return adminEmailState.value;
   },
@@ -249,6 +250,31 @@ describe("settingsRouter", () => {
         expect(error.code).toBe("UNAUTHORIZED");
         return true;
       });
+    });
+  });
+
+  describe("setupKeyStatus", () => {
+    afterEach(() => {
+      delete serverEnv.SETUP_KEY;
+    });
+
+    it("tells an admin whether SETUP_KEY is still set", async () => {
+      const client = createRouterClient(settingsRouter, {
+        context: buildContext({ user: { role: "admin", twoFactorEnabled: true } }),
+      });
+      expect(await client.setupKeyStatus()).toEqual({ setupKeySet: false });
+      serverEnv.SETUP_KEY = { reveal: () => "k".repeat(32) };
+      expect(await client.setupKeyStatus()).toEqual({ setupKeySet: true });
+    });
+
+    it("is NOT_FOUND to a non-admin and to anonymous callers", async () => {
+      serverEnv.SETUP_KEY = { reveal: () => "k".repeat(32) };
+      for (const context of [buildContext({ user: { role: "user" } }), buildContext(null)]) {
+        const client = createRouterClient(settingsRouter, { context });
+        await expect(client.setupKeyStatus()).rejects.toSatisfy(
+          (error: ORPCError) => error instanceof ORPCError && error.code === "NOT_FOUND",
+        );
+      }
     });
   });
 

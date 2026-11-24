@@ -115,8 +115,10 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | settings.adminSetupStatus | browser settings |
 | settings.getAll | browser settings |
 | settings.myNotificationPreferences | browser preferences |
+| settings.setupKeyStatus | instance administration |
 | settings.update | instance administration |
 | settings.updateMyNotificationPreferences | browser preferences |
+| setup.claimFirstAdmin | first-admin bootstrap |
 | users.archive | instance administration |
 | users.invite | instance administration |
 | users.list | instance administration |

@@ -87,6 +87,12 @@ export const serverVars = {
   // Sole production bootstrap identity. One trimmed, lowercase, valid email.
   // Unset is allowed (dev/test first-user bootstrap; provisioned installs).
   ADMIN_EMAIL: z.string().trim().email().toLowerCase().optional(),
+  // First-admin bootstrap key, documented in docs/hosting.md § Bootstrap
+  // While set, POST /api/setup/admin exists and `pnpm deploy:generate-admin` can issue a
+  // one-time setup link for the bootstrap identity until bootstrap completes,
+  // with no SMTP needed. Unset it after setup. The maximum keeps every valid
+  // key inside the route's 4 KiB request body.
+  SETUP_KEY: z.string().min(32).max(512).optional().transform(toSecret),
   // TTL (seconds) for the in-memory SSR HTML cache of public pages
   // (apps/server/src/ssr-cache.ts). 0 disables the cache entirely; the
   // default keeps a cached public render for up to a minute. Edits to a live

@@ -34,6 +34,9 @@
     "./lib/two-factor-policy": {
       "default": "./src/lib/two-factor-policy.ts"
     },
+    "./lib/setup-admin": {
+      "default": "./src/lib/setup-admin.ts"
+    },
     "./lib/rate-limit-families": {
       "default": "./src/lib/rate-limit-families.ts"
     },

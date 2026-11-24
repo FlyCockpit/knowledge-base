@@ -10,6 +10,17 @@ Dokploy on a VPS is the documented deployment target. Production and container d
 - After `BootstrapState` completes, the email never re-promotes a demoted user.
 - Disabled public signup still accepts admin invitations. When SMTP is off, invite returns the one-time link privately.
 
+### First admin without email (`SETUP_KEY`)
+
+The ADMIN_EMAIL sign-up sends a verification email. Without SMTP, use the setup key instead:
+
+1. Set `SETUP_KEY` (32 to 512 characters, `pnpm generate:secret`) next to `ADMIN_EMAIL` on the server and deploy.
+2. From any machine with a checkout, run `pnpm deploy:generate-admin --url https://kb.example.com --email <ADMIN_EMAIL>` and type the key when asked (it is never taken as an argument). It prints a one-time link valid for an hour; re-running replaces it.
+3. Open the link and choose the password. That creates the admin (email verified, two-factor grace starting now) and completes bootstrap in one transaction.
+4. Sign in, enroll two-factor authentication, then remove `SETUP_KEY` and redeploy. Admins see a reminder until you do.
+
+The rules: `POST /api/setup/admin` and `setup.claimFirstAdmin` answer 404 while `SETUP_KEY` is unset (removing it also kills an unspent link). The key is compared in constant time, the route is limited to 5 attempts per IP per 15 minutes (fail-closed) and every attempt writes one `setup.first-admin` record without the key, address or link. Issuing creates no user, only a hashed link. The claim takes the identity authority lock and the `BootstrapState` row lock and applies the same policy as the sign-up, so production admits only `ADMIN_EMAIL`, and a racing sign-up and the claim cannot both create an admin. Both refuse once bootstrap is complete and under `FORCE_SSO`.
+
 ## Volumes and processes
 
 - One data volume at `KB_DATA_ROOT` holds `repos/`, `assets/`, `models/` and `index/`. Server and worker both mount it RW; nothing is mounted below it.

@@ -25,7 +25,7 @@ import { ORPC_BATCH_MAX_SIZE } from "@knowledge-base/config/orpc-batch";
 import { THEME_INIT_SCRIPT } from "@knowledge-base/config/theme-init";
 import prisma from "@knowledge-base/db";
 import { logEvent, logInternalError } from "@knowledge-base/env/log";
-import { ADMIN_EMAIL, env } from "@knowledge-base/env/server";
+import { ADMIN_EMAIL, env, FORCE_SSO } from "@knowledge-base/env/server";
 import { kbDataPaths } from "@knowledge-base/env/topology";
 import { QUEUE_NAMES, redisConnection } from "@knowledge-base/queue";
 import { hasExternalConsumer } from "@knowledge-base/queue/consumer-health";
@@ -91,6 +91,7 @@ import { validateSameSiteJsonRequest } from "./request-origin.js";
 import { mountSecurityHeaders } from "./security-headers.js";
 import { registerSeoRoutes } from "./seo.js";
 import { sessionMiddleware } from "./session-middleware.js";
+import { mountSetupRoutes } from "./setup-routes.js";
 import { SIGNIN_FAILURE_PATH, signinFailureLimit } from "./signin-failure-limit.js";
 import { adminBootstrapMarker } from "./signup-gate.js";
 import { handleSsrRequest } from "./ssr-cache.js";
@@ -170,6 +171,12 @@ app.use("/*", async (c, next) => {
     permit.release();
   }
 });
+// SETUP_KEY first-admin bootstrap (`pnpm deploy:generate-admin`). 404 unless
+// SETUP_KEY is set; refuses once bootstrap is complete. Mounted after the body
+// policy (4 KiB cap for this path) and the admission gate, and before CORS, so
+// an unset key 404s every method, preflights included. See setup-routes.ts.
+mountSetupRoutes(app, { setupKey: env.SETUP_KEY, passwordSignInEnabled: !FORCE_SSO });
+
 const mcpAuthHandler = mountMcpOAuth(app, {
   baseUrl: env.BETTER_AUTH_URL,
   webOrigin: env.CORS_ORIGIN,

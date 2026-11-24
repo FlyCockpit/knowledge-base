@@ -230,6 +230,10 @@
     "retry": "Reintentar",
     "firstAccountAdmin": "<0>ADMIN_EMAIL</0> no está configurado, así que la primera cuenta registrada se convirtió en administradora. Configura <0>ADMIN_EMAIL</0> para elegir la cuenta administradora de forma explícita."
   },
+  "setupKeyBanner": {
+    "title": "Elimina SETUP_KEY",
+    "message": "<0>SETUP_KEY</0> sigue configurada en el servidor. Solo se necesita para crear el primer administrador: elimínala del entorno y vuelve a desplegar."
+  },
   "twoFactorNudge": {
     "title": "La autenticación de dos factores no está configurada",
     "message": "Tu cuenta de administrador inicia sesión solo con una contraseña. Agrega una aplicación de autenticación como segundo factor para que una contraseña robada no alcance para abrir este panel de administración.",

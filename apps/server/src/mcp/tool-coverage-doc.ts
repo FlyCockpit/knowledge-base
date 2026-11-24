@@ -81,6 +81,8 @@ const humanOnly = {
   "queue.listFailed": "instance administration",
   "settings.getAll": "browser settings",
   "settings.adminSetupStatus": "browser settings",
+  "settings.setupKeyStatus": "instance administration",
+  "setup.claimFirstAdmin": "first-admin bootstrap",
   "settings.myNotificationPreferences": "browser preferences",
   "settings.updateMyNotificationPreferences": "browser preferences",
   "settings.update": "instance administration",

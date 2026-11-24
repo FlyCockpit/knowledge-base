@@ -144,6 +144,10 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "rpc:search.structured": read,
   "rpc:settings.getAll": read,
   "rpc:settings.adminSetupStatus": read,
+  "rpc:settings.setupKeyStatus": read,
+  "rpc:setup.claimFirstAdmin": outOfBand(
+    "SETUP_KEY first-admin bootstrap; one setup.first-admin-claim log record per attempt",
+  ),
   "rpc:settings.myNotificationPreferences": read,
   "rpc:settings.updateMyNotificationPreferences": outOfBand("per-user preference"),
   "rpc:settings.update": outOfBand(
