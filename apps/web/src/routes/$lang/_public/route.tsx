@@ -48,7 +48,9 @@ function PublicHeader() {
 
   return (
     <header>
-      <div className="flex min-w-0 flex-row items-center gap-4 px-4 py-2">
+      {/* The app header's row gap: 16px from `sm:`, 8px on phones, where
+          the 44px brand and the es-MX controls fit 320px with 16px edges. */}
+      <div className="flex min-w-0 flex-row items-center gap-2 px-4 py-2 sm:gap-4">
         <AppBrand lang={lang} />
         {/* The public branch has no BottomNav, so from `sm:` up this
             scrollable row is its navigation. Below `sm:` there is no room for

@@ -157,6 +157,14 @@ describe("public header row", () => {
     expect(classesOf(html, /<div class="(ml-auto [^"]*)">/)).toContain("shrink-0");
   });
 
+  it("uses the app header's row gap (8px on phones, 16px from sm:)", async () => {
+    for (const html of [await renderPublic(), renderNode(<Header />)]) {
+      const row = classesOf(html, /<div class="(flex min-w-0 flex-row [^"]*)">/);
+      expect(row).toEqual(expect.arrayContaining(["gap-2", "sm:gap-4", "px-4"]));
+      expect(row).not.toContain("gap-4");
+    }
+  });
+
   it("gives Sign In the app header's touch metrics", async () => {
     const html = await renderPublic();
     const match = html.match(/<a data-to="\/\$lang\/login" class="([^"]*)"[^>]*>([^<]*)<\/a>/);
