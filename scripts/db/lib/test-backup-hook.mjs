@@ -2,7 +2,13 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
-export function writeTestBackupHook(dir, { logFile, failFile } = {}) {
+/**
+ * `gate` (a directory) makes the hook signal and block: it creates
+ * `<gate>/hook-started`, then waits until the test creates `<gate>/hook-release`
+ * (60 s bound, then exit 1). A test can then act strictly while the hook runs,
+ * with no timing assumption about how long the runner takes to reach it.
+ */
+export function writeTestBackupHook(dir, { logFile, failFile, gate } = {}) {
   const script = path.join(dir, "fixture-backup.mjs");
   writeFileSync(
     script,
@@ -15,6 +21,16 @@ const logFile=${JSON.stringify(logFile ?? null)};
 const failFile=${JSON.stringify(failFile ?? null)};
 if(logFile) fs.appendFileSync(logFile,process.argv.slice(2).join(" ")+"\\n");
 if(failFile && fs.existsSync(failFile)) process.exit(1);
+const gate=${JSON.stringify(gate ?? null)};
+if(gate){
+  fs.writeFileSync(path.join(gate,"hook-started"),"");
+  const tick=new Int32Array(new SharedArrayBuffer(4));
+  const until=Date.now()+60000;
+  while(!fs.existsSync(path.join(gate,"hook-release"))){
+    if(Date.now()>until) process.exit(1);
+    Atomics.wait(tick,0,0,5);
+  }
+}
 // --check-destination (brand-new database) checks the destination only: no bundle.
 if(process.argv.includes("--check-destination")) process.exit(0);
 const bundlePath=path.join(${JSON.stringify(dir)},"backup-"+env.KB_BACKUP_RUN_ID+".age");

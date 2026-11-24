@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, test } from "node:test";
@@ -60,6 +60,7 @@ function fakeDb(init) {
     holds: new Map(),
     cluster: init.cluster ?? null,
     identity: init.identity ?? { system_identifier: "7", timeline: 1 },
+    queryDelayMs: init.queryDelayMs ?? 0,
   };
   /** Answers for the runner-owned tables; undefined → fall through. */
   const runtimeQuery = (sql, params) => {
@@ -132,6 +133,7 @@ function fakeDb(init) {
         if (db.runnerHolder === this) db.runnerHolder = null;
       }
       async query(sql, params = []) {
+        if (db.queryDelayMs) await new Promise((resolve) => setTimeout(resolve, db.queryDelayMs));
         if (/restore_table/.test(sql))
           return { rows: [{ restore_table: db.pendingRestore ? "kb_restore" : null }] };
         if (/FROM knowledge_base_control.kb_restore/.test(sql))
@@ -832,22 +834,41 @@ describe("KB restore admission and full-bundle backup", () => {
     assert.equal(result.code, 1, result.out);
     assert.deepEqual(result.calls, []);
   });
-  test("backup runs without DADP and changed history restarts classification", async () => {
-    const db = fakeDb({ rows: [applied("0_init")] });
-    const timer = setTimeout(() => {
-      assert.equal(db.ddlHolder, null, "bundle hook never runs while DADP is held");
-      assert.equal(db.parentPrismaHeld, false, "bundle hook never runs while Prisma is held");
-      db.rows.push(applied(NEXT));
-    }, 30);
-    try {
-      const result = await runtime(db);
+  // The history changes strictly while the bundle hook runs: the hook signals
+  // `hook-started` and blocks until the test releases it, so neither a fast
+  // hook nor a slow runner (forced query delay) can move the change outside
+  // the backup window.
+  for (const queryDelayMs of [0, 20])
+    test(`backup runs without DADP and changed history restarts classification (query delay ${queryDelayMs} ms)`, async () => {
+      const gate = mkdtempSync(path.join(dir, "gate-"));
+      const db = fakeDb({ rows: [applied("0_init")], queryDelayMs });
+      let finished = false;
+      let observed = false;
+      const duringBackup = (async () => {
+        try {
+          while (!existsSync(path.join(gate, "hook-started"))) {
+            if (finished) return;
+            await new Promise((resolve) => setTimeout(resolve, 2));
+          }
+          observed = true;
+          assert.equal(db.ddlHolder, null, "bundle hook never runs while DADP is held");
+          assert.equal(db.parentPrismaHeld, false, "bundle hook never runs while Prisma is held");
+          db.rows.push(applied(NEXT));
+        } finally {
+          writeFileSync(path.join(gate, "hook-release"), "");
+        }
+      })();
+      const result = await runtime(db, {
+        backupHook: writeTestBackupHook(gate, { gate }),
+      }).finally(() => {
+        finished = true;
+      });
+      await duringBackup;
+      assert.ok(observed, "the bundle hook ran");
       assert.equal(result.code, 0, result.out);
       assert.match(result.out, /changed during backup/);
       assert.deepEqual(result.calls, [], "changed prefix is never deployed using stale facts");
-    } finally {
-      clearTimeout(timer);
-    }
-  });
+    });
 });
 
 for (const enabled of [undefined, "", "false"])
