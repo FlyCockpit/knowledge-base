@@ -55,6 +55,8 @@ fn worker_error(why: impl Into<String>) -> StoreError {
 #[derive(Clone, Debug)]
 pub struct ModelHost {
     executable: PathBuf,
+    /// The executable's canonical spelling, named in the worker identity.
+    canonical_executable: PathBuf,
     runtime_dir: PathBuf,
     cache: ModelCache,
     idle: Duration,
@@ -79,8 +81,17 @@ impl ModelHost {
                 "the embedding runtime directory must be absolute".into(),
             ));
         }
+        // The worker names its endpoint after the executable it finds itself
+        // to be (`current_exe`), so the identity uses the file's canonical
+        // spelling on both sides: `dir/./kb`, a symlink, an 8.3 name or
+        // `D:/a/kb.exe` (Git Bash) for `D:\a\kb.exe` must still reach the
+        // worker it starts. It is still started by the path as given. A
+        // missing file keeps its spelling (`startability` reports it).
+        let canonical_executable =
+            std::fs::canonicalize(&executable).unwrap_or_else(|_| executable.clone());
         Ok(Self {
             executable,
+            canonical_executable,
             runtime_dir,
             cache: ModelCache::new(models_dir)?,
             idle: idle.clamp(Duration::from_millis(50), Duration::from_secs(900)),
@@ -122,7 +133,7 @@ impl ModelHost {
         let text = format!(
             "{PROTOCOL}\0{VERSION}\0{}\0{}\0{}\0{}",
             crate::qwen::runtime_identity(),
-            self.executable.display(),
+            self.canonical_executable.display(),
             self.cache.dir().display(),
             self.cache.private_dir().display()
         );

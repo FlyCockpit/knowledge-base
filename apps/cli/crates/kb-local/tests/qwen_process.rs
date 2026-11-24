@@ -1547,3 +1547,33 @@ fn a_squatted_stale_pipe_name_is_refused_before_any_document_text() {
     let seen = String::from_utf8_lossy(&seen.lock().expect("seen")).to_string();
     assert!(!seen.contains("secret document text"), "{seen}");
 }
+
+#[test]
+fn a_differently_spelled_executable_reaches_the_worker_it_starts() {
+    // The worker names its endpoint after the executable it finds itself to
+    // be; a caller that spells the same file another way (`dir/./kb`, or
+    // `D:/a/kb.exe` for `D:\a\kb.exe` from Git Bash) must still find it.
+    let f = Fixture::new("model-spelling");
+    let s = Store::open(&f.root.join("store")).expect("store");
+    let plain = model_host::seeded(&f.root, IDLE);
+    let helper = model_host::helper();
+    let respelled = helper
+        .parent()
+        .expect("helper dir")
+        .join(".")
+        .join(helper.file_name().expect("helper name"));
+    let host = ModelHost::new(
+        respelled,
+        plain.runtime_dir().to_path_buf(),
+        f.root.join("m"),
+        IDLE,
+    )
+    .expect("model host");
+    configure(&s, &host);
+    let pid = runtime(&s, &host)
+        .embed(&s, "hello", Purpose::Query, Duration::from_secs(30))
+        .expect("embed through the respelled executable")
+        .pid;
+    assert_eq!(host.status().map(|info| info.pid), Some(pid));
+    assert_eq!(host.endpoint(), plain.endpoint());
+}
