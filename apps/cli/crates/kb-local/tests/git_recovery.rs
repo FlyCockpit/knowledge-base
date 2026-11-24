@@ -1558,6 +1558,23 @@ fn batch_pid_selects_its_repository_among_live_readers() {
     );
 }
 
+// A live, non-zombie process: a zombie has already closed its descriptors.
+#[cfg(target_os = "linux")]
+fn running(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/status")).is_ok_and(|status| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("State:"))
+            .is_some_and(|state| !matches!(state.trim().chars().next(), Some('Z' | 'X')))
+    })
+}
+
+// The reader outlives its owner because a second writer of its stdin pipe (its
+// fd 0 reopened through /proc) keeps it blocked on protocol input. Never
+// SIGSTOP it instead: if the killed owner's group-leader thread exits while the
+// reader's parent is still another exiting owner thread, the owner's process
+// group counts as orphaned, and the kernel sends an orphaned group with a
+// stopped member SIGHUP+SIGCONT (POSIX job control): the reader dies early.
 #[cfg(target_os = "linux")]
 #[test]
 fn managed_batch_without_guard_blocks_successor_after_owner_kill() {
@@ -1569,26 +1586,17 @@ fn managed_batch_without_guard_blocks_successor_after_owner_kill() {
         let mut owner = spawn_role("managed-batch", &root, &format!("{kb} {head} {mode}"), None);
         wait_for_line(&mut owner, "READY");
         let pid = batch_pid(owner.id(), &root.join("repos").join(format!("kb_{kb}.git")));
-        assert!(
-            Command::new("kill")
-                .args(["-STOP", &pid.to_string()])
-                .status()
-                .unwrap()
-                .success()
-        );
+        let input = std::fs::OpenOptions::new()
+            .write(true)
+            .open(format!("/proc/{pid}/fd/0"))
+            .expect("second writer of the batch input");
         owner.kill().unwrap();
         owner.wait().unwrap();
         let successor = Store::open(&root).unwrap();
-        let alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+        let alive = running(pid);
         let excluded = successor.try_lock_write(&[]).unwrap().is_none();
-        // Continue even on historical failure so closed batch input drains.
-        assert!(
-            Command::new("kill")
-                .args(["-CONT", &pid.to_string()])
-                .status()
-                .unwrap()
-                .success()
-        );
+        // EOF on the batch input: the reader exits and releases the store lock.
+        drop(input);
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(guard) = successor.try_lock_write(&[]).unwrap() {
