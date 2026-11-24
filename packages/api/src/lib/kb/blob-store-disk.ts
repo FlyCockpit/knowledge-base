@@ -363,7 +363,10 @@ export async function withVerifiedCasPublication(
       fsyncCasPublishBarriers(chain, verifiedFd);
       if (input.afterDurableBytes) await input.afterDurableBytes();
       input.signal?.throwIfAborted();
-      assertUnchangedBlob(verifiedFd, chain.leafPath, verified);
+      // A same-size in-place rewrite within one filesystem timestamp tick
+      // keeps inode, size, mtime and ctime, so the published blob is re-hashed
+      // through the pinned descriptor: durability rests on content.
+      verifyTempBlob(verifiedFd, chain.leafPath, body, hash, verified);
     } catch (error) {
       if (error instanceof KbAdmissionError) throw error;
       if (error instanceof Error && "code" in error) {
@@ -450,33 +453,36 @@ export function createDiskBlobStore(assetsDir: string, offlineScratchName?: stri
       const before = await file.stat({ bigint: true });
       if (!before.isFile() || before.size !== BigInt(input.size)) throw diskUnavailable();
       check();
+      const verifyContent = async (checkActive?: () => void) => {
+        check();
+        checkActive?.();
+        const buffer = Buffer.alloc(Math.min(BLOB_FRAME_BYTES, input.size));
+        const hasher = createHash("sha256");
+        for (let offset = 0; offset < input.size; ) {
+          check();
+          checkActive?.();
+          const { bytesRead } = await file.read(
+            buffer,
+            0,
+            Math.min(buffer.length, input.size - offset),
+            offset,
+          );
+          check();
+          checkActive?.();
+          if (bytesRead === 0) throw diskUnavailable();
+          hasher.update(buffer.subarray(0, bytesRead));
+          offset += bytesRead;
+        }
+        if (`sha256:${hasher.digest("hex")}` !== input.hash) throw diskUnavailable();
+        unchanged(before, await file.stat({ bigint: true }));
+        check();
+      };
       const reader: BlobReader = {
         get verified() {
           return verified;
         },
         async preflight(checkActive) {
-          check();
-          checkActive?.();
-          const buffer = Buffer.alloc(Math.min(BLOB_FRAME_BYTES, input.size));
-          const hasher = createHash("sha256");
-          for (let offset = 0; offset < input.size; ) {
-            check();
-            checkActive?.();
-            const { bytesRead } = await file.read(
-              buffer,
-              0,
-              Math.min(buffer.length, input.size - offset),
-              offset,
-            );
-            check();
-            checkActive?.();
-            if (bytesRead === 0) throw diskUnavailable();
-            hasher.update(buffer.subarray(0, bytesRead));
-            offset += bytesRead;
-          }
-          if (`sha256:${hasher.digest("hex")}` !== input.hash) throw diskUnavailable();
-          unchanged(before, await file.stat({ bigint: true }));
-          check();
+          await verifyContent(checkActive);
           verified = true;
         },
         async readFrame(offset, length) {
@@ -499,11 +505,13 @@ export function createDiskBlobStore(assetsDir: string, offlineScratchName?: stri
           check();
           return bytes.subarray(0, bytesRead);
         },
+        // Timestamps can miss a same-size in-place rewrite within one
+        // filesystem tick, so completion re-hashes the pinned inode: the
+        // full-object guarantee rests on content, not on mtime/ctime alone.
         async complete() {
           check();
           if (!verified) throw diskUnavailable();
-          unchanged(before, await file.stat({ bigint: true }));
-          check();
+          await verifyContent();
         },
         close,
       };
@@ -618,18 +626,23 @@ export async function offlineDiskBytes<T>(
           throw diskUnavailable();
     };
     const body = Buffer.alloc(row.size);
-    for (let at = 0; at < body.length; ) {
-      signal?.throwIfAborted();
-      const n = readSync(fd, body, at, Math.min(BLOB_FRAME_BYTES, body.length - at), at);
-      if (!n) throw diskUnavailable();
-      at += n;
-    }
-    if (`sha256:${createHash("sha256").update(body).digest("hex")}` !== row.hash)
-      throw diskUnavailable();
-    unchanged();
+    const verify = () => {
+      for (let at = 0; at < body.length; ) {
+        signal?.throwIfAborted();
+        const n = readSync(fd!, body, at, Math.min(BLOB_FRAME_BYTES, body.length - at), at);
+        if (!n) throw diskUnavailable();
+        at += n;
+      }
+      if (`sha256:${createHash("sha256").update(body).digest("hex")}` !== row.hash)
+        throw diskUnavailable();
+      unchanged();
+    };
+    verify();
     signal?.throwIfAborted();
     fsyncCasPublishBarriers(chain, fd);
-    unchanged();
+    // Timestamps can miss a same-size in-place rewrite within one filesystem
+    // tick, so the barrier is followed by a content re-hash, not metadata alone.
+    verify();
     return await work(body, () => {
       unchanged();
       unlinkSync(chain.leafPath);

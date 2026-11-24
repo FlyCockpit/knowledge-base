@@ -291,7 +291,10 @@ fn a_file_replaced_between_verification_and_load_is_refused() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("file");
     let cache = ModelCache::new(dir.clone()).expect("cache");
     let found = cache.resolve(&m).expect("found");
-    // Replaced (new inode, same size and bytes) after the cheap stat.
+    // Replaced (new inode, same size and bytes) after the cheap stat. The
+    // old inode stays open, so no filesystem can hand its number to the
+    // replacement: a genuine identity change even within one ctime tick.
+    let _old = std::fs::File::open(&file).expect("hold the replaced inode");
     std::fs::remove_file(&file).expect("unlink");
     std::fs::write(&file, b"abc").expect("replacement");
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("file");

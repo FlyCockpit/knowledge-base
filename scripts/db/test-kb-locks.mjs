@@ -18,6 +18,19 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { writeTestBackupHook } from "./lib/test-backup-hook.mjs";
 
+/** Exited = reaped (no /proc entry) or a zombie. One read, no exists-then-read
+ * race: a process that is reaped between two checks is exited, not an error. */
+function processExited(pid) {
+  let status;
+  try {
+    status = readFileSync(`/proc/${pid}/status`, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ESRCH") return true;
+    throw error;
+  }
+  return /^State:\s+Z/m.test(status);
+}
+
 export async function kbLockScenarios({ step, serverUrl, repo, pg, sh }) {
   const lib = (file) => import(path.join(repo, "scripts/db/lib", file));
   const { adminClient, createDatabase, removeDatabase } = await lib("scratch-db.mjs");
@@ -304,12 +317,7 @@ process.exitCode=await run({mode:${JSON.stringify(mode)},contracts:false,migrati
             );
             if (timing === "before-prisma") {
               const pid = readFileSync(barrier, "utf8");
-              await until(
-                () =>
-                  !existsSync(`/proc/${pid}/status`) ||
-                  /^State:\s+Z/m.test(readFileSync(`/proc/${pid}/status`, "utf8")),
-                "orphan native wrapper survived its runner",
-              );
+              await until(() => processExited(pid), "orphan native wrapper survived its runner");
             }
             // Keep the DDL barrier held until backend exclusion proves rollback.
             // A disconnected backend may still be processing its buffered SQL;

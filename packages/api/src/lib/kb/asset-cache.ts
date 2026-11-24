@@ -794,35 +794,40 @@ export function createAssetCache(input: {
             closeCasDirChain(final);
           }
           check();
+          // Timestamps can miss a same-size in-place rewrite within one
+          // filesystem tick, so completion re-hashes the pinned descriptor too.
+          const verifyContent = async (checkActive?: () => void) => {
+            check();
+            checkActive?.();
+            const buf = Buffer.alloc(Math.min(BLOB_FRAME_BYTES, size));
+            const digest = createHash("sha256");
+            for (let offset = 0; offset < size; ) {
+              check();
+              checkActive?.();
+              const n = await new Promise<number>((resolve, reject) => {
+                read(fd!, buf, 0, Math.min(buf.length, size - offset), offset, (error, n) => {
+                  if (error) reject(error);
+                  else resolve(n);
+                });
+              });
+              check();
+              checkActive?.();
+              if (!n) throw cacheUnavailable();
+              digest.update(buf.subarray(0, n));
+              offset += n;
+            }
+            if (`sha256:${digest.digest("hex")}` !== hash) throw cacheUnavailable();
+            unchanged(e, fstatSync(fd!, { bigint: true }));
+            if (!(await state.isReady(e, deadline))) throw cacheUnavailable();
+            check();
+          };
           return {
             get verified() {
               return verified;
             },
             preflight: (checkActive) =>
               io(async () => {
-                check();
-                checkActive?.();
-                const buf = Buffer.alloc(Math.min(BLOB_FRAME_BYTES, size));
-                const digest = createHash("sha256");
-                for (let offset = 0; offset < size; ) {
-                  check();
-                  checkActive?.();
-                  const n = await new Promise<number>((resolve, reject) => {
-                    read(fd!, buf, 0, Math.min(buf.length, size - offset), offset, (error, n) => {
-                      if (error) reject(error);
-                      else resolve(n);
-                    });
-                  });
-                  check();
-                  checkActive?.();
-                  if (!n) throw cacheUnavailable();
-                  digest.update(buf.subarray(0, n));
-                  offset += n;
-                }
-                if (`sha256:${digest.digest("hex")}` !== hash) throw cacheUnavailable();
-                unchanged(e, fstatSync(fd!, { bigint: true }));
-                if (!(await state.isReady(e, deadline))) throw cacheUnavailable();
-                check();
+                await verifyContent(checkActive);
                 verified = true;
               }),
             readFrame: (offset, length) =>
@@ -850,9 +855,7 @@ export function createAssetCache(input: {
             complete: () =>
               io(async () => {
                 if (!verified) throw cacheUnavailable();
-                unchanged(e, fstatSync(fd!, { bigint: true }));
-                if (!(await state.isReady(e, deadline))) throw cacheUnavailable();
-                check();
+                await verifyContent();
               }),
             sampleDownload: () => touch.sample(),
             close,

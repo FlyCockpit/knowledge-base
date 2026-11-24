@@ -182,6 +182,21 @@ describe("cache reader async preflight", () => {
     },
   );
 
+  it("re-hashes at completion: a content change with an unchanged fingerprint is refused", async () => {
+    fixture = await setup();
+    const { reader, cache, pin } = fixture;
+    await reader.preflight();
+    expect(reader.verified).toBe(true);
+    // Same inode, size, mtime and ctime (as within one timestamp tick), other bytes.
+    reads.fault = "hash";
+    await expect(reader.complete()).rejects.toThrow();
+    expect(reads.calls).toBe(4);
+    expect(readSync).not.toHaveBeenCalled();
+    expect(cache.state.invalidate).toHaveBeenCalledWith(pin.entry, expect.any(Number));
+    await reader.close();
+    expect(cache.state.release).toHaveBeenCalledWith(pin, expect.any(Number));
+  });
+
   it.each(["close", "signal", "lifecycle"] as const)(
     "drains an asynchronous read before closing during %s cancellation",
     async (cancel) => {
