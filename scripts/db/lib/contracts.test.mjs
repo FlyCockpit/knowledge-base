@@ -11,6 +11,7 @@ import {
   CONTRACT_PREAMBLE_TIMEOUT_MS,
   CONTRACT_START_MIN_MS,
   CONTRACT_STATEMENT_TIMEOUT_MS,
+  captureMigrationHistory,
   checkClusterIdentity,
   classifyFailure,
   ddlFor,
@@ -27,6 +28,7 @@ import {
   scheduleLines,
   statementTimeoutMs,
   validateContract,
+  validateMigrationHistory,
 } from "./contracts.mjs";
 import { analyzeContract, catalogFromSql, enumRemoveContract, wrapTransactional } from "./sql.mjs";
 
@@ -1282,4 +1284,143 @@ test("snapshot accepts out-of-order applied subsets, rejects unknown, duplicate 
       /unique matching subset/,
     );
   }
+});
+
+describe("captureMigrationHistory / validateMigrationHistory with release migrations", () => {
+  // Release REL replaces P1 and P2 (P2 with a contract); the database applied
+  // only P1, so the pre-migration backup runs before the runner reconciles.
+  const hex = (c) => c.repeat(64);
+  const REL = "20261110000000_release_2";
+  const P1 = "20261101000000_one";
+  const P2 = "20261102000000_two";
+  const migrations = [
+    { name: "0_init", checksum: hex("a"), contract: null },
+    { name: REL, checksum: hex("b"), contract: { checksum: hex("c") } },
+  ];
+  const replaced = [
+    { name: P1, release: REL, checksum: hex("d"), contractChecksum: null },
+    { name: P2, release: REL, checksum: hex("e"), contractChecksum: hex("f") },
+  ];
+  const done = new Date("2026-11-01T00:00:00Z");
+  const fakeClient = (applied, contracts = []) => ({
+    async query(sql) {
+      if (sql.includes("_prisma_migrations"))
+        return {
+          rows: applied.map(([name, checksum]) => ({
+            name,
+            checksum,
+            finished_at: done,
+            rolled_back_at: null,
+          })),
+        };
+      if (sql.includes("to_regclass")) return { rows: [{ present: true }] };
+      return { rows: contracts };
+    },
+  });
+  const capture = (client, options = {}) =>
+    captureMigrationHistory(client, { schema: "public", migrations, replaced, ...options });
+
+  test("a replaced migration applied before reconcile is captured as replaced, with its own checksum", async () => {
+    const history = await capture(
+      fakeClient([
+        ["0_init", hex("a")],
+        [P1, hex("d")],
+      ]),
+    );
+    assert.deepEqual(
+      history.applied.map((r) => r.name),
+      ["0_init", P1],
+    );
+    assert.deepEqual(history.replaced, replaced);
+    assert.doesNotThrow(() => validateMigrationHistory(history, migrations, replaced));
+  });
+
+  test("an applied replaced contract keeps its state, checked against replaces.json", async () => {
+    const contract = { name: P2, contract_checksum: hex("f"), contract_applied_at: done };
+    const history = await capture(
+      fakeClient(
+        [
+          ["0_init", hex("a")],
+          [P1, hex("d")],
+          [P2, hex("e")],
+        ],
+        [contract],
+      ),
+    );
+    assert.deepEqual(history.contracts, [contract]);
+    await assert.rejects(
+      capture(
+        fakeClient(
+          [
+            ["0_init", hex("a")],
+            [P2, hex("e")],
+          ],
+          [{ ...contract, contract_checksum: hex("0") }],
+        ),
+      ),
+      /contract state/,
+    );
+    // P2 has a contract in replaces.json, so its contract row must be captured.
+    await assert.rejects(
+      capture(
+        fakeClient([
+          ["0_init", hex("a")],
+          [P2, hex("e")],
+        ]),
+      ),
+      /lacks contract execution state/,
+    );
+  });
+
+  test("unknown names, wrong checksums and release-plus-replaced histories are refused", async () => {
+    for (const applied of [
+      [
+        ["0_init", hex("a")],
+        [P1, hex("0")],
+      ],
+      [
+        ["0_init", hex("a")],
+        ["20261103000000_unknown", hex("d")],
+      ],
+      [
+        ["0_init", hex("a")],
+        [P1, hex("d")],
+        [REL, hex("b")],
+      ],
+    ])
+      await assert.rejects(capture(fakeClient(applied)), /Snapshot/);
+    // Without the release's replaces.json a replaced name is unknown.
+    await assert.rejects(
+      capture(
+        fakeClient([
+          ["0_init", hex("a")],
+          [P1, hex("d")],
+        ]),
+        { replaced: [] },
+      ),
+      /unique matching subset/,
+    );
+  });
+
+  test("the archived replaced set must match the one the snapshot recorded", async () => {
+    const history = await capture(
+      fakeClient([
+        ["0_init", hex("a")],
+        [P1, hex("d")],
+      ]),
+    );
+    for (const other of [
+      [],
+      replaced.slice(0, 1),
+      [{ ...replaced[0], checksum: hex("0") }, replaced[1]],
+      [replaced[0], { ...replaced[1], contractChecksum: null }],
+      [{ ...replaced[0], release: "20261111000000_release_3" }, replaced[1]],
+    ])
+      assert.throws(() => validateMigrationHistory(history, migrations, other), /Snapshot/);
+    // A history without release migrations keeps the original shape.
+    const plain = await capture(fakeClient([["0_init", hex("a")]]), { replaced: [] });
+    assert.equal("replaced" in plain, false);
+    assert.throws(() => validateMigrationHistory(plain, migrations, replaced), /Snapshot/);
+    assert.doesNotThrow(() => validateMigrationHistory(plain, migrations));
+  });
 });

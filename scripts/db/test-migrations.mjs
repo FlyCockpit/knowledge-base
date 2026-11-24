@@ -36,12 +36,17 @@
  *   - runtime: two concurrent leaders serialize on the runner lock (one
  *     deploy, both exit 0); a migration another session is still applying
  *     (Prisma's lock held) is refused and left untouched
+ *   - release migrations (scripts/db/test-release.mjs): every prefix of a
+ *     squashed chain reconciles to the fresh schema with its rows; contract
+ *     state carried over; tampered copies, checksum mismatches and unknown
+ *     migrations refused; followers wait; db:migrate:apply reconciles too
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -63,6 +68,7 @@ import { wrapTransactional } from "./lib/sql.mjs";
 import { writeTestBackupHook } from "./lib/test-backup-hook.mjs";
 import { contractScenarios } from "./test-contracts.mjs";
 import { kbLockScenarios } from "./test-kb-locks.mjs";
+import { releaseScenarios } from "./test-release.mjs";
 
 // A git hook (or any caller) may export GIT_DIR, GIT_INDEX_FILE and the like;
 // inherited by the scratch repositories' git calls (here and in the scripts they run),
@@ -290,6 +296,150 @@ INSERT INTO project (id,"updatedAt","ownerId",name,notes) VALUES ('fx_project_1'
   g("add", "-A");
   g("commit", "-q", "-m", "base");
   return { repo, git: g };
+}
+
+/**
+ * `pnpm db:baseline` (the create flow) in a fresh repo with the template's
+ * marker: a lone 0_init is kept byte for byte; an inherited multi-folder
+ * history is refused, because KB's hand-written 0_init SQL (CHECK
+ * constraints, kb_* functions, triggers, partial indexes) cannot be
+ * regenerated from the Prisma schema, so the fold's proof never holds here
+ * (KB ships no template-history.json; the command is inert in this app);
+ * refusals for rows created by migrations, unrecognized files, and the app's
+ * own release tags; tags that came with the template are only reported.
+ */
+async function baselineScenarios({ serverUrl, env }) {
+  const { repo: b, git: bg } = makeRepo();
+  const mig = path.join(b, "packages/db/prisma/migrations");
+  const marker = path.join(b, "packages/db/prisma/template-history.json");
+  const schemaFile = path.join(b, "packages/db/prisma/schema/projects.prisma");
+  const baseline = () =>
+    sh(process.execPath, [path.join(b, "scripts/db/baseline.mjs")], {
+      cwd: b,
+      env: { ...env, CHECK_DATABASE_URL: serverUrl },
+    });
+  const addMarker = () => {
+    writeFileSync(marker, '{ "note": "test" }\n');
+    bg("add", "-A");
+    bg("commit", "-q", "-m", "marker");
+  };
+  const init = () => readFileSync(path.join(mig, "0_init/migration.sql"), "utf8");
+  try {
+    // The create flow runs on a new app, whose history is the template's lone
+    // 0_init: this app's own later folders (and their fixtures) are not part of it.
+    const later = readdirSync(mig).filter((n) => n !== "0_init" && n !== "migration_lock.toml");
+    if (later.length) {
+      const fixtures = path.join(b, "packages/db/prisma/fixtures");
+      for (const name of later) rmSync(path.join(mig, name), { recursive: true });
+      for (const file of readdirSync(fixtures))
+        if (later.some((name) => file.startsWith(`${name}.`))) rmSync(path.join(fixtures, file));
+      bg("add", "-A");
+      bg("commit", "-q", "-m", "a new app's lone 0_init");
+    }
+    const original = init();
+    await step(
+      "baseline: a lone inherited 0_init is kept byte for byte; the marker goes",
+      async () => {
+        addMarker();
+        bg("tag", "v9.9.9"); // a template release tag (its tree has the marker)
+        const r = baseline();
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /already a single 0_init/);
+        assert.match(r.out, /The release tags v9\.9\.9 came from the template/);
+        assert.equal(init(), original);
+        assert.equal(existsSync(marker), false);
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "baseline");
+        bg("tag", "-d", "v9.9.9");
+      },
+    );
+    await step(
+      "baseline: KB's hand-written 0_init SQL cannot be regenerated from the schema, so folding refuses and writes nothing",
+      async () => {
+        addMarker();
+        const schema = readFileSync(schemaFile, "utf8");
+        writeFileSync(
+          schemaFile,
+          schema.replace(
+            "  notes     String?",
+            '  notes     String?\n  extra     String?  @map("extra")',
+          ),
+        );
+        const folder = "20990101000000_add_extra";
+        const check = path.join(b, "packages/db/prisma/fixtures", `${folder}.check.sql`);
+        newFolder(mig, folder, wrapTransactional('ALTER TABLE "project" ADD COLUMN "extra" TEXT;'));
+        writeFileSync(check, "SELECT 1 WHERE false;\n");
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "template PR");
+        const r = baseline();
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.out, /not equivalent; nothing written/);
+        // What only the hand-written history has, e.g. KB's own functions.
+        assert.match(r.out, /only the inherited history has: .*kb_/);
+        assert.deepEqual(readdirSync(mig).sort(), ["0_init", folder, "migration_lock.toml"]);
+        assert.equal(init(), original);
+        assert.equal(existsSync(marker), true);
+        assert.equal(existsSync(check), true);
+        // Back to the lone 0_init so the next refusals start clean.
+        rmSync(path.join(mig, folder), { recursive: true });
+        rmSync(check);
+        writeFileSync(schemaFile, schema);
+        rmSync(marker);
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "undo template PR");
+      },
+    );
+    await step(
+      "baseline: refuses rows created by migrations, unrecognized files, and the app's own release tags",
+      async () => {
+        addMarker();
+        newFolder(
+          mig,
+          "20990102000000_seed_rows",
+          wrapTransactional(
+            `INSERT INTO "user" ("id", "name", "email") VALUES ('u1', 'Seeded', 'seeded@example.test');`,
+          ),
+        );
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "data migration");
+        const rows = baseline();
+        assert.equal(rows.code, 1, rows.out);
+        assert.match(
+          rows.out,
+          /create 1 row\(s\) in "user"; a 0_init regenerated from the schema would not/,
+        );
+        assert.equal(
+          existsSync(path.join(mig, "20990102000000_seed_rows")),
+          true,
+          "nothing written",
+        );
+        writeFileSync(path.join(b, "packages/db/prisma/fixtures/draft.sql"), "-- wip\n");
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "stray fixture");
+        const stray = baseline();
+        assert.equal(stray.code, 1, stray.out);
+        assert.match(stray.out, /files this command does not recognize[\s\S]*fixtures\/draft\.sql/);
+        writeFileSync(path.join(b, "packages/db/prisma/fixtures/untracked.sql"), "-- wip\n");
+        assert.match(baseline().out, /uncommitted, untracked or ignored files/);
+        rmSync(path.join(b, "packages/db/prisma/fixtures/untracked.sql"));
+        rmSync(marker);
+        bg("add", "-A");
+        bg("commit", "-q", "-m", "app release");
+        bg("tag", "v1.0.0"); // the app's own release: no marker in its tree
+        writeFileSync(marker, '{ "note": "test" }\n');
+        const tagged = baseline();
+        assert.equal(tagged.code, 1, tagged.out);
+        assert.match(tagged.out, /release tags of its own \(v1\.0\.0\)/);
+      },
+    );
+  } finally {
+    rmSync(b, { recursive: true, force: true });
+  }
+}
+
+function newFolder(migrations, folder, sql) {
+  mkdirSync(path.join(migrations, folder), { recursive: true });
+  writeFileSync(path.join(migrations, folder, "migration.sql"), sql);
 }
 
 async function main() {
@@ -1226,6 +1376,9 @@ async function runSteps(server) {
       pg,
       sh,
     });
+
+    await releaseScenarios({ step, serverUrl: server.url, repo, pg });
+    await baselineScenarios({ serverUrl: server.url, env });
   } finally {
     await step("harness: clean up only the scratch databases created by this run", async () => {
       const client = await adminClient(pg, server.url);

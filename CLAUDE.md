@@ -135,7 +135,7 @@ Routes auto-split. Never `export` a component function from a route file. Anchor
 
 ### Prisma
 
-Prisma Migrate owns schema history. Edit `packages/db/prisma/schema/`, generate with `pnpm db:migrate <name>`, review SQL, apply locally with `pnpm db:migrate:apply`. Commit schema and migration together. Merged migration folders (including `contract.sql`) are immutable. Use `@map`/`@@map` for renames; type changes require the two-PR recipe. In-place breaking changes are refused. See `docs/schema-migrations.md` and `docs/schema-changes-recipe.md`.
+Prisma Migrate owns schema history. Edit `packages/db/prisma/schema/`, generate with `pnpm db:migrate <name>`, review SQL, apply locally with `pnpm db:migrate:apply`. Commit schema and migration together. Merged migration folders (including `contract.sql`) are immutable, except via the release squash (`pnpm db:release-squash`); a folder in a release tag never changes. The history starts at this app's own `0_init`. Use `@map`/`@@map` for renames; type changes require the two-PR recipe. In-place breaking changes are refused. See `docs/schema-migrations.md` and `docs/schema-changes-recipe.md`.
 
 `pnpm db:worktree` creates this checkout's exact local/shadow databases; linked worktrees get distinct names. After a rebase, use `pnpm db:migrate:rebase`. `pnpm db:reset:local` is an explicit destructive local-only wrapper, never automatic. Production uses the server image runner; never run local wrappers against shared databases. Query projections are disclosure boundaries (`satisfies Prisma.<Model>Select`, no result casting). Money uses integer minor units. Public slugs are human-readable.
 

@@ -9,6 +9,7 @@ import { putPinnedAgeOnPath } from "./age-pin.mjs";
 import {
   coordinateBackup,
   encryptBundle,
+  pathCheck,
   readBundle,
   verifyEncryptedBundle,
 } from "./kb-backup.mjs";
@@ -123,6 +124,55 @@ test("path traversal, symlink sources, excluded roots and duplicate paths never 
   ]) {
     await assert.rejects(encryptBundle({ ...f, metadata, sources, recipient: f.key }));
     await assert.rejects(verifyEncryptedBundle(f.file));
+  }
+});
+
+test("release migration artifacts are bundled under exact paths only", async (t) => {
+  const f = await fixture(t);
+  const release = "schema/migrations/20990110000000_release_2";
+  const replacedPaths = [
+    `${release}/migration.sql`,
+    `${release}/contract.sql`,
+    `${release}/replaces.json`,
+    `${release}/replaced/20990101000000_one/migration.sql`,
+    `${release}/replaced/20990102000000_two/migration.sql`,
+    `${release}/replaced/20990102000000_two/contract.sql`,
+  ];
+  for (const path of replacedPaths) assert.doesNotThrow(() => pathCheck(path));
+  await encryptBundle({
+    ...f,
+    metadata,
+    sources: replacedPaths.map((path) => ({ path, source: f.source })),
+    recipient: f.key,
+  });
+  await verifyEncryptedBundle(f.file);
+  const result = await readBundle(f.file, f.identity);
+  assert.deepEqual(
+    result.files.map((file) => file.path),
+    replacedPaths,
+  );
+  for (const path of [
+    "schema/migrations/replaces.json",
+    `${release}/replaces.json.orig`,
+    `${release}/replaced/replaces.json`,
+    `${release}/replaced/migration.sql`,
+    `${release}/replaced/20990101000000_one/notes.md`,
+    `${release}/replaced/20990101000000_one/replaces.json`,
+    `${release}/replaced/20990101000000_one/nested/migration.sql`,
+    `${release}/replaced/../migration.sql`,
+    `${release}/other/20990101000000_one/migration.sql`,
+  ]) {
+    assert.throws(() => pathCheck(path), /Invalid backup path/, path);
+    await assert.rejects(
+      encryptBundle({
+        ...f,
+        file: join(f.dir, "refused.age"),
+        metadata,
+        sources: [{ path, source: f.source }],
+        recipient: f.key,
+      }),
+      /Invalid backup path/,
+    );
   }
 });
 

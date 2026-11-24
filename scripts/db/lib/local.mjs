@@ -73,3 +73,24 @@ export function migrationFoldersAt(ref) {
   }
   return [...names].sort();
 }
+
+/** Release tags: `git tag --list $RELEASE_TAG_PATTERN` (default `v*`). */
+export function releaseTags(pattern = process.env.RELEASE_TAG_PATTERN || "v*") {
+  return git(["tag", "--list", pattern]).split("\n").filter(Boolean).sort();
+}
+
+/** Every migration folder that is in at least one release tag. */
+export function releasedFolders(tags = releaseTags()) {
+  const out = new Set();
+  for (const tag of tags) for (const name of migrationFoldersAt(tag)) out.add(name);
+  return out;
+}
+
+/** The newest release tag reachable from `ref`, or null. */
+export function lastReleaseTag(ref, pattern = process.env.RELEASE_TAG_PATTERN || "v*") {
+  const result = spawnSync("git", ["describe", "--tags", "--abbrev=0", "--match", pattern, ref], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() || null : null;
+}

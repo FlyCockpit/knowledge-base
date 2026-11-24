@@ -124,6 +124,41 @@ test("streamed extraction verifies frames, hashes, terminator, budgets and safe 
   await assert.rejects(extractBundle(f.file, wrong, f.stage));
 });
 
+test("extraction stages a release folder's replaces.json and replaced copies, nothing else under it", async (t) => {
+  const f = await fixture(t);
+  const bytes = Buffer.from("dump");
+  const entry = (path) => ({
+    path,
+    size: 4,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  const release = "schema/migrations/20990110000000_release_2";
+  const paths = [
+    "postgres.dump",
+    `${release}/migration.sql`,
+    `${release}/replaces.json`,
+    `${release}/replaced/20990101000000_one/migration.sql`,
+    `${release}/replaced/20990101000000_one/contract.sql`,
+  ];
+  await forged(f, paths.map(entry));
+  const verified = await extractBundle(f.file, f.identity, f.stage);
+  assert.equal(verified.inventory.length, paths.length + 2);
+  assert.equal(
+    await readFile(join(f.stage, release, "replaced/20990101000000_one/contract.sql"), "utf8"),
+    "dump",
+  );
+  for (const path of [
+    `${release}/replaced/20990101000000_one/run.sh`,
+    `${release}/replaced/20990101000000_one/deeper/migration.sql`,
+    `${release}/manifest.json`,
+  ]) {
+    const stage = join(f.dir, `stage-${randomUUID()}`);
+    await mkdir(stage);
+    await forged(f, [entry("postgres.dump"), entry(path)]);
+    await assert.rejects(extractBundle(f.file, f.identity, stage), path);
+  }
+});
+
 test("extraction rejects symlink staging parents and leaves prior target untouched", async (t) => {
   const f = await fixture(t);
   const previous = join(f.dir, "previous");
@@ -304,6 +339,59 @@ test("compatibility refuses unknown history/checksums and every unsupported proj
         [{ ...baseline, checksum: "e".repeat(64) }],
       ),
     /COMPATIBLE_IMAGE/,
+  );
+});
+
+test("a snapshot taken before release reconcile restores only on an image shipping the same replaced migrations", async () => {
+  const { validateRestoreCompatibility } = await import("./kb-restore.mjs");
+  const { baseline, snapshot } = compatibilityFixture();
+  const release = { name: "2_release_2", checksum: "b".repeat(64), contract: null, sql: "" };
+  const replaced = [
+    { name: "1_one", release: release.name, checksum: "c".repeat(64), contractChecksum: null },
+    { name: "1_two", release: release.name, checksum: "d".repeat(64), contractChecksum: null },
+  ];
+  const before = structuredClone(snapshot);
+  before.migrationHistory.migrations.push({
+    name: release.name,
+    checksum: release.checksum,
+    contractChecksum: null,
+  });
+  before.migrationHistory.replaced = replaced;
+  before.migrationHistory.applied.push({ name: "1_one", checksum: "c".repeat(64) });
+  const archived = [baseline, release];
+  assert.doesNotThrow(() =>
+    validateRestoreCompatibility(before, archived, archived, {
+      archived: replaced,
+      image: replaced,
+    }),
+  );
+  for (const image of [
+    [],
+    [{ ...replaced[0], checksum: "e".repeat(64) }, replaced[1]],
+    [{ ...replaced[0], release: "3_release_3" }],
+  ])
+    assert.throws(
+      () => validateRestoreCompatibility(before, archived, archived, { archived: replaced, image }),
+      /COMPATIBLE_IMAGE/,
+    );
+  // An unapplied replaced migration the image no longer ships does not block.
+  assert.doesNotThrow(() =>
+    validateRestoreCompatibility(before, archived, archived, {
+      archived: replaced,
+      image: replaced.slice(0, 1),
+    }),
+  );
+  // Bundle files and recorded history disagree, or the checksum is wrong: refused.
+  assert.throws(() =>
+    validateRestoreCompatibility(before, archived, archived, { archived: [], image: replaced }),
+  );
+  const wrong = structuredClone(before);
+  wrong.migrationHistory.applied[1].checksum = "f".repeat(64);
+  assert.throws(() =>
+    validateRestoreCompatibility(wrong, archived, archived, {
+      archived: replaced,
+      image: replaced,
+    }),
   );
 });
 

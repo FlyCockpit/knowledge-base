@@ -31,6 +31,7 @@ import { assertLocal, defaultBaseRef, migrationFoldersAt } from "./lib/local.mjs
 import { describeUrl, shadowName } from "./lib/local-db-name.mjs";
 import { readMigrationState, readMigrationsFolder } from "./lib/migration-state.mjs";
 import { FIXTURES_DIR, loadPg, MIGRATIONS_DIR } from "./lib/prisma.mjs";
+import { readReleases } from "./lib/replaces.mjs";
 import { adminClient, createDatabase } from "./lib/scratch-db.mjs";
 import { CONTRACT_FILE, parseTemplateHeader, TEMPLATES } from "./lib/sql.mjs";
 import { nextPrefix } from "./migrate.mjs";
@@ -94,7 +95,10 @@ async function main() {
   const url = assertLocal("db:migrate:rebase", { shadow: true });
   const baseFolders = migrationFoldersAt(baseRef);
   const localFolders = readMigrationsFolder(MIGRATIONS_DIR).map((m) => m.name);
-  const missing = baseFolders.filter((name) => !localFolders.includes(name));
+  // A release folder stands for the base folders it squashed (replaces.json).
+  const { releases } = readReleases(MIGRATIONS_DIR);
+  const squashed = new Set(releases.flatMap((r) => r.replaces.map((e) => e.name)));
+  const missing = baseFolders.filter((name) => !localFolders.includes(name) && !squashed.has(name));
   if (missing.length) {
     console.error(
       `FATAL: ${baseRef} has migration(s) this checkout lacks: ${missing.join(", ")}. Rebase onto ${baseRef} first.`,
@@ -102,6 +106,15 @@ async function main() {
     process.exit(1);
   }
   const plan = planRebase(baseFolders, localFolders);
+  const release = plan.renames.filter(({ from }) => releases.some((r) => r.name === from));
+  if (release.length) {
+    console.error(
+      `FATAL: ${release.map((r) => r.from).join(", ")} is a release migration and no longer sorts after ${baseRef}'s latest migration: ` +
+        "something merged after the squash. Redo the release squash on the rebased branch (restore the per-PR folders from the base, " +
+        "then `pnpm db:release-squash <last-tag> <release-name>` again); a release folder is never re-timestamped, its replaces.json names it.",
+    );
+    process.exit(1);
+  }
   if (!plan.own.length) console.log(`No branch-only migrations relative to ${baseRef}.`);
   else if (!plan.renames.length)
     console.log(`Ordering OK: ${plan.own.join(", ")} sort after ${baseRef}'s latest migration.`);

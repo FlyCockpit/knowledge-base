@@ -18,16 +18,29 @@
  * rolled back would let its migration run twice. It never resets the
  * database — divergence prints the `pnpm db:reset:local`
  * command for you to run explicitly.
+ *
+ * After pulling a release squash, the migrations this database applied one by
+ * one are reconciled onto the release folder first, exactly like the deploy
+ * runner does (scripts/db/lib/replaces.mjs).
  */
 import { fileURLToPath } from "node:url";
 import { assertLocal } from "./lib/local.mjs";
 import {
   migrationInFlight,
+  pgConnectionString,
+  prismaSchemaName,
   readMigrationState,
   readMigrationsFolder,
   tryHoldRunnerLock,
 } from "./lib/migration-state.mjs";
 import { loadPg, MIGRATIONS_DIR, prisma } from "./lib/prisma.mjs";
+import {
+  applyReconcile,
+  needsReconcile,
+  planReconcile,
+  READ_HISTORY_SQL,
+  readReleases,
+} from "./lib/replaces.mjs";
 import { COMMIT_SENTINEL, checkWrapper } from "./lib/sql.mjs";
 
 const IN_FLIGHT_HELP =
@@ -68,18 +81,18 @@ export async function applyLocal({ url, pg, prisma: runPrisma, migrationsDir = M
     return 1;
   }
   try {
-    return await applyHoldingLock({ url, read, prisma: runPrisma, migrationsDir });
+    return await applyHoldingLock({ url, pg, read, prisma: runPrisma, migrationsDir });
   } finally {
     await lock.release();
   }
 }
 
-async function applyHoldingLock({ url, read, prisma, migrationsDir }) {
+async function applyHoldingLock({ url, pg, read, prisma, migrationsDir }) {
   const env = { DATABASE_URL: url };
   // Re-read under the lock: our own session now holds the runner key, so only
   // Prisma's lock and the KB lifecycle lock still tell us someone else is
   // mid-migration (or mid-snapshot).
-  const state = await read();
+  let state = await read();
   if (state.state === "restore-pending") {
     console.error(RESTORE_PENDING);
     return 1;
@@ -101,6 +114,25 @@ async function applyHoldingLock({ url, read, prisma, migrationsDir }) {
         "It is disposable local data, so recreate it from the migrations:\n\n  pnpm db:reset:local\n",
     );
     return 1;
+  }
+  const manifests = readReleases(migrationsDir);
+  if (manifests.problems.length) {
+    console.error(
+      `FATAL: this checkout's release manifests are not intact: ${manifests.problems.join("; ")}.\n` +
+        "A release folder's replaced/ copies must match its replaces.json; restore them from git.",
+    );
+    return 1;
+  }
+  if (state.state === "db-ahead" && needsReconcile(state, manifests.releases)) {
+    const code = await reconcileLocal({
+      url,
+      pg,
+      state,
+      releases: manifests.releases,
+      migrations: readMigrationsFolder(migrationsDir),
+    });
+    if (code !== 0) return code;
+    state = await read();
   }
   if (state.state === "db-ahead") {
     console.error(
@@ -162,6 +194,46 @@ async function applyHoldingLock({ url, read, prisma, migrationsDir }) {
     );
   const generated = await prisma(["generate"], { env });
   return generated.code;
+}
+
+/** Reconcile replaced migrations onto their release folder (one transaction per release). */
+async function reconcileLocal({ url, pg, state, releases, migrations }) {
+  const client = new pg.Client({ connectionString: pgConnectionString(url) });
+  await client.connect();
+  try {
+    const schema = prismaSchemaName(url);
+    const { rows } = await client.query(READ_HISTORY_SQL(schema));
+    const plan = planReconcile({ rows, releases, localNames: state.local });
+    if (plan.refusals.length) {
+      console.error(
+        `FATAL: ${plan.refusals.join(" ")}\nThis is local data: \`pnpm db:reset:local\` rebuilds it from this checkout.`,
+      );
+      return 1;
+    }
+    for (const step of plan.steps) {
+      const result = await applyReconcile(client, {
+        schema,
+        step,
+        releases,
+        localNames: state.local,
+        migrations,
+        log: (message) => console.log(message),
+      });
+      console.log(
+        `Release ${step.release.name}: reconciled the ${step.present.length} replaced migration(s) you had applied` +
+          `${result.applied.length ? ` (applied the missing ${result.applied.join(", ")})` : ""}.`,
+      );
+    }
+    return 0;
+  } catch (error) {
+    console.error(
+      `FATAL: release reconciliation failed and was rolled back: ${error instanceof Error ? error.message : String(error)}\n` +
+        "This is local data: `pnpm db:reset:local` rebuilds it from this checkout.",
+    );
+    return 1;
+  } finally {
+    await client.end().catch(() => {});
+  }
 }
 
 async function main() {

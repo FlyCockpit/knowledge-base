@@ -16,6 +16,7 @@ import {
   readApplicationCatalog,
   readMigrationsFolder,
 } from "../db/lib/migration-state.mjs";
+import { readReplacedMigrations } from "../db/lib/replaces.mjs";
 import { ensureKbDataSkeleton, isSkeletonOnly, kbDataPaths } from "../init-kb-volumes.mjs";
 import { applyArchive, prepareArchive } from "../restore-archive.mjs";
 import { assertNoStorageMigration } from "./asset-storage-control.mjs";
@@ -267,10 +268,37 @@ export const RESTORE_SURFACE = {
   },
 };
 
-/** Match the typed restore surface, including omitted INSERT defaults. */
-export function validateRestoreCompatibility(metadata, archived, image) {
+/** Release manifests whose replaced copies do not verify describe no restorable history. */
+function restoreReplaced(dir) {
+  try {
+    return readReplacedMigrations(dir);
+  } catch (error) {
+    fail("RESTORE_UNSUPPORTED_PREFIX_USE_COMPATIBLE_IMAGE", error);
+  }
+}
+
+/**
+ * Match the typed restore surface, including omitted INSERT defaults.
+ * `replaced` holds the bundle's and the image's replaced migrations
+ * (readReplacedMigrations): a snapshot taken before the runner reconciled a
+ * release records them as applied, so the image must ship the same release
+ * manifest entries for its runner to reconcile the restored database.
+ */
+export function validateRestoreCompatibility(
+  metadata,
+  archived,
+  image,
+  replaced = { archived: [], image: [] },
+) {
   const unsupported = () => fail("RESTORE_UNSUPPORTED_PREFIX_USE_COMPATIBLE_IMAGE");
-  validateMigrationHistory(metadata.migrationHistory, archived);
+  validateMigrationHistory(metadata.migrationHistory, archived, replaced.archived);
+  const imageReplaced = new Map(replaced.image.map((e) => [e.name, JSON.stringify(e)]));
+  for (const entry of replaced.archived)
+    if (
+      metadata.migrationHistory.applied.some((row) => row.name === entry.name) &&
+      imageReplaced.get(entry.name) !== JSON.stringify(entry)
+    )
+      unsupported();
   if (
     metadata.migrationHistory.schema !== "public" ||
     !metadata.migrationHistory.applied.length ||
@@ -1197,10 +1225,16 @@ async function restoreTarget(
       JSON.stringify(inventory),
     ]);
     const archived = readMigrationsFolder(join(stage, "schema/migrations"));
+    const imageMigrations = join(ROOT, "packages/db/prisma/migrations");
+    const replaced = {
+      archived: restoreReplaced(join(stage, "schema/migrations")),
+      image: restoreReplaced(imageMigrations),
+    };
     validateRestoreCompatibility(
       metadata,
       archived,
-      readMigrationsFolder(join(ROOT, "packages/db/prisma/migrations")),
+      readMigrationsFolder(imageMigrations),
+      replaced,
     );
     step = "IMPORT";
     if (attempt.state === "STAGING") {
@@ -1222,6 +1256,7 @@ async function restoreTarget(
     const restoredHistory = await captureMigrationHistory(client, {
       schema: metadata.migrationHistory.schema,
       migrations: archived,
+      replaced: replaced.archived,
     });
     if (JSON.stringify(restoredHistory) !== JSON.stringify(metadata.migrationHistory))
       fail("RESTORE_MIGRATION_HISTORY_MISMATCH");

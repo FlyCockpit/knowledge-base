@@ -67,6 +67,15 @@ import { createHash, randomUUID } from "node:crypto";
  * An applied migration whose file changed since (checksum mismatch) is a
  * refusal in both modes: the running schema is not what the image describes.
  *
+ * Release migrations (scripts/db/lib/replaces.mjs): a folder with a
+ * `replaces.json` stands for the per-PR migrations it squashed. A database
+ * that applied some or all of them (a test deployment that tracked the
+ * default branch) is reconciled first, under the runner lock and in one
+ * transaction: the missing ones run from `replaced/`, the release is recorded
+ * as applied, the replaced rows are removed. A tampered `replaced/` copy, a
+ * checksum mismatch, or an applied migration that is neither in the image nor
+ * replaced is refused (both modes). Followers wait while the leader does it.
+ *
  * Never prints DATABASE_URL.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -106,6 +115,15 @@ import {
   safeError,
 } from "./lib/migration-state.mjs";
 import { loadPg, MIGRATIONS_DIR, prisma, ROOT, SCHEMA_DIR } from "./lib/prisma.mjs";
+import {
+  applyReconcile,
+  needsReconcile,
+  planReconcile,
+  READ_HISTORY_SQL,
+  REPLACED_DIR,
+  readReleases,
+  remainingContract,
+} from "./lib/replaces.mjs";
 import {
   analyzeMigration,
   COMMIT_SENTINEL,
@@ -200,11 +218,19 @@ export async function run(options = {}) {
     const instanceId = env.KB_INSTANCE_ID || null;
     if (instanceId && !UUID.test(instanceId))
       throw new Refusal("KB_INSTANCE_ID is not a UUID (the entrypoint sets it; leave it unset).");
+    const manifests = readReleases(migrationsDir);
+    if (manifests.problems.length)
+      throw new Refusal(
+        `this image's release manifests are not intact: ${manifests.problems.join("; ")}. ` +
+          `A release folder's ${REPLACED_DIR}/ copies must match its replaces.json byte for byte; rebuild the image ` +
+          "from the released commit (never edit a release folder by hand).",
+      );
     const ctx = {
       abort,
       env,
       databaseUrl,
       migrationsDir,
+      releases: manifests.releases,
       pg,
       runPrisma: async (args, options = {}) => {
         if (abort.signal.aborted) throw new Refusal("Migration cancelled before native start.");
@@ -273,7 +299,9 @@ function refuseAhead(state, why = "") {
   throw new Refusal(
     `the database has applied migration(s) this image does not contain: ${state.ahead.join(", ")}. ` +
       `This image is older than the database (a rollback or stale deploy)${why}. Deploy the newer image, or ` +
-      `restore/repair per ${RUNBOOK}. Refusing to start old code against a newer schema.`,
+      `restore/repair per ${RUNBOOK}. Refusing to start old code against a newer schema. (If they are ` +
+      "per-PR migrations that a release squashed, and that release's replaced/ copies have since been removed, " +
+      "deploy that release's image first.)",
   );
 }
 
@@ -510,6 +538,17 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   // Re-read: another runner may have finished everything while we waited.
   let state = await ctx.state();
   refuseCommon(state);
+  /** @type {{ ran: boolean, label: string | null } | null} */
+  let backup = null;
+  if (needsReconcile(state, ctx.releases)) {
+    refuseMismatch(state);
+    const reconciled = await reconcileReleases(ctx, lock, state);
+    if (reconciled.restart) return applyLocked(ctx, lock, deadline, pollMs);
+    backup = reconciled.backup;
+    state = await ctx.state();
+    refuseCommon(state);
+    refuseAhead(state);
+  }
   if (state.state === "db-ahead") return await admitOlderImage(ctx, state);
   // Something other than a runner (an operator's `prisma migrate deploy`)
   // holds Prisma's lock and its migration is mid-flight: wait for it rather
@@ -537,7 +576,7 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   refuseMismatch(state);
   if (state.state === "up-to-date") {
     log(`database is up to date (${state.applied.length} migration(s) applied).`);
-    return await afterUpToDate(ctx, lock, { fresh: false, backup: null });
+    return await afterUpToDate(ctx, lock, { fresh: false, backup });
   }
 
   const byName = new Map(readMigrationsFolder(ctx.migrationsDir).map((m) => [m.name, m]));
@@ -555,7 +594,7 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
     refuseMismatch(state);
     if (state.state === "up-to-date") {
       log(`database is up to date (${state.applied.length} migration(s) applied).`);
-      return await afterUpToDate(ctx, lock, { fresh: false, backup: null });
+      return await afterUpToDate(ctx, lock, { fresh: false, backup });
     }
   }
   /** @type {Array<{ name: string, logs: string | null }>} */
@@ -599,8 +638,12 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   }
 
   log(`pending migration(s): ${toApply.join(", ")}`);
-  lock.assertHeld("the pre-migration backup");
-  const backup = freshDatabase ? await freshDatabaseBackupCheck(ctx) : await preMigrateBackup(ctx);
+  // A release reconciliation that had to apply replaced migrations already
+  // took this run's pre-migration backup.
+  if (!backup?.ran) {
+    lock.assertHeld("the pre-migration backup");
+    backup = freshDatabase ? await freshDatabaseBackupCheck(ctx) : await preMigrateBackup(ctx);
+  }
 
   return await withMutation(ctx, async (client) => {
     const current = await readMutationFacts(ctx, client);
@@ -668,6 +711,89 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   }).then(async (result) =>
     result.restart ? applyLocked(ctx, lock, deadline, pollMs) : afterUpToDate(ctx, lock, result),
   );
+}
+
+/**
+ * Reconcile replaced migrations onto their release (scripts/db/lib/replaces.mjs),
+ * before anything else touches the history. Planned and applied under
+ * mutation exclusion (DADP, released around the full-bundle backup hook);
+ * the facts read before the backup are revalidated after it, and a change
+ * restarts classification and backup (`restart`). Returns the pre-migration
+ * backup when missing replaced migrations had to be applied (null otherwise).
+ * @returns {Promise<{ restart: true } | { restart: false, backup: { ran: boolean, label: string | null } | null }>}
+ */
+async function reconcileReleases(ctx, lock, state) {
+  if (state.inProgress)
+    throw new Refusal(
+      "another session holds Prisma's migration lock (a `prisma migrate deploy` is running), so the release " +
+        `reconciliation cannot start. The next start checks again. ${RUNBOOK}.`,
+    );
+  const { facts, rows } = await withMutation(ctx, async (client) => ({
+    facts: await readMutationFacts(ctx, client),
+    rows: (await client.query(READ_HISTORY_SQL(ctx.schema))).rows,
+  }));
+  const plan = planReconcile({ rows, releases: ctx.releases, localNames: state.local });
+  if (plan.refusals.length) throw new Refusal(plan.refusals.join(" "));
+  let backup = null;
+  const missing = plan.steps.flatMap((step) => step.missing);
+  if (missing.length) {
+    const byName = new Map(
+      missing.map((e) => [
+        e.name,
+        {
+          name: e.name,
+          sql: e.sql ?? "",
+          contract: e.contract ? { sql: e.contract, checksum: e.contractChecksum ?? "" } : null,
+        },
+      ]),
+    );
+    await preDeployGates(ctx, { toApply: [...byName.keys()], freshDatabase: false, byName });
+    lock.assertHeld("the pre-migration backup");
+    backup = await preMigrateBackup(ctx);
+  }
+  return withMutation(ctx, async (client) => {
+    if (JSON.stringify(await readMutationFacts(ctx, client)) !== JSON.stringify(facts)) {
+      log(
+        "database/history/contract state changed during backup; restarting classification and backup.",
+      );
+      return { restart: true };
+    }
+    for (const step of plan.steps) {
+      lock.assertHeld(`reconciling ${step.release.name}`);
+      let result;
+      try {
+        // Raw replaced-migration DDL runs on the DADP-owning connection;
+        // applyReconcile re-plans from the locked history before any SQL.
+        result = await applyReconcile(client, {
+          schema: ctx.schema,
+          step,
+          releases: ctx.releases,
+          localNames: state.local,
+          migrations: readMigrationsFolder(ctx.migrationsDir),
+          log,
+        });
+      } catch (error) {
+        throw new Refusal(
+          `could not reconcile release ${step.release.name}: ${safeError(error)}. The transaction was rolled back; nothing changed. ${RUNBOOK}.`,
+        );
+      }
+      const replaced = step.release.replaces.map((e) => e.name);
+      log(
+        result.applied.length
+          ? `release ${step.release.name}: this database had ${step.present.length} of the ${replaced.length} migration(s) it replaces; applied the missing ${result.applied.join(", ")} from ${REPLACED_DIR}/, recorded ${step.release.name} as applied and removed the replaced rows (one transaction).`
+          : `release ${step.release.name}: this database had all ${replaced.length} migration(s) it replaces; recorded ${step.release.name} as applied and removed the replaced rows. No schema SQL ran.`,
+      );
+      if (result.contracts === "all")
+        log(
+          `release ${step.release.name}: every replaced scheduled deletion already ran; its contract.sql is recorded as applied.`,
+        );
+      else if (result.contracts === "some")
+        log(
+          `release ${step.release.name}: some replaced scheduled deletions already ran; only the rest of its contract.sql will run.`,
+        );
+    }
+    return { restart: false, backup };
+  });
 }
 
 /**
@@ -918,7 +1044,11 @@ async function contractsPhase(ctx, client, lock, migrations, run) {
 
 async function applyDue(ctx, client, lock, { migrations, run, level, now, inputs, due }) {
   const schema = ctx.schema;
-  const byName = new Map(migrations.map((m) => [m.name, m]));
+  // A reconciled release runs only the contract sections that did not run as
+  // replaced migrations' contracts (scripts/db/lib/replaces.mjs).
+  const byName = new Map(
+    migrations.map((m) => [m.name, remainingContract(m, inputs.rows.get(m.name))]),
+  );
   const live = await readLiveCatalog(client, schema, { timeoutMs: CONTRACTS_CATALOG_TIMEOUT_MS });
   const image = await imageCatalog(ctx);
   if (image instanceof Error) {
@@ -1292,12 +1422,18 @@ async function waitMode(ctx, options) {
     if (ctx.abort?.signal.aborted) throw new Refusal("Migration runner cancelled.");
     const state = await ctx.state();
     if (state.state === "restore-pending") refuseCommon(state);
-    if (state.state === "up-to-date" || state.state === "db-ahead") {
+    // Replaced migrations (db-ahead that a release covers): the leader
+    // reconciles them onto their release, so keep waiting.
+    if (
+      state.state === "up-to-date" ||
+      (state.state === "db-ahead" && !needsReconcile(state, ctx.releases))
+    ) {
       const lock = await acquireRunnerLock(ctx, deadline, poll, timeout);
       try {
         const locked = await ctx.state(lock.client);
         refuseCommon(locked);
         refuseMismatch(locked);
+        if (locked.state === "db-ahead" && needsReconcile(locked, ctx.releases)) continue;
         if (locked.state === "db-ahead") return await admitOlderImage(ctx, locked);
         if (locked.state !== "up-to-date") continue;
         log("database is up to date; starting.");

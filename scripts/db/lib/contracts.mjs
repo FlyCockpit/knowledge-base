@@ -87,8 +87,14 @@ const MIGRATION_DDL = `CREATE TABLE IF NOT EXISTS %1$I."_knowledge_base_migratio
   contract_last_error text,
   contract_backup text,
   contract_note text,
-  contract_notified_at timestamptz
+  contract_notified_at timestamptz,
+  contract_done_parts text[]
 )`;
+// Added after the table first shipped: existing databases get it here.
+// contract_done_parts: the `-- knowledge-base:from` sections of a release's
+// contract.sql that already ran as replaced migrations' contracts
+// (scripts/db/lib/replaces.mjs); only the rest is applied.
+const MIGRATION_COLUMNS_DDL = `ALTER TABLE %1$I."_knowledge_base_migration" ADD COLUMN IF NOT EXISTS contract_done_parts text[]`;
 export const HOLD_DDL = `CREATE TABLE IF NOT EXISTS %1$I."_knowledge_base_hold" (
   reason text PRIMARY KEY,
   until timestamptz NOT NULL,
@@ -163,6 +169,14 @@ export async function runtimeTablesExist(client, schema) {
 /** CREATE TABLE IF NOT EXISTS for every runner-owned table. Runner lock held. */
 export async function ensureRuntimeTables(client, schema) {
   for (const ddl of RUNTIME_DDL) await client.query(ddlFor(ddl, schema));
+  // Only when missing: ALTER takes an exclusive lock even when it does nothing.
+  const { rows } = await client.query(
+    `SELECT 1 FROM pg_catalog.pg_attribute
+      WHERE attrelid = to_regclass(format('%I."_knowledge_base_migration"', $1::text))
+        AND attname = 'contract_done_parts' AND NOT attisdropped`,
+    [schema],
+  );
+  if (!rows.length) await client.query(ddlFor(MIGRATION_COLUMNS_DDL, schema));
 }
 
 // --- recording applied migrations --------------------------------------------
@@ -188,6 +202,29 @@ export function describeEffects(effects) {
         `value ${quoteIdent(label)} of enum ${displayKey(removal.enum)} (rows moved to ${quoteIdent(removal.mapped[i])})`,
       );
   return parts.length ? parts.join("; ") : "nothing recognizable";
+}
+
+/**
+ * recordApplied's rollback analysis of one image migration: its SQL against
+ * the catalog every earlier folder (and its contract) builds.
+ * @param {Array<{ name: string, sql: string, contract: { sql: string } | null }>} migrations in folder order
+ * @param {string} name
+ */
+export function rollbackSafetyOf(migrations, name) {
+  let catalog = emptyCatalog();
+  for (const migration of migrations) {
+    if (migration.name === name)
+      return rollbackSafety(migration.sql, {
+        priorTables: new Set(catalog.tables.keys()),
+        catalog,
+        folder: migration.name,
+      });
+    catalog = catalogFromSql(
+      migration.contract ? [migration.sql, migration.contract.sql] : [migration.sql],
+      catalog,
+    );
+  }
+  throw new Error(`${name} is not one of the image's migrations`);
 }
 
 /**
@@ -1102,9 +1139,15 @@ export function lateRecoveries(pendingAnalyses, { live, applied, schema = "publi
 
 /**
  * Offline-restore interface (ALL helpers use the caller's existing session).
- * captureMigrationHistory(client, {schema, migrations}) -> snapshot metadata.
- * validateMigrationHistory(history, migrations) -> throws on invalid history.
+ * captureMigrationHistory(client, {schema, migrations, replaced}) -> snapshot metadata.
+ * validateMigrationHistory(history, migrations, replaced) -> throws on invalid history.
  * finalizeRestoreState(client, {schema, holdMs = SOAK_MS}) -> hold-until Date.
+ *
+ * `replaced` is readReplacedMigrations (replaces.mjs): the per-PR migrations a
+ * shipped release folder replaces, verified against its replaces.json. A
+ * database backed up before the runner reconciles it still records them as
+ * applied (and their contract rows), so they are part of the history; the
+ * snapshot keeps the exact list and a restore must ship the same one.
  *
  * The snapshot caller owns DADP -> Prisma exclusion and its exported snapshot;
  * the restore caller owns runner -> request -> maintenance -> DADP -> Prisma
@@ -1112,7 +1155,7 @@ export function lateRecoveries(pendingAnalyses, { live, applied, schema = "publi
  * COMMIT, acquire locks, or invoke another runner. Finalize and KB READY must
  * commit together. Do not infer that shipped-but-unapplied migrations ran.
  */
-export async function captureMigrationHistory(client, { schema, migrations }) {
+export async function captureMigrationHistory(client, { schema, migrations, replaced = [] }) {
   const history = (
     await client.query(
       `SELECT migration_name AS name, checksum, finished_at, rolled_back_at FROM ${quoteIdent(schema)}._prisma_migrations ORDER BY migration_name, started_at`,
@@ -1128,6 +1171,8 @@ export async function captureMigrationHistory(client, { schema, migrations }) {
       checksum: m.checksum,
       contractChecksum: m.contract?.checksum ?? null,
     })),
+    // Only when a release ships replaced copies, so other snapshots keep their shape.
+    ...(replaced.length ? { replaced: replaced.map(replacedEntry) } : {}),
     applied: history
       .filter((r) => r.finished_at && !r.rolled_back_at)
       .map(({ name, checksum }) => ({ name, checksum })),
@@ -1135,20 +1180,32 @@ export async function captureMigrationHistory(client, { schema, migrations }) {
       ? (await client.query(`SELECT * FROM ${tables(schema).migration} ORDER BY name`)).rows
       : [],
   };
-  validateMigrationHistory(result, migrations);
+  validateMigrationHistory(result, migrations, replaced);
   return result;
 }
 
-/** Pure archive validation, including applied-set membership and contract checksums. */
-export function validateMigrationHistory(history, migrations) {
+const replacedEntry = ({ name, release, checksum, contractChecksum }) => ({
+  name,
+  release,
+  checksum,
+  contractChecksum,
+});
+
+/**
+ * Pure archive validation, including applied-set membership and contract
+ * checksums. An applied name is a shipped migration or a replaced one (with
+ * the checksums its release's replaces.json records), never both a release
+ * and a migration it replaces.
+ */
+export function validateMigrationHistory(history, migrations, replaced = []) {
   if (
     history?.version !== 1 ||
     !Array.isArray(history.applied) ||
     !Array.isArray(history.migrations) ||
-    !Array.isArray(history.contracts)
+    !Array.isArray(history.contracts) ||
+    (history.replaced !== undefined && !Array.isArray(history.replaced))
   )
     throw new Error("Invalid snapshot migration history.");
-  const local = new Map(migrations.map((m) => [m.name, m]));
   if (
     history.migrations.length !== migrations.length ||
     history.migrations.some(
@@ -1159,6 +1216,30 @@ export function validateMigrationHistory(history, migrations) {
     )
   )
     throw new Error("Snapshot migration files/checksums differ from the shipped archive files.");
+  const recorded = history.replaced ?? [];
+  if (
+    recorded.length !== replaced.length ||
+    recorded.some(
+      (e, i) =>
+        !e ||
+        typeof e !== "object" ||
+        Object.keys(e).length !== 4 ||
+        JSON.stringify(replacedEntry(e)) !== JSON.stringify(replacedEntry(replaced[i])),
+    )
+  )
+    throw new Error("Snapshot replaced migrations differ from the shipped release manifests.");
+  /** name -> { checksum, contractChecksum } for every migration the archive knows. */
+  const local = new Map(
+    migrations.map((m) => [
+      m.name,
+      { checksum: m.checksum, contractChecksum: m.contract?.checksum ?? null },
+    ]),
+  );
+  for (const e of replaced) {
+    if (local.has(e.name))
+      throw new Error("Snapshot replaced migrations differ from the shipped release manifests.");
+    local.set(e.name, e);
+  }
   const applied = new Set();
   for (const row of history.applied) {
     if (
@@ -1171,6 +1252,10 @@ export function validateMigrationHistory(history, migrations) {
       );
     applied.add(row.name);
   }
+  if (replaced.some((e) => applied.has(e.name) && applied.has(e.release)))
+    throw new Error(
+      "Snapshot applied migrations record both a release and a migration it replaces.",
+    );
   const seen = new Set();
   for (const row of history.contracts) {
     const m = local.get(row.name);
@@ -1178,13 +1263,13 @@ export function validateMigrationHistory(history, migrations) {
       seen.has(row.name) ||
       !applied.has(row.name) ||
       !m ||
-      row.contract_checksum !== (m.contract?.checksum ?? null) ||
-      (row.contract_applied_at && !m.contract)
+      row.contract_checksum !== m.contractChecksum ||
+      (row.contract_applied_at && !m.contractChecksum)
     )
       throw new Error("Snapshot contract state does not match applied migration files.");
     seen.add(row.name);
   }
-  if (history.applied.some((row) => local.get(row.name)?.contract && !seen.has(row.name)))
+  if (history.applied.some((row) => local.get(row.name)?.contractChecksum && !seen.has(row.name)))
     throw new Error("Snapshot lacks contract execution state for an applied migration.");
 }
 

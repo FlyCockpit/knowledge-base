@@ -5,9 +5,13 @@ import {
   checkFolder,
   checkImmutability,
   checkOrdering,
+  checkReleaseSections,
   compareApplicationCatalogs,
   compareSnapshots,
+  contractsAfter,
+  fingerprintDiff,
   render,
+  retiredBefore,
 } from "./check-migrations.mjs";
 import { keptLabelsFromNotices } from "./lib/diff-source.mjs";
 import {
@@ -20,6 +24,7 @@ import {
   summarizeEffects,
   wrapTransactional,
 } from "./lib/sql.mjs";
+import { buildRelease } from "./release-squash.mjs";
 
 const blob = (text) => {
   const bytes = Buffer.from(text);
@@ -186,6 +191,208 @@ describe("checkImmutability", () => {
       () => Buffer.from("CREATE TABLE a ();\n"),
     );
     assert.match(extra[0], /added inside/);
+  });
+});
+
+describe("checkImmutability: release squashes", () => {
+  const P1 = "20990101000000_one";
+  const R = "20990110000000_release_2";
+  const sql = "SELECT 1;\n";
+  const baseFiles = [
+    { path: "0_init/migration.sql", sha: blob("CREATE TABLE a ();\n") },
+    { path: `${P1}/migration.sql`, sha: blob(sql) },
+  ];
+  const releases = [{ name: R, replaces: [{ name: P1 }] }];
+  const head = (files) => (rel) => (rel in files ? Buffer.from(files[rel]) : null);
+  const init = { "0_init/migration.sql": "CREATE TABLE a ();\n" };
+  test("a base folder may move into a release's replaced/ copy, byte-identical", () => {
+    const files = { ...init, [`${R}/replaced/${P1}/migration.sql`]: sql };
+    assert.deepEqual(
+      checkImmutability(baseFiles, () => [], head(files), { releases }),
+      [],
+    );
+  });
+  test("…but not with other bytes, not without the copy, not without a manifest", () => {
+    const edited = { ...init, [`${R}/replaced/${P1}/migration.sql`]: "SELECT 2;\n" };
+    assert.match(
+      checkImmutability(baseFiles, () => [], head(edited), { releases }).join(),
+      /not byte-identical/,
+    );
+    assert.match(
+      checkImmutability(baseFiles, () => [], head(init), { releases }).join(),
+      /missing/,
+    );
+    assert.match(checkImmutability(baseFiles, () => [], head(init)).join(), /deleted or renamed/);
+  });
+  test("a folder in a release tag never moves, even with a copy", () => {
+    const files = { ...init, [`${R}/replaced/${P1}/migration.sql`]: sql };
+    const details = checkImmutability(baseFiles, () => [], head(files), {
+      releases,
+      released: new Set([P1]),
+    });
+    assert.match(details.join(), /is in a release tag but was deleted or renamed/);
+  });
+  test("the previous release's replaced/ and replaces.json go only in a release PR", () => {
+    const previous = [
+      { path: `${R}/migration.sql`, sha: blob(sql) },
+      { path: `${R}/replaces.json`, sha: blob("{}") },
+      { path: `${R}/replaced/${P1}/migration.sql`, sha: blob(sql) },
+    ];
+    const files = { [`${R}/migration.sql`]: sql };
+    const released = new Set([R]);
+    assert.deepEqual(
+      checkImmutability(previous, () => [`${R}/migration.sql`], head(files), {
+        released,
+        releasePr: true,
+      }),
+      [],
+    );
+    assert.equal(
+      checkImmutability(previous, () => [`${R}/migration.sql`], head(files), { released }).length,
+      2,
+    );
+    assert.match(
+      checkImmutability(previous, () => [], head({}), { released, releasePr: true }).join(),
+      new RegExp(`${R}/migration.sql\` is in a release tag`),
+    );
+  });
+});
+
+describe("checkReleaseSections / contractsAfter", () => {
+  const sha = (t) => createHash("sha256").update(t).digest("hex");
+  const P1 = "20990101000000_one";
+  const P2 = "20990102000000_two";
+  const R = "20990110000000_release_2";
+  const m1 = wrapTransactional('ALTER TABLE "t" ADD COLUMN "b" TEXT;');
+  const m2 = wrapTransactional('ALTER TABLE "t" ADD COLUMN "c" TEXT;\nUPDATE "t" SET "c" = "a";');
+  const c2 = 'ALTER TABLE "t" DROP COLUMN "a";\n'; // destructive:audited — fixture text, never executed.
+  const migrations = [
+    { name: P1, sql: m1, checksum: sha(m1), contract: null },
+    { name: P2, sql: m2, checksum: sha(m2), contract: { sql: c2, checksum: sha(c2) } },
+  ];
+  const built = buildRelease({ release: R, tag: "v1", migrations });
+  const migration = (name, sql, contract = null) => ({
+    name,
+    sql,
+    checksum: sha(sql),
+    contract: contract ? { sql: contract, checksum: sha(contract) } : null,
+  });
+  const release = {
+    name: R,
+    tag: "v1",
+    replaces: built.manifest.replaces.map((e, i) => ({
+      ...e,
+      sql: migrations[i].sql,
+      contract: migrations[i].contract?.sql ?? null,
+    })),
+  };
+  test("the squashed folder passes", () => {
+    assert.deepEqual(
+      checkReleaseSections(release, {
+        sql: built.migrationSql,
+        contract: { sql: built.contractSql },
+      }),
+      [],
+    );
+  });
+  test("a release regenerated from a schema diff (rename as drop + add) fails", () => {
+    const regenerated = wrapTransactional(
+      `-- knowledge-base:from ${P1}\nALTER TABLE "t" ADD COLUMN "b" TEXT;\n-- knowledge-base:from ${P2}\nALTER TABLE "t" DROP COLUMN "a", ADD COLUMN "c" TEXT;`,
+    );
+    assert.match(
+      checkReleaseSections(release, {
+        sql: regenerated,
+        contract: { sql: built.contractSql },
+      }).join(),
+      new RegExp(`section for ${P2} is not its replaced/ copy verbatim`),
+    );
+  });
+  test("SQL slipped in outside the sections fails (it would run only on databases that apply the release)", () => {
+    const sneaky = built.migrationSql.replace(
+      `-- knowledge-base:from ${P1}`,
+      `UPDATE "t" SET "a" = NULL WHERE "a" IS NOT NULL;\n\n-- knowledge-base:from ${P1}`,
+    );
+    assert.notEqual(sneaky, built.migrationSql);
+    assert.match(
+      checkReleaseSections(release, { sql: sneaky, contract: { sql: built.contractSql } }).join(),
+      /SQL outside the `-- knowledge-base:from` sections/,
+    );
+    assert.match(
+      checkReleaseSections(release, {
+        sql: built.migrationSql,
+        contract: { sql: `${built.contractSql}SELECT 1;\n` },
+      }).join(),
+      /contract\.sql`?: not the replaced contract\.sql files concatenated/,
+    );
+  });
+  test("a release missing one replaced migration fails", () => {
+    const short = buildRelease({ release: R, tag: "v1", migrations: [migrations[1]] });
+    assert.match(
+      checkReleaseSections(release, {
+        sql: short.migrationSql,
+        contract: { sql: short.contractSql },
+      }).join(),
+      /are not the migrations replaces\.json lists/,
+    );
+  });
+  test("contractsAfter: base contracts that ran are not run again by the release", () => {
+    const [after] = contractsAfter(
+      [{ name: R, contract: { sql: built.contractSql, checksum: "c" } }],
+      [release],
+      new Set([P2]),
+    );
+    assert.doesNotMatch(after.contract.sql, /DROP COLUMN/);
+    const [untouched] = contractsAfter(
+      [{ name: R, contract: { sql: built.contractSql, checksum: "c" } }],
+      [release],
+      new Set(),
+    );
+    assert.match(untouched.contract.sql, /DROP COLUMN "a"/);
+  });
+  test("check 5 accepts a section that recovers what an earlier section of the same release retired", () => {
+    const init = wrapTransactional('CREATE TABLE "t" ("id" INTEGER NOT NULL, "a" TEXT);');
+    const retire = migration(
+      "20990101000000_retire_a",
+      wrapTransactional("SELECT 1;"),
+      'ALTER TABLE "t" DROP COLUMN "a";\n',
+    ); // destructive:audited — fixture text, never executed.
+    const recover = migration(
+      "20990102000000_recover_a",
+      wrapTransactional(
+        `ALTER TABLE "t" ADD COLUMN "b" TEXT;\n\n${recoverBlock({ table: "t", from: "a", to: "b" })}`,
+      ),
+    );
+    const r = buildRelease({ release: R, tag: "v1", migrations: [retire, recover] });
+    assert.deepEqual(r.problems, []);
+    const release = {
+      name: R,
+      replaces: [retire, recover].map((m) => ({
+        name: m.name,
+        sql: m.sql,
+        contract: m.contract?.sql ?? null,
+      })),
+    };
+    const upTo = [{ name: "0_init", sql: init, contract: null }];
+    const folder = { name: R, sql: r.migrationSql, contract: { sql: r.contractSql } };
+    const catalog = catalogFromSql(init);
+    const sections = [retire, recover].map((m) => ({
+      name: m.name,
+      sql: m.sql,
+      contract: m.contract ? { sql: m.contract.sql } : null,
+    }));
+    // Judged per squashed migration (as each was when it merged): no failure at all.
+    assert.deepEqual(
+      checkFolder(folder, { catalog, retired: retiredBefore(upTo, release), sections }).failures,
+      [],
+    );
+    // The old behaviour, for contrast: the recover looks orphaned without the
+    // release's own retirements, and the whole folder reads as drop a + add b.
+    const old = checkFolder(folder, { catalog, retired: retiredBefore(upTo, undefined) }).failures;
+    assert.ok(old.some((f) => /--recover/.test(f)));
+    assert.ok(old.some((f) => /dropped and "b" is added/.test(f)));
+  });
+  test("fingerprintDiff lists one-sided lines", () => {
+    assert.deepEqual(fingerprintDiff(["a", "b"], ["b", "c"]), { onlyA: ["a"], onlyB: ["c"] });
   });
 });
 

@@ -536,6 +536,16 @@ jobs:
           path: migration-summary.md
           if-no-files-found: warn
 
+      # Release PRs only (the change adds a folder with replaces.json): the
+      # checks again with the last release tag as the base — Guard A
+      # (equivalence, every prefix of the squashed chain) and Guard B (upgrade
+      # from the tag with fixture data). A no-op on every other PR. The tags
+      # come with the full-history checkout above.
+      - name: Check release squash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: pnpm db:check-release --auto --base "origin/${BASE_REF}"
+
   # ── React Doctor (React health scan: hooks, a11y, perf, security) ─
 
   react-doctor:

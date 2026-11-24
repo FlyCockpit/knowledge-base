@@ -22,6 +22,7 @@ import {
   readApplicationCatalog,
   readMigrationsFolder,
 } from "../db/lib/migration-state.mjs";
+import { readReplacedMigrations } from "../db/lib/replaces.mjs";
 import { kbDataPaths } from "../init-kb-volumes.mjs";
 import { assertNoStorageMigration } from "./asset-storage-control.mjs";
 import {
@@ -135,8 +136,10 @@ const REQUEST = "kb.maintenance.request";
 const ROOT = resolve(import.meta.dirname, "../..");
 
 const monotonicMs = () => Number(process.hrtime.bigint() / 1_000_000n);
+// Migration files: a folder's migration/contract SQL, and a release folder's
+// replaces.json plus its replaced/<migration>/ SQL copies (scripts/db/lib/replaces.mjs).
 const SAFE =
-  /^(asset-inventory\.jsonl|postgres\.dump|schema\/migrations\/(?:migration_lock\.toml|[A-Za-z0-9_-]+\/(?:migration|contract)\.sql)|repos\/kb_[a-z0-9]{24,32}\.git\/[A-Za-z0-9_./-]+|assets\/objects\/[a-f0-9]{2}\/[a-f0-9]{62})$/;
+  /^(asset-inventory\.jsonl|postgres\.dump|schema\/migrations\/(?:migration_lock\.toml|[A-Za-z0-9_-]+\/(?:(?:replaced\/[A-Za-z0-9_-]+\/)?(?:migration|contract)\.sql|replaces\.json))|repos\/kb_[a-z0-9]{24,32}\.git\/[A-Za-z0-9_./-]+|assets\/objects\/[a-f0-9]{2}\/[a-f0-9]{62})$/;
 export function pathCheck(path, directory = false) {
   if (
     !(
@@ -809,6 +812,7 @@ export async function snapshotOffline({
     const migrationHistory = await captureMigrationHistory(client, {
       schema,
       migrations: readMigrationsFolder(join(schemaDir, "migrations")),
+      replaced: readReplacedMigrations(join(schemaDir, "migrations")),
     });
     const sourceCatalog = await readApplicationCatalog(client, schema);
     const instance = JSON.parse(
