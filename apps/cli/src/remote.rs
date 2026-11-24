@@ -166,7 +166,7 @@ fn client(
         ..ClientOptions::default()
     };
     let client = Arc::new(if let Some(proxy) = config.proxy.as_deref() {
-        crate::auth::validate_proxy(proxy)?;
+        crate::config::validate_proxy(proxy)?;
         McpClient::new_with_proxy(
             resource.clone(),
             credential,

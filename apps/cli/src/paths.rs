@@ -67,11 +67,11 @@ pub fn cache_dir() -> Result<PathBuf> {
     resolve(&base.join(APP), "cache")
 }
 
-/// The per-user model cache shared by every store. `models_dir` in the
-/// config file overrides it (absolute paths only).
-pub fn models_dir(config: &crate::config::Config) -> Result<PathBuf> {
-    match &config.models_dir {
-        Some(dir) => Ok(dir.clone()),
+/// The per-user model cache shared by every store, or `configured` (the
+/// config file's `models_dir`, absolute paths only) when one is set.
+pub fn models_dir(configured: Option<&Path>) -> Result<PathBuf> {
+    match configured {
+        Some(dir) => Ok(dir.to_path_buf()),
         None => Ok(cache_dir()?.join("models")),
     }
 }
@@ -86,8 +86,9 @@ pub fn runtime_dir() -> Result<PathBuf> {
     }
 }
 
-/// The shared embedding worker host for this user and configuration.
-pub fn model_host(config: &crate::config::Config) -> Result<kb_local::qwen::ModelHost> {
+/// The shared embedding worker host for this user, reading models from
+/// [`models_dir`] of `configured_models`.
+pub fn model_host(configured_models: Option<&Path>) -> Result<kb_local::qwen::ModelHost> {
     let exe = std::env::current_exe().context("locating the `kb` executable")?;
     // A configured `models_dir` may be shared with another program: files
     // not safe to load in place are copied, verified, into the owner-only
@@ -95,7 +96,7 @@ pub fn model_host(config: &crate::config::Config) -> Result<kb_local::qwen::Mode
     Ok(kb_local::qwen::ModelHost::new(
         exe,
         runtime_dir()?,
-        models_dir(config)?,
+        models_dir(configured_models)?,
         std::time::Duration::from_secs(900),
     )?
     .with_private_cache(cache_dir()?.join("models"))?)

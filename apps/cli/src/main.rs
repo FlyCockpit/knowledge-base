@@ -8,7 +8,7 @@
 //!
 //! Keep this file small. Real work belongs in `src/commands/`.
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use kb::cli::{Cli, Command};
 use kb::exit::ExitCode;
@@ -68,6 +68,6 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         Command::Logout(args) => commands::logout::run(args),
         Command::Export(args) => commands::export::run(args),
         Command::Config(args) => commands::config::run(args),
-        Command::Completions(args) => commands::completions::run(args),
+        Command::Completions(args) => commands::completions::run(args, Cli::command()),
     }
 }
