@@ -777,6 +777,7 @@ fn ci_path_filters_cover_cli_crates_and_shared_protocol_inputs() {
             "packages/api/src/lib/kb/local-model.ts",
             "packages/test-utils/src/kb/*reference.json",
             "packages/test-utils/src/kb/embedding-normalization.json",
+            "packages/test-utils/src/kb/embedding-parity/**",
             ".github/workflows/**",
         ] {
             assert!(paths.contains(path), "{event} misses consumed input {path}");

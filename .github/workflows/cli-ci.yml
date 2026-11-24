@@ -33,6 +33,7 @@ on:
       - "packages/api/src/lib/kb/local-model.ts"
       - "packages/test-utils/src/kb/*reference.json"
       - "packages/test-utils/src/kb/embedding-normalization.json"
+      - "packages/test-utils/src/kb/embedding-parity/**"
       - ".github/workflows/**"
   pull_request:
     paths:
@@ -49,6 +50,7 @@ on:
       - "packages/api/src/lib/kb/local-model.ts"
       - "packages/test-utils/src/kb/*reference.json"
       - "packages/test-utils/src/kb/embedding-normalization.json"
+      - "packages/test-utils/src/kb/embedding-parity/**"
       - ".github/workflows/**"
   schedule:
     # Check RustSec advisories regularly without making unrelated PRs flaky.

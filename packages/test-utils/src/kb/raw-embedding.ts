@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { unitVector } from "@knowledge-base/api/lib/kb/index-file/testing";
 import { expect } from "vitest";
 
@@ -12,17 +12,94 @@ export const normalizationFixture = JSON.parse(
 };
 
 /**
- * Minimum cosine between a live real-model vector and the shared fixture (recorded by the server
- * worker on x64). x64 reproduces it and keeps the strict 0.9999 bar; every other architecture
- * (arm64) is held to 0.9995. Same weights and llama.cpp source, but float accumulation order in
- * the CPU kernels differs per build (ISA, CPU features, weight repack, compiler and libm):
- * measured d1 against the x64 fixture, macOS arm64 Gemma 0.99990 / Qwen 0.99973, Linux arm64
- * musl and this server worker Qwen 0.99980, Linux arm64 gnu Qwen 0.99972. Real defects (wrong
- * pooling, the wrong model) land far below 0.999; double normalization keeps the direction and is
- * caught by the raw-magnitude checks instead. The CLI twin is
- * `REAL_MODEL_PARITY_MIN_COSINE` in `apps/cli/crates/kb-local/tests/qwen_model.rs`.
+ * Minimum cosine between a live real-model vector and the reference recorded on the same platform
+ * (`embedding-parity/server-<platform>.json`). Strict on every platform: a platform is only ever
+ * compared with its own recording. Real defects (wrong pooling, the wrong model) land far below
+ * 0.999; double normalization keeps the direction and is caught by the raw-magnitude checks
+ * instead. The CLI twin is `REAL_MODEL_PARITY_MIN_COSINE` in
+ * `apps/cli/crates/kb-local/tests/qwen_model.rs`.
  */
-export const REAL_MODEL_PARITY_MIN_COSINE = process.arch === "x64" ? 0.9999 : 0.9995;
+export const REAL_MODEL_PARITY_MIN_COSINE = 0.9999;
+
+/**
+ * The platform whose numerics the server worker's vectors carry. `scripts/build-embedding-runtime.mjs`
+ * builds the pinned llama.cpp for Linux x64/arm64 only, with `GGML_NATIVE=OFF` (ggml's fixed
+ * non-native instruction-set defaults) and the host toolchain, so the kernels are fixed by the
+ * architecture and not by the host CPU's features.
+ */
+export const parityPlatform = () => `${process.platform}-${process.arch}`;
+
+const parityReferencePath = (platform: string) =>
+  join(import.meta.dirname, "embedding-parity", `server-${platform}.json`);
+
+const parityRegeneration = (platform: string) =>
+  `record it on ${platform}: pnpm test:kb --build-only qwen-model, then KB_RECORD_EMBEDDING_PARITY=1 ` +
+  "pnpm test:kb -- qwen-model, or on CI: gh workflow run kb-model-smoke.yml -f record_parity=true " +
+  "and commit the embedding-parity-* artifacts (docs/embeddings.md)";
+
+type ParityRow = { id: string; purpose: string; text: string; unitF32Hex: string };
+
+/**
+ * Record mode (exactly `KB_RECORD_EMBEDDING_PARITY=1`; unset or empty compares): write the live
+ * vectors as this platform's reference instead of comparing. Any other value is refused rather
+ * than silently recording.
+ */
+export function recordingParity() {
+  const value = process.env.KB_RECORD_EMBEDDING_PARITY;
+  if (value === undefined || value === "") return false;
+  if (value === "1") return true;
+  throw new Error(`KB_RECORD_EMBEDDING_PARITY must be 1 or unset, not ${JSON.stringify(value)}`);
+}
+
+/**
+ * A model's recorded unit vectors for `platform`, checked against the shared inputs. A missing or
+ * stale reference fails with the command that records it; another platform's recording is never
+ * substituted.
+ */
+export function parityReference(platform: string, modelId: string): Map<string, Float32Array> {
+  const path = parityReferencePath(platform);
+  if (!existsSync(path))
+    throw new Error(
+      `No server embedding parity reference for ${platform} (${path}); ${parityRegeneration(platform)}`,
+    );
+  const reference = JSON.parse(readFileSync(path, "utf8")) as {
+    runtime: string;
+    platform: string;
+    models: Record<string, ParityRow[]>;
+  };
+  if (reference.runtime !== "server" || reference.platform !== platform)
+    throw new Error(`${path} is not the server reference for ${platform}`);
+  const rows = reference.models[modelId];
+  if (!rows) throw new Error(`${path} has no ${modelId} rows; ${parityRegeneration(platform)}`);
+  const inputs = (row: { id: string; purpose: string; text: string }) =>
+    JSON.stringify([row.id, row.purpose, row.text]);
+  if (rows.map(inputs).join("\n") !== normalizationFixture.items.map(inputs).join("\n"))
+    throw new Error(
+      `${path} ${modelId} was recorded for other inputs than embedding-normalization.json; ${parityRegeneration(platform)}`,
+    );
+  return new Map(
+    rows.map((row) => {
+      const bytes = Buffer.from(row.unitF32Hex, "hex");
+      return [row.id, new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)];
+    }),
+  );
+}
+
+/** Record mode: write a model's rows into the platform's reference, keeping the other models'. */
+export function recordParityReference(platform: string, modelId: string, rows: ParityRow[]) {
+  const path = parityReferencePath(platform);
+  const models: Record<string, ParityRow[]> = existsSync(path)
+    ? (JSON.parse(readFileSync(path, "utf8")) as { models: Record<string, ParityRow[]> }).models
+    : {};
+  models[modelId] = rows;
+  const sorted = Object.fromEntries(Object.entries(models).sort(([a], [b]) => (a < b ? -1 : 1)));
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    `${JSON.stringify({ runtime: "server", platform, models: sorted }, null, 2)}\n`,
+  );
+  console.log(`recorded ${modelId} parity reference ${path}`);
+}
 
 /**
  * The embedding contract (docs/embeddings.md): a built-in runtime returns the RAW pooled

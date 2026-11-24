@@ -15,7 +15,11 @@ import { modelInference } from "./model-inference";
 import {
   expectRawEmbedding,
   normalizationFixture,
+  parityPlatform,
+  parityReference,
   REAL_MODEL_PARITY_MIN_COSINE,
+  recordingParity,
+  recordParityReference,
 } from "./raw-embedding";
 
 // Dynamic URL avoids crossing this composite project's root.
@@ -205,6 +209,17 @@ it("real-model normalization parity: live raw vectors normalize to the shared fi
 }, async () => {
   const qwenPath = process.env.KB_QWEN_MODEL_PATH;
   if (!qwenPath || !modelPath) throw new Error("Both pinned artifacts are required");
+  // This platform's references first: a missing or stale one fails before any model work.
+  const platform = parityPlatform();
+  const record = recordingParity();
+  const references = record
+    ? undefined
+    : new Map(
+        [QWEN_MODEL, GEMMA_MODEL].map((model) => [
+          model.modelId,
+          parityReference(platform, model.modelId),
+        ]),
+      );
   const fixture = normalizationFixture;
   const dir = mkdtempSync(join(scratch, "normalization-"));
   symlinkSync(qwenPath, join(dir, QWEN_MODEL.fileName));
@@ -220,6 +235,8 @@ it("real-model normalization parity: live raw vectors normalize to the shared fi
   const hex = (unit: Float32Array) =>
     Buffer.from(unit.buffer, unit.byteOffset, unit.byteLength).toString("hex");
   for (const [index, model] of [QWEN_MODEL, GEMMA_MODEL].entries()) {
+    const reference = references?.get(model.modelId);
+    const rows = [];
     for (const item of fixture.items) {
       const [raw] = await modelInference(() =>
         supervisor.embed({
@@ -236,12 +253,18 @@ it("real-model normalization parity: live raw vectors normalize to the shared fi
       // Same raw input -> the exact recorded bytes (the CLI asserts these bytes too).
       const replay = unitVector(recorded.raw, model.dimensions);
       expect(hex(replay)).toBe(recorded.unitF32Hex);
-      // The live model reproduces the recorded direction.
-      const parity = cosine(Array.from(unit), Array.from(replay));
-      expect(parity, `${model.modelId} ${item.id}: cosine ${parity}`).toBeGreaterThanOrEqual(
-        REAL_MODEL_PARITY_MIN_COSINE,
-      );
+      if (!reference) {
+        rows.push({ id: item.id, purpose: item.purpose, text: item.text, unitF32Hex: hex(unit) });
+        continue;
+      }
+      // The live model reproduces the direction recorded on this platform.
+      const parity = cosine(Array.from(unit), Array.from(reference.get(item.id)!));
+      expect(
+        parity,
+        `${model.modelId} ${item.id} on ${platform}: cosine ${parity}`,
+      ).toBeGreaterThanOrEqual(REAL_MODEL_PARITY_MIN_COSINE);
     }
+    if (record) recordParityReference(platform, model.modelId, rows);
   }
 });
 

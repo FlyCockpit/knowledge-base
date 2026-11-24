@@ -30,13 +30,33 @@ near 100, Gemma near 1,000). The index format normalizes exactly once,
 quantization and the sqlite-vec arm) and on the query arm. Server and CLI
 produce the same bytes for the same raw vector (shared fixture
 `packages/test-utils/src/kb/embedding-normalization.json`, recorded from the
-real models). The live real-model lanes compare each model's fresh output with
-that fixture by cosine: x64 builds, which recorded it, must reach ≥ 0.9999;
-every other build (macOS arm64, Linux arm64 gnu and musl, the server worker on
-arm64) must reach ≥ 0.9995. The weights and llama.cpp source are the same, but
-float accumulation order in the CPU kernels differs per build (ISA, CPU
-features, weight repack, compiler and libm), which moves arm64 results by about
-1e-4 to 3e-4 (measured Qwen d1 0.99972 to 0.99980). Wrong pooling or the
+real models). The live real-model lanes check each model's fresh raw magnitude
+against that fixture and its direction, by cosine ≥ 0.9999 on every platform,
+against a reference recorded on the same platform:
+`packages/test-utils/src/kb/embedding-parity/<runtime>-<platform>.json`
+(`server-linux-x64`, `cli-x86_64-linux-gnu`, `cli-aarch64-macos`,
+`cli-x86_64-windows-msvc`, ...). The weights and llama.cpp source are the same
+everywhere, but float accumulation order in the CPU kernels differs per build
+(measured Qwen d1 against the x64 recording: 0.99972 to 0.99980 on arm64,
+0.99978 with MSVC on x64). Both builds fix their kernels at compile time
+(`GGML_NATIVE=OFF`, no runtime CPU-variant dispatch), so the platform is the
+build target, not the host CPU: the CLI's `<arch>-<os>[-<env>]` of the `kb`
+that runs inference (`KB_MODEL_PLATFORM` names it when it differs from the test
+harness, as on the static musl legs), the server's `linux-<arch>`. A platform
+without a reference, or one recorded for other inputs, fails with the command
+that records it; no other platform's reference is substituted. Record on the
+platform itself with `KB_RECORD_EMBEDDING_PARITY=1` and the usual lane command
+(CLI: `cargo test --locked -p kb-local --test qwen_model -- --ignored
+--test-threads=1 gemma_real_model qwen_real_model` with `KB_MODEL_PLATFORM`,
+`KB_MODEL_EXECUTABLE` and both model paths; server: `pnpm test:kb -- qwen-model`)
+and the build that lane runs (a debug `kb` on the host legs, the `dist` binary on
+the static musl legs: a debug build compiles llama.cpp as RelWithDebInfo),
+or for the CI platforms run `gh workflow run kb-model-smoke.yml -f
+record_parity=true` and commit the `embedding-parity-*` artifacts after
+reviewing them (a recording run checks nothing, so it fails the required
+`qwen-model-smoke` status). Record mode is exactly `KB_RECORD_EMBEDDING_PARITY=1`;
+any other non-empty value is refused. Re-record every platform when the runtime pin, the build
+flags or the shared inputs change. Wrong pooling or the
 wrong model land far below 0.999; double normalization keeps the direction and
 is caught by the raw-magnitude checks. Vector reuse and the
 CLI checkpoint copy already-normalized data and never normalize again. RRF fuses ranks, so it does not depend on norms. Revoke destroys ciphertext and

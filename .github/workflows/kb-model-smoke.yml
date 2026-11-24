@@ -10,6 +10,11 @@
 # reported on every push/PR/tag, and it is green only when BOTH architecture
 # legs succeeded and uploaded matching evidence — a skipped, cancelled or
 # missing leg cannot be called release-ready.
+#
+# Each leg compares live vectors with the parity reference recorded on its own
+# platform (packages/test-utils/src/kb/embedding-parity/); a manual run with
+# `record_parity` records them instead and uploads `embedding-parity-*`; such a
+# run compares nothing, so its required status always fails.
 name: KB model smoke
 
 on:
@@ -19,6 +24,11 @@ on:
       - "**[0-9]+.[0-9]+.[0-9]+*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      record_parity:
+        description: Record each leg's embedding parity reference (docs/embeddings.md) and upload it as an artifact instead of comparing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -152,7 +162,16 @@ jobs:
           KB_GEMMA_EVIDENCE_OUT: ${{ runner.temp }}/gemma-evidence-${{ matrix.arch }}.json
           KB_QWEN_MODEL_PATH: ${{ runner.temp }}/qwen-model/${{ env.QWEN_FILE }}
           KB_QWEN_EVIDENCE_OUT: ${{ runner.temp }}/qwen-evidence-${{ matrix.arch }}.json
+          KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}
         run: pnpm test:kb -- qwen-model
+
+      - name: Upload recorded parity reference
+        if: ${{ inputs.record_parity }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: embedding-parity-server-linux-${{ matrix.arch }}
+          path: packages/test-utils/src/kb/embedding-parity/server-linux-${{ matrix.arch }}.json
+          if-no-files-found: error
 
       - name: Upload Gemma evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -180,23 +199,30 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            platform: x86_64-linux-gnu
           # No `ubuntu-latest` label exists for arm64 runners.
           - runner: ubuntu-26.04-arm
             target: aarch64-unknown-linux-gnu
+            platform: aarch64-linux-gnu
           - runner: macos-15-intel
             target: x86_64-apple-darwin
+            platform: x86_64-macos
           - runner: macos-latest
             target: aarch64-apple-darwin
+            platform: aarch64-macos
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
+            platform: x86_64-windows-msvc
           # The shipped static musl release binaries (apps/cli/ci/
           # musl-builder.Dockerfile), driven by the same host test harness.
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            platform: x86_64-linux-musl
           # No `ubuntu-latest` label exists for arm64 runners; the static binary
           # does not depend on the runner image, so the 24.04 arm64 image serves.
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            platform: aarch64-linux-musl
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -303,9 +329,19 @@ jobs:
           TMPDIR: ${{ runner.temp }}
           KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.GEMMA_FILE }}
           KB_QWEN_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.QWEN_FILE }}
+          # The executable's platform: its parity reference (the musl legs run a gnu harness).
+          KB_MODEL_PLATFORM: ${{ matrix.platform }}
+          KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}
         run: |
           cargo test --locked -p kb-local --test qwen_model -- --ignored --test-threads=1 2>&1 | tee "${{ runner.temp }}/rust-model-evidence.txt"
           grep -Eq 'test result: ok\. 4 passed; 0 failed' "${{ runner.temp }}/rust-model-evidence.txt"
+      - name: Upload recorded parity reference
+        if: ${{ inputs.record_parity }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: embedding-parity-cli-${{ matrix.platform }}
+          path: packages/test-utils/src/kb/embedding-parity/cli-${{ matrix.platform }}.json
+          if-no-files-found: error
       - name: Record actual architecture and compiler
         run: |
           rustc -vV >> "${{ runner.temp }}/rust-model-evidence.txt"
@@ -331,6 +367,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
+
+      # A recording run skips every parity comparison: it is never parity evidence.
+      - name: Not a recording run
+        if: ${{ inputs.record_parity }}
+        run: |
+          echo "record_parity run: references were recorded, not checked; commit them and rely on the next run"
+          exit 1
 
       - name: Every matrix leg succeeded
         run: |

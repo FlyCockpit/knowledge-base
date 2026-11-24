@@ -285,7 +285,13 @@ KB_QWEN_MODEL_PATH=/private/cache/Qwen3-Embedding-0.6B-Q8_0.gguf \
 cargo test --locked -p kb-local --test qwen_model -- --ignored --test-threads=1
 ```
 
-Missing or tampered files fail that command. The required model workflow
+Missing or tampered files fail that command. Live vectors must match the
+reference recorded on the same platform at cosine >= 0.9999
+(`packages/test-utils/src/kb/embedding-parity/cli-<arch>-<os>[-<env>].json`;
+set `KB_MODEL_PLATFORM` when `kb` was built for another environment of this
+host, e.g. `x86_64-linux-musl`). A platform without one fails with the command
+that records it: the same command with `KB_RECORD_EMBEDDING_PARITY=1`, see
+[embeddings](../../docs/embeddings.md). The required model workflow
 selects both tests, asserts a nonzero count, and covers the shipped native
 release platforms. Linux memory assertions reject a build that allocates
 unused pooled logits. Local host evidence does not certify other

@@ -23,25 +23,170 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
         / (a.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt()
             * b.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt())
 }
-/// Minimum cosine between a live real-model vector and the shared fixture
-/// (`embedding-normalization.json`, recorded by the server worker on x64).
+/// Minimum cosine between a live real-model vector and the reference recorded
+/// on the same platform (`embedding-parity/cli-<platform>.json`). Strict on
+/// every platform: a platform is only ever compared with its own recording.
+/// Real defects (wrong pooling, the wrong model) land far below 0.999; double
+/// normalization keeps the direction and is caught by the raw-magnitude check
+/// instead. The server twin is `REAL_MODEL_PARITY_MIN_COSINE` in
+/// `packages/test-utils/src/kb/raw-embedding.ts`.
+const REAL_MODEL_PARITY_MIN_COSINE: f64 = 0.9999;
+/// Per-platform parity references, relative to this crate (docs/embeddings.md).
+const PARITY_REFERENCE_DIR: &str = "../../../../packages/test-utils/src/kb/embedding-parity";
+/// The platform whose numerics the live vectors carry: `<arch>-<os>[-<env>]`
+/// of the `kb` that runs inference (`KB_MODEL_EXECUTABLE`).
 ///
-/// x64 builds reproduce that fixture and keep the strict 0.9999 bar. Every
-/// other target (macOS arm64, Linux arm64 gnu/musl) is held to 0.9995: the
-/// weights and llama.cpp source are identical, but float accumulation order in
-/// the CPU kernels differs per build (ISA, enabled CPU features, weight
-/// repack, compiler and libm). Measured against the x64 fixture, d1: macOS
-/// arm64 Gemma 0.99990 / Qwen 0.99973, Linux arm64 gnu Qwen 0.99972, Linux
-/// arm64 musl Gemma 0.99989 / Qwen 0.99980; one build-flag change on the same
-/// CPU moves Qwen by about 2e-4. Real defects (wrong pooling, the wrong model)
-/// land far below 0.999; double normalization keeps the direction and is
-/// caught by the raw-magnitude check instead. The server twin is
-/// `REAL_MODEL_PARITY_MIN_COSINE` in `packages/test-utils/src/kb/raw-embedding.ts`.
-const REAL_MODEL_PARITY_MIN_COSINE: f64 = if cfg!(target_arch = "x86_64") {
-    0.9999
-} else {
-    0.9995
-};
+/// The vendored llama.cpp build fixes its CPU kernels at compile time:
+/// `GGML_NATIVE=OFF`, so ggml's instruction-set options are its CMake
+/// defaults for a non-native build (on x86_64 SSE4.2/AVX/AVX2/BMI2/FMA/F16C
+/// when not cross-compiling) plus the target's `CARGO_CFG_TARGET_FEATURE`;
+/// no `dynamic-backends`; Linux aarch64 pinned to armv8-a; and ggml's
+/// `ggml_cpu_has_*` kernel and repack selection are `#if`s. So the host CPU
+/// does not move the result, while the target's architecture, OS and
+/// toolchain/libc (gcc or clang or MSVC, glibc or musl libm) do:
+/// measured d1 Qwen against the x64 server recording, Linux arm64 gnu 0.99972,
+/// musl 0.99980, macOS arm64 0.99973, Windows MSVC x64 0.99978.
+///
+/// Defaults to this test binary's own target. `KB_MODEL_PLATFORM` names the
+/// executable's when it was built for another environment of this host (the
+/// static musl legs run a gnu harness); it may change only the environment.
+fn parity_platform() -> String {
+    let host = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
+    match std::env::var("KB_MODEL_PLATFORM") {
+        Ok(platform) => {
+            let env = platform
+                .strip_prefix(&host)
+                .unwrap_or_else(|| panic!("KB_MODEL_PLATFORM {platform:?} must start with {host}"));
+            assert!(
+                env.is_empty()
+                    || env.strip_prefix('-').is_some_and(|e| {
+                        !e.is_empty() && e.bytes().all(|b| b.is_ascii_lowercase())
+                    }),
+                "KB_MODEL_PLATFORM {platform:?} must be {host} or {host}-<env>"
+            );
+            platform
+        }
+        Err(_) => {
+            let env = if cfg!(target_env = "gnu") {
+                "-gnu"
+            } else if cfg!(target_env = "musl") {
+                "-musl"
+            } else if cfg!(target_env = "msvc") {
+                "-msvc"
+            } else {
+                ""
+            };
+            format!("{host}{env}")
+        }
+    }
+}
+/// Record mode is exactly `KB_RECORD_EMBEDDING_PARITY=1` (unset or empty:
+/// compare); any other value is refused rather than silently recording.
+fn recording_parity() -> bool {
+    match std::env::var("KB_RECORD_EMBEDDING_PARITY") {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok(value) if value.is_empty() => false,
+        Ok(value) if value == "1" => true,
+        other => panic!("KB_RECORD_EMBEDDING_PARITY must be 1 or unset, not {other:?}"),
+    }
+}
+fn parity_reference_path(platform: &str) -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(PARITY_REFERENCE_DIR)
+        .join(format!("cli-{platform}.json"))
+}
+/// How to record the missing or stale reference, on that platform.
+fn parity_regeneration(platform: &str) -> String {
+    format!(
+        "record it on {platform}: from apps/cli, KB_RECORD_EMBEDDING_PARITY=1 \
+         KB_MODEL_PLATFORM={platform} KB_MODEL_EXECUTABLE=<kb built for it> \
+         KB_GEMMA_MODEL_PATH=<gguf> KB_QWEN_MODEL_PATH=<gguf> cargo test --locked -p kb-local \
+         --test qwen_model -- --ignored --test-threads=1 gemma_real_model qwen_real_model, \
+         or on CI: gh workflow run kb-model-smoke.yml -f record_parity=true and commit the \
+         embedding-parity-* artifacts (docs/embeddings.md)"
+    )
+}
+/// This model's recorded unit vectors for `platform`, checked against the
+/// shared inputs. A missing or stale reference fails with the command that
+/// records it; another platform's recording is never substituted.
+fn parity_reference(
+    platform: &str,
+    model: &str,
+    items: &[serde_json::Value],
+) -> std::collections::BTreeMap<String, Vec<f32>> {
+    let path = parity_reference_path(platform);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "no CLI embedding parity reference for {platform} ({}: {e}); {}",
+            path.display(),
+            parity_regeneration(platform)
+        )
+    });
+    let reference: serde_json::Value = serde_json::from_str(&text).expect("parity reference");
+    assert!(
+        reference["runtime"] == "cli" && reference["platform"] == platform,
+        "{} is not the CLI reference for {platform}",
+        path.display()
+    );
+    let rows = reference["models"][model].as_array().unwrap_or_else(|| {
+        panic!(
+            "{} has no {model} rows; {}",
+            path.display(),
+            parity_regeneration(platform)
+        )
+    });
+    let inputs = |row: &serde_json::Value| {
+        (
+            row["id"].clone(),
+            row["purpose"].clone(),
+            row["text"].clone(),
+        )
+    };
+    assert!(
+        rows.iter().map(inputs).eq(items.iter().map(inputs)),
+        "{} {model} was recorded for other inputs than embedding-normalization.json; {}",
+        path.display(),
+        parity_regeneration(platform)
+    );
+    rows.iter()
+        .map(|row| {
+            let hex = row["unitF32Hex"].as_str().expect("hex");
+            let vector = (0..hex.len() / 8)
+                .map(|i| {
+                    let b = u32::from_str_radix(&hex[i * 8..i * 8 + 8], 16).expect("hex");
+                    f32::from_le_bytes(b.to_be_bytes())
+                })
+                .collect();
+            (row["id"].as_str().expect("id").to_owned(), vector)
+        })
+        .collect()
+}
+/// Record mode (`KB_RECORD_EMBEDDING_PARITY=1`): write this model's rows into
+/// the platform's reference, keeping the other model's.
+fn record_parity_reference(platform: &str, model: &str, rows: Vec<serde_json::Value>) {
+    let path = parity_reference_path(platform);
+    let mut models = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let old: serde_json::Value = serde_json::from_str(&text).expect("parity reference");
+            assert!(old["runtime"] == "cli" && old["platform"] == platform);
+            old["models"].as_object().expect("models").clone()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => panic!("{}: {e}", path.display()),
+    };
+    models.insert(model.to_owned(), serde_json::Value::Array(rows));
+    let reference = serde_json::json!({ "runtime": "cli", "platform": platform, "models": models });
+    std::fs::create_dir_all(path.parent().expect("dir")).expect("reference dir");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&reference).expect("json") + "\n",
+    )
+    .expect("write parity reference");
+    let _ = std::io::Write::write_fmt(
+        &mut std::io::stderr(),
+        format_args!("recorded {model} parity reference {}\n", path.display()),
+    );
+}
 fn raw_norm(v: &[f32]) -> f64 {
     v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt()
 }
@@ -66,6 +211,16 @@ fn recorded_raw_norm(model: &str) -> f64 {
         / rows.len() as f64
 }
 fn run(id: &str, var: &str, fixture: &str) {
+    // This platform's parity reference first: a missing or stale one fails
+    // before any model work.
+    let parity: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../packages/test-utils/src/kb/embedding-normalization.json"
+    ))
+    .expect("normalization fixture");
+    let items = parity["items"].as_array().expect("items");
+    let platform = parity_platform();
+    let record = recording_parity();
+    let reference = (!record).then(|| parity_reference(&platform, id, items));
     let f = Fixture::new("real-model");
     #[cfg(unix)]
     {
@@ -265,13 +420,11 @@ fn run(id: &str, var: &str, fixture: &str) {
         );
     }
     assert!(vectors.len() >= 6);
-    // Server/CLI normalization parity: the live raw output, normalized once by
-    // the index format, matches the server runtime's recorded unit vectors.
-    let parity: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../../packages/test-utils/src/kb/embedding-normalization.json"
-    ))
-    .expect("normalization fixture");
-    for item in parity["items"].as_array().expect("items") {
+    // Real-model normalization parity: the live raw output, normalized once by
+    // the index format, matches the unit vectors recorded on this platform
+    // (the raw magnitude is checked against the shared server recording).
+    let mut recorded_rows = Vec::new();
+    for item in items {
         let purpose = if item["purpose"] == "query" {
             Purpose::Query
         } else {
@@ -307,19 +460,28 @@ fn run(id: &str, var: &str, fixture: &str) {
             item["id"]
         );
         let unit = kb_local::index_format::unit_vector(&raw, m.dimensions).expect("unit");
-        let hex = recorded["unitF32Hex"].as_str().expect("hex");
-        let server = (0..hex.len() / 8)
-            .map(|i| {
-                let b = u32::from_str_radix(&hex[i * 8..i * 8 + 8], 16).expect("hex");
-                f32::from_le_bytes(b.to_be_bytes())
-            })
-            .collect::<Vec<_>>();
-        let parity_cosine = cosine(&unit, &server);
+        let Some(reference) = &reference else {
+            let hex = unit
+                .iter()
+                .map(|x| format!("{:08x}", u32::from_be_bytes(x.to_le_bytes())))
+                .collect::<String>();
+            recorded_rows.push(serde_json::json!({
+                "id": item["id"],
+                "purpose": item["purpose"],
+                "text": item["text"],
+                "unitF32Hex": hex,
+            }));
+            continue;
+        };
+        let parity_cosine = cosine(&unit, &reference[item["id"].as_str().expect("id")]);
         assert!(
             parity_cosine >= REAL_MODEL_PARITY_MIN_COSINE,
-            "server/CLI parity {}: cosine {parity_cosine} < {REAL_MODEL_PARITY_MIN_COSINE}",
+            "real-model parity {} on {platform}: cosine {parity_cosine} < {REAL_MODEL_PARITY_MIN_COSINE}",
             item["id"]
         );
+    }
+    if record {
+        record_parity_reference(&platform, id, recorded_rows);
     }
     // d1=locks, d2=redaction; query fixture asks about writers.
     assert!(cosine(&vectors[0], &vectors[3]) > cosine(&vectors[1], &vectors[3]));
