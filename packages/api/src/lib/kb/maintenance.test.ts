@@ -1,3 +1,4 @@
+import { captureLog } from "@knowledge-base/env/log";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ query: vi.fn(), end: vi.fn(), connect: vi.fn() }));
@@ -33,6 +34,31 @@ describe("maintenance participant", () => {
       }),
     ).rejects.toThrow("mode mismatch");
     expect(recover).not.toHaveBeenCalled();
+  });
+  it("logs the offline-recovery refusal with its stable code before refusing startup", async () => {
+    state.query.mockImplementation(async (sql: string) => ({
+      rows: sql.includes("pg_try")
+        ? [{ held: true }]
+        : sql.includes("WHERE key=")
+          ? [{ value: '{"assetStorageAttempt":null}' }]
+          : [],
+    }));
+    const { startMaintenanceParticipant } = await import("./maintenance");
+    const log = captureLog();
+    try {
+      const close = vi.fn();
+      await expect(startMaintenanceParticipant("inert", close)).rejects.toThrow(/offline recovery/);
+      expect(close).toHaveBeenCalledOnce();
+      expect(log.records).toEqual([
+        expect.objectContaining({
+          site: "kb.maintenance-recovery-required",
+          level: "warn",
+          code: "MAINTENANCE_RECOVERY_REQUIRED",
+        }),
+      ]);
+    } finally {
+      log.restore();
+    }
   });
   it("withholds acknowledgement and the permit until storage ownership drains", async () => {
     state.query.mockImplementation(async (sql: string) => ({

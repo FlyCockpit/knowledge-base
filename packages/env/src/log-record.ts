@@ -105,6 +105,10 @@ export const LOG_SITES = {
     "procedure budget limiter unavailable; failing open",
   ],
   "kb.staging-cleanup": ["error", "query data janitor failed"],
+  "kb.maintenance-recovery-required": [
+    "warn",
+    "startup refused: a backup left maintenance closed; re-run the backup to take the recovery snapshot",
+  ],
   "kb.recovery-sweep": ["error", "journal recovery sweep failed"],
   "kb.recovery-kb": [
     "error",

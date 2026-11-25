@@ -3,6 +3,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { initializeConnection } from "@knowledge-base/env/connection-config";
+import { logEvent } from "@knowledge-base/env/log";
 import { Client } from "pg";
 import { assertNoAssetMigration } from "./asset-storage-mode";
 import type { LockQuery } from "./lock";
@@ -107,10 +108,14 @@ export async function startMaintenanceParticipant(
     await assertNoAssetMigration((sql, values) => client.query(sql, values));
     await admitStorage?.((sql, values) => client.query(sql, values));
     await check(recover);
-    if (requested)
+    if (requested) {
+      // check() has already closed admission, so the host stops as planned and
+      // never prints this refusal: say it here, once per start.
+      logEvent("kb.maintenance-recovery-required", { code: "MAINTENANCE_RECOVERY_REQUIRED" });
       throw new Error(
         "Maintenance request requires offline recovery before startup: a backup left maintenance closed; re-run the backup to take the recovery snapshot.",
       );
+    }
     // Session-scoped: released by Postgres when this process or its session dies.
     for (let attempt = 0; !participantKey; attempt++) {
       if (attempt === 8) throw new Error("No free maintenance participant token.");
