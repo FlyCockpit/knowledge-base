@@ -49,7 +49,8 @@ export const TOO_MANY_CHANGES_MESSAGE =
  * instance's "all" limit (`max` in the details).
  */
 export function tooManyBasesMessage(max: number): string {
-  return `This credential can read more than ${max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them.`;
+  const bases = max === 1 ? "knowledge base" : "knowledge bases";
+  return `This credential can read more than ${max} ${bases}, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them.`;
 }
 
 /** FORBIDDEN by the credential's write mode, by what the call needed. */

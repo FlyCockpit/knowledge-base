@@ -33,7 +33,9 @@ pub struct Args {
     /// Serve this server: its origin or /mcp resource, `name=<url>`, or the
     /// name of a configured server (`kb config add-server`). Repeat it to
     /// serve several servers on one connection: each tool is advertised once
-    /// and takes a `server` argument naming one of them. Default:
+    /// and takes a `server` argument naming one of them, except
+    /// `knowledge_search_all`, where `server` is optional: without it the
+    /// search fans out to every server that offers it. Default:
     /// `mcp_servers`, else `server`, from the config file.
     #[arg(long = "server", id = "server", value_name = "URL|NAME")]
     pub servers: Vec<String>,

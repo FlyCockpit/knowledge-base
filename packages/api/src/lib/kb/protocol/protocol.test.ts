@@ -36,6 +36,7 @@ import {
   buildKbSuccessCallToolResult,
   KB_PROTOCOL_ERROR_CODES,
   KB_RETRYABLE_ERROR_CODES,
+  tooManyBasesMessage,
 } from "./envelope";
 import { FIXTURE_KB_ID, FIXTURE_KEY, FIXTURE_PATH, FIXTURE_SHA } from "./fixture-data";
 import { kbReadToolSchemas } from "./reads";
@@ -1146,5 +1147,12 @@ describe("open JSON dictionaries", () => {
       structuredRowSchema.safeParse(Object.fromEntries([["__proto__", "x".repeat(1025)]])).success,
     ).toBe(false);
     expect(structuredRowSchema.safeParse([]).success).toBe(false);
+  });
+});
+
+describe("TOO_MANY_BASES message", () => {
+  it("says knowledge base for a limit of one", () => {
+    expect(tooManyBasesMessage(1)).toContain("more than 1 knowledge base, ");
+    expect(tooManyBasesMessage(16)).toContain("more than 16 knowledge bases, ");
   });
 });

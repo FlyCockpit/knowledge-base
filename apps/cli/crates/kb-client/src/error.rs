@@ -28,7 +28,10 @@ pub fn too_many_bases_message(max: i64) -> Option<&'static str> {
     static TABLE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
         (1..=crate::types::SEARCH_ALL_MAX_BASES)
-            .map(|max| format!("This credential can read more than {max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to {}) to choose the bases to search; knowledge_bases_list lists them.", crate::types::SEARCH_ALL_MAX_BASES))
+            .map(|max| {
+                let bases = if max == 1 { "knowledge base" } else { "knowledge bases" };
+                format!("This credential can read more than {max} {bases}, the most one search of every base covers on this instance. Pass kbIds (up to {}) to choose the bases to search; knowledge_bases_list lists them.", crate::types::SEARCH_ALL_MAX_BASES)
+            })
             .collect()
     });
     let at = usize::try_from(max).ok()?.checked_sub(1)?;

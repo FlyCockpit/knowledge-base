@@ -130,10 +130,15 @@ fn too_many_bases_names_its_limit_on_stdio_and_remote_decode() {
         let result = kb_client::error::tool_error(ErrorCode::InvalidArgument, details.clone());
         let wire = &result["structuredContent"]["error"];
         let error = ToolError::from_value(wire).unwrap();
+        let bases = if max == 1 {
+            "knowledge base"
+        } else {
+            "knowledge bases"
+        };
         assert_eq!(
             error.message(),
             format!(
-                "This credential can read more than {max} knowledge bases, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them."
+                "This credential can read more than {max} {bases}, the most one search of every base covers on this instance. Pass kbIds (up to 64) to choose the bases to search; knowledge_bases_list lists them."
             )
         );
         assert_eq!(error.details().to_value(), details);

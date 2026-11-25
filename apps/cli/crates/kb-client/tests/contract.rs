@@ -371,10 +371,19 @@ fn search_all_typed_shapes_and_constants_match_the_contract() {
             .expect("envelope.ts");
     let template = kb_client::error::too_many_bases_message(16)
         .unwrap()
-        .replace("16", "${max}");
+        .replace("16 knowledge bases", "${max} ${bases}");
     assert!(
         envelope.contains(&format!("return `{template}`;")),
         "{template}"
+    );
+    // ... with the same singular for a limit of one.
+    assert!(
+        envelope.contains(r#"const bases = max === 1 ? "knowledge base" : "knowledge bases";"#)
+    );
+    assert!(
+        kb_client::error::too_many_bases_message(1)
+            .unwrap()
+            .contains("more than 1 knowledge base, ")
     );
     for (max, ok) in [(0, false), (1, true), (64, true), (65, false), (-1, false)] {
         assert_eq!(
