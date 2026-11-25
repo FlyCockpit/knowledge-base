@@ -25,7 +25,7 @@ use kb_local::{NewKb, Store, StoreError};
 /// Preserve the real production handoff and its pipes. The native fixture
 /// scope owns descendants, even after this direct child's successful wait;
 /// this guard additionally kills/reaps the direct child on local unwinding.
-struct HandoffChild(kb_local::git_read::ProcessChild);
+struct HandoffChild(kb_local::locks::ProcessChild);
 impl HandoffChild {
     fn spawn(
         guard: &kb_local::locks::WriteGuard,
@@ -39,7 +39,7 @@ impl HandoffChild {
     }
 }
 impl std::ops::Deref for HandoffChild {
-    type Target = kb_local::git_read::ProcessChild;
+    type Target = kb_local::locks::ProcessChild;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

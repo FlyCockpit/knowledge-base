@@ -30,19 +30,25 @@ pub(crate) fn asset_ref(e: &ManifestEntry) -> Result<AssetRef, StoreError> {
         mime: serde_json::from_value(serde_json::json!(e.mime)).map_err(|_| unavailable())?,
     })
 }
+/// The store-backed tree policy of one KB: the trusted asset catalog and the
+/// KB's sealed records, as [`Store::tree_policy`] hands them over.
 pub(crate) struct Policy<'a> {
-    pub store: &'a Store,
-    pub kb: &'a KbId,
-    pub pending: &'a [ManifestEntry],
+    catalog: &'a rusqlite::Connection,
+    /// `Store::check_local_sealed` for this KB; `live` selects the
+    /// publication rule (live records) over the snapshot rule.
+    sealed: SealedCheck<'a>,
+    kb: &'a KbId,
+    pending: &'a [ManifestEntry],
     /// `path -> blob` of the commit this one builds on. References in
     /// a blob unchanged at its path were validated when it was written, so
     /// a later revocation never blocks unrelated writes; only changed paths
     /// must reference live records. `None` validates every reference.
-    pub base: Option<&'a std::collections::HashMap<String, String>>,
+    base: Option<&'a std::collections::HashMap<String, String>>,
 }
+type SealedCheck<'a> = Box<dyn Fn(&[SealedOccurrence], bool) -> Result<(), SealedOccurrence> + 'a>;
 impl TreePolicy for Policy<'_> {
     fn check_manifest_entry(&self, _commit: Option<&Sha>, e: &ManifestEntry) -> Result<(), String> {
-        let trusted:Option<(i64,String,bool)>=self.store.conn.query_row("SELECT size,mime,EXISTS(SELECT 1 FROM kb_asset_lineage WHERE kb_id=?1 AND hash=?2) FROM asset_blobs WHERE hash=?2",(self.kb.as_str(),&e.hash),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|"asset catalog unavailable")?;
+        let trusted:Option<(i64,String,bool)>=self.catalog.query_row("SELECT size,mime,EXISTS(SELECT 1 FROM kb_asset_lineage WHERE kb_id=?1 AND hash=?2) FROM asset_blobs WHERE hash=?2",(self.kb.as_str(),&e.hash),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|"asset catalog unavailable")?;
         if trusted
             .as_ref()
             .is_some_and(|(size, mime, _)| *size != e.size as i64 || mime != &e.mime)
@@ -70,7 +76,7 @@ impl TreePolicy for Policy<'_> {
             .filter(|r| self.base.and_then(|b| b.get(&r.path)) != Some(&r.blob))
             .cloned()
             .collect::<Vec<_>>();
-        self.store.check_local_sealed(self.kb, &changed, true)
+        (self.sealed)(&changed, true)
     }
 }
 /// Immutable exports retain symbolic source after record revocation. All
@@ -85,7 +91,7 @@ impl TreePolicy for SnapshotPolicy<'_> {
         _c: Option<&Sha>,
         refs: &[SealedOccurrence],
     ) -> Result<(), SealedOccurrence> {
-        self.0.store.check_local_sealed(self.0.kb, refs, false)
+        (self.0.sealed)(refs, false)
     }
 }
 /// `path -> blob` of one commit's tree (bounded like every tree walk).
@@ -108,6 +114,24 @@ pub(crate) fn blob_map(
     Ok(entries.into_iter().map(|e| (e.path, e.sha)).collect())
 }
 impl Store {
+    /// The tree policy for validating `kb`'s commits against this store:
+    /// `pending` assets are authorized besides the trusted catalog, and only
+    /// paths whose blob differs from `base` must reference live records.
+    pub(crate) fn tree_policy<'a>(
+        &'a self,
+        kb: &'a KbId,
+        pending: &'a [ManifestEntry],
+        base: Option<&'a std::collections::HashMap<String, String>>,
+    ) -> Policy<'a> {
+        Policy {
+            catalog: &self.conn,
+            sealed: Box::new(move |refs, live| self.check_local_sealed(kb, refs, live)),
+            kb,
+            pending,
+            base,
+        }
+    }
+
     pub(crate) fn manifest_entries(
         &self,
         kb: &KbId,
@@ -115,12 +139,7 @@ impl Store {
         rev: &Sha,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         let entries = at_revision(repo, rev)?;
-        let policy = Policy {
-            store: self,
-            kb,
-            pending: &[],
-            base: None,
-        };
+        let policy = self.tree_policy(kb, &[], None);
         for e in &entries {
             policy
                 .check_manifest_entry(Some(rev), e)

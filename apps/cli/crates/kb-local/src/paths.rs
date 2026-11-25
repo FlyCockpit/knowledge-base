@@ -22,6 +22,39 @@ use kb_client::types::KbId;
 
 use crate::StoreError;
 
+/// Initialization stages for bounded crash/fault tests.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenStage {
+    SyncState,
+    BeforePublish,
+    SyncDirectory(PathBuf),
+}
+
+/// The effective user ID, read from a file this process just created (no FFI).
+#[cfg(unix)]
+pub(crate) fn own_uid() -> Result<u32, StoreError> {
+    use std::os::unix::fs::MetadataExt;
+    static UID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    if let Some(uid) = UID.get() {
+        return Ok(*uid);
+    }
+    // Linux: /proc/self belongs to the effective user; no write needed.
+    #[cfg(target_os = "linux")]
+    if let Ok(meta) = std::fs::metadata("/proc/self") {
+        return Ok(*UID.get_or_init(|| meta.uid()));
+    }
+    let path = std::env::temp_dir().join(format!(".kb-uid-{}", crate::state::new_uuid_v4()?));
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(StoreError::Io)?;
+    let uid = file.metadata().map_err(StoreError::Io)?.uid();
+    let _ = std::fs::remove_file(&path);
+    Ok(*UID.get_or_init(|| uid))
+}
+
 /// Durable registry file (never disposable).
 pub const STATE_FILE: &str = "state.sqlite";
 /// Initialization scratch name; only ever published by rename.
@@ -121,7 +154,7 @@ impl StorePaths {
 
     pub(crate) fn ensure_managed_dirs(
         &self,
-        observer: &mut dyn FnMut(crate::store::OpenStage) -> Result<(), StoreError>,
+        observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
         for dir in MANAGED_DIRS {
             ensure_dir_observed(&self.root, &[dir], false, observer)?;
@@ -533,7 +566,7 @@ pub(crate) fn ensure_dir_observed(
     root: &Path,
     segments: &[&str],
     sync_existing: bool,
-    observer: &mut dyn FnMut(crate::store::OpenStage) -> Result<(), StoreError>,
+    observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
 ) -> Result<PathBuf, StoreError> {
     let mut current = root.to_path_buf();
     for segment in segments {
@@ -785,18 +818,18 @@ pub(crate) fn same_file(a: &File, b: &File) -> Result<bool, StoreError> {
 
 pub(crate) fn sync_dir_observed(
     path: &Path,
-    observer: &mut dyn FnMut(crate::store::OpenStage) -> Result<(), StoreError>,
+    observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    observer(crate::store::OpenStage::SyncDirectory(path.to_path_buf()))?;
+    observer(OpenStage::SyncDirectory(path.to_path_buf()))?;
     sync_dir(path)
 }
 
 /// [`sync_ancestor_dir`] with the open-stage observer.
 pub(crate) fn sync_ancestor_dir_observed(
     path: &Path,
-    observer: &mut dyn FnMut(crate::store::OpenStage) -> Result<(), StoreError>,
+    observer: &mut dyn FnMut(OpenStage) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    observer(crate::store::OpenStage::SyncDirectory(path.to_path_buf()))?;
+    observer(OpenStage::SyncDirectory(path.to_path_buf()))?;
     sync_ancestor_dir(path)
 }
 
@@ -951,7 +984,7 @@ mod entry_path_tests {
     }
 
     fn own_uid() -> u32 {
-        crate::model_download::own_uid().expect("uid")
+        super::own_uid().expect("uid")
     }
 
     fn refusal(result: Result<PathBuf, StoreError>) -> String {

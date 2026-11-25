@@ -1,5 +1,5 @@
 //! Exact OpenAI response semantics, shared server cases; no raw error text.
-use crate::{StoreError, egress::unavailable};
+use crate::StoreError;
 use kb_client::error::CancellationToken;
 use serde_json::Value;
 use std::{
@@ -10,6 +10,12 @@ use std::{
     time::Duration,
 };
 use tokio::time::Instant;
+
+/// A provider or model answer kb cannot use: the index is unavailable for
+/// this call.
+pub fn unavailable() -> StoreError {
+    StoreError::IndexUnavailable
+}
 /// Raw provider vectors, unchanged (f64, never rounded or normalized here):
 /// the index spec normalizes exactly once, `u = f32(v / ‖v‖₂)`. Refusal rules
 /// are the shared server cases: every value finite as f32 and a nonzero f32
@@ -101,8 +107,8 @@ impl ProviderControl {
         self.cancelled.store(true, Ordering::Release);
         self.cancel.cancel();
     }
-    pub(crate) fn git_scope(&self) -> crate::git_read::OperationDeadline {
-        crate::git_read::OperationDeadline::bounded(
+    pub(crate) fn git_scope(&self) -> crate::deadline::OperationDeadline {
+        crate::deadline::OperationDeadline::bounded(
             std::time::Instant::now() + self.remaining(),
             self.cancelled.clone(),
         )
@@ -332,17 +338,17 @@ mod git_control_tests {
         let scope = ctl.git_scope();
         ctl.cancel();
         assert_eq!(
-            crate::git_read::OperationDeadline::check()
+            crate::deadline::OperationDeadline::check()
                 .unwrap_err()
                 .protocol_code(),
             kb_client::ErrorCode::Cancelled
         );
         drop(scope);
-        assert!(crate::git_read::OperationDeadline::check().is_ok());
+        assert!(crate::deadline::OperationDeadline::check().is_ok());
         let expired = ProviderControl::with_timeout(Duration::ZERO);
         let _scope = expired.git_scope();
         assert_eq!(
-            crate::git_read::OperationDeadline::check()
+            crate::deadline::OperationDeadline::check()
                 .unwrap_err()
                 .protocol_code(),
             kb_client::ErrorCode::DeadlineExceeded

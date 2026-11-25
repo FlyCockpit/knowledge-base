@@ -17,7 +17,8 @@
 //! so a retained source cannot be silently copied back by ordinary loads.
 use crate::{
     StoreError,
-    egress::{Dns, NativeDns, is_public, unavailable},
+    egress::{Dns, NativeDns, is_public},
+    embedder::unavailable,
     paths::{is_link, sync_dir},
     qwen::{ModelDescriptor, data},
 };
@@ -59,30 +60,6 @@ fn model_error(why: impl Into<String>) -> StoreError {
     StoreError::Explained(kb_client::ErrorCode::IndexUnavailable, why.into())
 }
 
-/// The effective user ID, read from a file this process just created (no FFI).
-#[cfg(unix)]
-pub(crate) fn own_uid() -> Result<u32, StoreError> {
-    use std::os::unix::fs::MetadataExt;
-    static UID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    if let Some(uid) = UID.get() {
-        return Ok(*uid);
-    }
-    // Linux: /proc/self belongs to the effective user; no write needed.
-    #[cfg(target_os = "linux")]
-    if let Ok(meta) = fs::metadata("/proc/self") {
-        return Ok(*UID.get_or_init(|| meta.uid()));
-    }
-    let path = std::env::temp_dir().join(format!(".kb-uid-{}", crate::state::new_uuid_v4()?));
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(StoreError::Io)?;
-    let uid = file.metadata().map_err(StoreError::Io)?.uid();
-    let _ = fs::remove_file(&path);
-    Ok(*UID.get_or_init(|| uid))
-}
-
 /// A file or directory llama.cpp may load in place after a checksum: not a
 /// link, owned by this user (or root) and writable by nobody else (Unix:
 /// no group/other write bit; Windows: an owner-only ACL). Anything else could
@@ -99,7 +76,7 @@ fn check_trusted(path: &Path, meta: &fs::Metadata, dir: bool) -> Result<(), Stor
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let uid = meta.uid();
-        if (uid != own_uid()? && uid != 0) || meta.permissions().mode() & 0o022 != 0 {
+        if (uid != crate::paths::own_uid()? && uid != 0) || meta.permissions().mode() & 0o022 != 0 {
             return Err(StoreError::UnsafePath(format!(
                 "model cache: `{}` is writable by or owned by another user",
                 path.display()
@@ -135,7 +112,7 @@ fn check_trusted_chain(dir: &Path) -> Result<(), StoreError> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            let uid = own_uid()?;
+            let uid = crate::paths::own_uid()?;
             let mode = meta.permissions().mode();
             let owner_ok = meta.uid() == uid || meta.uid() == 0;
             let shared = mode & 0o022 != 0;

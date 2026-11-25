@@ -44,10 +44,12 @@ impl From<rusqlite::Error> for GenerationReadError {
         Self::Failed(error.into())
     }
 }
-impl From<GenerationReadError> for StoreError {
-    fn from(error: GenerationReadError) -> Self {
-        match error {
-            GenerationReadError::Repaired(_) => Self::IndexUnavailable,
+impl GenerationReadError {
+    /// The protocol error a public caller receives: a repaired generation
+    /// reads as `IndexUnavailable`, every other failure as itself.
+    pub(crate) fn into_store_error(self) -> StoreError {
+        match self {
+            GenerationReadError::Repaired(_) => StoreError::IndexUnavailable,
             GenerationReadError::ReadFailed(error) | GenerationReadError::Failed(error) => error,
         }
     }
@@ -962,7 +964,7 @@ impl Store {
                     ms(self.now_ms()),
                 ),
             )?;
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             tx.commit()?;
             return Ok(out);
         }
@@ -1012,7 +1014,7 @@ impl Store {
                 },
             ),
         )?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         tx.commit()?;
         Ok(out)
     }
@@ -1489,7 +1491,7 @@ impl Store {
     ) -> Result<GenerationReadLease, StoreError> {
         let guard = self.lock_write(std::slice::from_ref(kb))?;
         self.lease_generation_locked(p, kb, None, &guard)
-            .map_err(StoreError::from)
+            .map_err(GenerationReadError::into_store_error)
     }
     pub(crate) fn lease_generation_locked(
         &self,

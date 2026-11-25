@@ -113,7 +113,7 @@ pub trait Credentials {
         account: &'a str,
         ctl: &'a crate::embedder::ProviderControl,
         _: &'a crate::locks::CredentialFence,
-    ) -> crate::egress::IoFuture<'a, Secret> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Secret, StoreError>> + 'a>> {
         Box::pin(async move {
             ctl.check()?;
             self.get(account)
@@ -153,7 +153,7 @@ impl NativeCredentials {
             #[cfg(windows)]
             let native = crate::win::spawn(&command, crate::win::Input::Pipe, None)
                 .map_err(|_| unavailable())?;
-            crate::git_read::ProcessChild::new(native, None)
+            crate::locks::ProcessChild::new(native, None)
         };
         NativeCall::new(child, input, fence.is_some())
     }
@@ -178,13 +178,13 @@ impl NativeCredentials {
 }
 /// Owns all threads and the child until reaped, including cancellation/error.
 struct NativeCall {
-    child: crate::git_read::ProcessChild,
+    child: crate::locks::ProcessChild,
     writer: Option<std::thread::JoinHandle<std::io::Result<()>>>,
     reader: Option<std::thread::JoinHandle<std::io::Result<Zeroizing<Vec<u8>>>>>,
 }
 impl NativeCall {
     fn new(
-        child: crate::git_read::ProcessChild,
+        child: crate::locks::ProcessChild,
         input: Zeroizing<Vec<u8>>,
         fenced: bool,
     ) -> Result<Self, StoreError> {
@@ -306,7 +306,7 @@ impl Credentials for NativeCredentials {
         account: &'a str,
         ctl: &'a crate::embedder::ProviderControl,
         fence: &'a crate::locks::CredentialFence,
-    ) -> crate::egress::IoFuture<'a, Secret> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Secret, StoreError>> + 'a>> {
         Box::pin(async move {
             ctl.check()?;
             let mut call = self.start("get", account, "", Some(fence))?;

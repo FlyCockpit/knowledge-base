@@ -20,10 +20,12 @@ use kb_client::types::{KbId, MainBranch, PrStatus, PrSummary, Sha};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
+use crate::StoreError;
+use crate::error::constraint_to_conflict;
 use crate::locks::WriteGuard;
 use crate::pr_merge::ConflictItem;
 use crate::state::now_utc;
-use crate::store::{Store, StoreError, constraint_to_conflict};
+use crate::store::Store;
 
 /// Prefix of server-owned proposal branches.
 pub const PR_REF_PREFIX: &str = "refs/heads/pr/";

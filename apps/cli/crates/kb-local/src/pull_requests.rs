@@ -3,7 +3,7 @@
 //! an unreviewed head. COMMITTING is the durable authority boundary; recovery
 //! may finish that reservation after revocation, using its exact PR delta.
 use crate::{
-    Store, StoreError,
+    Bits, Store, StoreError,
     bases::check_input,
     cursor::{self, Binding},
     diff,
@@ -82,14 +82,13 @@ fn summary_result(op: &Uuid, row: &PrRow) -> PrMutationOutput {
         pr: row.summary(),
     }
 }
+/// May a principal holding `bits` on the PR's KB take `decision` on it?
 fn review_permission(
-    store: &Store,
+    bits: Bits,
     principal: &LocalPrincipal,
-    kb: &KbId,
     row: &PrRow,
     decision: ReviewDecision,
 ) -> Result<(), StoreError> {
-    let bits = store.authorize(principal, kb, Permission::Read)?;
     if bits.contains(Permission::Review)
         || (decision == ReviewDecision::Close
             && row.author == principal.actor_key()
@@ -150,7 +149,7 @@ impl Store {
         if known.request_hash != digest {
             return Err(StoreError::IdempotencyMismatch);
         }
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         match known.phase {
             Phase::Finalized => serde_json::from_str(known.response.as_deref().unwrap_or(""))
                 .map(Some)
@@ -299,7 +298,7 @@ impl Store {
         principal: &LocalPrincipal,
         input: PullRequestsListInput,
     ) -> Result<Page<kb_client::types::PrSummary>, StoreError> {
-        let _deadline = crate::git_read::OperationDeadline::start();
+        let _deadline = crate::deadline::OperationDeadline::start();
         check_input::<PullRequestsList>(&input)?;
         let guard = self.lock_write(std::slice::from_ref(&input.kb_id))?;
         self.authorize(principal, &input.kb_id, Permission::Read)?;
@@ -358,7 +357,7 @@ impl Store {
         let result = Page { items, next_cursor };
         self.authorize(principal, &input.kb_id, Permission::Read)?;
         check_response_size(serde_json::to_vec(&result), RESPONSE_MAX_BYTES)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         Ok(result)
     }
     pub fn pull_requests_get(
@@ -366,7 +365,7 @@ impl Store {
         principal: &LocalPrincipal,
         input: PullRequestsGetInput,
     ) -> Result<PullRequestsGetOutput, StoreError> {
-        let _deadline = crate::git_read::OperationDeadline::start();
+        let _deadline = crate::deadline::OperationDeadline::start();
         check_input::<PullRequestsGet>(&input)?;
         let guard = self.lock_write(std::slice::from_ref(&input.kb_id))?;
         self.authorize(principal, &input.kb_id, Permission::Read)?;
@@ -452,7 +451,7 @@ impl Store {
         };
         self.authorize(principal, &input.kb_id, Permission::Read)?;
         check_response_size(serde_json::to_vec(&result), RESPONSE_MAX_BYTES)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         Ok(result)
     }
     pub fn pull_requests_create(
@@ -460,7 +459,7 @@ impl Store {
         principal: &LocalPrincipal,
         input: PullRequestsCreateInput,
     ) -> Result<PrMutationOutput, StoreError> {
-        let _deadline = crate::git_read::OperationDeadline::start();
+        let _deadline = crate::deadline::OperationDeadline::start();
         check_input::<PullRequestsCreate>(&input)?;
         self.demand_authoring(kb_client::authoring::WriteKind::Edit)?;
         let kb = &input.kb_id;
@@ -566,7 +565,7 @@ impl Store {
         };
         let tx = self.conn.unchecked_transaction()?;
         crate::uploads::charge_mutation(&tx, &actor, kb.as_str(), self.now_ms())?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         crate::proposals::apply_proposal_delta(&tx, kb, &input.expected_head_sha, &delta)?;
         finalized_receipt(
             &tx,
@@ -578,7 +577,7 @@ impl Store {
             &hash,
             &result,
         )?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         tx.commit()?;
         Ok(result)
     }
@@ -597,7 +596,7 @@ impl Store {
         input: PullRequestsReviewInput,
         observer: Observer<'_>,
     ) -> Result<PrMutationOutput, StoreError> {
-        let _deadline = crate::git_read::OperationDeadline::start();
+        let _deadline = crate::deadline::OperationDeadline::start();
         check_input::<PullRequestsReview>(&input)?;
         if !matches!(
             (input.decision, input.confirm),
@@ -618,7 +617,12 @@ impl Store {
         self.authorize(principal, kb, Permission::Read)?;
         self.active_record(kb)?;
         let row = self.pr_row(kb, input.number)?.ok_or(StoreError::NotFound)?;
-        review_permission(self, principal, kb, &row, input.decision)?;
+        review_permission(
+            self.authorize(principal, kb, Permission::Read)?,
+            principal,
+            &row,
+            input.decision,
+        )?;
         let actor = principal.actor_key();
         let operation = if input.decision == ReviewDecision::Merge {
             "PR_MERGE"
@@ -645,7 +649,7 @@ impl Store {
             return Err(stale(&row.head_sha, row.number));
         }
         let op = new_uuid_v4()?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         if input.decision == ReviewDecision::Close {
             let mut closed = row.clone();
             closed.status = PrStatus::Closed;
@@ -674,7 +678,7 @@ impl Store {
                 &hash,
                 &result,
             )?;
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             tx.commit()?;
             return Ok(result);
         }
@@ -718,7 +722,7 @@ impl Store {
         merged.version += 1;
         merged.target_sha = main.clone();
         let result = summary_result(&op, &merged);
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let delta = Delta {
             head: commit.clone(),
             activate: false,
@@ -756,7 +760,7 @@ impl Store {
                 &hash,
                 &result,
             )?;
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             tx.commit()?;
             return Ok(result);
         }
@@ -784,7 +788,7 @@ impl Store {
             &delta,
             observer,
         )?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         Ok(result)
     }
 }
@@ -879,14 +883,18 @@ impl Store {
         }
         let base_tree = TreeEdit::load(repo, main)?;
         let base = base_tree.original_blobs().clone();
-        let policy = crate::manifest::Policy {
-            store: self,
-            kb,
-            pending: pending_assets,
-            base: Some(&base),
-        };
+        let policy = self.tree_policy(kb, pending_assets, Some(&base));
         merged_commit(
-            &policy, repo, guard, op, main, subject, actor, review, base_tree,
+            &policy,
+            &self.paths,
+            repo,
+            guard,
+            op,
+            main,
+            subject,
+            actor,
+            review,
+            base_tree,
         )
     }
 
@@ -933,6 +941,7 @@ impl Store {
 #[allow(clippy::too_many_arguments)] // One merge: policy, repo/locks, op identity and the PR.
 fn merged_commit(
     policy: &crate::manifest::Policy<'_>,
+    paths: &crate::StorePaths,
     repo: &GitRepo,
     guard: &crate::WriteGuard,
     op: &Uuid,
@@ -946,9 +955,9 @@ fn merged_commit(
     // Every object the plan writes (synthetic trees, merge results, the
     // merged tree and commit) lands in a disposable store; only a review
     // that will publish promotes what the merge commit needs.
-    let scratch = Scratch::new(&policy.store.paths, op)?;
+    let scratch = Scratch::new(paths, op)?;
     let staged = repo.staged(&scratch.objects_dir()?)?;
-    let mut source = crate::pr_merge::GitSource::new(&staged, &policy.store.paths, guard);
+    let mut source = crate::pr_merge::GitSource::new(&staged, paths, guard);
     let refuse = |source: &mut crate::pr_merge::GitSource<'_>,
                   paths: &[crate::pr_merge::ConflictItem]|
      -> Result<StoreError, StoreError> {

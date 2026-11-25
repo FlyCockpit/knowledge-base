@@ -124,7 +124,7 @@ pub(crate) fn recover_scratch(
     let mut removed = false;
     let result: Result<(), StoreError> = (|| {
         for entry in std::fs::read_dir(paths.uploads_dir()).map_err(StoreError::Io)? {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             let entry = entry.map_err(StoreError::Io)?;
             let name = entry.file_name();
             let Some(op) = name.to_str().and_then(|n| n.strip_prefix("publish-")) else {
@@ -162,7 +162,7 @@ fn recover_unindexed_packs(
     conn: &rusqlite::Connection,
 ) -> Result<(), StoreError> {
     for entry in std::fs::read_dir(paths.root().join("repos")).map_err(StoreError::Io)? {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let entry = entry.map_err(StoreError::Io)?;
         let name = entry.file_name();
         let Some(kb) = name
@@ -182,7 +182,7 @@ fn recover_unindexed_packs(
         };
         let mut removed = false;
         for entry in entries {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             let entry = entry.map_err(StoreError::Io)?;
             let name = entry.file_name();
             let Some(hash) = name
@@ -282,7 +282,7 @@ impl Pressure {
         };
         let mut found = Vec::new();
         for entry in entries.into_iter().flatten() {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             let name = entry.map_err(StoreError::Io)?.file_name();
             let Some(hash) = name
                 .to_str()
@@ -354,7 +354,7 @@ fn visit_loose(
         Err(e) => return Err(StoreError::Io(e)),
     };
     for entry in entries {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let entry = entry.map_err(StoreError::Io)?;
         let Some(rest) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
@@ -404,7 +404,7 @@ fn loose_objects(
     let mut found: Vec<(String, u64)> = Vec::new();
     let mut bytes = 0u64;
     for fan in 0..=255u8 {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let more = loose_in(
             paths,
             &objects.join(format!("{fan:02x}")),
@@ -521,7 +521,7 @@ fn remove_pack_file(path: &Path) -> Result<bool, StoreError> {
 }
 
 #[cfg(test)]
-type AfterRollupInstall = Box<dyn FnOnce() -> Option<crate::git_read::OperationDeadline>>;
+type AfterRollupInstall = Box<dyn FnOnce() -> Option<crate::deadline::OperationDeadline>>;
 
 #[cfg(test)]
 type RollupBoundary = Box<dyn FnOnce() -> Result<(), StoreError>>;
@@ -539,7 +539,7 @@ thread_local! {
     pub(crate) static BEFORE_ROLLUP_INTENT: std::cell::RefCell<Option<RollupBoundary>> = const { std::cell::RefCell::new(None) };
     pub(crate) static AFTER_ROLLUP_INTENT: std::cell::RefCell<Option<RollupBoundary>> = const { std::cell::RefCell::new(None) };
     pub(crate) static AFTER_RETIREMENT_UNLINK: std::cell::RefCell<Option<RetirementBoundary>> = const { std::cell::RefCell::new(None) };
-    pub(crate) static BEFORE_PRUNE: std::cell::RefCell<Option<Box<dyn FnMut() -> crate::git_read::OperationDeadline>>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static BEFORE_PRUNE: std::cell::RefCell<Option<Box<dyn FnMut() -> crate::deadline::OperationDeadline>>> = const { std::cell::RefCell::new(None) };
     pub(crate) static AFTER_ROLLUP_INSTALL: std::cell::RefCell<Option<AfterRollupInstall>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -666,7 +666,7 @@ fn resume_cleanup(
     let mut fans = std::collections::BTreeSet::new();
     let result = (|| {
         for (kind, name) in &entries {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             Sha::parse(name).map_err(|_| failed("cleanup intent"))?;
             #[cfg(test)]
             CLEANUP_ENTRIES.with(|n| n.set(n.get() + 1));
@@ -695,7 +695,7 @@ fn resume_cleanup(
                 #[cfg(test)]
                 let _scope =
                     BEFORE_PRUNE.with(|hook| hook.borrow_mut().as_mut().map(|hook| hook()));
-                crate::git_read::OperationDeadline::check()?;
+                crate::deadline::OperationDeadline::check()?;
                 let fan = objects.join(&name[..2]);
                 let path = fan.join(&name[2..]);
                 paths.check_no_follow(&path)?;
@@ -774,7 +774,7 @@ pub(crate) fn consolidate_objects(
     let loose: Vec<String> = loose.into_iter().map(|(sha, _)| sha).collect();
     let mut names = loose.clone();
     for pack in roll {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let index = packs.join(format!("pack-{}.idx", pack.hash));
         paths.check_no_follow(&index)?;
         names.extend(pack_index_names(&index)?.iter().map(hex));
@@ -1037,7 +1037,7 @@ impl<'a> ObjectWriter<'a> {
     pub(crate) fn trees_batch(&mut self, trees: &[(String, Vec<u8>)]) -> Result<(), StoreError> {
         const CHUNK: usize = 512;
         for chunk in trees.chunks(CHUNK) {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             let mut args: Vec<std::ffi::OsString> = vec![
                 "hash-object".into(),
                 "-t".into(),
@@ -1117,7 +1117,7 @@ impl<'a> ObjectWriter<'a> {
         if promoted.is_empty() {
             return Ok(promoted);
         }
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         // index-pack finishes in managed scratch; its completed pack becomes
         // visible as one graph when the durable index is installed last.
         self.repo.install_objects(&canonical, &promoted)?;
@@ -1185,7 +1185,7 @@ pub(crate) fn sync_objects(repo: &GitRepo, objects: &[String]) -> Result<(), Sto
     let root = repo.git_dir().join("objects");
     let mut dirs = std::collections::BTreeSet::new();
     for sha in objects {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let (fan, rest) = sha.split_at(2);
         let dir = root.join(fan);
         let file = dir.join(rest);
@@ -1198,7 +1198,7 @@ pub(crate) fn sync_objects(repo: &GitRepo, objects: &[String]) -> Result<(), Sto
         dirs.insert(dir);
     }
     for dir in dirs {
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         sync_dir(&dir)?;
     }
     sync_dir(&root)

@@ -577,7 +577,7 @@ fn worker_start_failure_is_reported_promptly() {
         matches!(error, kb_local::StoreError::EmbeddingFailed),
         "{error}"
     );
-    assert!(error.degradable_for(Purpose::Query));
+    assert!(Purpose::Query.degrades(&error));
 }
 
 #[test]

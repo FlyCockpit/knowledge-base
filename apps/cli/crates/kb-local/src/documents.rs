@@ -21,6 +21,7 @@ use kb_client::types::{
     Permission, Sha,
 };
 
+use crate::StoreError;
 use crate::bases::check_input;
 use crate::cursor::{self, Binding};
 use crate::git_read::{
@@ -30,7 +31,7 @@ use crate::git_read::{
 use crate::limits::{check_response_size, page_limit};
 use crate::markdown::{map_to_json, parse_markdown};
 use crate::state::LocalPrincipal;
-use crate::store::{Store, StoreError};
+use crate::store::Store;
 use crate::tree::TREE_LIMITS;
 
 /// The tool shape of a document read at `commit`, its asset references

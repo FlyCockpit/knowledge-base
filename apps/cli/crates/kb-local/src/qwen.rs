@@ -11,8 +11,8 @@ type ModelControl<'a> = (
 pub use crate::embed_service::{Engine, ModelHost};
 use crate::{
     LocalPrincipal, Store, StoreError,
-    egress::unavailable,
     embed_service::{Conn, Job},
+    embedder::unavailable,
 };
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "linux"))]
@@ -542,6 +542,24 @@ impl Store {
 pub enum Purpose {
     Query,
     Document,
+}
+impl Purpose {
+    /// Closed classification, by the caller's purpose: may this embedding
+    /// `error` degrade to the lexical arm? Only at the query boundary, and only
+    /// for the embedder's own rejections: a failed provider/model call
+    /// (including a provider rate limit or an unloaded model, which reach the
+    /// boundary as `EmbeddingFailed`), the call's own timeout, or the model
+    /// rejecting the query as longer than its context. A document embedding
+    /// (a build) never degrades: its errors fail or retry the attempt.
+    pub fn degrades(self, error: &StoreError) -> bool {
+        matches!(self, Purpose::Query)
+            && matches!(
+                error,
+                StoreError::EmbeddingFailed
+                    | StoreError::EmbeddingTimeout
+                    | StoreError::OperationAborted(kb_client::ErrorCode::EmbeddingInputTooLong)
+            )
+    }
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

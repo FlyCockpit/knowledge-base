@@ -25,8 +25,71 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::StoreError;
+use crate::deadline::OperationDeadline;
 use crate::paths::{StorePaths, open_no_follow};
 use kb_client::types::KbId;
+
+#[cfg(unix)]
+pub(crate) type NativeChild = std::process::Child;
+#[cfg(windows)]
+pub(crate) type NativeChild = crate::win::ProcessChild;
+#[cfg(unix)]
+pub(crate) type ChildStdin = std::process::ChildStdin;
+#[cfg(unix)]
+pub(crate) type ChildStdout = std::process::ChildStdout;
+#[cfg(windows)]
+pub(crate) type ChildStdin = std::fs::File;
+#[cfg(windows)]
+pub(crate) type ChildStdout = std::fs::File;
+
+/// A native child retaining its caller's lease until it is reaped.
+/// Git descendants inherit the store lock; dropping this handle cannot unlock
+/// their file description (Unix) or bypass the successor Job drain (Windows).
+/// Credential children keep the caller's lease in the parent and independently
+/// open their effect fence before receiving input.
+pub struct ProcessChild {
+    native: NativeChild,
+    pub stdin: Option<ChildStdin>,
+    pub stdout: Option<ChildStdout>,
+    owner: Option<Arc<crate::locks::LockOwner>>,
+}
+
+impl ProcessChild {
+    pub(crate) fn new(
+        mut native: NativeChild,
+        owner: Option<Arc<crate::locks::LockOwner>>,
+    ) -> Self {
+        Self {
+            stdin: native.stdin.take(),
+            stdout: native.stdout.take(),
+            native,
+            owner,
+        }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.native.id()
+    }
+
+    pub fn kill(&mut self) -> std::io::Result<()> {
+        self.native.kill()
+    }
+
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        drop(self.stdin.take());
+        let status = self.native.wait()?;
+        drop(self.owner.take());
+        Ok(status)
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let status = self.native.try_wait()?;
+        if status.is_some() {
+            drop(self.owner.take());
+        }
+        Ok(status)
+    }
+}
 
 // A registry of held store locks. Git spawns reuse current identity-matched
 // ownership or acquire their own lease; ordinary WriteGuards never reuse it.
@@ -110,7 +173,7 @@ fn with_owner<T>(
     // Same bounded admission as `store_lock`, capped by any operation deadline.
     let deadline = Instant::now() + ADMISSION_TIMEOUT;
     let check_deadline = || {
-        if Instant::now() >= deadline || crate::git_read::OperationDeadline::check().is_err() {
+        if Instant::now() >= deadline || OperationDeadline::check().is_err() {
             Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "store lock admission deadline exceeded",
@@ -189,7 +252,7 @@ fn inherit(owner: &LockOwner, command: &mut Command) -> std::io::Result<()> {
 pub(crate) fn spawn_git(
     mut command: Command,
     paths: Option<&StorePaths>,
-) -> std::io::Result<crate::git_read::ProcessChild> {
+) -> std::io::Result<ProcessChild> {
     with_owner(paths, |owner| {
         if let Some(owner) = &owner {
             inherit(owner, &mut command)?;
@@ -198,7 +261,7 @@ pub(crate) fn spawn_git(
         if let Some(owner) = &owner {
             owner.inherited.store(true, Ordering::Relaxed);
         }
-        Ok(crate::git_read::ProcessChild::new(child, owner))
+        Ok(ProcessChild::new(child, owner))
     })
 }
 
@@ -207,10 +270,10 @@ pub(crate) fn spawn_git(
     command: Command,
     paths: Option<&StorePaths>,
     input: crate::win::Input,
-) -> std::io::Result<crate::git_read::ProcessChild> {
+) -> std::io::Result<ProcessChild> {
     with_owner(paths, |owner| {
         let child = crate::win::spawn(&command, input, owner.as_deref())?;
-        Ok(crate::git_read::ProcessChild::new(child, owner))
+        Ok(ProcessChild::new(child, owner))
     })
 }
 
@@ -220,10 +283,7 @@ pub(crate) fn spawn_git(
 /// Windows also drains the account's kill-on-close job before a successor.
 pub struct CredentialFence(HeldLock, std::path::PathBuf);
 impl CredentialFence {
-    pub(crate) fn spawn_native(
-        &self,
-        mut command: Command,
-    ) -> Result<crate::git_read::ProcessChild, StoreError> {
+    pub(crate) fn spawn_native(&self, mut command: Command) -> Result<ProcessChild, StoreError> {
         let path = self.1.with_extension("native.lock");
         let paths = self.0.owner.paths.as_ref().ok_or(StoreError::LockNotHeld)?;
         // Create/validate the persistent inode before spawn. All parent files
@@ -238,10 +298,7 @@ impl CredentialFence {
         // A live native call retains ownership even if the caller drops its
         // fence. Successful reap releases this copy, not the caller's copy:
         // registration/revocation finalization and later calls stay excluded.
-        Ok(crate::git_read::ProcessChild::new(
-            child,
-            Some(Arc::clone(&self.0.owner)),
-        ))
+        Ok(ProcessChild::new(child, Some(Arc::clone(&self.0.owner))))
     }
 }
 fn try_credential_lock(
@@ -264,10 +321,10 @@ pub(crate) fn credential_lock(
     paths: &StorePaths,
     id: &KbId,
     revision: i64,
-    ctl: &crate::embedder::ProviderControl,
+    check: impl Fn() -> Result<(), StoreError>,
 ) -> Result<CredentialFence, StoreError> {
     loop {
-        ctl.check()?;
+        check()?;
         if let Some(fence) = try_credential_lock(paths, id, revision)? {
             return Ok(fence);
         }
@@ -278,10 +335,10 @@ pub(crate) async fn credential_lock_async(
     paths: &StorePaths,
     id: &KbId,
     revision: i64,
-    ctl: &crate::embedder::ProviderControl,
+    check: impl Fn() -> Result<(), StoreError>,
 ) -> Result<CredentialFence, StoreError> {
     loop {
-        ctl.check()?;
+        check()?;
         if let Some(fence) = try_credential_lock(paths, id, revision)? {
             return Ok(fence);
         }
@@ -374,7 +431,7 @@ impl WriteGuard {
     /// and stdout and discarded stderr, as the supervised Git boundary does.
     /// Consumes the builder so its child-only handoff cannot retain a parent
     /// lock duplicate after spawn or be reused for a later child.
-    pub fn spawn(&self, command: Command) -> Result<crate::git_read::ProcessChild, StoreError> {
+    pub fn spawn(&self, command: Command) -> Result<ProcessChild, StoreError> {
         // Explicit guard children use the same bounded registry admission as
         // automatic Git readers, reusing this guard's identity-matched lease.
         #[cfg(unix)]
@@ -458,7 +515,7 @@ fn store_lock_until(
 ) -> Result<Option<HeldLock>, StoreError> {
     loop {
         if admission != Admission::Try {
-            crate::git_read::OperationDeadline::check()?;
+            OperationDeadline::check()?;
         }
         if admission != Admission::Try && Instant::now() >= deadline {
             return Err(StoreError::DeadlineExceeded);
@@ -475,7 +532,7 @@ fn store_lock_until(
                         return Err(StoreError::DeadlineExceeded);
                     }
                     if admission != Admission::Try {
-                        crate::git_read::OperationDeadline::check()?;
+                        OperationDeadline::check()?;
                     }
                     owners.retain(|owner| owner.strong_count() > 0);
                     owners.push(Arc::downgrade(&lock.owner));
@@ -535,7 +592,7 @@ fn acquire_with_admission(
     };
     for id in &ids {
         if admission != Admission::Try {
-            crate::git_read::OperationDeadline::check()?;
+            OperationDeadline::check()?;
         }
         let file = open_lock_file(paths, &paths.kb_lock_file(id))?;
         while !take(&file)? {
@@ -545,7 +602,7 @@ fn acquire_with_admission(
             if Instant::now() >= deadline {
                 return Err(StoreError::DeadlineExceeded);
             }
-            crate::git_read::OperationDeadline::check()?;
+            OperationDeadline::check()?;
             std::thread::sleep(Duration::from_millis(10));
         }
         guard._kbs.push(
@@ -555,7 +612,7 @@ fn acquire_with_admission(
     }
     guard.ids = ids;
     if admission != Admission::Try {
-        crate::git_read::OperationDeadline::check()?;
+        OperationDeadline::check()?;
     }
     if admission != Admission::Try && Instant::now() >= deadline {
         return Err(StoreError::DeadlineExceeded);
@@ -974,9 +1031,9 @@ mod tests {
             .stderr(std::process::Stdio::null());
         command
     }
-    struct TestChild(crate::git_read::ProcessChild);
+    struct TestChild(ProcessChild);
     impl std::ops::Deref for TestChild {
-        type Target = crate::git_read::ProcessChild;
+        type Target = ProcessChild;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
@@ -1028,7 +1085,8 @@ mod tests {
             #[cfg(unix)]
             "native-owner" => {
                 let store = crate::Store::open(&root.join("store")).expect("fixture");
-                let fence = credential_lock(&store.paths, &credential_id(), 1, &Default::default())
+                let ctl = crate::embedder::ProviderControl::default();
+                let fence = credential_lock(&store.paths, &credential_id(), 1, || ctl.check())
                     .expect("account admission");
                 let mut child = TestChild(
                     fence
@@ -1087,7 +1145,8 @@ mod tests {
         for cancelled in [false, true] {
             let root = CredentialRoot::new();
             let store = crate::Store::open(&root.0.join("store")).expect("fixture");
-            let fence = credential_lock(&store.paths, &credential_id(), 1, &Default::default())
+            let ctl = crate::embedder::ProviderControl::default();
+            let fence = credential_lock(&store.paths, &credential_id(), 1, || ctl.check())
                 .expect("admission");
             let copy = fence
                 .0
@@ -1155,7 +1214,8 @@ mod tests {
         root.ready("native-parked");
         owner.kill().expect("owner death");
         owner.wait().expect("owner reap");
-        let fence = credential_lock(&store.paths, &credential_id(), 1, &Default::default())
+        let ctl = crate::embedder::ProviderControl::default();
+        let fence = credential_lock(&store.paths, &credential_id(), 1, || ctl.check())
             .expect("new lifecycle owner");
         assert!(!root.0.join("native-drained").exists());
         let mut successor = TestChild(
@@ -1206,9 +1266,8 @@ mod tests {
                 let paths = store.paths.clone();
                 let (send, receive) = std::sync::mpsc::channel();
                 let worker = std::thread::spawn(move || {
-                    let _scope = operation.then(|| {
-                        crate::git_read::OperationDeadline::for_test(Duration::from_millis(100))
-                    });
+                    let _scope =
+                        operation.then(|| OperationDeadline::for_test(Duration::from_millis(100)));
                     let started = Instant::now();
                     let result = native_version(&paths);
                     send.send((result, started.elapsed())).expect("fixture");
@@ -1272,7 +1331,7 @@ mod tests {
         let registry = OWNERS.lock().expect("fixture");
         let (send, receive) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let _scope = crate::git_read::OperationDeadline::for_test(Duration::from_millis(100));
+            let _scope = OperationDeadline::for_test(Duration::from_millis(100));
             let started = Instant::now();
             let mut command = Command::new("git");
             command.arg("--version");
