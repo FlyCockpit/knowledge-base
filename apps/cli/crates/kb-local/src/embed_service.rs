@@ -588,7 +588,7 @@ impl ModelHost {
                 ));
             }
             // A worker that exits before listening failed to start (a zero
-            // exit means another worker owns the identity: keep waiting).
+            // exit means it deferred to another worker owning the identity).
             if let Some(status) = child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
                 child = None;
                 if !status.success() {
@@ -596,6 +596,18 @@ impl ModelHost {
                         "the shared embedding worker exited at startup ({status})"
                     )));
                 }
+            }
+            // No child of ours and nobody owning the identity: the worker this
+            // caller started or deferred to is gone without serving it (its
+            // lifetime ended before this caller reached it, or the one it
+            // deferred to exited). Nobody else starts one while this caller
+            // holds the start lock, so it starts another.
+            if child.is_none() && !self.instance_held() {
+                match self.spawn_worker() {
+                    Ok(next) => child = Some(next),
+                    Err(e) => break Err(e),
+                }
+                start_by = Instant::now() + START_TIMEOUT;
             }
             std::thread::sleep(Duration::from_millis(25));
         };
@@ -1395,6 +1407,16 @@ impl ModelHost {
     /// Run the shared worker through its lifecycle (see [`Lifecycle`]).
     /// Returns at once (Ok) when another worker already serves this identity.
     pub fn serve(&self, engine: Engine) -> Result<(), StoreError> {
+        self.serve_with_start(engine, || {})
+    }
+    /// [`Self::serve`] running `starting` once this worker owns the identity,
+    /// before its start-up work and listening (tests: a slow or unserved start).
+    #[doc(hidden)]
+    pub fn serve_with_start(
+        &self,
+        engine: Engine,
+        starting: impl FnOnce(),
+    ) -> Result<(), StoreError> {
         self.ensure_runtime_dir()?;
         // The lifecycle lock, shared for this process's whole life (Serving and
         // Draining): an exclusive holder proves no worker is alive.
@@ -1444,11 +1466,22 @@ impl ModelHost {
             changed: tokio::sync::Notify::new(),
             inflight: std::sync::atomic::AtomicUsize::new(0),
         });
-        {
-            let shared = shared.clone();
-            let cache = self.cache.clone();
-            std::thread::spawn(move || engine_loop(shared, cache, engine));
-        }
+        // The engine (and with it the lifetime decision) starts only once
+        // the endpoint is published: the lifetime is time a client could
+        // reach this worker. Counting the start-up before it (the durable key
+        // write is a full fsync on macOS) could drain a fresh worker before
+        // it ever listened; its starter then waits out its deadline for a
+        // worker that exited without serving.
+        let mut engine = Some(engine);
+        let mut start_engine = || {
+            if let Some(engine) = engine.take() {
+                shared.touch();
+                let shared = shared.clone();
+                let cache = self.cache.clone();
+                std::thread::spawn(move || engine_loop(shared, cache, engine));
+            }
+        };
+        starting();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1484,6 +1517,7 @@ impl ModelHost {
                         .map_err(StoreError::Io)?;
                 }
                 let uid = crate::paths::own_uid()?;
+                start_engine();
                 let mut tick = tokio::time::interval(Duration::from_millis(50));
                 while serving() {
                     tokio::select! {
@@ -1517,6 +1551,7 @@ impl ModelHost {
                 let temp = endpoint.with_extension(format!("pipe.{}", crate::state::new_uuid_v4()?));
                 fs::write(&temp, name.as_bytes()).map_err(StoreError::Io)?;
                 fs::rename(&temp, &endpoint).map_err(StoreError::Io)?;
+                start_engine();
                 let mut tick = tokio::time::interval(Duration::from_millis(50));
                 while serving() {
                     tokio::select! {

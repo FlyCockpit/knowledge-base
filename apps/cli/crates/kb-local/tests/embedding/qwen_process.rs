@@ -484,6 +484,112 @@ fn idle_exit_and_restart_with_a_new_pid() {
     assert_ne!(first.pid, second.pid);
 }
 
+/// A worker's lifetime is time a client could reach it: start-up work after
+/// it owns the identity (a durable key write is a full fsync on macOS) never
+/// counts. A start-up longer than the lifetime still serves the request that
+/// started it, from that very worker, instead of draining before it listened
+/// and leaving its starter waiting out the deadline.
+#[test]
+fn a_start_up_longer_than_the_lifetime_still_serves_its_starter() {
+    let f = Fixture::new("model-slow-start");
+    let s = Store::open(&f.root.join("store")).expect("store");
+    let host = model_host::seeded(&f.root, Duration::from_millis(300));
+    configure(&s, &host);
+    wait_until("idle worker exit", || host.status().is_none());
+    std::fs::write(model_host::hook(&host, "model-test-slow-start"), b"x").expect("hook");
+    let starter = {
+        let (root, host) = (s.paths().root().to_path_buf(), host.clone());
+        std::thread::spawn(move || {
+            let s = Store::open(&root).expect("store");
+            ModelRuntime::new(&s, host)
+                .expect("runtime")
+                .embed(&s, "hello", Purpose::Query, Duration::from_secs(10))
+                .map(|e| e.pid)
+        })
+    };
+    wait_until("the fresh worker owns the identity", || {
+        model_host::hook(&host, "model-test-starting").exists()
+    });
+    // Three lifetimes pass before it listens.
+    std::thread::sleep(Duration::from_millis(900));
+    std::fs::write(model_host::hook(&host, "model-test-start-go"), b"x").expect("go");
+    let served = starter
+        .join()
+        .expect("thread")
+        .expect("served by the slowly started worker");
+    let started = std::fs::read_to_string(model_host::hook(&host, "model-test-starting"))
+        .expect("starting pid");
+    assert_eq!(
+        served.to_string(),
+        started,
+        "the worker that started slowly"
+    );
+}
+
+/// A fresh worker that ends without serving anyone (a zero exit, the
+/// identity free) leaves nobody starting one while its starter holds the start
+/// lock: the starter starts another instead of waiting out its deadline, and
+/// every caller queued behind the start lock with it.
+#[test]
+fn a_fresh_worker_that_ends_unserved_is_started_again() {
+    let f = Fixture::new("model-unserved-exit");
+    let s = Store::open(&f.root.join("store")).expect("store");
+    let host = model_host::seeded(&f.root, Duration::from_millis(300));
+    configure(&s, &host);
+    wait_until("idle worker exit", || host.status().is_none());
+    std::fs::write(model_host::hook(&host, "model-test-exit-unserved"), b"x").expect("hook");
+    let served = runtime(&s, &host)
+        .embed(&s, "hello", Purpose::Query, Duration::from_secs(10))
+        .expect("served by a worker started again")
+        .pid;
+    let exited = std::fs::read_to_string(model_host::hook(&host, "model-test-exited"))
+        .expect("the first worker ended unserved");
+    assert_ne!(served.to_string(), exited);
+}
+
+/// A fresh worker that defers (a zero exit) while another still owns the
+/// identity leaves its starter waiting only while that holder lives: once the
+/// holder is gone without serving it, the starter starts another worker
+/// instead of waiting out its deadline.
+#[test]
+fn a_starter_starts_again_once_the_worker_it_deferred_to_is_gone() {
+    let f = Fixture::new("model-deferred-exit");
+    let host = model_host::seeded(&f.root, Duration::from_millis(300));
+    let s = Store::open(&f.root.join("store")).expect("store");
+    configure(&s, &host);
+    let old = runtime(&s, &host)
+        .embed(&s, "hello", Purpose::Query, Duration::from_secs(5))
+        .expect("loaded")
+        .pid;
+    std::fs::write(model_host::hook(&host, "model-test-slow-release"), b"x").expect("hook");
+    wait_until("idle expiry starts releasing the model", || {
+        model_host::hook(&host, "model-test-releasing").exists()
+    });
+    std::fs::write(model_host::hook(&host, "model-test-exit-deferring"), b"x").expect("hook");
+    let waiting = {
+        let (root, host) = (s.paths().root().to_path_buf(), host.clone());
+        std::thread::spawn(move || {
+            let s = Store::open(&root).expect("store");
+            ModelRuntime::new(&s, host)
+                .expect("runtime")
+                .embed(&s, "hello", Purpose::Query, Duration::from_secs(10))
+                .map(|e| e.pid)
+        })
+    };
+    wait_until("the fresh worker deferred", || {
+        !model_host::hook(&host, "model-test-exit-deferring").exists()
+    });
+    // The holder outlives the starter's reap of the deferred child (one
+    // connect attempt, at most a second). The outcome does not depend on it.
+    std::thread::sleep(Duration::from_secs(2));
+    std::fs::write(model_host::hook(&host, "model-test-release-go"), b"x").expect("go");
+    let served = waiting
+        .join()
+        .expect("thread")
+        .expect("served by a worker started after the holder left");
+    assert_ne!(served, old);
+}
+
 #[test]
 fn worker_crash_mid_request_fails_fast_and_restarts() {
     let (_f, s, host) = setup("model-crash");

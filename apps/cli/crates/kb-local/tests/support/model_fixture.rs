@@ -89,8 +89,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("worker start fault".into());
     }
     // Hooks are files in the worker's working directory (the runtime dir).
-    host.serve(Box::new(
-        |m, n, cache, artifact, text, purpose, probe, measure| {
+    // Once: exit at once with success, as a worker deferring to another that
+    // owns the identity does.
+    if std::fs::remove_file("model-test-exit-deferring").is_ok() {
+        return Ok(());
+    }
+    // Once each: a slow start-up (this worker owns the identity but is not
+    // listening yet), or an end before serving anyone, as when its lifetime
+    // passes before its starter reaches it. Only the first worker after the
+    // hook does either, so a replacement neither repeats nor relabels it.
+    let starting = || {
+        if std::fs::remove_file("model-test-exit-unserved").is_ok() {
+            let _ = std::fs::write("model-test-exited", std::process::id().to_string());
+            std::process::exit(0);
+        }
+        if std::fs::remove_file("model-test-slow-start").is_ok() {
+            let _ = std::fs::write("model-test-starting", std::process::id().to_string());
+            while !Path::new("model-test-start-go").exists() {
+                gone();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    host.serve_with_start(
+        Box::new(|m, n, cache, artifact, text, purpose, probe, measure| {
             let Some(artifact) = artifact else {
                 // A slow release (a large model's memory going away).
                 if Path::new("model-test-slow-release").exists() {
@@ -202,7 +224,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pid: std::process::id(),
                 peak_bytes: None,
             }))
-        },
-    ))?;
+        }),
+        starting,
+    )?;
     Ok(())
 }
