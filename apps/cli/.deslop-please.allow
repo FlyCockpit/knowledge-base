@@ -1,0 +1,11 @@
+# Existing architectural debt suppressed by `deslop-please --allow`.
+# Fixing an entry here never fails CI; new issues not listed here fail.
+module-cycle kb_local::assets,kb_local::bases,kb_local::changes,kb_local::disk,kb_local::documents,kb_local::dream,kb_local::exports,kb_local::generation_build,kb_local::generation_maintenance,kb_local::generations,kb_local::index,kb_local::journal,kb_local::proposals,kb_local::providers,kb_local::pull_requests,kb_local::qwen,kb_local::recovery,kb_local::sealed,kb_local::store,kb_local::uploads
+tangle kb_local::index::IndexEmbedder,kb_local::qwen::ModelRuntime,kb_local::store::Store
+field-leak kb_local::embed_service::ModelHost::cache
+field-leak kb_local::embedder::QueryEmbeddingControl::control
+field-leak kb_local::generations::GenerationCancellation::token
+field-leak kb_local::locks::ProcessChild::stdin
+field-leak kb_local::locks::ProcessChild::stdout
+field-leak kb_local::store::Store::paths
+wide-directory crates/kb-local/src/
