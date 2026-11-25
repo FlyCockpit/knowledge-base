@@ -42,6 +42,8 @@ function watchMutations(page: Page) {
 async function confirmToken(page: Page, token: string, button: string) {
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toBeVisible();
+  // Every open starts empty, even after an earlier dialog with the same token.
+  await expect(dialog.getByPlaceholder(token)).toHaveValue("");
   await dialog.getByPlaceholder(token).fill(token);
   // Keyboard activation: the harness loads no app CSS, so the modal's unstyled
   // backdrop would swallow a pointer click.

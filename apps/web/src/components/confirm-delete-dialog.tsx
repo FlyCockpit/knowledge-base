@@ -47,9 +47,29 @@ type ConfirmDeleteDialogProps = {
   onConfirm: (confirmValue: string) => void;
 };
 
-export function ConfirmDeleteDialog({
-  open,
-  onOpenChange,
+export function ConfirmDeleteDialog({ open, onOpenChange, ...body }: ConfirmDeleteDialogProps) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      {/*
+        Confirm-delete dialogs carry a typed token + two touch-sized actions.
+        The default alert max-width (xs/sm) is too narrow for the footer on
+        small screens, so override both base and data-[size=…] variants.
+      */}
+      <AlertDialogContent className="max-w-[calc(100%-2rem)]! sm:max-w-md! data-[size=default]:max-w-[calc(100%-2rem)]! data-[size=default]:sm:max-w-md! data-[size=sm]:max-w-[calc(100%-2rem)]!">
+        {/* Keyed by `open`: a close resets it at once, not after the exit animation. */}
+        <ConfirmDeleteBody key={open ? "open" : "closed"} {...body} />
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/**
+ * Remounted on every open and close: the typed confirmation starts empty on
+ * every open, however the dialog was closed (Cancel, Escape, or the parent
+ * after a successful action) and whether or not the next target has the same
+ * token (e.g. "REVOKE"); a closing dialog can no longer be confirmed.
+ */
+function ConfirmDeleteBody({
   title,
   description,
   confirmToken,
@@ -63,60 +83,48 @@ export function ConfirmDeleteDialog({
   disabled = false,
   onConfirm,
   children,
-}: ConfirmDeleteDialogProps) {
+}: Omit<ConfirmDeleteDialogProps, "open" | "onOpenChange">) {
   const [confirm, setConfirm] = useState("");
   const inputId = useId();
   const { t } = useTranslation("common");
-
-  const handleOpenChange = (next: boolean) => {
-    if (!next) setConfirm("");
-    onOpenChange(next);
-  };
 
   const matches = confirm === confirmToken && confirmToken.length > 0;
   const actionDisabled = !matches || isPending || disabled;
 
   return (
-    <AlertDialog open={open} onOpenChange={handleOpenChange}>
-      {/*
-        Confirm-delete dialogs carry a typed token + two touch-sized actions.
-        The default alert max-width (xs/sm) is too narrow for the footer on
-        small screens, so override both base and data-[size=…] variants.
-      */}
-      <AlertDialogContent className="max-w-[calc(100%-2rem)]! sm:max-w-md! data-[size=default]:max-w-[calc(100%-2rem)]! data-[size=default]:sm:max-w-md! data-[size=sm]:max-w-[calc(100%-2rem)]!">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        {children}
-        <div className="min-w-0 space-y-2">
-          <Label htmlFor={inputId}>{typePrompt}</Label>
-          <CopyField value={confirmToken} copyLabel={copyAriaLabel} />
-          <Input
-            id={inputId}
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder={placeholder ?? confirmToken}
-            autoComplete="off"
-            inputMode={inputMode}
-          />
-        </div>
-        <AlertDialogFooter className="sm:flex-wrap">
-          <AlertDialogCancel className="min-h-[44px] w-full sm:w-auto">
-            {t("actions.cancel")}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            className="min-h-[44px] w-full sm:w-auto"
-            disabled={actionDisabled}
-            onClick={() => onConfirm(confirm)}
-          >
-            {isPending
-              ? (pendingLabel ?? t("actions.deleting"))
-              : (confirmLabel ?? t("actions.delete"))}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{title}</AlertDialogTitle>
+        <AlertDialogDescription>{description}</AlertDialogDescription>
+      </AlertDialogHeader>
+      {children}
+      <div className="min-w-0 space-y-2">
+        <Label htmlFor={inputId}>{typePrompt}</Label>
+        <CopyField value={confirmToken} copyLabel={copyAriaLabel} />
+        <Input
+          id={inputId}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder={placeholder ?? confirmToken}
+          autoComplete="off"
+          inputMode={inputMode}
+        />
+      </div>
+      <AlertDialogFooter className="sm:flex-wrap">
+        <AlertDialogCancel className="min-h-[44px] w-full sm:w-auto">
+          {t("actions.cancel")}
+        </AlertDialogCancel>
+        <AlertDialogAction
+          variant="destructive"
+          className="min-h-[44px] w-full sm:w-auto"
+          disabled={actionDisabled}
+          onClick={() => onConfirm(confirm)}
+        >
+          {isPending
+            ? (pendingLabel ?? t("actions.deleting"))
+            : (confirmLabel ?? t("actions.delete"))}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </>
   );
 }
