@@ -11,6 +11,7 @@ import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useForm } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -166,7 +167,11 @@ function GrantEditForm({
   // Temporary access never changes scopes: they stay as stored.
   const fixedScopes = oauth || temporary;
   const plan = grantEditPlan(snapshot, selection, { scopesEditable: !fixedScopes, touched });
-  const { options, removalOnly } = storedKbOptions(snapshot, live);
+  const { options, removalOnly } = storedKbOptions(
+    snapshot,
+    live,
+    t("settings:credentials.kbUnavailable"),
+  );
   const scopes = (
     oauth ? target.scopes : temporary ? snapshot.scopes : (plan.input.scopes ?? snapshot.scopes)
   ).filter(
@@ -447,10 +452,12 @@ function ConfirmStepHeading({ step, title }: { step: string; title: string }) {
  * Picker options for editing: every live KB, plus each stored entry. Stored
  * bits the user no longer holds live (a downgraded or revoked share) are shown
  * so they can be removed, but are removal-only; additions stay live-only.
+ * A stored KB the user can no longer see is named `unavailableName`, never by id.
  */
 export function storedKbOptions(
   snapshot: CredentialSelection,
   live: readonly LiveKbOption[],
+  unavailableName: string,
 ): { options: LiveKbOption[]; removalOnly: Record<string, KbBit[]> } {
   const liveById = new Map(live.map((kb) => [kb.kbId, kb]));
   const options: LiveKbOption[] = [
@@ -464,7 +471,7 @@ export function storedKbOptions(
     ...Object.keys(snapshot.acl)
       .filter((kbId) => !liveById.has(kbId))
       .sort()
-      .map((kbId) => ({ kbId, name: kbId, bits: [...(snapshot.acl[kbId] ?? [])] })),
+      .map((kbId) => ({ kbId, name: unavailableName, bits: [...(snapshot.acl[kbId] ?? [])] })),
   ];
   const removalOnly: Record<string, KbBit[]> = {};
   for (const [kbId, bits] of Object.entries(snapshot.acl)) {
@@ -490,7 +497,63 @@ function UpdateError({ error }: { error: unknown }) {
   );
 }
 
-/** Exactly what an edit adds (or removes), in words; KBs by name when known. */
+/**
+ * The lines of a ChangeList. Keyed apart from the text: two unavailable KBs
+ * with the same change read the same.
+ */
+export function changeListItems(
+  changes: GrantEditChanges,
+  names: ReadonlyMap<string, string>,
+  t: TFunction<"settings">,
+): { key: string; text: string }[] {
+  const bits = (list: readonly string[]) =>
+    list.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ");
+  return [
+    ...changes.scopes.map((scope) => ({
+      key: `scope:${scope}`,
+      text: t(`credentials.picker.scopes.${scope === "mcp:write" ? "write" : "read"}`),
+    })),
+    ...changes.toolGroups.map((group) => ({
+      key: `group:${group}`,
+      text: t("credentials.edit.changeGroup", {
+        group: t(`credentials.picker.groups.${group}.label`),
+      }),
+    })),
+    ...changes.kbs.map((kb) => ({
+      key: `kb:${kb.kbId}`,
+      text: t("credentials.edit.changeKb", {
+        name: names.get(kb.kbId) ?? t("credentials.kbUnavailable"),
+        bits: bits(kb.bits),
+      }),
+    })),
+    ...(changes.cap
+      ? [
+          {
+            key: "cap",
+            text: t("credentials.edit.changeCap", {
+              bits: bits(changes.cap.bits),
+              count: changes.cap.count,
+            }),
+          },
+        ]
+      : []),
+    ...(changes.allowCreate ? [{ key: "create", text: t("credentials.edit.changeCreate") }] : []),
+    ...(changes.createdKbBits.length
+      ? [
+          {
+            key: "createdBits",
+            text: t("credentials.edit.changeCreatedBits", { bits: bits(changes.createdKbBits) }),
+          },
+        ]
+      : []),
+    ...changes.authoringMode.map((need) => ({
+      key: `mode:${need}`,
+      text: t(`credentials.edit.changeWriteMode.${need}`),
+    })),
+  ];
+}
+
+/** Exactly what an edit adds (or removes), in words; KBs by name, never by id. */
 export function ChangeList({
   direction,
   changes,
@@ -501,41 +564,14 @@ export function ChangeList({
   names: ReadonlyMap<string, string>;
 }) {
   const { t } = useTranslation("settings");
-  const bits = (list: readonly string[]) =>
-    list.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ");
-  const items = [
-    ...changes.scopes.map((scope) =>
-      t(`credentials.picker.scopes.${scope === "mcp:write" ? "write" : "read"}`),
-    ),
-    ...changes.toolGroups.map((group) =>
-      t("credentials.edit.changeGroup", {
-        group: t(`credentials.picker.groups.${group}.label`),
-      }),
-    ),
-    ...changes.kbs.map((kb) =>
-      t("credentials.edit.changeKb", { name: names.get(kb.kbId) ?? kb.kbId, bits: bits(kb.bits) }),
-    ),
-    ...(changes.cap
-      ? [
-          t("credentials.edit.changeCap", {
-            bits: bits(changes.cap.bits),
-            count: changes.cap.count,
-          }),
-        ]
-      : []),
-    ...(changes.allowCreate ? [t("credentials.edit.changeCreate")] : []),
-    ...(changes.createdKbBits.length
-      ? [t("credentials.edit.changeCreatedBits", { bits: bits(changes.createdKbBits) })]
-      : []),
-    ...changes.authoringMode.map((need) => t(`credentials.edit.changeWriteMode.${need}`)),
-  ];
+  const items = changeListItems(changes, names, t);
   if (items.length === 0) return null;
   return (
     <section className="min-w-0 space-y-1">
       <h4 className="text-sm font-medium">{t(`credentials.edit.${direction}`)}</h4>
       <ul className="list-disc space-y-0.5 pl-5 text-sm break-words">
         {items.map((item) => (
-          <li key={item}>{item}</li>
+          <li key={item.key}>{item.text}</li>
         ))}
       </ul>
     </section>

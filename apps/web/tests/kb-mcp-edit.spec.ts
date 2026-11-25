@@ -110,8 +110,10 @@ test("Edit access waits for the complete stored ACL, then removes stored permiss
   await loadEverything(sheet);
   await expect(sheet.getByRole("button", { name: "Save changes", exact: true })).toBeVisible();
 
-  // The revoked share appears by id, removal-only; the downgraded share keeps its stored write.
-  const revokedRead = kbBox(sheet, seeded.revoked, "Read");
+  // The revoked share appears as unavailable (never by id), removal-only; the
+  // downgraded share keeps its stored write.
+  await expect(sheet.getByText(seeded.revoked)).toHaveCount(0);
+  const revokedRead = kbBox(sheet, "Deleted or unavailable knowledge base", "Read");
   await expect(revokedRead).toBeChecked();
   await expect(revokedRead).toBeEnabled();
   const downWrite = kbBox(sheet, "Edit downgraded", "Write");

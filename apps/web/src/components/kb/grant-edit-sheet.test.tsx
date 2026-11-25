@@ -6,7 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { AclPicker } from "@/components/kb/acl-picker";
-import { ChangeList, storedKbOptions } from "@/components/kb/grant-edit-sheet";
+import { ChangeList, changeListItems, storedKbOptions } from "@/components/kb/grant-edit-sheet";
 import { type LiveKbOption, selectionReducer } from "@/hooks/use-mcp-consent";
 import { grantEditPlan, selectionFromGrant } from "@/lib/mcp-grant-edit";
 
@@ -56,7 +56,7 @@ describe("Edit access confirmation", () => {
   const render = (node: React.ReactNode) =>
     renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
 
-  it("lists exactly what is added, with KB names when known and ids otherwise", () => {
+  it("lists exactly what is added, with KB names when known and never a raw id", () => {
     const markup = render(
       <ChangeList
         direction="added"
@@ -73,7 +73,8 @@ describe("Edit access confirmation", () => {
     expect(markup).toContain(`${enSettings.credentials.picker.groups.assets.label} tools`);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.pull_requests.label} tools`);
     expect(markup).toContain(`Alpha notes: ${bits.propose.label}, ${bits.write.label}`);
-    expect(markup).toContain(`${KB_B}: ${bits.read.label}`);
+    expect(markup).toContain(`${enSettings.credentials.kbUnavailable}: ${bits.read.label}`);
+    expect(markup).not.toContain(KB_B);
     expect(markup).toContain(edit.changeCreate);
     expect(markup).toContain(bits.read.label);
     expect(markup).toContain(`${enSettings.credentials.picker.groups.kb_admin.label} tools`);
@@ -81,6 +82,29 @@ describe("Edit access confirmation", () => {
     // edit, assets and pull_requests; kb_admin comes with create), two KBs,
     // create, created bits.
     expect(markup.match(/<li>/g)).toHaveLength(10);
+  });
+
+  it("lists two unavailable KBs with the same change once each, keyed apart", () => {
+    const changes = {
+      scopes: [],
+      toolGroups: [],
+      kbs: [
+        { kbId: KB_A, bits: ["read" as const] },
+        { kbId: KB_B, bits: ["read" as const] },
+      ],
+      cap: null,
+      allowCreate: false,
+      createdKbBits: [],
+      authoringMode: [],
+    };
+    const line = `${enSettings.credentials.kbUnavailable}: ${enSettings.credentials.picker.bits.read.label}`;
+    const items = changeListItems(changes, new Map(), i18n.getFixedT("en-US", "settings"));
+    expect(items.map((item) => item.text)).toEqual([line, line]);
+    expect(new Set(items.map((item) => item.key)).size).toBe(2);
+    const markup = render(<ChangeList direction="removed" changes={changes} names={new Map()} />);
+    expect(markup.split(`<li>${line}</li>`)).toHaveLength(3);
+    expect(markup).not.toContain(KB_A);
+    expect(markup).not.toContain(KB_B);
   });
 
   it("renders nothing when a direction has no changes", () => {
@@ -140,16 +164,24 @@ describe("Edit access: stored permissions without live authority", () => {
   const live: LiveKbOption[] = [{ kbId: KB_DOWN, name: "Downgraded notes", bits: ["read"] }];
 
   it("offers every stored entry, marking bits the user no longer holds as removal-only", () => {
-    const { options, removalOnly } = storedKbOptions(snapshot, live);
+    const { options, removalOnly } = storedKbOptions(
+      snapshot,
+      live,
+      enSettings.credentials.kbUnavailable,
+    );
     expect(options).toEqual([
       { kbId: KB_DOWN, name: "Downgraded notes", bits: ["read", "propose", "write"] },
-      { kbId: KB_REVOKED, name: KB_REVOKED, bits: ["read"] },
+      { kbId: KB_REVOKED, name: enSettings.credentials.kbUnavailable, bits: ["read"] },
     ]);
     expect(removalOnly).toEqual({ [KB_REVOKED]: ["read"], [KB_DOWN]: ["propose", "write"] });
   });
 
   const picker = (selection: typeof snapshot) => {
-    const { options, removalOnly } = storedKbOptions(snapshot, live);
+    const { options, removalOnly } = storedKbOptions(
+      snapshot,
+      live,
+      enSettings.credentials.kbUnavailable,
+    );
     return renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
         <AclPicker
@@ -171,8 +203,14 @@ describe("Edit access: stored permissions without live authority", () => {
 
   it("shows the revoked share and the downgraded bits checked and removable", () => {
     const markup = picker(snapshot);
-    expect(markup).toContain(KB_REVOKED);
+    expect(markup).toContain(
+      `<legend class="max-w-full truncate px-1 text-sm font-medium">${enSettings.credentials.kbUnavailable}</legend>`,
+    );
     expect(markup).toContain(enSettings.credentials.picker.kbUnavailable);
+    // The id survives only in DOM id references, never as visible or accessible text.
+    expect(markup.replace(/(id|for|aria-labelledby|aria-describedby)="[^"]*"/g, "")).not.toContain(
+      KB_REVOKED,
+    );
     expect(markup).toContain(enSettings.credentials.picker.removalOnly);
     for (const [kbId, bit] of [
       [KB_REVOKED, "read"],
