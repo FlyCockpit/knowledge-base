@@ -13,7 +13,7 @@ A REST API key (`kbk_…`) is a different credential from an MCP token (`kbp_…
 - `/api/v1` takes only an API key. An MCP token there gets 401.
 - `/mcp`, Git, asset and export downloads and the web app's `/rpc` refuse an API key with 401.
 
-Create one in **Settings → API keys**. Only a signed-in person can mint a key, and the secret is shown once. A key expires after 365 days by default; you can pick an earlier date or **never expires**. A key cannot be edited afterwards; revoke it and mint a new one instead. At mint you choose:
+Create one in **Settings → API keys**. Only a signed-in person can mint a key, and the secret is shown once. The reveal and each key's **Details** show a copyable `curl` example that mints a child token within the key's limits (or checks the key), next to links to this guide and the OpenAPI document. A key expires after 365 days by default; you can pick an earlier date or **never expires**. A key cannot be edited afterwards; revoke it and mint a new one instead. At mint you choose:
 
 | Choice | Meaning |
 |---|---|

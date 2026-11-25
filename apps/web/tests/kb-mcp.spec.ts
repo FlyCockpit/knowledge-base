@@ -243,10 +243,17 @@ async function openMint(page: Page, name: string) {
   await page.goto(`${fx.origin}/en-US/settings/mcp`);
   await page.getByRole("button", { name: "Create token", exact: true }).click();
   await page.getByRole("textbox", { name: "Token name", exact: true }).fill(name);
-  const readScope = page.getByRole("checkbox", { name: "Read (mcp:read)", exact: true });
-  await expect(readScope).toBeEnabled();
-  await readScope.press("Space");
-  await expect(readScope).toBeChecked();
+  // Nothing is preselected: the token does nothing until a purpose is chosen.
+  const purpose = page.getByRole("radiogroup", { name: "What should this token do?" });
+  await expect(purpose.getByRole("radio", { checked: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByText("Choose what the token should do.", { exact: true })).toBeVisible();
+  const read = purpose.getByRole("radio", { name: "Read", exact: true });
+  await expect(read).toBeEnabled();
+  await read.press("Space");
+  await expect(read).toBeChecked();
 }
 async function caches(page: Page) {
   return page.evaluate(() => {
@@ -340,6 +347,7 @@ test("pending close/reopen does not reveal the old secret or replace a newer dra
     await expect.poll(async () => (await caches(page)).includes(secret)).toBe(false);
     await expect(page.getByRole("textbox", { name: "Token name", exact: true })).toHaveValue(name);
     await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+    await expect(page.getByRole("radio", { checked: true })).toHaveCount(0);
     await expect(page.getByText(secret, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Copy token" })).toHaveCount(0);
   } finally {
@@ -358,6 +366,9 @@ test("empty/default PAT creation by keyboard submits once and clears the secret 
   });
   await page.getByRole("textbox", { name: "Token name", exact: true }).press("Enter");
   await expect(page.getByRole("button", { name: "Copy token" })).toBeVisible();
+  // The reveal ends with the next step: connecting a client, the token kept out of the command.
+  await expect(page.getByRole("heading", { name: "Next: connect your client" })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(/read -rs KB_MCP_TOKEN/)).toBeVisible();
   expect(inputs).toHaveLength(1);
   const input = (
     JSON.parse(inputs[0]!) as {
@@ -447,4 +458,26 @@ test("OAuth filtering and permission pages survive count changes and unchanged-p
   await expect(row.getByText(kbLabel(seeded.lastKb), { exact: true })).toHaveCount(0);
   await expect(row.getByText(kbLabel("w".repeat(24)), { exact: true })).toBeVisible();
   await expect(row.getByText(kbLabel("y".repeat(24)), { exact: true })).toBeVisible();
+});
+
+test("MCP access leads with this server's URL and per-client setup, OAuth first", async ({
+  page,
+}) => {
+  await page.goto(`${fx.origin}/en-US/settings/mcp`);
+  const card = page.getByRole("region", { name: "Connect an AI client" });
+  await expect(card.getByText(`${fx.origin}/mcp`, { exact: true })).toBeVisible();
+  await expect(
+    card.getByText(`claude mcp add --transport http kb ${fx.origin}/mcp`, { exact: true }),
+  ).toBeVisible();
+  await card.getByRole("button", { name: "Codex", exact: true }).click();
+  await expect(card.getByText(/codex mcp login kb/)).toBeVisible();
+  await expect(card.getByRole("link", { name: /MCP guide/ })).toHaveAttribute(
+    "href",
+    /github\.com\/FlyCockpit\/knowledge-base\/.+\/docs\/mcp\.md$/,
+  );
+  // Clients that can't sign in get a token from the same place.
+  await card.getByRole("button", { name: "Use a token instead", exact: true }).click();
+  await expect(
+    page.getByRole("dialog").getByRole("radiogroup", { name: "What should this token do?" }),
+  ).toBeVisible();
 });

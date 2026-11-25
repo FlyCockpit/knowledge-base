@@ -1,5 +1,9 @@
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
-import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
+import {
+  MCP_TOOL_GROUPS,
+  MCP_TOOL_PRESETS,
+  type McpToolPreset,
+} from "@knowledge-base/auth/mcp-tool-groups";
 import { Button } from "@knowledge-base/ui/components/button";
 import {
   Dialog,
@@ -22,25 +26,34 @@ import {
 } from "@tanstack/react-query";
 import { KeyRound, Plus } from "lucide-react";
 import type * as React from "react";
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 import { InlineRetry } from "@/components/inline-retry";
-import { AclPicker } from "@/components/kb/acl-picker";
-import { AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
+import { CreateCapabilityPicker, KbAccessPicker } from "@/components/kb/acl-picker";
+import { AuthoringModePicker, AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
+import { AdvancedSection, CreateFooter } from "@/components/kb/credential-dialog-parts";
 import type { GrantEditTarget } from "@/components/kb/grant-edit-sheet";
-import { presetFor } from "@/components/kb/tool-group-picker";
+import { McpClientSetup } from "@/components/kb/mcp-connect";
+import { RadioCards } from "@/components/kb/radio-cards";
+import { presetFor, ToolGroupPicker } from "@/components/kb/tool-group-picker";
 import { LoadMore } from "@/components/load-more";
 import { SecretReveal } from "@/components/secret-reveal";
 import { StatusPill } from "@/components/status-pill";
 import {
+  type CredentialSelection,
+  effectiveSelection,
   emptySelection,
+  type GrantSelection,
   isConsentRejection,
+  type LiveKbOption,
+  type SelectionAction,
   selectionIssues,
   selectionReducer,
   toGrantSelection,
   useLiveKbOptions,
 } from "@/hooks/use-mcp-consent";
+import { scopeForGroups } from "@/lib/mcp-connect";
 import { orpc } from "@/utils/orpc";
 
 type Client = AppRouterClient;
@@ -549,31 +562,71 @@ export function PatSecretReveal({ secret }: { secret: string }) {
   );
 }
 
+/** The answers to "What should this token do?": a tool preset, or a custom group set from Advanced. */
+type TokenPurpose = McpToolPreset | "custom";
+
 /**
- * Create → Dialog. Uses the shared picker with nothing preselected. Closing
- * resets and unmounts this form. Reopening owns a new observer/draft, so late
- * responses cannot reveal the abandoned secret in the new dialog.
+ * The PAT create draft as a grant: the scope follows from the tool groups
+ * (write when any group changes data), and nothing is granted until a
+ * purpose is chosen, so no scope is ever preselected.
+ */
+export function patDraftGrant(
+  selection: CredentialSelection,
+  live: readonly LiveKbOption[],
+  purposeChosen: boolean,
+): GrantSelection {
+  const scopes = purposeChosen ? [scopeForGroups(effectiveSelection(selection).toolGroups)] : [];
+  return toGrantSelection(selection, live, scopes);
+}
+
+/** Why Create is disabled, in the order the form asks (empty when it can be created). */
+export function patDraftIssueKeys(grant: GrantSelection): string[] {
+  return selectionIssues(grant).map((issue) =>
+    issue === "scopeRequired"
+      ? "settings:credentials.purposeRequired"
+      : `settings:credentials.picker.issues.${issue}`,
+  );
+}
+
+/**
+ * Create → Dialog. Nothing is preselected: the token does nothing until a
+ * purpose is chosen. Closing resets and unmounts this form. Reopening owns a
+ * new observer/draft, so late responses cannot reveal the abandoned secret in
+ * the new dialog. The reveal ends with how to connect a client.
  */
 export function PatCreateDialog({
   open,
   onOpenChange,
+  serverUrl,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** This server's URL, for the connect snippets after the reveal. */
+  serverUrl: string;
 }) {
-  return open ? <PatCreateForm onOpenChange={onOpenChange} /> : null;
+  return open ? <PatCreateForm onOpenChange={onOpenChange} serverUrl={serverUrl} /> : null;
 }
 
-function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+function PatCreateForm({
+  onOpenChange,
+  serverUrl,
+}: {
+  onOpenChange: (open: boolean) => void;
+  serverUrl: string;
+}) {
   const { t } = useTranslation(["settings", "common"]);
   const queryClient = useQueryClient();
   const { query: kbQuery, live } = useLiveKbOptions();
   const [selection, dispatch] = useReducer(selectionReducer, undefined, emptySelection);
-  const grant = toGrantSelection(selection, live);
-  const issues = selectionIssues(grant);
+  const [purposeChosen, setPurposeChosen] = useState(false);
+  const grant = patDraftGrant(selection, live, purposeChosen);
+  const issues = patDraftIssueKeys(grant);
+  const writes = grant.scopes.includes("mcp:write");
+  const purpose: TokenPurpose | null = purposeChosen ? presetFor(selection.toolGroups) : null;
   const mint = useMutation(
     withPatSecretHygiene(queryClient, orpc.mcpTokens.create.mutationOptions()),
   );
+  const blocked = mint.isError && !isPatMintRejection(mint.error);
   const form = useForm({
     defaultValues: { name: "", expiry: DEFAULT_EXPIRY as PatExpiryChoice, customDate: "" },
     validators: {
@@ -589,8 +642,7 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
         }),
     },
     onSubmit: async ({ value }) => {
-      if (issues.length > 0 || mint.isPending || (mint.isError && !isPatMintRejection(mint.error)))
-        return;
+      if (issues.length > 0 || mint.isPending || blocked) return;
       const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
       if (!expiry.ok) return;
       mint.mutate({
@@ -611,20 +663,42 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
     mint.reset();
     form.reset();
     dispatch({ type: "reset" });
+    setPurposeChosen(false);
     onOpenChange(false);
   };
+  // Hand-picked groups are a purpose too: what is ticked is what the token gets.
+  const pick = (action: SelectionAction) => {
+    setPurposeChosen(true);
+    dispatch(action);
+  };
+  const disabled = mint.isPending || kbQuery.isPending;
+  const effective = effectiveSelection(selection);
 
   const minted = mint.data;
   return (
     <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("settings:credentials.createTitle")}</DialogTitle>
-          <DialogDescription>{t("settings:credentials.createDescription")}</DialogDescription>
+          <DialogTitle>
+            {minted
+              ? t("settings:credentials.createdTitle")
+              : t("settings:credentials.createTitle")}
+          </DialogTitle>
+          <DialogDescription>
+            {minted
+              ? t("settings:credentials.createdDescription")
+              : t("settings:credentials.createDescription")}
+          </DialogDescription>
         </DialogHeader>
         {minted ? (
           <>
             <PatSecretReveal secret={minted.secret} />
+            <section className="min-w-0 space-y-2" aria-labelledby="pat-next-connect">
+              <h3 id="pat-next-connect" className="text-sm font-medium">
+                {t("settings:credentials.nextConnect")}
+              </h3>
+              <McpClientSetup serverUrl={serverUrl} token={minted.secret} />
+            </section>
             <DialogFooter>
               <Button className="min-h-[44px]" onClick={() => close(false)}>
                 {t("settings:credentials.done")}
@@ -645,12 +719,69 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
                 <TextField
                   field={field}
                   label={t("settings:credentials.nameLabel")}
+                  description={t("settings:credentials.nameHelp")}
                   autoComplete="off"
                   inputMode="text"
                   maxLength={100}
                 />
               )}
             </form.Field>
+            <RadioCards<TokenPurpose>
+              legend={t("settings:credentials.purposeLegend")}
+              options={[
+                ...PURPOSE_PRESETS.map((value) => ({
+                  value,
+                  label: t(`settings:credentials.picker.presets.${value}.label`),
+                  description: t(`settings:credentials.picker.presets.${value}.description`),
+                })),
+                ...(purpose === "custom"
+                  ? [
+                      {
+                        value: "custom" as const,
+                        label: t("settings:credentials.picker.presets.custom.label"),
+                        description: t("settings:credentials.picker.presets.custom.description"),
+                      },
+                    ]
+                  : []),
+              ]}
+              value={purpose}
+              disabled={disabled}
+              onChange={(next) => {
+                if (next !== "custom")
+                  pick({ type: "setToolGroups", groups: MCP_TOOL_PRESETS[next] });
+              }}
+            />
+            {writes && (
+              <AuthoringModePicker
+                value={selection.authoringMode}
+                onChange={(mode) => dispatch({ type: "setAuthoringMode", mode })}
+                disabled={disabled}
+              />
+            )}
+            {kbQuery.isError ? (
+              <InlineRetry
+                message={t("settings:credentials.kbsLoadError")}
+                onRetry={() => kbQuery.refetch()}
+              />
+            ) : (
+              <KbAccessPicker
+                live={live}
+                selection={selection}
+                onChange={dispatch}
+                disabled={disabled}
+              />
+            )}
+            {kbQuery.hasNextPage && (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-[44px]"
+                disabled={kbQuery.isFetchingNextPage}
+                onClick={() => kbQuery.fetchNextPage()}
+              >
+                {t("common:actions.loadMore")}
+              </Button>
+            )}
             <form.Field name="expiry">
               {(field) => (
                 <SelectField
@@ -703,38 +834,33 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
                 ) : null
               }
             </form.Subscribe>
-            {kbQuery.isError ? (
-              <InlineRetry
-                message={t("settings:credentials.kbsLoadError")}
-                onRetry={() => kbQuery.refetch()}
-              />
-            ) : (
-              <AclPicker
-                live={live}
-                selection={selection}
-                onChange={dispatch}
-                scopeMode="select"
-                writeScopeSelected={grant.scopes.includes("mcp:write")}
+            <AdvancedSection
+              label={t("settings:credentials.advanced")}
+              defaultOpen={purpose === "custom"}
+            >
+              <ToolGroupPicker
+                groups={effective.toolGroups}
+                onChange={pick}
+                writeScope={writes}
+                authoringMode={selection.authoringMode}
+                allowCreate={effective.allowCreate}
                 offerSealed
-                disabled={mint.isPending || kbQuery.isPending}
+                kbs={live.flatMap((kb) => {
+                  const bits = effective.acl[kb.kbId] ?? [];
+                  return bits.length ? [{ name: kb.name, bits }] : [];
+                })}
+                createdKbBits={effective.allowCreate ? effective.createdKbBits : []}
+                disabled={disabled}
+                showPresets={false}
               />
-            )}
-            {kbQuery.hasNextPage && (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-[44px]"
-                disabled={kbQuery.isFetchingNextPage}
-                onClick={() => kbQuery.fetchNextPage()}
-              >
-                {t("common:actions.loadMore")}
-              </Button>
-            )}
-            {issues.map((issue) => (
-              <p key={issue} className="text-sm text-muted-foreground">
-                {t(`settings:credentials.picker.issues.${issue}`)}
-              </p>
-            ))}
+              {/* Creating needs the kb_admin group, which writes: ticking it chooses write access. */}
+              <CreateCapabilityPicker
+                selection={selection}
+                onChange={pick}
+                writeScopeSelected
+                disabled={disabled}
+              />
+            </AdvancedSection>
             {mint.isError && (
               <p role="alert" className="text-sm text-destructive">
                 {isPatMintRejection(mint.error)
@@ -742,32 +868,19 @@ function PatCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void
                   : t("settings:credentials.createUncertain", { name: mint.variables?.name ?? "" })}
               </p>
             )}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-[44px]"
-                onClick={() => close(false)}
-              >
-                {t("common:actions.cancel")}
-              </Button>
-              <Button
-                type="submit"
-                className="min-h-[44px]"
-                disabled={
-                  mint.isPending ||
-                  issues.length > 0 ||
-                  (mint.isError && !isPatMintRejection(mint.error))
-                }
-              >
-                {mint.isPending
-                  ? t("settings:credentials.creating")
-                  : t("settings:credentials.createSubmit")}
-              </Button>
-            </DialogFooter>
+            <CreateFooter
+              reasons={issues.map((key) => t(key))}
+              pending={mint.isPending}
+              blocked={blocked}
+              submitLabel={t("settings:credentials.createSubmit")}
+              pendingLabel={t("settings:credentials.creating")}
+              onCancel={() => close(false)}
+            />
           </form>
         )}
       </DialogContent>
     </Dialog>
   );
 }
+
+const PURPOSE_PRESETS = Object.keys(MCP_TOOL_PRESETS) as McpToolPreset[];

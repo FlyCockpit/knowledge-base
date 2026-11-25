@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
+import { ApiKeyNextSteps } from "@/components/kb/api-key-next-steps";
 import { AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
 import { CheckRow } from "@/components/kb/check-row";
 import { expired, TokenStatePill } from "@/components/kb/credential-list";
@@ -188,16 +189,19 @@ export function ApiKeyList({ lang, keys, onCreate, onDetails, onRevoke, footer }
 export function ApiKeyDetailsDialog({
   apiKey,
   lang,
+  serverUrl,
   onOpenChange,
 }: {
   apiKey: ApiKeyRow | null;
   lang: string;
+  /** This server's URL, for the minting example. */
+  serverUrl: string;
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation(["settings", "common"]);
   return (
     <Dialog open={apiKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
         {apiKey && (
           <>
             <DialogHeader>
@@ -208,6 +212,12 @@ export function ApiKeyDetailsDialog({
               <ApiKeySummary apiKey={apiKey} lang={lang} />
             </div>
             {apiKey.kbCount > 0 && <ApiKeyKbs grantId={apiKey.grantId} />}
+            {!apiKey.revokedAt && !expired(apiKey.expiresAt) && (
+              <ApiKeyNextSteps
+                serverUrl={serverUrl}
+                ceiling={apiKey.allowMintChildren ? apiKey : null}
+              />
+            )}
             <ApiKeyChildren apiKey={apiKey} lang={lang} />
             <DialogFooter>
               <Button

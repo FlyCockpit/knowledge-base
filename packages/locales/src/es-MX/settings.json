@@ -54,7 +54,7 @@
     "appsTitle": "Aplicaciones conectadas",
     "create": "Crear token",
     "createTitle": "Crear un token de acceso personal",
-    "createDescription": "Elige exactamente qué puede hacer este token. Las herramientas empiezan con el conjunto Lectura; el tipo de acceso, los permisos de las bases de conocimiento y la creación de bases de conocimiento quedan sin seleccionar hasta que tú los selecciones.",
+    "createDescription": "Elige qué puede hacer el token y a qué bases de conocimiento llega. No hay nada seleccionado hasta que lo elijas.",
     "nameLabel": "Nombre del token",
     "expiryLabel": "Vencimiento",
     "expiryHelp": "Un token con fecha vence como máximo {{max}} días a partir de hoy. Un token sin vencimiento sigue siendo válido hasta que lo revoques.",
@@ -74,7 +74,7 @@
     "kbsLoadError": "No se pudieron cargar tus bases de conocimiento.",
     "listLoadError": "No se pudieron cargar tus credenciales.",
     "noTokens": "No tienes tokens de acceso personal.",
-    "noApps": "No hay aplicaciones conectadas a tu cuenta.",
+    "noApps": "Todavía no hay aplicaciones. Una aplicación que inicia sesión con OAuth, como Claude Code después de /mcp → Authenticate, aparece aquí cuando la apruebas. Luego puedes cambiar o revocar su acceso aquí.",
     "revoke": "Revocar",
     "editAccess": "Editar acceso",
     "revoking": "Revocando…",
@@ -174,7 +174,7 @@
       },
       "kbsLegend": "Bases de conocimiento",
       "kbsHint": "Selecciona cada base de conocimiento y cada permiso por separado. Solo se muestran los permisos que tienes.",
-      "presetCapsBits": "El conjunto de herramientas seleccionado solo permite estos permisos: {{bits}}. Elige Personalizado en Opciones avanzadas para otros.",
+      "presetCapsBits": "El conjunto de herramientas seleccionado solo permite estos permisos: {{bits}}. Para otorgar otros, elige grupos de herramientas individuales en Opciones avanzadas.",
       "noKbs": "Todavía no tienes acceso a ninguna base de conocimiento.",
       "kbUnavailable": "Ya no está disponible para ti. Solo puedes quitarla de esta conexión.",
       "removalOnly": "Ya no tienes este permiso. Puedes quitarlo, pero no volver a agregarlo.",
@@ -329,7 +329,14 @@
           "description": "Ambos: dreams y ediciones directas marcadas como Agente."
         }
       }
-    }
+    },
+    "createdTitle": "Tu nuevo token",
+    "createdDescription": "Cópialo y luego conecta tu cliente con una de las configuraciones de abajo.",
+    "nextConnect": "Siguiente: conecta tu cliente",
+    "nameHelp": "Ponle el nombre del agente o del equipo que lo usará.",
+    "purposeLegend": "¿Qué debe hacer este token?",
+    "purposeRequired": "Elige qué debe hacer el token.",
+    "advanced": "Opciones avanzadas: grupos de herramientas y creación de bases de conocimiento"
   },
   "apiKeys": {
     "intro": "Una clave de API REST (kbk_…) permite que tu propia automatización cree, liste y elimine bases de conocimiento y emita tokens MCP para ellas mediante /api/v1. Nunca lee ni escribe documentos por sí misma y no se puede usar como token MCP.",
@@ -378,10 +385,6 @@
       "description": "Tokens para una base de conocimiento cada uno, dentro de los límites de abajo."
     },
     "childHint": "Límites para los tokens MCP que emite esta clave. Cada token es para una base de conocimiento, elegida al emitirlo, y puede tener cualquier opción de un token de acceso personal, dentro de estos límites.",
-    "childWrites": {
-      "label": "Los tokens pueden cambiar contenido",
-      "description": "Sin esto, los tokens emitidos son de solo lectura."
-    },
     "issues": {
       "reachRequired": "Elige el alcance de la clave.",
       "kbRequired": "Elige al menos una base de conocimiento.",
@@ -426,7 +429,7 @@
     "kbsTitle": "Bases de conocimiento",
     "kbsLoadError": "No se pudieron cargar las bases de conocimiento de la clave.",
     "childrenTitle": "Tokens MCP emitidos por esta clave",
-    "noChildren": "Esta clave no ha emitido ningún token.",
+    "noChildren": "Esta clave todavía no ha emitido tokens.",
     "revokeChildSuccess": "Token revocado.",
     "revokeTitle": "¿Revocar la clave de API?",
     "revokeDescription_one": "\"{{name}}\" deja de funcionar de inmediato, igual que el {{count}} token MCP activo que emitió. Esto no se puede deshacer.",
@@ -468,7 +471,26 @@
     "revokeSuccessKeptTokens": "Clave de API revocada. Sus tokens siguen funcionando.",
     "childCreatedKbs_one": "También llega a {{count}} base de conocimiento que creó.",
     "childCreatedKbs_other": "También llega a {{count}} bases de conocimiento que creó.",
-    "revokeAlsoAnyChildren": "Revocar también cualquier token que haya emitido"
+    "revokeAlsoAnyChildren": "Revocar también cualquier token que haya emitido",
+    "nameLabel": "Nombre de la clave",
+    "nameHelp": "Ponle el nombre de la automatización que la usará.",
+    "createdTitle": "Tu nueva clave de API",
+    "createdDescription": "Cópiala y luego pruébala con los comandos de abajo.",
+    "childPurposeLegend": "¿Qué pueden hacer los tokens que emite?",
+    "childAdvanced": "Opciones avanzadas: grupos de herramientas, valores sellados y creación de bases de conocimiento",
+    "next": {
+      "mintTitle": "Siguiente: emite un token MCP",
+      "mintHint": "Pega la clave cuando la primera línea espere y presiona Enter; nunca aparece en una línea de comandos. Los comandos listan las bases de conocimiento de la clave y luego emiten un token para la que tenga el id que pongas en KB_ID. Los permisos deben estar dentro de las \"capabilities\" de esa base en la lista; redúcelos para una que solo puedes leer. Cambia el nombre y las herramientas como necesites. La respuesta muestra el token una sola vez. Si se pierde, volver a ejecutar el último comando con el mismo MINT_KEY identifica el token pero no puede mostrar su secreto: revoca ese token y emite otro con un MINT_KEY nuevo.",
+      "checkTitle": "Siguiente: prueba la clave",
+      "checkHint": "Pega la clave cuando la primera línea espere y presiona Enter; nunca aparece en una línea de comandos. La respuesta dice qué puede hacer la clave.",
+      "copyMint": "Copiar los comandos para emitir",
+      "copyCheck": "Copiar el comando de prueba",
+      "guide": "Guía de la API REST",
+      "openApi": "Documento OpenAPI",
+      "mintCreatedHint": "Pega la clave cuando la primera línea espere y presiona Enter; nunca aparece en una línea de comandos. Esta clave solo llega a las bases de conocimiento que crea, así que los comandos primero crean una y luego emiten un token para ella (pon en KB_ID el id de la respuesta). La respuesta muestra el token una sola vez. Si se pierde, volver a ejecutar el último comando con el mismo MINT_KEY identifica el token pero no puede mostrar su secreto: revoca ese token y emite otro con un MINT_KEY nuevo.",
+      "listedId": "un \"id\" de esa lista",
+      "createdId": "el \"id\" de \"kb\" en esa respuesta"
+    }
   },
   "providers": {
     "title": "Proveedores de embeddings",
@@ -543,5 +565,34 @@
     "copyUnix": "Copiar el comando de instalación para Linux y macOS",
     "copyWindows": "Copiar el comando de instalación para Windows",
     "hint": "kb se instala en ~/.cargo/bin (%USERPROFILE%\\.cargo\\bin en Windows). Un dispositivo aprobado aparece en Tokens de acceso personal, donde puedes revocarlo."
+  },
+  "connect": {
+    "title": "Conecta un cliente de IA",
+    "description": "Agrega este servidor a Claude Code, Codex o cualquier cliente MCP. El cliente inicia sesión con tu cuenta en el navegador, así que no hay ningún secreto que copiar.",
+    "urlLabel": "URL del servidor MCP",
+    "copyUrl": "Copiar la URL del servidor",
+    "clientLabel": "Cliente",
+    "clients": {
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "other": "Otros clientes"
+    },
+    "copySnippet": "Copiar la configuración de {{client}}",
+    "hints": {
+      "oauth": {
+        "claude": "Luego ejecuta /mcp en Claude Code, elige {{name}} y selecciona Authenticate. Aprueba el acceso en tu navegador. Agrega --scope user para usarlo en todos los proyectos.",
+        "codex": "El inicio de sesión abre tu navegador; aprueba el acceso ahí.",
+        "other": "Agrega esto a la configuración MCP del cliente, o pega la URL del servidor donde la pida. Abre tu navegador para iniciar sesión; aprueba el acceso ahí."
+      },
+      "token": {
+        "claude": "Pega el token cuando la primera línea espere y presiona Enter. Claude Code lee {{env}} del entorno en el que inicia, así que defínelo ahí también en sesiones futuras (desde un gestor de secretos o tu perfil de shell). El token no queda en tu historial de shell ni en la configuración de Claude Code.",
+        "codex": "Pega el token cuando la primera línea espere y presiona Enter. Codex lee {{env}} de la shell que lo inicia, así que defínelo ahí también en sesiones futuras (desde un gestor de secretos o tu perfil de shell).",
+        "other": "Solo para el archivo de configuración privado de un cliente: contiene el token. Nunca lo subas a un repositorio ni lo compartas."
+      }
+    },
+    "protocol": "Los clientes deben hablar MCP {{version}} sobre Streamable HTTP. Las versiones actuales de Claude Code y Codex lo hacen; un cliente más antiguo recibe \"Unsupported protocol version\".",
+    "useToken": "Usar un token en su lugar",
+    "docs": "Guía de MCP",
+    "opensInNewTab": "(se abre en una pestaña nueva)"
   }
 }

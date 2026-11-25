@@ -20,6 +20,7 @@ import {
   type TokenRow,
 } from "@/components/kb/credential-list";
 import { GrantEditSheet, type GrantEditTarget } from "@/components/kb/grant-edit-sheet";
+import { McpConnectCard } from "@/components/kb/mcp-connect";
 import { LoadMore } from "@/components/load-more";
 import { hasLiveCredentials } from "@/lib/credential-counts";
 import { pageHead } from "@/lib/page-title";
@@ -182,6 +183,9 @@ function McpCredentialSettings() {
           }}
         />
       )}
+      <div className="mb-8">
+        <McpConnectCard serverUrl={env.VITE_SERVER_URL} onUseToken={() => setCreateOpen(true)} />
+      </div>
       <CredentialList
         lang={lang}
         tokens={tokens.data?.pages.flatMap((page) => page.items) ?? []}
@@ -209,7 +213,11 @@ function McpCredentialSettings() {
       <div className="mt-8">
         <CliInstall origin={env.VITE_SERVER_URL} />
       </div>
-      <PatCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <PatCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        serverUrl={env.VITE_SERVER_URL}
+      />
       <GrantEditSheet
         target={editing}
         onOpenChange={(open) => {

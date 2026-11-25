@@ -71,10 +71,7 @@ export function AclPicker({
   const base = useId();
   // Display exactly what would be submitted: bits above the preset's ceiling never show.
   const selection = effectiveSelection(draft);
-  const allowed = allowedKbBits(selection.toolGroups);
-  const capped = allowed.length < KB_BITS.length;
   const id = (...parts: string[]) => `${base}-${parts.join("-")}`;
-  const aclEmpty = Object.keys(selection.acl).length === 0;
 
   return (
     <div className="space-y-6">
@@ -129,97 +126,148 @@ export function AclPicker({
         disabled={disabled}
       />
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">{t("credentials.picker.kbsLegend")}</h3>
-        <p className="text-sm text-muted-foreground">{t("credentials.picker.kbsHint")}</p>
-        {capped && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("credentials.picker.presetCapsBits", {
-              bits: allowed.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", "),
-            })}
-          </p>
-        )}
-        {live.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("credentials.picker.noKbs")}</p>
-        ) : (
-          live.map((kb) => (
-            <fieldset key={kb.kbId} className="min-w-0 space-y-2 rounded-md border p-3">
-              <legend className="max-w-full truncate px-1 text-sm font-medium">{kb.name}</legend>
-              {kb.bits.length > 0 &&
-                kb.bits.every((bit) => removalOnly[kb.kbId]?.includes(bit)) && (
-                  <p className="text-xs text-muted-foreground">
-                    {t("credentials.picker.kbUnavailable")}
-                  </p>
-                )}
-              {kb.bits
-                .filter((bit) => allowed.includes(bit))
-                .map((bit) => {
-                  const checked = (selection.acl[kb.kbId] ?? []).includes(bit);
-                  const stale = removalOnly[kb.kbId]?.includes(bit) ?? false;
-                  return (
-                    <CheckRow
-                      key={bit}
-                      id={id("kb", kb.kbId, bit)}
-                      checked={checked}
-                      disabled={disabled || (stale && !checked)}
-                      onToggle={() => onChange({ type: "toggleBit", kbId: kb.kbId, bit })}
-                      label={t(`credentials.picker.bits.${bit}.label`)}
-                      // Every KB repeats the same bit labels; name the KB too.
-                      accessibleName={t("credentials.picker.kbBitName", {
-                        kb: kb.name,
-                        bit: t(`credentials.picker.bits.${bit}.label`),
-                      })}
-                      description={
-                        stale
-                          ? t("credentials.picker.removalOnly")
-                          : t(`credentials.picker.bits.${bit}.description`)
-                      }
-                    />
-                  );
-                })}
-            </fieldset>
-          ))
-        )}
-        {aclEmpty && (
-          <p role="status" className="rounded-md border border-dashed p-3 text-sm">
-            {t("credentials.picker.emptyAcl")}
-          </p>
-        )}
-      </div>
+      <KbAccessPicker
+        live={live}
+        selection={draft}
+        onChange={onChange}
+        disabled={disabled}
+        removalOnly={removalOnly}
+      />
 
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">{t("credentials.picker.createLegend")}</legend>
-        <CheckRow
-          id={id("create")}
-          checked={selection.allowCreate}
-          disabled={disabled || !writeScopeSelected}
-          onToggle={() => onChange({ type: "setAllowCreate", value: !selection.allowCreate })}
-          label={t("credentials.picker.allowCreate")}
-          description={
-            writeScopeSelected
-              ? t("credentials.picker.allowCreateDescription")
-              : t("credentials.picker.allowCreateNeedsWrite")
-          }
-        />
-        {selection.allowCreate && (
-          <fieldset className="space-y-2 rounded-md border p-3">
-            <legend className="px-1 text-sm font-medium">
-              {t("credentials.picker.createdBitsLegend")}
-            </legend>
-            {allowed.map((bit: KbBit) => (
-              <CheckRow
-                key={bit}
-                id={id("created", bit)}
-                checked={selection.createdKbBits.includes(bit)}
-                disabled={disabled}
-                onToggle={() => onChange({ type: "toggleCreatedBit", bit })}
-                label={t(`credentials.picker.bits.${bit}.label`)}
-                description={t(`credentials.picker.bits.${bit}.description`)}
-              />
-            ))}
-          </fieldset>
-        )}
-      </fieldset>
+      <CreateCapabilityPicker
+        selection={draft}
+        onChange={onChange}
+        writeScopeSelected={writeScopeSelected}
+        disabled={disabled}
+      />
     </div>
+  );
+}
+
+/**
+ * Which knowledge bases the credential reaches and with which permissions,
+ * capped to the tool preset's ceiling. Each KB is its own fieldset listing
+ * only the bits the user holds live; nothing starts checked.
+ */
+export function KbAccessPicker({
+  live,
+  selection: draft,
+  onChange,
+  disabled = false,
+  removalOnly = {},
+}: Pick<AclPickerProps, "live" | "selection" | "onChange" | "disabled" | "removalOnly">) {
+  const { t } = useTranslation("settings");
+  const base = useId();
+  const selection = effectiveSelection(draft);
+  const allowed = allowedKbBits(selection.toolGroups);
+  const capped = allowed.length < KB_BITS.length;
+  const id = (...parts: string[]) => `${base}-${parts.join("-")}`;
+  const aclEmpty = Object.keys(selection.acl).length === 0;
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium">{t("credentials.picker.kbsLegend")}</h3>
+      <p className="text-sm text-muted-foreground">{t("credentials.picker.kbsHint")}</p>
+      {capped && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("credentials.picker.presetCapsBits", {
+            bits: allowed.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", "),
+          })}
+        </p>
+      )}
+      {live.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("credentials.picker.noKbs")}</p>
+      ) : (
+        live.map((kb) => (
+          <fieldset key={kb.kbId} className="min-w-0 space-y-2 rounded-md border p-3">
+            <legend className="max-w-full truncate px-1 text-sm font-medium">{kb.name}</legend>
+            {kb.bits.length > 0 && kb.bits.every((bit) => removalOnly[kb.kbId]?.includes(bit)) && (
+              <p className="text-xs text-muted-foreground">
+                {t("credentials.picker.kbUnavailable")}
+              </p>
+            )}
+            {kb.bits
+              .filter((bit) => allowed.includes(bit))
+              .map((bit) => {
+                const checked = (selection.acl[kb.kbId] ?? []).includes(bit);
+                const stale = removalOnly[kb.kbId]?.includes(bit) ?? false;
+                return (
+                  <CheckRow
+                    key={bit}
+                    id={id("kb", kb.kbId, bit)}
+                    checked={checked}
+                    disabled={disabled || (stale && !checked)}
+                    onToggle={() => onChange({ type: "toggleBit", kbId: kb.kbId, bit })}
+                    label={t(`credentials.picker.bits.${bit}.label`)}
+                    // Every KB repeats the same bit labels; name the KB too.
+                    accessibleName={t("credentials.picker.kbBitName", {
+                      kb: kb.name,
+                      bit: t(`credentials.picker.bits.${bit}.label`),
+                    })}
+                    description={
+                      stale
+                        ? t("credentials.picker.removalOnly")
+                        : t(`credentials.picker.bits.${bit}.description`)
+                    }
+                  />
+                );
+              })}
+          </fieldset>
+        ))
+      )}
+      {aclEmpty && (
+        <p role="status" className="rounded-md border border-dashed p-3 text-sm">
+          {t("credentials.picker.emptyAcl")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** May the credential create knowledge bases, and what it gets on them (needs write access). */
+export function CreateCapabilityPicker({
+  selection: draft,
+  onChange,
+  writeScopeSelected = false,
+  disabled = false,
+}: Pick<AclPickerProps, "selection" | "onChange" | "writeScopeSelected" | "disabled">) {
+  const { t } = useTranslation("settings");
+  const base = useId();
+  const selection = effectiveSelection(draft);
+  const allowed = allowedKbBits(selection.toolGroups);
+  const id = (...parts: string[]) => `${base}-${parts.join("-")}`;
+  return (
+    <fieldset className="space-y-3">
+      <legend className="text-sm font-medium">{t("credentials.picker.createLegend")}</legend>
+      <CheckRow
+        id={id("create")}
+        checked={selection.allowCreate}
+        disabled={disabled || !writeScopeSelected}
+        onToggle={() => onChange({ type: "setAllowCreate", value: !selection.allowCreate })}
+        label={t("credentials.picker.allowCreate")}
+        description={
+          writeScopeSelected
+            ? t("credentials.picker.allowCreateDescription")
+            : t("credentials.picker.allowCreateNeedsWrite")
+        }
+      />
+      {selection.allowCreate && (
+        <fieldset className="space-y-2 rounded-md border p-3">
+          <legend className="px-1 text-sm font-medium">
+            {t("credentials.picker.createdBitsLegend")}
+          </legend>
+          {allowed.map((bit: KbBit) => (
+            <CheckRow
+              key={bit}
+              id={id("created", bit)}
+              checked={selection.createdKbBits.includes(bit)}
+              disabled={disabled}
+              onToggle={() => onChange({ type: "toggleCreatedBit", bit })}
+              label={t(`credentials.picker.bits.${bit}.label`)}
+              description={t(`credentials.picker.bits.${bit}.description`)}
+            />
+          ))}
+        </fieldset>
+      )}
+    </fieldset>
   );
 }

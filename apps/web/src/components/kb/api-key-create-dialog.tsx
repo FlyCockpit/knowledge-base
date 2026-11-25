@@ -1,6 +1,11 @@
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
 import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
-import { MCP_TOOL_GROUPS, type McpToolGroup } from "@knowledge-base/auth/mcp-tool-groups";
+import {
+  MCP_TOOL_GROUPS,
+  MCP_TOOL_PRESETS,
+  type McpToolGroup,
+  type McpToolPreset,
+} from "@knowledge-base/auth/mcp-tool-groups";
 import { Button } from "@knowledge-base/ui/components/button";
 import {
   Dialog,
@@ -20,8 +25,10 @@ import { useTranslation } from "react-i18next";
 import z from "zod";
 
 import { InlineRetry } from "@/components/inline-retry";
+import { ApiKeyNextSteps } from "@/components/kb/api-key-next-steps";
 import { AuthoringModePicker } from "@/components/kb/authoring-mode-picker";
 import { CheckRow } from "@/components/kb/check-row";
+import { AdvancedSection, CreateFooter } from "@/components/kb/credential-dialog-parts";
 import {
   EXPIRY_CHOICES,
   EXPIRY_PRESETS,
@@ -31,7 +38,8 @@ import {
   patExpiresAtFromChoice,
   withPatSecretHygiene,
 } from "@/components/kb/credential-list";
-import { ToolGroupPicker } from "@/components/kb/tool-group-picker";
+import { RadioCards } from "@/components/kb/radio-cards";
+import { presetFor, ToolGroupPicker } from "@/components/kb/tool-group-picker";
 import { SecretReveal } from "@/components/secret-reveal";
 import {
   expandKbBits,
@@ -41,6 +49,7 @@ import {
   type SelectionAction,
   useLiveKbOptions,
 } from "@/hooks/use-mcp-consent";
+import { groupsWrite } from "@/lib/mcp-connect";
 import { orpc } from "@/utils/orpc";
 
 type ApiKeyMintInput = Parameters<AppRouterClient["apiKeys"]["create"]>[0];
@@ -68,8 +77,7 @@ export type ApiKeyDraft = {
   allowDelete: boolean;
   allowMintChildren: boolean;
   childToolGroups: readonly McpToolGroup[];
-  /** Whether minted tokens may change content (then a write mode is required). */
-  childWrites: boolean;
+  /** Required when the child tool groups change data (then minted tokens may write). */
   childAuthoringMode: McpAuthoringMode | null;
   /** Minted tokens may create knowledge bases (an explicit opt-in). */
   childAllowCreate: boolean;
@@ -86,7 +94,6 @@ export function emptyApiKeyDraft(): ApiKeyDraft {
     allowDelete: false,
     allowMintChildren: false,
     childToolGroups: ["read"],
-    childWrites: false,
     childAuthoringMode: null,
     childAllowCreate: false,
     childrenEndWithKey: false,
@@ -134,7 +141,11 @@ export function apiKeyDraftIssues(
   if (draft.allowMintChildren && draft.childToolGroups.length === 0) {
     issues.push("toolGroupRequired");
   }
-  if (draft.allowMintChildren && draft.childWrites && draft.childAuthoringMode === null) {
+  if (
+    draft.allowMintChildren &&
+    groupsWrite(draft.childToolGroups) &&
+    draft.childAuthoringMode === null
+  ) {
     issues.push("writeModeRequired");
   }
   return issues;
@@ -160,7 +171,7 @@ export function toApiKeyMintInput(
     ...(draft.allowMintChildren
       ? {
           childToolGroups: MCP_TOOL_GROUPS.filter((g) => draft.childToolGroups.includes(g)),
-          childAuthoringMode: draft.childWrites ? draft.childAuthoringMode : null,
+          childAuthoringMode: groupsWrite(draft.childToolGroups) ? draft.childAuthoringMode : null,
           ...(draft.childAllowCreate ? { childAllowCreate: true } : {}),
           ...(draft.childrenEndWithKey ? { childrenEndWithKey: true } : {}),
         }
@@ -172,6 +183,8 @@ export function toApiKeyMintInput(
 function toggle<T>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
+
+const CHILD_PRESETS = Object.keys(MCP_TOOL_PRESETS) as McpToolPreset[];
 
 /** The tool-group picker's actions, applied to the minted tokens' groups. */
 function childGroupsAfter(
@@ -194,14 +207,23 @@ function childGroupsAfter(
 export function ApiKeyCreateDialog({
   open,
   onOpenChange,
+  serverUrl,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** This server's URL, for the minting example after the reveal. */
+  serverUrl: string;
 }) {
-  return open ? <ApiKeyCreateForm onOpenChange={onOpenChange} /> : null;
+  return open ? <ApiKeyCreateForm onOpenChange={onOpenChange} serverUrl={serverUrl} /> : null;
 }
 
-function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+function ApiKeyCreateForm({
+  onOpenChange,
+  serverUrl,
+}: {
+  onOpenChange: (open: boolean) => void;
+  serverUrl: string;
+}) {
   const { t } = useTranslation(["settings", "common"]);
   const queryClient = useQueryClient();
   const { query: kbQuery, live } = useLiveKbOptions();
@@ -214,7 +236,7 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
       API_KEY_LIST_QUERY_ROOT,
     ),
   );
-  const blocked = mint.isPending || (mint.isError && !isPatMintRejection(mint.error));
+  const blocked = mint.isError && !isPatMintRejection(mint.error);
   const form = useForm({
     defaultValues: { name: "", expiry: API_KEY_DEFAULT_EXPIRY, customDate: "" },
     validators: {
@@ -230,7 +252,7 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
         }),
     },
     onSubmit: ({ value }) => {
-      if (issues.length > 0 || blocked) return;
+      if (issues.length > 0 || mint.isPending || blocked) return;
       const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
       if (!expiry.ok) return;
       mint.mutate(toApiKeyMintInput(value.name, draft, live, expiry.expiresAt));
@@ -249,10 +271,16 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
   const mintErrorCode = (mint.error as { code?: unknown } | null)?.code;
   return (
     <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("settings:apiKeys.createTitle")}</DialogTitle>
-          <DialogDescription>{t("settings:apiKeys.createDescription")}</DialogDescription>
+          <DialogTitle>
+            {minted ? t("settings:apiKeys.createdTitle") : t("settings:apiKeys.createTitle")}
+          </DialogTitle>
+          <DialogDescription>
+            {minted
+              ? t("settings:apiKeys.createdDescription")
+              : t("settings:apiKeys.createDescription")}
+          </DialogDescription>
         </DialogHeader>
         {minted ? (
           <>
@@ -260,6 +288,19 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
               value={minted.secret}
               title={t("settings:apiKeys.secretOnce")}
               copyLabel={t("settings:apiKeys.copySecret")}
+            />
+            <ApiKeyNextSteps
+              serverUrl={serverUrl}
+              ceiling={
+                mint.variables?.allowMintChildren
+                  ? {
+                      reach: mint.variables.reach,
+                      bits: mint.variables.bits,
+                      childToolGroups: mint.variables.childToolGroups ?? [],
+                      childAuthoringMode: mint.variables.childAuthoringMode ?? null,
+                    }
+                  : null
+              }
             />
             <DialogFooter>
               <Button className="min-h-[44px]" onClick={() => close(false)}>
@@ -280,7 +321,8 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
               {(field) => (
                 <TextField
                   field={field}
-                  label={t("settings:credentials.nameLabel")}
+                  label={t("settings:apiKeys.nameLabel")}
+                  description={t("settings:apiKeys.nameHelp")}
                   autoComplete="off"
                   inputMode="text"
                   maxLength={100}
@@ -360,11 +402,6 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
                 ) : null
               }
             />
-            {issues.map((issue) => (
-              <p key={issue} className="text-sm text-muted-foreground">
-                {t(`settings:apiKeys.issues.${issue}`)}
-              </p>
-            ))}
             {mint.isError && (
               <p role="alert" className="text-sm text-destructive">
                 {mintErrorCode === "CONFLICT"
@@ -374,25 +411,14 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
                     : t("settings:apiKeys.createUncertain", { name: mint.variables?.name ?? "" })}
               </p>
             )}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-[44px]"
-                onClick={() => close(false)}
-              >
-                {t("common:actions.cancel")}
-              </Button>
-              <Button
-                type="submit"
-                className="min-h-[44px]"
-                disabled={blocked || issues.length > 0}
-              >
-                {mint.isPending
-                  ? t("settings:credentials.creating")
-                  : t("settings:apiKeys.createSubmit")}
-              </Button>
-            </DialogFooter>
+            <CreateFooter
+              reasons={issues.map((issue) => t(`settings:apiKeys.issues.${issue}`))}
+              pending={mint.isPending}
+              blocked={blocked}
+              submitLabel={t("settings:apiKeys.createSubmit")}
+              pendingLabel={t("settings:credentials.creating")}
+              onCancel={() => close(false)}
+            />
           </form>
         )}
       </DialogContent>
@@ -429,6 +455,8 @@ export function ApiKeyDraftPicker({
   const base = useId();
   const ceiling = draftCeiling(draft);
   const hasManage = ceiling.includes("manage");
+  const childPreset = presetFor(draft.childToolGroups);
+  const childWrites = groupsWrite(draft.childToolGroups);
   const set = (patch: Partial<ApiKeyDraft>) => onChange({ ...draft, ...patch });
   const bitLabels = (bits: readonly KbBit[]) =>
     bits.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ");
@@ -449,41 +477,17 @@ export function ApiKeyDraftPicker({
 
   return (
     <div className="min-w-0 space-y-6">
-      <fieldset className="min-w-0 space-y-2">
-        <legend className="text-sm font-medium">{t("apiKeys.reach.legend")}</legend>
-        <div role="radiogroup" aria-label={t("apiKeys.reach.legend")} className="space-y-1">
-          {API_KEY_REACHES.map((reach) => {
-            const id = `${base}-reach-${reach}`;
-            return (
-              <label
-                key={reach}
-                htmlFor={id}
-                className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-md p-2 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
-              >
-                <input
-                  id={id}
-                  type="radio"
-                  name={`${base}-reach`}
-                  value={reach}
-                  checked={draft.reach === reach}
-                  disabled={disabled}
-                  onChange={() => set({ reach })}
-                  aria-describedby={`${id}-desc`}
-                  className="mt-1 size-4 shrink-0 accent-primary"
-                />
-                <span className="min-w-0 space-y-1">
-                  <span className="block text-sm leading-snug font-medium">
-                    {t(`apiKeys.reach.${reach}.label`)}
-                  </span>
-                  <span id={`${id}-desc`} className="block text-xs text-muted-foreground">
-                    {t(`apiKeys.reach.${reach}.description`)}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
+      <RadioCards<ApiKeyReach>
+        legend={t("apiKeys.reach.legend")}
+        options={API_KEY_REACHES.map((reach) => ({
+          value: reach,
+          label: t(`apiKeys.reach.${reach}.label`),
+          description: t(`apiKeys.reach.${reach}.description`),
+        }))}
+        value={draft.reach}
+        disabled={disabled}
+        onChange={(reach) => set({ reach })}
+      />
 
       <fieldset className="min-w-0 space-y-2">
         <legend className="text-sm font-medium">{t("apiKeys.bitsLegend")}</legend>
@@ -575,47 +579,37 @@ export function ApiKeyDraftPicker({
       {draft.allowMintChildren && (
         <div className="min-w-0 space-y-6 rounded-md border p-3">
           <p className="text-sm text-muted-foreground">{t("apiKeys.childHint")}</p>
-          <ToolGroupPicker
-            groups={draft.childToolGroups}
-            onChange={(action) =>
-              set({ childToolGroups: childGroupsAfter(draft.childToolGroups, action) })
-            }
-            writeScope={draft.childWrites}
-            authoringMode={draft.childWrites ? draft.childAuthoringMode : null}
-            allowCreate={draft.childAllowCreate}
-            offerSealed
-            kbs={previewKbs}
-            createdKbBits={draft.childAllowCreate ? ceiling : []}
+          <RadioCards<McpToolPreset | "custom">
+            legend={t("apiKeys.childPurposeLegend")}
+            options={[
+              ...CHILD_PRESETS.map((value) => ({
+                value,
+                label: t(`credentials.picker.presets.${value}.label`),
+                description: t(`credentials.picker.presets.${value}.description`),
+              })),
+              ...(childPreset === "custom"
+                ? [
+                    {
+                      value: "custom" as const,
+                      label: t("credentials.picker.presets.custom.label"),
+                      description: t("credentials.picker.presets.custom.description"),
+                    },
+                  ]
+                : []),
+            ]}
+            value={childPreset}
             disabled={disabled}
+            onChange={(next) => {
+              if (next !== "custom") set({ childToolGroups: MCP_TOOL_PRESETS[next] });
+            }}
           />
-          {draft.childToolGroups.includes("sealed") && (
-            <p role="status" className="text-sm text-destructive">
-              {t("apiKeys.childSealedWarning")}
-            </p>
-          )}
-          <CheckRow
-            id={`${base}-child-writes`}
-            checked={draft.childWrites}
-            disabled={disabled}
-            onToggle={() => set({ childWrites: !draft.childWrites })}
-            label={t("apiKeys.childWrites.label")}
-            description={t("apiKeys.childWrites.description")}
-          />
-          {draft.childWrites && (
+          {childWrites && (
             <AuthoringModePicker
               value={draft.childAuthoringMode}
               onChange={(mode) => set({ childAuthoringMode: mode })}
               disabled={disabled}
             />
           )}
-          <CheckRow
-            id={`${base}-child-create`}
-            checked={draft.childAllowCreate}
-            disabled={disabled}
-            onToggle={() => set({ childAllowCreate: !draft.childAllowCreate })}
-            label={t("apiKeys.childAllowCreate.label")}
-            description={t("apiKeys.childAllowCreate.description")}
-          />
           <CheckRow
             id={`${base}-children-end`}
             checked={draft.childrenEndWithKey}
@@ -628,6 +622,38 @@ export function ApiKeyDraftPicker({
                 : "apiKeys.childrenEndWithKey.off",
             )}
           />
+          <AdvancedSection
+            label={t("apiKeys.childAdvanced")}
+            defaultOpen={childPreset === "custom"}
+          >
+            <ToolGroupPicker
+              groups={draft.childToolGroups}
+              onChange={(action) =>
+                set({ childToolGroups: childGroupsAfter(draft.childToolGroups, action) })
+              }
+              writeScope={childWrites}
+              authoringMode={childWrites ? draft.childAuthoringMode : null}
+              allowCreate={draft.childAllowCreate}
+              offerSealed
+              kbs={previewKbs}
+              createdKbBits={draft.childAllowCreate ? ceiling : []}
+              disabled={disabled}
+              showPresets={false}
+            />
+            {draft.childToolGroups.includes("sealed") && (
+              <p role="status" className="text-sm text-destructive">
+                {t("apiKeys.childSealedWarning")}
+              </p>
+            )}
+            <CheckRow
+              id={`${base}-child-create`}
+              checked={draft.childAllowCreate}
+              disabled={disabled}
+              onToggle={() => set({ childAllowCreate: !draft.childAllowCreate })}
+              label={t("apiKeys.childAllowCreate.label")}
+              description={t("apiKeys.childAllowCreate.description")}
+            />
+          </AdvancedSection>
         </div>
       )}
     </div>

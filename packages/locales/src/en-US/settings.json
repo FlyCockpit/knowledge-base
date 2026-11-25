@@ -54,7 +54,7 @@
     "appsTitle": "Connected apps",
     "create": "Create token",
     "createTitle": "Create a personal access token",
-    "createDescription": "Choose exactly what this token may do. Tools start on the Read preset; access type, knowledge base permissions and knowledge base creation stay unselected until you select them.",
+    "createDescription": "Choose what the token may do and which knowledge bases it reaches. Nothing is selected until you choose it.",
     "nameLabel": "Token name",
     "expiryLabel": "Expiry",
     "expiryHelp": "A dated token expires at most {{max}} days from now. A token with no expiry stays valid until you revoke it.",
@@ -74,7 +74,7 @@
     "kbsLoadError": "Couldn't load your knowledge bases.",
     "listLoadError": "Couldn't load your credentials.",
     "noTokens": "You have no personal access tokens.",
-    "noApps": "No apps are connected to your account.",
+    "noApps": "No apps yet. An app that signs in with OAuth, such as Claude Code after /mcp → Authenticate, appears here once you approve it. You can then change or revoke its access here.",
     "revoke": "Revoke",
     "editAccess": "Edit access",
     "revoking": "Revoking…",
@@ -174,7 +174,7 @@
       },
       "kbsLegend": "Knowledge bases",
       "kbsHint": "Select each knowledge base and permission individually. Only permissions you hold are listed.",
-      "presetCapsBits": "The selected tool preset allows only these permissions: {{bits}}. Choose Custom under Advanced for others.",
+      "presetCapsBits": "The selected tool preset allows only these permissions: {{bits}}. To grant others, choose individual tool groups under Advanced.",
       "noKbs": "You don't have access to any knowledge bases yet.",
       "kbUnavailable": "No longer available to you. You can only remove it from this connection.",
       "removalOnly": "You no longer hold this permission. You can remove it, but not add it back.",
@@ -329,7 +329,14 @@
           "description": "Both: dreams, and direct edits labelled Agent."
         }
       }
-    }
+    },
+    "createdTitle": "Your new token",
+    "createdDescription": "Copy it, then connect your client with one of the setups below.",
+    "nextConnect": "Next: connect your client",
+    "nameHelp": "Name it after the agent or machine that will use it.",
+    "purposeLegend": "What should this token do?",
+    "purposeRequired": "Choose what the token should do.",
+    "advanced": "Advanced: tool groups and creating knowledge bases"
   },
   "apiKeys": {
     "intro": "A REST API key (kbk_…) lets your own automation create, list and delete knowledge bases and mint MCP tokens for them through /api/v1. It never reads or writes documents itself, and it can't be used as an MCP token.",
@@ -378,10 +385,6 @@
       "description": "Tokens for one knowledge base each, within the limits below."
     },
     "childHint": "Limits for the MCP tokens this key mints. Each token is for one knowledge base, chosen when it is minted, and may hold any option a personal access token can, within these limits.",
-    "childWrites": {
-      "label": "Tokens may change content",
-      "description": "Without this, minted tokens are read-only."
-    },
     "issues": {
       "reachRequired": "Choose the key's reach.",
       "kbRequired": "Choose at least one knowledge base.",
@@ -426,7 +429,7 @@
     "kbsTitle": "Knowledge bases",
     "kbsLoadError": "Couldn't load the key's knowledge bases.",
     "childrenTitle": "MCP tokens minted by this key",
-    "noChildren": "This key hasn't minted any tokens.",
+    "noChildren": "This key hasn't minted any tokens yet.",
     "revokeChildSuccess": "Token revoked.",
     "revokeTitle": "Revoke API key?",
     "revokeDescription_one": "\"{{name}}\" stops working immediately, and so does the {{count}} active MCP token it minted. This can't be undone.",
@@ -468,7 +471,26 @@
     "revokeSuccessKeptTokens": "API key revoked. Its tokens keep working.",
     "childCreatedKbs_one": "Also reaches {{count}} knowledge base it created.",
     "childCreatedKbs_other": "Also reaches {{count}} knowledge bases it created.",
-    "revokeAlsoAnyChildren": "Also revoke any tokens it minted"
+    "revokeAlsoAnyChildren": "Also revoke any tokens it minted",
+    "nameLabel": "Key name",
+    "nameHelp": "Name it after the automation that will use it.",
+    "createdTitle": "Your new API key",
+    "createdDescription": "Copy it, then try it with the commands below.",
+    "childPurposeLegend": "What may the tokens it mints do?",
+    "childAdvanced": "Advanced: tool groups, sealed values and creating knowledge bases",
+    "next": {
+      "mintTitle": "Next: mint an MCP token",
+      "mintHint": "Paste the key when the first line waits, then press Enter; it never appears on a command line. The commands list the key's knowledge bases, then mint a token for the one whose id you set as KB_ID. The permissions must be within that knowledge base's \"capabilities\" in the list; lower them for one you can only read. Change the name and tools as you need. The reply shows the token once. If it is lost, rerunning the last command with the same MINT_KEY names the token but can't show its secret: revoke that token and mint again with a new MINT_KEY.",
+      "checkTitle": "Next: try the key",
+      "checkHint": "Paste the key when the first line waits, then press Enter; it never appears on a command line. The reply says what the key may do.",
+      "copyMint": "Copy the minting commands",
+      "copyCheck": "Copy the check command",
+      "guide": "REST API guide",
+      "openApi": "OpenAPI document",
+      "mintCreatedHint": "Paste the key when the first line waits, then press Enter; it never appears on a command line. This key reaches only knowledge bases it creates, so the commands create one first, then mint a token for it (set KB_ID from the reply). The reply shows the token once. If it is lost, rerunning the last command with the same MINT_KEY names the token but can't show its secret: revoke that token and mint again with a new MINT_KEY.",
+      "listedId": "an \"id\" from that list",
+      "createdId": "the \"id\" of \"kb\" in that reply"
+    }
   },
   "providers": {
     "title": "Embedding providers",
@@ -543,5 +565,34 @@
     "copyUnix": "Copy the Linux and macOS install command",
     "copyWindows": "Copy the Windows install command",
     "hint": "kb is installed in ~/.cargo/bin (%USERPROFILE%\\.cargo\\bin on Windows). An approved device appears under Personal access tokens, where you can revoke it."
+  },
+  "connect": {
+    "title": "Connect an AI client",
+    "description": "Add this server to Claude Code, Codex or any MCP client. The client signs in with your account in the browser, so there's no secret to copy.",
+    "urlLabel": "MCP server URL",
+    "copyUrl": "Copy server URL",
+    "clientLabel": "Client",
+    "clients": {
+      "claude": "Claude Code",
+      "codex": "Codex",
+      "other": "Other clients"
+    },
+    "copySnippet": "Copy the {{client}} setup",
+    "hints": {
+      "oauth": {
+        "claude": "Then run /mcp in Claude Code, pick {{name}} and choose Authenticate. Approve the access in your browser. Add --scope user to use it in every project.",
+        "codex": "The login opens your browser; approve the access there.",
+        "other": "Add this to the client's MCP settings, or paste the server URL where it asks for one. It opens your browser to sign in; approve the access there."
+      },
+      "token": {
+        "claude": "Paste the token when the first line waits, then press Enter. Claude Code reads {{env}} from the environment it starts in, so set it there in later sessions too (from a secret manager or your shell profile). The token stays out of your shell history and Claude Code's settings.",
+        "codex": "Paste the token when the first line waits, then press Enter. Codex reads {{env}} from the shell that starts it, so set it there in later sessions too (from a secret manager or your shell profile).",
+        "other": "For a client's private settings file only: it contains the token. Never commit or share it."
+      }
+    },
+    "protocol": "Clients must speak MCP {{version}} over Streamable HTTP. Current Claude Code and Codex do; an older client gets \"Unsupported protocol version\".",
+    "useToken": "Use a token instead",
+    "docs": "MCP guide",
+    "opensInNewTab": "(opens in a new tab)"
   }
 }

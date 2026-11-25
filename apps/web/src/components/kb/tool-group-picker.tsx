@@ -38,6 +38,11 @@ type ToolGroupPickerProps = {
   /** Permissions on knowledge bases the credential creates (empty unless allowed). */
   createdKbBits: readonly KbBit[];
   disabled: boolean;
+  /**
+   * False when the preset is chosen elsewhere (the create dialogs ask "What
+   * should this token do?" first): only the groups and the preview show.
+   */
+  showPresets?: boolean;
 };
 
 /**
@@ -56,6 +61,7 @@ export function ToolGroupPicker({
   kbs,
   createdKbBits,
   disabled,
+  showPresets = true,
 }: ToolGroupPickerProps) {
   const { t } = useTranslation("settings");
   const base = useId();
@@ -75,37 +81,41 @@ export function ToolGroupPicker({
   return (
     <fieldset className="min-w-0 space-y-3">
       <legend className="text-sm font-medium">{t("credentials.picker.toolsLegend")}</legend>
-      <p className="text-sm text-muted-foreground">{t("credentials.picker.toolsHint")}</p>
-      <SegmentedControl<PresetChoice>
-        value={preset}
-        ariaLabel={t("credentials.picker.toolsLegend")}
-        items={[
-          ...PRESETS.map((value) => ({
-            value,
-            label: t(`credentials.picker.presets.${value}.label`),
-          })),
-          { value: "custom" as const, label: t("credentials.picker.presets.custom.label") },
-        ]}
-        onChange={(next) => {
-          if (disabled) return;
-          if (next === "custom") setAdvanced(true);
-          else onChange({ type: "setToolGroups", groups: MCP_TOOL_PRESETS[next] });
-        }}
-      />
-      <p className="text-sm text-muted-foreground">
-        {t(`credentials.picker.presets.${preset}.description`)}
-      </p>
-      <Button
-        type="button"
-        variant="ghost"
-        className="min-h-[44px] px-2"
-        aria-expanded={advanced}
-        aria-controls={`${base}-advanced`}
-        onClick={() => setAdvanced((open) => !open)}
-      >
-        {t(advanced ? "credentials.picker.hideAdvanced" : "credentials.picker.showAdvanced")}
-      </Button>
-      {advanced && (
+      {showPresets && (
+        <>
+          <p className="text-sm text-muted-foreground">{t("credentials.picker.toolsHint")}</p>
+          <SegmentedControl<PresetChoice>
+            value={preset}
+            ariaLabel={t("credentials.picker.toolsLegend")}
+            items={[
+              ...PRESETS.map((value) => ({
+                value,
+                label: t(`credentials.picker.presets.${value}.label`),
+              })),
+              { value: "custom" as const, label: t("credentials.picker.presets.custom.label") },
+            ]}
+            onChange={(next) => {
+              if (disabled) return;
+              if (next === "custom") setAdvanced(true);
+              else onChange({ type: "setToolGroups", groups: MCP_TOOL_PRESETS[next] });
+            }}
+          />
+          <p className="text-sm text-muted-foreground">
+            {t(`credentials.picker.presets.${preset}.description`)}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-[44px] px-2"
+            aria-expanded={advanced}
+            aria-controls={`${base}-advanced`}
+            onClick={() => setAdvanced((open) => !open)}
+          >
+            {t(advanced ? "credentials.picker.hideAdvanced" : "credentials.picker.showAdvanced")}
+          </Button>
+        </>
+      )}
+      {(advanced || !showPresets) && (
         <fieldset id={`${base}-advanced`} className="space-y-2 rounded-md border p-3">
           <legend className="px-1 text-sm font-medium">
             {t("credentials.picker.groupsLegend")}

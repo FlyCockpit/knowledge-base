@@ -101,3 +101,9 @@ it.each(["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"])(
     expect(out).toContain("actions.tryAgain");
   },
 );
+it("leads with the connect card: the MCP URL and client setup before the credential lists", () => {
+  const out = render();
+  expect(out).toContain("connect.title");
+  expect(out).toMatch(/\/mcp/);
+  expect(out.indexOf("connect.title")).toBeLessThan(out.indexOf("token-alpha"));
+});

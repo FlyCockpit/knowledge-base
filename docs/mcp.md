@@ -1,11 +1,17 @@
 # MCP clients and kb/1
 
 Connect an interactive MCP client to `https://kb.example/mcp` using OAuth.
+**Settings → MCP access** shows this server's URL and the setup for Claude Code
+(`claude mcp add --transport http kb <url>`, then `/mcp` → Authenticate), Codex
+(`codex mcp add kb --url <url>`, `codex mcp login kb`) and other clients' JSON.
 The issuer is `https://kb.example/api/auth`; discovery and MCP are always on.
 The canonical resource comes from `BETTER_AUTH_URL`. For a headless harness,
 mint a personal access token in `/{lang}/settings/mcp`, or use
 [CLI device login](./cli.md). Send a PAT as `Authorization: Bearer` through
-private client configuration; never put it in a URL, argv or a shared log.
+private client configuration; never put it in a URL, argv or a shared log. The
+token reveal shows client setups that read it from `KB_MCP_TOKEN` instead (Claude
+Code expands `${KB_MCP_TOKEN}` in a stored header; Codex takes
+`--bearer-token-env-var`).
 Browser cookies do not authenticate MCP. OAuth also supports sender-bound DPoP;
 Git passwords and self-revocation accept PATs only.
 
@@ -37,7 +43,9 @@ created KB does not widen that token's approved bits or another grant's ACL.
 
 Every connection also names its tool groups (`read`, `edit`, `assets`, `export`,
 `pull_requests`, `index_admin`, `kb_admin`, `sealed`); the web offers the Read
-(default), Propose edits and Direct edits presets. A call to a tool outside the
+(default), Propose edits and Direct edits presets. Creating a PAT asks for one of
+them first, with nothing preselected, and derives the scope from the chosen groups
+(`mcp:write` when any of them changes data); single groups are under Advanced. A call to a tool outside the
 groups is `FORBIDDEN`; `knowledge_bases_list` and `knowledge_bases_get` need no
 group. Asset changes inside `knowledge_changes_apply` need `assets`, Markdown
 uploads need `edit` and asset uploads `assets`. Git fetch and asset reads need

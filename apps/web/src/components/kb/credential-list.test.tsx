@@ -13,11 +13,14 @@ import {
   isPatMintRejection,
   PAT_LIST_QUERY_ROOT,
   PatSecretReveal,
+  patDraftGrant,
+  patDraftIssueKeys,
   patExpiresAtFromChoice,
   remainingParts,
   type TokenRow,
   withPatSecretHygiene,
 } from "@/components/kb/credential-list";
+import { emptySelection, type LiveKbOption, selectionReducer } from "@/hooks/use-mcp-consent";
 
 const SECRET = `kbp_${"0".repeat(16)}_${"S".repeat(43)}`;
 const tokens: TokenRow[] = [
@@ -393,5 +396,61 @@ describe("PAT outcome uncertainty", () => {
     expect(observer.getCurrentResult().data).toBeUndefined();
     observer.reset();
     queryClient.clear();
+  });
+});
+
+describe("PAT create draft", () => {
+  const live: LiveKbOption[] = [
+    { kbId: "a".repeat(24), name: "Engineering", bits: ["read", "propose", "write"] },
+  ];
+  const withKb = selectionReducer(emptySelection(), {
+    type: "toggleBit",
+    kbId: "a".repeat(24),
+    bit: "read",
+  });
+
+  it("grants no scope until a purpose is chosen, and says so first", () => {
+    const grant = patDraftGrant(withKb, live, false);
+    expect(grant.scopes).toEqual([]);
+    expect(patDraftIssueKeys(grant)[0]).toBe("settings:credentials.purposeRequired");
+  });
+
+  it("derives the scope from the chosen purpose instead of asking for it", () => {
+    expect(patDraftGrant(withKb, live, true).scopes).toEqual(["mcp:read"]);
+    expect(patDraftIssueKeys(patDraftGrant(withKb, live, true))).toEqual([]);
+    const propose = selectionReducer(withKb, {
+      type: "setToolGroups",
+      groups: ["read", "edit", "pull_requests"],
+    });
+    const grant = patDraftGrant(propose, live, true);
+    expect(grant.scopes).toEqual(["mcp:write"]);
+    // Writing still needs an explicit write mode; none is preselected.
+    expect(patDraftIssueKeys(grant)).toEqual([
+      "settings:credentials.picker.issues.writeModeRequired",
+    ]);
+    const chosen = selectionReducer(propose, { type: "setAuthoringMode", mode: "edit" });
+    expect(patDraftGrant(chosen, live, true)).toMatchObject({
+      scopes: ["mcp:write"],
+      authoringMode: "edit",
+      acl: [{ kbId: "a".repeat(24), bits: ["read"] }],
+    });
+  });
+
+  it("creating knowledge bases makes the token write (its kb_admin group changes data)", () => {
+    const creating = selectionReducer(withKb, { type: "setAllowCreate", value: true });
+    const grant = patDraftGrant(creating, live, true);
+    expect(grant.toolGroups).toContain("kb_admin");
+    expect(grant.scopes).toEqual(["mcp:write"]);
+  });
+
+  it("drops a write mode once the purpose only reads", () => {
+    const back = selectionReducer(
+      selectionReducer(withKb, { type: "setAuthoringMode", mode: "both" }),
+      { type: "setToolGroups", groups: ["read"] },
+    );
+    expect(patDraftGrant(back, live, true)).toMatchObject({
+      scopes: ["mcp:read"],
+      authoringMode: null,
+    });
   });
 });

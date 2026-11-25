@@ -1,11 +1,12 @@
+import { env } from "@knowledge-base/env/web";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
 import { InlineRetry } from "@/components/inline-retry";
+
 import { ApiKeyCreateDialog } from "@/components/kb/api-key-create-dialog";
 import {
   ApiKeyDetailsDialog,
@@ -14,6 +15,7 @@ import {
   type ApiKeyRow,
   apiKeyRevokeToast,
 } from "@/components/kb/api-key-list";
+import { RestApiLinks } from "@/components/kb/api-key-next-steps";
 import { LoadMore } from "@/components/load-more";
 import { pageHead } from "@/lib/page-title";
 import { isQueryAccessError } from "@/lib/query-access-error";
@@ -106,6 +108,7 @@ function ApiKeySettings() {
             {t("settings:navMcp")}
           </Link>
         </p>
+        <RestApiLinks serverUrl={env.VITE_SERVER_URL} />
       </div>
       {keys.isError && (
         <InlineRetry
@@ -128,10 +131,15 @@ function ApiKeySettings() {
           />
         }
       />
-      <ApiKeyCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ApiKeyCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        serverUrl={env.VITE_SERVER_URL}
+      />
       <ApiKeyDetailsDialog
         apiKey={detailsRow}
         lang={lang}
+        serverUrl={env.VITE_SERVER_URL}
         onOpenChange={(open) => {
           if (!open) setDetails(null);
         }}

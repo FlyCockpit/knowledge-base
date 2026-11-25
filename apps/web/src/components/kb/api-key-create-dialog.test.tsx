@@ -72,7 +72,7 @@ describe("API key create validation", () => {
     ).toEqual([]);
   });
 
-  it("created reach needs create, and writing children need a write mode", () => {
+  it("created reach needs create, and children whose tools write need a write mode", () => {
     expect(apiKeyDraftIssues(draft({ reach: "created", bits: ["read"] }), live)).toEqual([
       "createdNeedsCreate",
     ]);
@@ -80,9 +80,13 @@ describe("API key create validation", () => {
     expect(apiKeyDraftIssues({ ...minting, childToolGroups: [] }, live)).toEqual([
       "toolGroupRequired",
     ]);
-    expect(apiKeyDraftIssues({ ...minting, childWrites: true }, live)).toEqual([
-      "writeModeRequired",
-    ]);
+    // The write access of minted tokens follows from their tools: Propose edits writes.
+    expect(
+      apiKeyDraftIssues({ ...minting, childToolGroups: ["read", "edit", "pull_requests"] }, live),
+    ).toEqual(["writeModeRequired"]);
+    expect(apiKeyDraftIssues({ ...minting, childToolGroups: ["read", "export"] }, live)).toEqual(
+      [],
+    );
   });
 
   it("builds the exact mint input: expanded bits, kbIds only for chosen reach, child ceilings only when minting", () => {
@@ -113,7 +117,6 @@ describe("API key create validation", () => {
           allowDelete: true,
           allowMintChildren: true,
           childToolGroups: ["edit", "read"],
-          childWrites: true,
           childAuthoringMode: "edit",
         }),
         live,
@@ -130,7 +133,7 @@ describe("API key create validation", () => {
       childAuthoringMode: "edit",
       expiresAt,
     });
-    // A write mode left over from unticking "may change content" is not sent.
+    // A write mode left over from a writing preset is not sent once the tools only read.
     expect(
       toApiKeyMintInput(
         "RO",
@@ -138,7 +141,7 @@ describe("API key create validation", () => {
           reach: "all",
           bits: ["read"],
           allowMintChildren: true,
-          childWrites: false,
+          childToolGroups: ["read"],
           childAuthoringMode: "both",
         }),
         live,
@@ -179,7 +182,6 @@ describe("API key create validation", () => {
         {
           ...minting,
           childToolGroups: ["sealed", "kb_admin", "read"],
-          childWrites: true,
           childAuthoringMode: "both",
           childAllowCreate: true,
           childrenEndWithKey: true,
@@ -251,8 +253,15 @@ describe("ApiKeyDraftPicker", () => {
   });
 
   it("previews the KBs the key creates as part of what a minted token can reach", () => {
+    // A custom group set opens Advanced, where the preview lives.
     const markup = html(
-      draft({ reach: "created", bits: ["read"], allowCreate: true, allowMintChildren: true }),
+      draft({
+        reach: "created",
+        bits: ["read"],
+        allowCreate: true,
+        allowMintChildren: true,
+        childToolGroups: ["read", "export"],
+      }),
     );
     expect(markup).toContain(enSettings.apiKeys.previewCreatedKbs);
     expect(markup).not.toContain(enSettings.credentials.picker.previewNoKbs);
@@ -264,11 +273,31 @@ describe("ApiKeyDraftPicker", () => {
     );
     const markup = html(draft({ reach: "all", bits: ["read"], allowMintChildren: true }));
     expect(markup).toContain(enSettings.apiKeys.childHint);
-    expect(markup).toContain(enSettings.apiKeys.childAllowCreate.label);
+    // The quick path: what the tokens do, then whether they end with the key.
+    expect(markup).toContain(enSettings.apiKeys.childPurposeLegend);
     expect(markup).toContain(enSettings.apiKeys.childrenEndWithKey.label);
+    // Token KB creation, sealed values and single groups wait under a closed Advanced.
+    expect(markup).toContain(enSettings.apiKeys.childAdvanced);
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain(enSettings.apiKeys.childAllowCreate.label);
+    // A Read preset writes nothing, so no write mode is asked for.
+    expect(markup).not.toContain(enSettings.credentials.writeMode.legend);
     expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.off));
     expect(markup).not.toContain(markupText(enSettings.apiKeys.childrenEndWithKey.on));
     expect(markup).not.toContain(markupText(enSettings.apiKeys.childSealedWarning));
+  });
+
+  it("asks for a write mode once the minted tokens' preset writes", () => {
+    const markup = html(
+      draft({
+        reach: "all",
+        bits: ["write"],
+        allowMintChildren: true,
+        childToolGroups: ["read", "edit", "pull_requests"],
+      }),
+    );
+    expect(markup).toContain(enSettings.credentials.writeMode.legend);
+    expect(markup).not.toContain(enSettings.apiKeys.childAllowCreate.label);
   });
 
   it("offers sealed values to minted tokens with the per-token approval warning once chosen", () => {
@@ -283,6 +312,7 @@ describe("ApiKeyDraftPicker", () => {
       }),
     );
     expect(markup).toContain(enSettings.credentials.picker.groups.sealed.label);
+    expect(markup).toContain(enSettings.apiKeys.childAllowCreate.label);
     expect(markup).toContain(markupText(enSettings.apiKeys.childSealedWarning));
     expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.on));
   });
