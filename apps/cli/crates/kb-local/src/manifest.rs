@@ -1,11 +1,11 @@
 //! Immutable manifest snapshots and retained per-KB authority, shared by all publishers.
 use crate::{
-    Store, StoreError,
+    StoreError,
     git_read::{DOCUMENT_MAX_BYTES, GitRepo, ObjectKind},
     git_tree::blob_at,
     tree::{self, ManifestEntry, SealedOccurrence, TreePolicy},
 };
-use kb_client::types::{AssetRef, ContentHash, KbId, KbPath, Mime, Sha};
+use kb_client::types::{AssetRef, ContentHash, KbId, KbPath, Sha};
 use rusqlite::OptionalExtension;
 
 pub(crate) fn at_revision(repo: &GitRepo, rev: &Sha) -> Result<Vec<ManifestEntry>, StoreError> {
@@ -31,8 +31,9 @@ pub(crate) fn asset_ref(e: &ManifestEntry) -> Result<AssetRef, StoreError> {
         mime: serde_json::from_value(serde_json::json!(e.mime)).map_err(|_| unavailable())?,
     })
 }
-/// The store-backed tree policy of one KB: the trusted asset catalog and the
-/// KB's sealed records, as [`Store::tree_policy`] hands them over.
+/// The store-backed tree policy of one KB: the trusted asset catalog
+/// connection and a check of the KB's sealed records, handed over by the
+/// store's asset authority (`Store::tree_policy` in `assets.rs`).
 pub(crate) struct Policy<'a> {
     catalog: &'a rusqlite::Connection,
     /// `Store::check_local_sealed` for this KB; `live` selects the
@@ -46,7 +47,25 @@ pub(crate) struct Policy<'a> {
     /// must reference live records. `None` validates every reference.
     base: Option<&'a std::collections::HashMap<String, String>>,
 }
-type SealedCheck<'a> = Box<dyn Fn(&[SealedOccurrence], bool) -> Result<(), SealedOccurrence> + 'a>;
+pub(crate) type SealedCheck<'a> =
+    Box<dyn Fn(&[SealedOccurrence], bool) -> Result<(), SealedOccurrence> + 'a>;
+impl<'a> Policy<'a> {
+    pub(crate) fn new(
+        catalog: &'a rusqlite::Connection,
+        sealed: SealedCheck<'a>,
+        kb: &'a KbId,
+        pending: &'a [ManifestEntry],
+        base: Option<&'a std::collections::HashMap<String, String>>,
+    ) -> Self {
+        Policy {
+            catalog,
+            sealed,
+            kb,
+            pending,
+            base,
+        }
+    }
+}
 impl TreePolicy for Policy<'_> {
     fn check_manifest_entry(&self, _commit: Option<&Sha>, e: &ManifestEntry) -> Result<(), String> {
         let trusted:Option<(i64,String,bool)>=self.catalog.query_row("SELECT size,mime,EXISTS(SELECT 1 FROM kb_asset_lineage WHERE kb_id=?1 AND hash=?2) FROM asset_blobs WHERE hash=?2",(self.kb.as_str(),&e.hash),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|"asset catalog unavailable")?;
@@ -113,52 +132,6 @@ pub(crate) fn blob_map(
         ),
     )?;
     Ok(entries.into_iter().map(|e| (e.path, e.sha)).collect())
-}
-impl Store {
-    /// The tree policy for validating `kb`'s commits against this store:
-    /// `pending` assets are authorized besides the trusted catalog, and only
-    /// paths whose blob differs from `base` must reference live records.
-    pub(crate) fn tree_policy<'a>(
-        &'a self,
-        kb: &'a KbId,
-        pending: &'a [ManifestEntry],
-        base: Option<&'a std::collections::HashMap<String, String>>,
-    ) -> Policy<'a> {
-        Policy {
-            catalog: &self.conn,
-            sealed: Box::new(move |refs, live| self.check_local_sealed(kb, refs, live)),
-            kb,
-            pending,
-            base,
-        }
-    }
-
-    pub(crate) fn manifest_entries(
-        &self,
-        kb: &KbId,
-        repo: &GitRepo,
-        rev: &Sha,
-    ) -> Result<Vec<ManifestEntry>, StoreError> {
-        let entries = at_revision(repo, rev)?;
-        let policy = self.tree_policy(kb, &[], None);
-        for e in &entries {
-            policy
-                .check_manifest_entry(Some(rev), e)
-                .map_err(|_| unavailable())?;
-        }
-        Ok(entries)
-    }
-    pub(crate) fn verify_asset_bytes(&self, e: &ManifestEntry) -> Result<(), StoreError> {
-        let hash = ContentHash::parse(&e.hash).map_err(|_| unavailable())?;
-        let path = crate::cas::blob_path(&self.paths, &hash);
-        self.paths.check_no_follow(&path)?;
-        let mut file = crate::paths::open_no_follow(&path, std::fs::OpenOptions::new().read(true))
-            .map_err(|_| unavailable())?;
-        let bytes = crate::cas::verified_bytes(&mut file, &hash, e.size)?;
-        let mime: Mime =
-            serde_json::from_value(serde_json::json!(e.mime)).map_err(|_| unavailable())?;
-        crate::mime::validate_media(&bytes, mime).map_err(|_| unavailable())
-    }
 }
 
 use std::collections::{HashMap, HashSet};

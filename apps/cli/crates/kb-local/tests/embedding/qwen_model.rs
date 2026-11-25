@@ -2,7 +2,8 @@
 //! Required explicit lane: missing weights are failures, never conditional skip.
 use kb_local::{
     Store,
-    qwen::{ModelRuntime, Purpose, descriptor},
+    model_catalog::{Purpose, descriptor},
+    qwen::ModelRuntime,
 };
 use std::{path::PathBuf, time::Duration};
 #[path = "../support"]
@@ -758,7 +759,7 @@ fn gemma_runtime_upgrade_reembeds() {
     use kb_local::{StoreError, index::IndexEmbedder, search::SearchControl};
     let id = "embeddinggemma-2-q8_0";
     let old_runtime: &'static str = Box::leak(format!("sha256:{}", "0".repeat(64)).into());
-    let current = kb_local::qwen::runtime_identity();
+    let current = kb_local::model_catalog::runtime_identity();
     let f = search_support::Fixture::new(768);
     #[cfg(unix)]
     {

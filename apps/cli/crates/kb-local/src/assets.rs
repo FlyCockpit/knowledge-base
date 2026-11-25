@@ -8,7 +8,7 @@ use crate::{
     git_read::GitRepo,
     journal::Observer,
     manifest,
-    tree::ManifestEntry,
+    tree::{ManifestEntry, TreePolicy},
 };
 use kb_client::tools::{AssetsImport, AssetsList, AssetsPut};
 use kb_client::types::*;
@@ -304,5 +304,53 @@ impl Store {
             crate::limits::RESPONSE_MAX_BYTES,
         )?;
         Ok(page)
+    }
+}
+/// The asset authority of a store: its trusted catalog and sealed records
+/// bound into tree policies, and the manifest of a revision checked against it.
+impl Store {
+    /// The tree policy for validating `kb`'s commits against this store:
+    /// `pending` assets are authorized besides the trusted catalog, and only
+    /// paths whose blob differs from `base` must reference live records.
+    pub(crate) fn tree_policy<'a>(
+        &'a self,
+        kb: &'a KbId,
+        pending: &'a [ManifestEntry],
+        base: Option<&'a std::collections::HashMap<String, String>>,
+    ) -> manifest::Policy<'a> {
+        manifest::Policy::new(
+            &self.conn,
+            Box::new(move |refs, live| self.check_local_sealed(kb, refs, live)),
+            kb,
+            pending,
+            base,
+        )
+    }
+
+    pub(crate) fn manifest_entries(
+        &self,
+        kb: &KbId,
+        repo: &GitRepo,
+        rev: &Sha,
+    ) -> Result<Vec<ManifestEntry>, StoreError> {
+        let entries = manifest::at_revision(repo, rev)?;
+        let policy = self.tree_policy(kb, &[], None);
+        for e in &entries {
+            policy
+                .check_manifest_entry(Some(rev), e)
+                .map_err(|_| manifest::unavailable())?;
+        }
+        Ok(entries)
+    }
+    pub(crate) fn verify_asset_bytes(&self, e: &ManifestEntry) -> Result<(), StoreError> {
+        let hash = ContentHash::parse(&e.hash).map_err(|_| manifest::unavailable())?;
+        let path = crate::cas::blob_path(&self.paths, &hash);
+        self.paths.check_no_follow(&path)?;
+        let mut file = crate::paths::open_no_follow(&path, std::fs::OpenOptions::new().read(true))
+            .map_err(|_| manifest::unavailable())?;
+        let bytes = crate::cas::verified_bytes(&mut file, &hash, e.size)?;
+        let mime: Mime = serde_json::from_value(serde_json::json!(e.mime))
+            .map_err(|_| manifest::unavailable())?;
+        crate::mime::validate_media(&bytes, mime).map_err(|_| manifest::unavailable())
     }
 }

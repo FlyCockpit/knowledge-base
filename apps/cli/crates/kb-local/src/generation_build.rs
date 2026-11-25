@@ -522,7 +522,8 @@ impl Store {
                     &self.paths,
                     &s.kb_id,
                     &s.id,
-                    pin,
+                    &pin.fingerprint,
+                    pin.dimensions,
                     progressed,
                 )?
             }

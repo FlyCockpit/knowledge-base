@@ -19,8 +19,8 @@ use crate::{
     StoreError,
     egress::{Dns, NativeDns, is_public},
     embedder::unavailable,
+    model_catalog::{ModelDescriptor, data},
     paths::{is_link, sync_dir},
-    qwen::{ModelDescriptor, data},
 };
 use ring::digest::{Context, SHA256};
 use serde::Serialize;
@@ -1358,7 +1358,7 @@ fn finish_at(
 #[cfg(test)]
 mod initialization_tests {
     use super::*;
-    use crate::qwen::descriptor;
+    use crate::model_catalog::descriptor;
 
     struct CacheFixture(PathBuf);
     impl CacheFixture {

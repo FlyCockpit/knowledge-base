@@ -3,7 +3,8 @@
 use kb_local::{
     Store,
     embed_service::WORKER_ARG,
-    qwen::{Embedding, ModelHost, ModelOutput, ModelRuntime},
+    embed_service::{Embedding, ModelOutput},
+    qwen::{ModelHost, ModelRuntime},
 };
 use std::{io::Write, path::Path, path::PathBuf, time::Duration};
 
@@ -44,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            let m = kb_local::qwen::descriptor("embeddinggemma-2-q8_0")?;
+            let m = kb_local::model_catalog::descriptor("embeddinggemma-2-q8_0")?;
             cache.publish_reader(&m, ParkedReader(false))?;
             return Ok(());
         }
@@ -71,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let e = runtime.embed(
                 &store,
                 &arg(5).unwrap_or_else(|_| "hello".into()),
-                kb_local::qwen::Purpose::Query,
+                kb_local::model_catalog::Purpose::Query,
                 Duration::from_secs(30),
             )?;
             writeln!(std::io::stdout(), "{}", e.pid)?;
@@ -128,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if measure {
                 return Ok(ModelOutput::TokenCount(
                     text.len()
-                        + m.prefix(kb_local::qwen::Purpose::Document).len()
+                        + m.prefix(kb_local::model_catalog::Purpose::Document).len()
                         + usize::from(m.add_bos)
                         + usize::from(m.add_eos),
                 ));
@@ -180,8 +181,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     log,
                     "{}:{text}",
                     match purpose {
-                        kb_local::qwen::Purpose::Query => "q",
-                        kb_local::qwen::Purpose::Document => "d",
+                        kb_local::model_catalog::Purpose::Query => "q",
+                        kb_local::model_catalog::Purpose::Document => "d",
                     }
                 );
             }

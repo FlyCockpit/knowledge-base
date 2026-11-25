@@ -1062,7 +1062,7 @@ mod tests {
     fn a_deferred_runtime_reconcile_runs_once_across_the_sessions_handles() {
         let old: &'static str = Box::leak(format!("sha256:{}", "0".repeat(64)).into());
         let foreign: &'static str = Box::leak(format!("sha256:{}", "f".repeat(64)).into());
-        let current = kb_local::qwen::runtime_identity();
+        let current = kb_local::model_catalog::runtime_identity();
         let temp = tempfile::tempdir().expect("fixture");
         let root = temp.path().join("managed");
         // What the previous CLI left: a KB pinned to the built-in under its runtime.

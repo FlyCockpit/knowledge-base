@@ -262,7 +262,8 @@ async fn a_transient_read_failure_never_retires_the_active_index() {
 async fn removing_a_model_two_stores_enabled_degrades_both_until_it_returns() {
     use kb_local::{
         index::IndexEmbedder,
-        qwen::{ModelConfiguration, ModelRuntime, descriptor},
+        model_catalog::descriptor,
+        qwen::{ModelConfiguration, ModelRuntime},
     };
     let host = model_host::seeded(
         &std::env::temp_dir().join(format!("kb-remove-two-{}.model", std::process::id())),
@@ -363,7 +364,10 @@ async fn removing_a_model_two_stores_enabled_degrades_both_until_it_returns() {
 /// file is back, then ready again.
 #[tokio::test]
 async fn a_removal_during_a_search_degrades_it_and_status_follows_the_file() {
-    use kb_local::qwen::{ModelConfiguration, ModelRuntime, descriptor};
+    use kb_local::{
+        model_catalog::descriptor,
+        qwen::{ModelConfiguration, ModelRuntime},
+    };
     let f = Fixture::new(1024);
     let host = model_host::seeded(&f.root.with_extension("model"), Duration::from_secs(5));
     let runtime = ModelRuntime::new(&f.store, host.clone()).expect("runtime");

@@ -33,7 +33,7 @@ On upgrade, update both source/runtime pins together with the server pin,
 regenerate the inventory, and rerun token/vector and memory parity for both
 models on every release platform. Any change to the pin's llama.cpp source fields
 or to `inventory.json` changes the CLI's runtime identity
-(`kb_local::qwen::runtime_identity`), so the upgraded `kb` re-embeds every
+(`kb_local::model_catalog::runtime_identity`), so the upgraded `kb` re-embeds every
 local KB on the built-in once (see [embeddings](../../../docs/embeddings.md)). Upstream crate code keeps its MIT OR Apache-2.0 license; llama.cpp
 is MIT (LICENSE in its source directory).
 

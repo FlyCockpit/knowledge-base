@@ -1,7 +1,10 @@
 //! Per-fixture shared-worker host: its own runtime directory, model
 //! cache and fake-inference worker executable.
 #![allow(dead_code)]
-use kb_local::qwen::{ModelHost, descriptor, model_ids};
+use kb_local::{
+    model_catalog::{descriptor, model_ids},
+    qwen::ModelHost,
+};
 use std::{path::PathBuf, time::Duration};
 
 pub fn helper() -> PathBuf {
