@@ -1,4 +1,5 @@
 import { kbListRetryError, mapKbDomainError } from "@knowledge-base/api/lib/kb/bases";
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { KbDomainError } from "@knowledge-base/api/lib/kb/errors";
 import { KbLockError, type KbLockErrorCode } from "@knowledge-base/api/lib/kb/lock";
 import { KB_TOOL_NAMES } from "@knowledge-base/api/lib/kb/protocol/catalog";
@@ -558,5 +559,20 @@ describe("knowledge_search_all binding", () => {
     expect(JSON.parse(multi.content[0].text)).toEqual(multi.structuredContent);
     expect(multi.content[1]).toEqual(single.content[1]);
     expect(toolSuccess("knowledge_search_all", output()).content).toHaveLength(1);
+  });
+});
+
+describe("busy credential connections during a tool", () => {
+  it("answer RATE_LIMITED with a one-second wait and are not logged", () => {
+    const log = captureLog();
+    try {
+      const result = toolFailure(new CredentialCapacityError(), { tool: "knowledge_search" });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "RATE_LIMITED", retryable: true, details: { retryAfterSeconds: 1 } },
+      });
+      expect(log.records).toEqual([]);
+    } finally {
+      log.restore();
+    }
   });
 });

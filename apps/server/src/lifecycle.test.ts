@@ -349,6 +349,31 @@ describe("createServerLifecycle", () => {
       log.restore();
     }
   });
+  it("names the gate and its held permits when the bearer drain times out, and still fails closed", async () => {
+    const log = captureLog();
+    try {
+      await createServerLifecycle({
+        closeBearerAdmission: () => new Promise(() => {}),
+        admissionOutstanding: () => ({ http: 0, bearer: 2 }),
+      }).start(() => ({ close: (callback) => callback() }));
+      listeners.get("SIGTERM")?.();
+      await vi.advanceTimersByTimeAsync(HTTP_DRAIN_MS + 1);
+      expect(log.records).toContainEqual(
+        expect.objectContaining({
+          site: "server.shutdown-drain-timeout",
+          level: "error",
+          stage: "bearer-drain",
+          httpPermits: 0,
+          bearerPermits: 2,
+        }),
+      );
+      expect(process.exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(state.disconnectDb).not.toHaveBeenCalled();
+    } finally {
+      log.restore();
+    }
+  });
+
   it("allows the mutation and child drain budgets before starting the full HTTP drain", async () => {
     const operationBudget = MUTATION_DEADLINE_MS + DRAIN_MS;
     state.shutdownCoordinator.mockImplementation(

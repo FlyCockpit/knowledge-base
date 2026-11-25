@@ -18,6 +18,7 @@ import {
   DOCUMENT_DELETE_OPERATION,
   DOCUMENT_UPDATE_OPERATION,
 } from "@knowledge-base/api/lib/kb/changes";
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { cursorExpiry, stableFilterHash } from "@knowledge-base/api/lib/kb/cursor";
 import {
   authorizeDocumentRead,
@@ -159,6 +160,10 @@ export function toolFailure(
 function toolFailureResult(error: unknown) {
   try {
     if (error instanceof SensitiveQueryError) return buildKbErrorCallToolResult("SENSITIVE_QUERY");
+    // Credential connections busy (a recheck under a burst): a short, retryable
+    // wait for the caller, not a server failure to log.
+    if (error instanceof CredentialCapacityError)
+      return buildKbErrorCallToolResult("RATE_LIMITED", { retryAfterSeconds: 1 });
     if (error instanceof DOMException && error.name === "AbortError")
       return buildKbErrorCallToolResult("CANCELLED");
     if (error instanceof DOMException && error.name === "TimeoutError")

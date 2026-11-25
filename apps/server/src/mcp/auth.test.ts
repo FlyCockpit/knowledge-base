@@ -1,11 +1,12 @@
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import type { LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import { authorize, type LiveAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
 import { digestPatSecret, generatePatSecret } from "@knowledge-base/api/lib/mcp-token-access";
 import { captureLog } from "@knowledge-base/env/log";
 import { describe, expect, it, vi } from "vitest";
 import { createAdmissionGate } from "./admission";
-import { createBearerAdmission, oauthVerifier } from "./auth";
+import { createBearerAdmission, durableDpopReplayStore, oauthVerifier } from "./auth";
 import { AuthServiceUnavailableError, admissionErrorResponse } from "./errors";
 
 // The default JWKS loader reads Better Auth's in-process key store lazily.
@@ -397,5 +398,23 @@ describe("unified credential admission", () => {
       return f.claims;
     });
     await expect(f.admit(f.request())).rejects.toBeDefined();
+  });
+});
+
+describe("DPoP replay reservation under load", () => {
+  it("keeps busy credential connections a capacity refusal, other storage failures generic", async () => {
+    const reserve = (failure: Error) =>
+      durableDpopReplayStore(async () => {
+        throw failure;
+      }, new AbortController().signal).reserve({
+        key: "proof",
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    await expect(reserve(new CredentialCapacityError())).rejects.toBeInstanceOf(
+      CredentialCapacityError,
+    );
+    const generic = await reserve(new Error("ECONNRESET")).catch((error: unknown) => error);
+    expect(generic).not.toBeInstanceOf(CredentialCapacityError);
+    expect(generic).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
   });
 });

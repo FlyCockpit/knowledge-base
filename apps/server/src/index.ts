@@ -273,6 +273,7 @@ const lifecycle = createServerLifecycle({
     const drain = Promise.all([httpGate.close(), bearerGate.close()]);
     return drain.then(() => mcpEndpoint.close());
   },
+  admissionOutstanding: () => ({ http: httpGate.outstanding, bearer: bearerGate.outstanding }),
 });
 const gitHttpLimiter = new RateLimiterRedis({
   storeClient: redisConnection,

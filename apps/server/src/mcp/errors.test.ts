@@ -1,3 +1,4 @@
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
 import { expect, it } from "vitest";
 import { AuthServiceUnavailableError, admissionErrorResponse } from "./errors";
@@ -26,4 +27,19 @@ it("names signing-key outages without changing the internal admission class", as
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ error: "AUTH_UNAVAILABLE" });
   expect(response.headers.has("www-authenticate")).toBe(false);
+});
+
+it("answers busy credential connections as a retryable 503 with Retry-After", async () => {
+  const response = admissionErrorResponse(
+    new CredentialCapacityError(),
+    "https://kb.example.invalid",
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("retry-after")).toBe("1");
+  expect(await response.json()).toEqual({ error: "STORAGE_UNAVAILABLE" });
+  const denied = admissionErrorResponse(
+    new KbAdmissionError("FORBIDDEN", "no"),
+    "https://kb.example.invalid",
+  );
+  expect(denied.headers.has("retry-after")).toBe(false);
 });

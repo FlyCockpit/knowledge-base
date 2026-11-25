@@ -53,6 +53,8 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 export function createServerLifecycle(
   options: {
     closeBearerAdmission?: () => Promise<void>;
+    /** Permits each admission gate still holds; named when the drain times out. */
+    admissionOutstanding?: () => { http: number; bearer: number };
     closeGitAdmission?: () => Promise<void>;
     /** Joins detached mail sends for at most the given ms; resolves with those left. */
     drainMail?: (timeoutMs: number) => Promise<number>;
@@ -111,7 +113,21 @@ export function createServerLifecycle(
     );
     void gitDrain.catch(() => {});
     const bearerDrain = options.closeBearerAdmission?.() ?? Promise.resolve();
-    const boundedBearerDrain = withTimeout(bearerDrain, HTTP_DRAIN_MS, "Bearer admission drain");
+    const boundedBearerDrain = withTimeout(
+      bearerDrain,
+      HTTP_DRAIN_MS,
+      "Bearer admission drain",
+    ).catch((error: unknown) => {
+      // Still fail closed (no maintenance ack), but say which gate held the
+      // drain and how many permits it still owned.
+      const held = options.admissionOutstanding?.();
+      logEvent("server.shutdown-drain-timeout", {
+        stage: "bearer-drain",
+        httpPermits: held?.http,
+        bearerPermits: held?.bearer,
+      });
+      throw error;
+    });
     // Observe immediately while coordinator drain runs; failure remains fatal below.
     void boundedBearerDrain.catch(() => {});
     logEvent("server.shutdown-start", { signal: reason });

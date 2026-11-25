@@ -36,5 +36,7 @@ declare module "pg" {
       queryMode: "extended";
     }): Promise<QueryResult<R>>;
     end(): Promise<void>;
+    /** pg's transport; `stream.destroy()` closes the socket without a reply. */
+    readonly connection?: { readonly stream?: { destroy(): void } };
   }
 }

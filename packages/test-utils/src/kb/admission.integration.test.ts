@@ -8,7 +8,12 @@ import { runLockedOperation } from "@knowledge-base/api/lib/kb/authority-lock";
 import { authorizedFrameStream } from "@knowledge-base/api/lib/kb/authorized-stream";
 import { createKnowledgeBaseAsGrant } from "@knowledge-base/api/lib/kb/bases";
 import { createDiskBlobStore } from "@knowledge-base/api/lib/kb/blob-store-disk";
-import { type CredentialQuery, credentialQuery } from "@knowledge-base/api/lib/kb/credential-query";
+import {
+  CREDENTIAL_CONNECTIONS_MAX,
+  CredentialCapacityError,
+  type CredentialQuery,
+  credentialQuery,
+} from "@knowledge-base/api/lib/kb/credential-query";
 import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
 import { createMemoryRatePort } from "@knowledge-base/api/lib/kb/limits";
 import type { CredentialVerifier, TokenPrincipal } from "@knowledge-base/api/lib/kb/principal";
@@ -448,6 +453,39 @@ describe("owned credential SQL and forced-2FA authority", () => {
     expect(
       (await db.query("runtime", "SELECT pid FROM pg_stat_activity WHERE pid=$1", [pid])).rows,
     ).toHaveLength(0);
+  });
+
+  it("a burst of parallel credential queries stays under the connection cap and never hits 53300", async () => {
+    const sql = credentialQuery(db.urls.runtime);
+    let peak = 0;
+    let sampling = true;
+    const sample = (async () => {
+      while (sampling) {
+        const rows = await db.query(
+          "runtime",
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name LIKE 'kb-admission-%'",
+        );
+        peak = Math.max(peak, Number((rows.rows[0] as { n: number }).n));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    })();
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 160 }, () =>
+        sql(new AbortController().signal, async (query) => {
+          await query("SELECT pg_sleep(0.01)");
+          return "ok";
+        }),
+      ),
+    );
+    sampling = false;
+    await sample;
+    for (const outcome of outcomes) {
+      if (outcome.status === "fulfilled") expect(outcome.value).toBe("ok");
+      // Only the clean busy refusal, never PostgreSQL's 53300.
+      else expect(outcome.reason).toBeInstanceOf(CredentialCapacityError);
+    }
+    expect(outcomes.some((o) => o.status === "fulfilled")).toBe(true);
+    expect(peak).toBeLessThanOrEqual(CREDENTIAL_CONNECTIONS_MAX);
   });
 
   it("an unheld query adapter cannot bypass the owned credential I/O port", async () => {

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
 import { getKbRuntime, type KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { logInternalError } from "@knowledge-base/env/log";
@@ -221,7 +222,12 @@ export function createMcpEndpoint(options: {
         // A denial (401/403) is the answer; any other code, including an
         // admission STORAGE_UNAVAILABLE, is a server failure the client sees
         // only as 503, so the operator log gets it.
-        if (!isAdmissionDenial(error) && !permit.signal.aborted)
+        // Credential connections busy is load shedding, answered 503 + Retry-After.
+        if (
+          !isAdmissionDenial(error) &&
+          !(error instanceof CredentialCapacityError) &&
+          !permit.signal.aborted
+        )
           logInternalError("mcp.endpoint", error, { requestId });
         return admissionErrorResponse(error, options.origin);
       } finally {

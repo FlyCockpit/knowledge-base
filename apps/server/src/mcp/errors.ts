@@ -29,6 +29,8 @@ export function admissionErrorResponse(error: unknown, origin: string) {
       status,
       headers: {
         "cache-control": "no-store",
+        // A 503 is transient (storage, key service, credential connections busy).
+        ...(status === 503 ? { "retry-after": "1" } : {}),
         ...(status === 401
           ? {
               "www-authenticate": `Bearer resource_metadata="${new URL("/.well-known/oauth-protected-resource/mcp", origin).href}"`,

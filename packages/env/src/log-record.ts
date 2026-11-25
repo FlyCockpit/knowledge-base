@@ -50,6 +50,10 @@ export const LOG_SITES = {
   "worker.startup-stopped": ["info", "worker startup stopped by a planned shutdown"],
   "git.unsupported": ["error", "git >= 2.45 is required; use the trixie-based images"],
   "server.shutdown": ["error", "server shutdown failed"],
+  "server.shutdown-drain-timeout": [
+    "error",
+    "shutdown drain timed out with admission permits still held",
+  ],
   "server.control-socket": ["error", "process fence control socket failed"],
   "server.unhandled-rejection": ["error", "server unhandled promise rejection"],
   "server.uncaught-exception": ["error", "server uncaught exception"],
@@ -213,6 +217,8 @@ const FIELD_KEYS = [
   "sweep",
   "rowId",
   "kind",
+  "httpPermits",
+  "bearerPermits",
 ] as const;
 export type LogFieldKey = (typeof FIELD_KEYS)[number];
 // Startup diagnostics are constants, never exception text or a caller's URL.
@@ -247,6 +253,7 @@ export type LogFields = {
   stage?:
     | StartupStage
     | "http-close"
+    | "bearer-drain"
     | "start"
     | "finished"
     | "minute"

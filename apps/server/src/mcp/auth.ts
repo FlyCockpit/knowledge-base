@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CredentialQuery } from "@knowledge-base/api/lib/kb/credential-query";
+import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { getOperationLease, type LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import {
   type CredentialVerifier,
@@ -42,7 +43,7 @@ const jwksSchema = z.object({ keys: z.array(z.object({ kty: z.string() }).passth
  * (the post-reply freshness check still governs admission). Storage failures
  * are a redacted 503; a replay stays 401.
  */
-function durableDpopReplayStore(sql: CredentialQuery, signal: AbortSignal) {
+export function durableDpopReplayStore(sql: CredentialQuery, signal: AbortSignal) {
   return {
     async reserve({ key, expiresAt }: { key: string; expiresAt: Date }) {
       const identifier = `dpop-proof:${key}`;
@@ -63,7 +64,9 @@ function durableDpopReplayStore(sql: CredentialQuery, signal: AbortSignal) {
             [id, identifier, key, new Date(expiresAt.getTime() + 1000), new Date()],
           );
         });
-      } catch {
+      } catch (error) {
+        // Busy credential connections stay load shedding (503 + Retry-After, unlogged).
+        if (error instanceof CredentialCapacityError) throw error;
         throw new KbAdmissionError("STORAGE_UNAVAILABLE", "Credential service unavailable");
       }
       return result.rows.length === 1 && Date.now() < validUntil;
