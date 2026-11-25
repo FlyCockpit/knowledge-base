@@ -886,7 +886,7 @@ fn fix_tombstone_destroys_only_its_sealed_authority_and_replays() {
     assert_eq!(t.keys.values.borrow().len(), 1);
     let repo = kb_local::git_read::GitRepo::for_kb(t.s.paths(), &t.kb.id).unwrap();
     assert!(
-        kb_local::git_read::read_document(&repo, &rev, t.input(&r, None).path.as_str())
+        kb_local::git_source::read_document(&repo, &rev, t.input(&r, None).path.as_str())
             .unwrap()
             .markdown
             .contains(&r.to_string())

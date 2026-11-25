@@ -634,7 +634,7 @@ fn admission_diagnostic(code: ErrorCode, diagnostics: &mut usize) -> Option<trac
 struct Sweep {
     at: std::time::Instant,
     after: Option<KbId>,
-    disposable_after: Option<kb_local::generations::SweepCursor>,
+    disposable_after: Option<kb_local::generation_maintenance::SweepCursor>,
     diagnostics: usize,
     /// Pack rollup deferrals already reported (KB, deferral count).
     deferrals: std::collections::HashSet<(KbId, u64)>,

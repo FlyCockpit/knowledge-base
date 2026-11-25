@@ -16,10 +16,13 @@ use std::path::{Path, PathBuf};
 use kb_client::types::{KbPath, Sha, Uuid};
 
 use crate::StoreError;
-use crate::git_read::{EntryKind, GitError, GitRepo, IncomingBudget, WalkBudget, walk_tree};
 use crate::locks::WriteGuard;
 use crate::paths::{StorePaths, create_dir_exclusive, sync_dir};
 use crate::tree::TREE_LIMITS;
+use crate::{
+    git_read::{GitError, GitRepo},
+    git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+};
 
 pub(crate) const MAIN_REF: &str = "refs/heads/main";
 const ZERO_OID: &str = "0000000000000000000000000000000000000000";

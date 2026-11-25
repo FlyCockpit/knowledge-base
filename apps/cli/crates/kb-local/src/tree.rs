@@ -17,10 +17,11 @@ use std::collections::HashMap;
 use kb_client::types::Sha;
 use kb_client::{casefold_path_key, check_kb_path};
 
-use crate::git_read::{
-    EntryKind, GitError, GitRepo, IncomingBudget, ObjectKind, ObjectReader, WalkBudget, walk_tree,
-};
 use crate::markdown::{parse_markdown, sealed_references_in, validate_markdown_bytes};
+use crate::{
+    git_read::{GitError, GitRepo, ObjectKind, ObjectReader},
+    git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+};
 
 /// Tree budgets (`KB_TREE_LIMITS` in `packages/api/src/lib/kb/limits.ts`).
 #[derive(Clone, Copy, Debug)]

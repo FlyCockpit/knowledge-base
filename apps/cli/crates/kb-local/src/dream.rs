@@ -42,14 +42,14 @@ use ring::digest::{SHA256, digest};
 use serde_json::{Map, Value, json};
 
 use crate::StoreError;
-use crate::git_read::{
-    DOCUMENT_MAX_BYTES, EntryKind, GitError, GitRepo, IncomingBudget, ObjectKind, WalkBudget,
-    walk_tree,
-};
 use crate::markdown::{find_sealed_references, parse_markdown};
 use crate::sensitive_text::contains_known_credential_patterns;
 use crate::store::Store;
 use crate::tree::TREE_LIMITS;
+use crate::{
+    git_read::{DOCUMENT_MAX_BYTES, GitError, GitRepo, ObjectKind},
+    git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+};
 
 /// Inline dream body cap (CONTRACT: 64 KiB each).
 pub const DREAM_BODY_MAX_BYTES: usize = 64 * 1024;

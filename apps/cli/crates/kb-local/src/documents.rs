@@ -24,15 +24,16 @@ use kb_client::types::{
 use crate::StoreError;
 use crate::bases::check_input;
 use crate::cursor::{self, Binding};
-use crate::git_read::{
-    DOCUMENT_MAX_BYTES, EntryKind, GitError, GitRepo, IncomingBudget, ObjectKind, SourceError,
-    WalkBudget, read_document, walk_tree,
-};
 use crate::limits::{check_response_size, page_limit};
 use crate::markdown::{map_to_json, parse_markdown};
 use crate::state::LocalPrincipal;
 use crate::store::Store;
 use crate::tree::TREE_LIMITS;
+use crate::{
+    git_read::{DOCUMENT_MAX_BYTES, GitError, GitRepo, ObjectKind},
+    git_source::{SourceError, read_document},
+    git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+};
 
 /// The tool shape of a document read at `commit`, its asset references
 /// resolved against that revision's manifest `entries`.

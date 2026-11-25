@@ -301,13 +301,13 @@ fn child_role_entry() {
             if parts[2] == "batch-malformed" {
                 assert!(matches!(error, GitError::Failed(_)), "{error:?}");
                 assert_eq!(
-                    kb_local::git_read::SourceError::from(error).protocol_code(),
+                    kb_local::git_source::SourceError::from(error).protocol_code(),
                     ErrorCode::StorageUnavailable
                 );
             } else {
                 assert!(matches!(error, GitError::Timeout), "{error:?}");
                 assert_eq!(
-                    kb_local::git_read::SourceError::from(error).protocol_code(),
+                    kb_local::git_source::SourceError::from(error).protocol_code(),
                     ErrorCode::DeadlineExceeded
                 );
             }
