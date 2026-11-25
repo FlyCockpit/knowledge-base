@@ -41,13 +41,14 @@ use kb_client::types::{DreamMetadata, DreamUpsert, KbId, KbPath, Sha, Uuid};
 use ring::digest::{SHA256, digest};
 use serde_json::{Map, Value, json};
 
+use crate::StoreError;
 use crate::git_read::{
     DOCUMENT_MAX_BYTES, EntryKind, GitError, GitRepo, IncomingBudget, ObjectKind, WalkBudget,
     walk_tree,
 };
 use crate::markdown::{find_sealed_references, parse_markdown};
 use crate::sensitive_text::contains_known_credential_patterns;
-use crate::store::{Store, StoreError};
+use crate::store::Store;
 use crate::tree::TREE_LIMITS;
 
 /// Inline dream body cap (CONTRACT: 64 KiB each).

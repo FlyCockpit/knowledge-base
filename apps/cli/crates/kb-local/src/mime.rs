@@ -1,5 +1,5 @@
 //! Bounded content sniffing; declared MIME never selects an unchecked format.
-use crate::{StoreError, cas::ASSET_MAX_BYTES};
+use crate::{StoreError, limits::ASSET_MAX_BYTES};
 use kb_client::types::Mime;
 pub fn is_asset_mime(mime: Mime) -> bool {
     matches!(

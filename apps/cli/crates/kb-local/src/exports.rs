@@ -4,9 +4,8 @@
 use crate::{
     LocalPrincipal, Store, StoreError, StorePaths,
     bases::check_input,
-    git_read::{
-        EntryKind, GitRepo, IncomingBudget, ObjectKind, OperationDeadline, WalkBudget, walk_tree,
-    },
+    deadline::OperationDeadline,
+    git_read::{EntryKind, GitRepo, IncomingBudget, ObjectKind, WalkBudget, walk_tree},
     paths::{ensure_dir, open_no_follow, sync_dir},
     state::{format_utc, new_uuid_v4},
     tree::{self, TREE_LIMITS},
@@ -109,77 +108,76 @@ struct Entry {
     blob: Option<String>,
     hash: Option<ContentHash>,
 }
-fn inventory(
-    s: &Store,
-    kb: &KbId,
-    repo: &GitRepo,
-    rev: &Sha,
-    kind: ExportKind,
-    c: &ExportControl,
-) -> Result<Vec<Entry>, StoreError> {
-    c.check()?;
-    let assets = s.manifest_entries(kb, repo, rev)?;
-    if assets.len() > EXPORT_MAX_ENTRIES
-        || assets.iter().map(|e| e.size).sum::<u64>() > EXPORT_MAX_BYTES
-    {
-        return Err(StoreError::QuotaExceeded("export inventory".into()));
-    }
-    // Validate names, modes, required files and whole-tree/manifest disjointness
-    // even for assets-only export; no arbitrary filesystem directory is read.
-    tree::validate_commit(
-        repo,
-        rev,
-        &crate::manifest::SnapshotPolicy(crate::manifest::Policy {
-            base: None,
-            store: s,
-            kb,
-            pending: &[],
-        }),
-    )
-    .map_err(|e| match e {
-        tree::TreeError::Invalid(_) => StoreError::InvalidArgument("export tree".into()),
-        tree::TreeError::Git(e) => e.into(),
-    })?;
+impl Store {
+    fn export_inventory(
+        &self,
+        kb: &KbId,
+        repo: &GitRepo,
+        rev: &Sha,
+        kind: ExportKind,
+        c: &ExportControl,
+    ) -> Result<Vec<Entry>, StoreError> {
+        c.check()?;
+        let assets = self.manifest_entries(kb, repo, rev)?;
+        if assets.len() > EXPORT_MAX_ENTRIES
+            || assets.iter().map(|e| e.size).sum::<u64>() > EXPORT_MAX_BYTES
+        {
+            return Err(StoreError::QuotaExceeded("export inventory".into()));
+        }
+        // Validate names, modes, required files and whole-tree/manifest disjointness
+        // even for assets-only export; no arbitrary filesystem directory is read.
+        tree::validate_commit(
+            repo,
+            rev,
+            &crate::manifest::SnapshotPolicy(self.tree_policy(kb, &[], None)),
+        )
+        .map_err(|e| match e {
+            tree::TreeError::Invalid(_) => StoreError::InvalidArgument("export tree".into()),
+            tree::TreeError::Git(e) => e.into(),
+        })?;
 
-    let mut out = Vec::new();
-    if kind == ExportKind::Whole {
-        let mut reader = repo.object_reader()?;
-        let info = reader.read_commit(rev)?;
-        let entries = walk_tree(
-            &mut reader,
-            &info.tree,
-            &mut WalkBudget::new(TREE_LIMITS.max_entries),
-            &mut IncomingBudget::new(
-                TREE_LIMITS.max_objects,
-                TREE_LIMITS.max_uncompressed_object_bytes,
-                None,
-            ),
-        )?;
-        for e in entries.into_iter().filter(|e| e.kind == EntryKind::Blob) {
-            c.check()?;
-            let bytes = reader.read(&e.sha, ObjectKind::Blob, TREE_LIMITS.max_markdown_bytes)?;
+        let mut out = Vec::new();
+        if kind == ExportKind::Whole {
+            let mut reader = repo.object_reader()?;
+            let info = reader.read_commit(rev)?;
+            let entries = walk_tree(
+                &mut reader,
+                &info.tree,
+                &mut WalkBudget::new(TREE_LIMITS.max_entries),
+                &mut IncomingBudget::new(
+                    TREE_LIMITS.max_objects,
+                    TREE_LIMITS.max_uncompressed_object_bytes,
+                    None,
+                ),
+            )?;
+            for e in entries.into_iter().filter(|e| e.kind == EntryKind::Blob) {
+                c.check()?;
+                let bytes =
+                    reader.read(&e.sha, ObjectKind::Blob, TREE_LIMITS.max_markdown_bytes)?;
+                out.push(Entry {
+                    path: e.path,
+                    size: bytes.len() as u64,
+                    blob: Some(e.sha),
+                    hash: None,
+                });
+            }
+        }
+        for e in assets {
             out.push(Entry {
                 path: e.path,
-                size: bytes.len() as u64,
-                blob: Some(e.sha),
-                hash: None,
+                size: e.size,
+                blob: None,
+                hash: Some(ContentHash::parse(&e.hash).map_err(|_| unavailable())?),
             });
         }
+        if out.len() > EXPORT_MAX_ENTRIES
+            || out.iter().map(|e| e.size).sum::<u64>() > EXPORT_MAX_BYTES
+        {
+            return Err(StoreError::QuotaExceeded("export inventory".into()));
+        }
+        c.check()?;
+        Ok(out)
     }
-    for e in assets {
-        out.push(Entry {
-            path: e.path,
-            size: e.size,
-            blob: None,
-            hash: Some(ContentHash::parse(&e.hash).map_err(|_| unavailable())?),
-        });
-    }
-    if out.len() > EXPORT_MAX_ENTRIES || out.iter().map(|e| e.size).sum::<u64>() > EXPORT_MAX_BYTES
-    {
-        return Err(StoreError::QuotaExceeded("export inventory".into()));
-    }
-    c.check()?;
-    Ok(out)
 }
 impl Store {
     pub fn export_prepare(
@@ -293,7 +291,8 @@ impl Store {
                 input.kb_id.as_str(),
                 self.now_ms(),
             )?;
-            let entries = inventory(self, &input.kb_id, &repo, &rev, input.kind, c)
+            let entries = self
+                .export_inventory(&input.kb_id, &repo, &rev, input.kind, c)
                 .or_else(|e| OperationDeadline::check().and(Err(e)))?;
             // Continuous producer ownership reserves the complete STORE archive
             // until it is materialized. Existing/unreclaimed bytes are already
@@ -334,9 +333,8 @@ impl Store {
                 observe(ExportStage::ArtifactOpened, &id)?;
                 c.check()?;
                 write_zip(
-                    self,
-                    p,
-                    &input.kb_id,
+                    &self.paths,
+                    &|| self.authorize(p, &input.kb_id, Permission::Read).map(drop),
                     &repo,
                     &entries,
                     &mut file,
@@ -407,7 +405,7 @@ impl Store {
 // Use OS-shipped utilities through the same lock-inheriting, capped-output,
 // deadline/cancellation/drain boundary as Git. No new unsafe/dependency scope.
 fn available_disk(repo: &GitRepo, path: &Path) -> Result<u64, StoreError> {
-    crate::limits::measure_disk(path, |command, cap| repo.run_command(command, cap))
+    crate::disk::measure_disk(path, |command, cap| repo.run_command(command, cap))
 }
 
 /// `failure_code` of an export its owner cancelled or discarded.
@@ -633,9 +631,8 @@ fn put32(b: &mut [u8], at: usize, v: u32) {
 }
 #[allow(clippy::too_many_arguments)] // One writer owns the file, fence and cancellation control.
 fn write_zip(
-    s: &Store,
-    p: &LocalPrincipal,
-    kb: &KbId,
+    paths: &StorePaths,
+    authorize: &dyn Fn() -> Result<(), StoreError>,
     repo: &GitRepo,
     entries: &[Entry],
     file: &mut File,
@@ -653,7 +650,7 @@ fn write_zip(
         Ok(())
     };
     for e in entries {
-        s.authorize(p, kb, Permission::Read)?;
+        authorize()?;
         c.check()?;
         // Source sizes are known from preflight; a CAS source is never loaded
         // as a whole buffer. Git documents are capped at 2 MiB by the validator.
@@ -664,8 +661,8 @@ fn write_zip(
                 TREE_LIMITS.max_markdown_bytes,
             )?))
         } else {
-            let path = crate::cas::blob_path(&s.paths, e.hash.as_ref().ok_or_else(unavailable)?);
-            s.paths.check_no_follow(&path)?;
+            let path = crate::cas::blob_path(paths, e.hash.as_ref().ok_or_else(unavailable)?);
+            paths.check_no_follow(&path)?;
             let f =
                 open_no_follow(&path, OpenOptions::new().read(true)).map_err(|_| unavailable())?;
             if f.metadata().map_err(StoreError::Io)?.len() != e.size {

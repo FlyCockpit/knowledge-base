@@ -5,7 +5,8 @@ pub use crate::fingerprint::EMBEDDING_VERSIONS;
 use crate::{
     LocalPrincipal, Store, StoreError,
     credentials::{self, Credentials, Secret},
-    egress::{Endpoint, PinnedEgress, unavailable},
+    egress::{Endpoint, PinnedEgress},
+    embedder::unavailable,
     embedder::{ProviderControl, validate_embeddings},
     state::{new_id, new_uuid_v4},
 };
@@ -221,7 +222,7 @@ impl Store {
         keys: &dyn Credentials,
     ) -> Result<ProviderRevision, StoreError> {
         let ctl = ProviderControl::default();
-        let fence = crate::locks::credential_lock(&self.paths, id, v, &ctl)?;
+        let fence = crate::locks::credential_lock(&self.paths, id, v, || ctl.check())?;
         {
             let _guard = self.lock_write(&[])?;
             let r = self.provider_revision(p, id, v)?;
@@ -331,7 +332,7 @@ impl Store {
             let Some(v) = v else {
                 break;
             };
-            let fence = crate::locks::credential_lock(&self.paths, id, v, &ctl)?;
+            let fence = crate::locks::credential_lock(&self.paths, id, v, || ctl.check())?;
             keys.delete_controlled(&self.credential_account(id, v), &ctl, &fence)?;
             let _guard = self.lock_write(&[])?;
             self.conn.execute("UPDATE provider_revisions SET secret_deleted=1 WHERE provider_id=?1 AND revision=?2",(id.as_str(),v))?;
@@ -515,7 +516,7 @@ impl Store {
             admit()?;
             self.usable_provider(p, id, v, attempt)?
         };
-        let fence = crate::locks::credential_lock_async(&self.paths, id, v, ctl).await?;
+        let fence = crate::locks::credential_lock_async(&self.paths, id, v, || ctl.check()).await?;
         {
             let _guard = self.lock_write(&[])?;
             ctl.check()?;

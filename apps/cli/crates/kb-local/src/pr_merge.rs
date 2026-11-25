@@ -13,6 +13,7 @@ use kb_client::error::{ConflictKind, ConflictPath, PROPOSAL_CONFLICT_MAX_PATHS, 
 use kb_client::types::{KbPath, Sha};
 use serde::{Deserialize, Serialize};
 
+use crate::StoreError;
 use crate::git_read::{DOCUMENT_MAX_BYTES, GitRepo, ObjectKind, ObjectReader};
 use crate::git_write::{ObjectWriter, Scratch, TreeEdit};
 use crate::locks::WriteGuard;
@@ -22,7 +23,6 @@ use crate::logical_merge::{
 };
 use crate::paths::StorePaths;
 use crate::state::new_uuid_v4;
-use crate::store::StoreError;
 use crate::tree::{MANIFEST_PATH, ManifestEntry, TREE_LIMITS};
 
 /// Combined UTF-8 budget of the inline base/theirs/yours contents
@@ -295,7 +295,7 @@ impl MergeSource for GitSource<'_> {
         if items.is_empty() {
             return Ok(out);
         }
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         let name = |index: usize| format!("f{index}");
         // `self.repo` is a staged repository: the synthetic trees and the
         // merge result land in its disposable object store, never canonical.
@@ -378,7 +378,7 @@ impl MergeSource for GitSource<'_> {
     }
 
     fn checkpoint(&mut self) -> Result<(), StoreError> {
-        crate::git_read::OperationDeadline::check()
+        crate::deadline::OperationDeadline::check()
     }
 }
 

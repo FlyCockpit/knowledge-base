@@ -24,6 +24,7 @@ use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+use crate::StoreError;
 use crate::cursor::{self, Binding};
 use crate::journal::{CreateKbRequest, Phase, parse_key, parse_uuid, request_hash};
 use crate::limits::{CREATE_WINDOW_SECS, page_limit};
@@ -31,7 +32,7 @@ use crate::locks::{self, WriteGuard};
 use crate::state::{
     Bits, LocalPrincipal, PrincipalKind, format_utc, new_uuid_v4, now_secs, now_utc,
 };
-use crate::store::{KbRecord, KbState, Store, StoreError};
+use crate::store::{KbRecord, KbState, Store};
 
 const OP_UPDATE: &str = "KB_UPDATE";
 const OP_DELETE: &str = "KB_DELETE";
@@ -561,7 +562,7 @@ impl Store {
             return Err(StoreError::Conflict("metadata version conflict".into()));
         }
         insert_receipt(&tx, &op_id, &actor, &kb, OP_UPDATE, key.as_str(), &hash)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         tx.commit()?;
         Ok(KbMutationOutput {
             operation_id: op_id,
@@ -646,7 +647,7 @@ impl Store {
         )?;
         tx.execute("UPDATE staged_uploads SET reserved_by_op_id=NULL WHERE kb_id=?1 AND reserved_by_op_id IN (SELECT op_id FROM operation_intents WHERE kb_id=?1 AND phase='ABORTED')",[kb.as_str()])?;
         insert_receipt(&tx, &op_id, &actor, &kb, OP_DELETE, key.as_str(), &hash)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         tx.commit()?;
         Ok(BasesDeleteOutput {
             operation_id: op_id,

@@ -217,8 +217,8 @@ async fn dispatch_with_io_observed(
     // Defence in depth behind the session's scope admission: the store
     // refuses every write the mode does not allow before any side effect.
     s.narrow_authoring(io.authoring);
-    let _scope = crate::git_read::OperationDeadline::transport(c.clone());
-    if let Err(e) = crate::git_read::OperationDeadline::check() {
+    let _scope = crate::deadline::OperationDeadline::transport(c.clone());
+    if let Err(e) = crate::deadline::OperationDeadline::check() {
         return failure(e);
     }
     macro_rules! call {

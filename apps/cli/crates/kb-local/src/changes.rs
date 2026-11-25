@@ -56,8 +56,10 @@ use kb_client::types::{
 use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 use serde_json::Value;
 
+use crate::StoreError;
 use crate::assets::AssetDelta;
 use crate::bases::check_input;
+use crate::error::constraint_to_conflict;
 use crate::git_read::GitRepo;
 use crate::git_write::{self, MAIN_REF, ObjectWriter, Scratch, TreeEdit};
 use crate::journal::{
@@ -65,14 +67,14 @@ use crate::journal::{
 };
 use crate::locks::WriteGuard;
 use crate::logical_merge::Kind;
-use crate::manifest::{self, Policy};
+use crate::manifest;
 use crate::markdown::{
     MarkdownIssueCode, parse_markdown, same_except_provenance_line, stamp_provenance,
 };
 use crate::pr_merge::ConflictItem;
 use crate::proposals::{PrRow, ProposalDelta, proposal_ref};
 use crate::state::{LocalPrincipal, new_uuid_v4, now_utc};
-use crate::store::{Store, StoreError, constraint_to_conflict};
+use crate::store::Store;
 use crate::tree::{TreeError, validate_commit};
 use kb_client::error::InvalidReason;
 
@@ -560,7 +562,7 @@ impl Store {
         } else {
             kb_client::authoring::WriteKind::Edit
         })?;
-        let _deadline = crate::git_read::OperationDeadline::start();
+        let _deadline = crate::deadline::OperationDeadline::start();
         let key = parse_key(&set.key)?;
         let (mut edits, assets) = validate_edits(&set)?;
         let kb = set.kb.clone();
@@ -1026,12 +1028,7 @@ impl Store {
             let validated = match validate_commit(
                 &staged,
                 &commit,
-                &Policy {
-                    store: self,
-                    kb: &kb,
-                    pending: &asset_delta.entries(),
-                    base: Some(&validation_base),
-                },
+                &self.tree_policy(&kb, &asset_delta.entries(), Some(&validation_base)),
             ) {
                 Ok(validated) => validated,
                 Err(TreeError::Invalid(violation)) => {
@@ -1412,9 +1409,9 @@ impl Store {
         let prepared = (|| -> Result<(), StoreError> {
             observer(Stage::Prepared)?;
             observer(Stage::SyncObjects)?;
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             git_write::sync_objects(repo, written)?;
-            crate::git_read::OperationDeadline::check()
+            crate::deadline::OperationDeadline::check()
         })();
         if let Err(error) = prepared {
             let _ = self.abort_intent(op_id, kb, false, kb_client::ErrorCode::Conflict);
@@ -1445,8 +1442,8 @@ impl Store {
             if let Some(source) = publication.import {
                 self.import_entry(publication.principal, source)?;
             }
-            crate::git_read::OperationDeadline::check()?;
-            crate::git_read::OperationDeadline::reserve_transport()?;
+            crate::deadline::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::reserve_transport()?;
             let changed = self.conn.execute(
                 "UPDATE operation_intents SET phase = 'COMMITTING' \
                  WHERE op_id = ?1 AND phase = 'PREPARED'",

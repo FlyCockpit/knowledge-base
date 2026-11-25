@@ -2,7 +2,8 @@
 //! acknowledged offsets follow fsync. Lock order: store -> sorted KB -> SQLite.
 use crate::{
     KbState, LocalPrincipal, Store, StoreError, StorePaths,
-    cas::{ASSET_MAX_BYTES, verified_bytes},
+    cas::verified_bytes,
+    limits::ASSET_MAX_BYTES,
     locks,
     mime::{is_asset_mime, validate_media},
     paths::{open_no_follow, sync_dir},

@@ -22,10 +22,10 @@ use std::rc::Rc;
 use kb_client::casefold_path_key;
 use serde::{Deserialize, Serialize};
 
+use crate::StoreError;
 use crate::markdown::{
     ProvenanceStamp, document_provenance, parse_markdown, split_front_matter, stamp_provenance,
 };
-use crate::store::StoreError;
 use crate::tree::{MANIFEST_PATH, ManifestEntry, TREE_LIMITS, canonical_manifest_bytes};
 
 /// The managed `.gitignore`: carried through from main, never merged.

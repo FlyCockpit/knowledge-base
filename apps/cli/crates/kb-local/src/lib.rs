@@ -127,13 +127,16 @@ pub mod chunk;
 pub mod citation;
 pub mod credentials;
 mod cursor;
+mod deadline;
 pub mod diff;
+mod disk;
 pub mod dispatch;
 pub mod documents;
 pub mod dream;
 pub mod egress;
 pub mod embed_service;
 pub mod embedder;
+mod error;
 pub mod exports;
 pub mod fingerprint;
 pub mod generations;
@@ -173,16 +176,15 @@ mod vector_cache;
 #[cfg(windows)]
 mod win;
 
+pub use error::StoreError;
 pub use journal::{
     CommitRequest, CreateKbRequest, FileChange, IntentRow, MAX_CHANGES, Phase, Receipt, Stage,
 };
 pub use locks::WriteGuard;
-pub use paths::StorePaths;
+pub use paths::{OpenStage, StorePaths};
 pub use recovery::{ConsolidationDeferral, READ_GATE_TIMEOUT, RecoveryReport};
 pub use state::{Bits, ConnectionSettings, LocalPrincipal, PrincipalKind};
-pub use store::{
-    KbRecord, KbState, NewKb, OpenStage, RuntimeReconcile, Store, StoreError, local_attachment,
-};
+pub use store::{KbRecord, KbState, NewKb, RuntimeReconcile, Store, local_attachment};
 
 #[cfg(test)]
 #[path = "../tests/support/temp_dir.rs"]

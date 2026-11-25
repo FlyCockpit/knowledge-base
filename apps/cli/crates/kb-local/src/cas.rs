@@ -1,6 +1,8 @@
 //! Immutable SHA256 CAS. No replacing rename on any platform, no GC.
 use crate::{
-    StoreError, StorePaths, locks,
+    StoreError, StorePaths,
+    limits::ASSET_MAX_BYTES,
+    locks,
     mime::validate_media,
     paths::{ensure_dir, open_no_follow, sync_dir},
     state::new_uuid_v4,
@@ -11,7 +13,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-pub const ASSET_MAX_BYTES: u64 = 25 * 1024 * 1024;
 #[derive(Debug)]
 pub struct PublishedBlob {
     pub path: PathBuf,

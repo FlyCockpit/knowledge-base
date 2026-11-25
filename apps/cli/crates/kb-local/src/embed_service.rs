@@ -19,7 +19,7 @@
 //!   model file without its pinned size and SHA-256 (`ModelCache`).
 use crate::{
     StoreError,
-    egress::unavailable,
+    embedder::unavailable,
     model_download::ModelCache,
     qwen::{Embedding, ModelDescriptor, ModelOutput, Purpose, descriptor},
 };
@@ -287,9 +287,7 @@ impl ModelHost {
         {
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
             let meta = file.metadata().map_err(StoreError::Io)?;
-            if meta.uid() != crate::model_download::own_uid()?
-                || meta.permissions().mode() & 0o077 != 0
-            {
+            if meta.uid() != crate::paths::own_uid()? || meta.permissions().mode() & 0o077 != 0 {
                 return Err(StoreError::UnsafePath(
                     "embedding worker key is not owner-only".into(),
                 ));
@@ -665,8 +663,7 @@ fn check_private_dir(dir: &Path) -> Result<(), StoreError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if meta.uid() != crate::model_download::own_uid()? || meta.permissions().mode() & 0o077 != 0
-        {
+        if meta.uid() != crate::paths::own_uid()? || meta.permissions().mode() & 0o077 != 0 {
             return Err(StoreError::UnsafePath(
                 "embedding runtime directory is not owner-only".into(),
             ));
@@ -790,7 +787,7 @@ async fn connect_stream(host: &ModelHost) -> Result<Stream, StoreError> {
         .await
         .map_err(StoreError::Io)?;
     let peer = stream.peer_cred().map_err(StoreError::Io)?.uid();
-    if peer != crate::model_download::own_uid()? {
+    if peer != crate::paths::own_uid()? {
         return Err(StoreError::UnsafePath(
             "embedding worker socket belongs to another user".into(),
         ));
@@ -1472,7 +1469,7 @@ impl ModelHost {
                     fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))
                         .map_err(StoreError::Io)?;
                 }
-                let uid = crate::model_download::own_uid()?;
+                let uid = crate::paths::own_uid()?;
                 let mut tick = tokio::time::interval(Duration::from_millis(50));
                 while serving() {
                     tokio::select! {

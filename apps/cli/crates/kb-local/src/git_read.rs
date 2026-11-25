@@ -36,29 +36,13 @@ use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-#[cfg(unix)]
-type NativeChild = std::process::Child;
-#[cfg(windows)]
-type NativeChild = crate::win::ProcessChild;
-#[cfg(unix)]
-type ChildStdin = std::process::ChildStdin;
-#[cfg(unix)]
-type ChildStdout = std::process::ChildStdout;
-#[cfg(windows)]
-type ChildStdin = std::fs::File;
-#[cfg(windows)]
-type ChildStdout = std::fs::File;
-
 pub(crate) enum Input {
     Null,
     Pipe,
     From(ChildStdout),
 }
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -67,19 +51,14 @@ use kb_client::host::snapshot::content_hash;
 use kb_client::types::{KbId, KbPath, Sha};
 
 use crate::StoreError;
+use crate::deadline::{OperationDeadline, ScopeWatch};
+use crate::locks::{ChildStdin, ChildStdout, ProcessChild};
 use crate::markdown::{MarkdownIssue, SourceDocument, parse_markdown};
 use crate::paths::StorePaths;
 
 /// Default wall-clock bound for one Git child (validation bounded
 /// 60s). Tests inject a shorter one with [`GitRepo::with_timeout`].
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(60);
-thread_local! {
-    static OPERATION_CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
-    static OPERATION_DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
-    static OPERATION_CLOCK: std::cell::Cell<fn() -> Instant> = const { std::cell::Cell::new(Instant::now) };
-}
-
-thread_local! { static TRANSPORT_CONTROL: std::cell::RefCell<Option<kb_client::mcp::stdio::CallControl>> = const { std::cell::RefCell::new(None) }; }
 // A test can park the pack feeder until the supervised indexer is killed.
 // Thread-local and one-shot, so parallel publications are unaffected.
 #[cfg(test)]
@@ -90,120 +69,6 @@ pub(crate) struct PackInstallProbe {
 #[cfg(test)]
 thread_local! {
     pub(crate) static PACK_INSTALL_PROBE: std::cell::RefCell<Option<PackInstallProbe>> = const { std::cell::RefCell::new(None) };
-}
-/// Synchronous service scope: every Git handle/child shares one absolute
-/// deadline, including readers opened by recovery and the dream guard.
-pub(crate) struct OperationDeadline(
-    Option<Instant>,
-    Option<Arc<AtomicBool>>,
-    Option<Option<kb_client::mcp::stdio::CallControl>>,
-    fn() -> Instant,
-);
-impl OperationDeadline {
-    pub(crate) fn now() -> Instant {
-        (OPERATION_CLOCK.get())()
-    }
-    pub(crate) fn transport(control: kb_client::mcp::stdio::CallControl) -> Self {
-        let mut scope = Self::bounded(control.until(), control.work_flag());
-        scope.2 = Some(TRANSPORT_CONTROL.replace(Some(control)));
-        scope
-    }
-    pub(crate) fn reserve_transport() -> Result<(), StoreError> {
-        Self::check()?;
-        TRANSPORT_CONTROL.with(|c| {
-            if let Some(c) = c.borrow().as_ref() {
-                c.reserve().map_err(StoreError::OperationAborted)?;
-                OPERATION_CANCEL.replace(None);
-            }
-            Ok(())
-        })
-    }
-
-    pub(crate) fn start() -> Self {
-        Self::with_timeout(Duration::from_secs(30))
-    }
-    /// A nested scope that ends at `budget` from now or at the enclosing
-    /// deadline, whichever is first (maintenance inside a caller's call).
-    pub(crate) fn budget(budget: Duration) -> Self {
-        Self::with_timeout(budget)
-    }
-    /// Time left in the current scope (zero once cancelled); `None` without
-    /// a deadline.
-    pub(crate) fn remaining() -> Option<Duration> {
-        if OPERATION_CANCEL.with(|c| {
-            c.borrow()
-                .as_ref()
-                .is_some_and(|c| c.load(Ordering::Acquire))
-        }) {
-            return Some(Duration::ZERO);
-        }
-        OPERATION_DEADLINE
-            .get()
-            .map(|deadline| deadline.saturating_duration_since(Self::now()))
-    }
-    // Tests shorten the same thread-local operation scope; production enters
-    // through start() (the thirty-second service bound) or a nested budget.
-    fn with_timeout(timeout: Duration) -> Self {
-        let deadline = Self::now() + timeout;
-        Self(
-            OPERATION_DEADLINE.replace(Some(
-                OPERATION_DEADLINE
-                    .get()
-                    .map_or(deadline, |old| old.min(deadline)),
-            )),
-            OPERATION_CANCEL.with(|c| c.borrow().clone()),
-            None,
-            OPERATION_CLOCK.get(),
-        )
-    }
-    pub(crate) fn bounded(deadline: Instant, cancel: Arc<AtomicBool>) -> Self {
-        Self::bounded_with_clock(deadline, cancel, Instant::now)
-    }
-    pub(crate) fn bounded_with_clock(
-        deadline: Instant,
-        cancel: Arc<AtomicBool>,
-        clock: fn() -> Instant,
-    ) -> Self {
-        Self(
-            OPERATION_DEADLINE.replace(Some(
-                OPERATION_DEADLINE
-                    .get()
-                    .map_or(deadline, |old| old.min(deadline)),
-            )),
-            OPERATION_CANCEL.replace(Some(cancel)),
-            None,
-            OPERATION_CLOCK.replace(clock),
-        )
-    }
-    #[cfg(test)]
-    pub(crate) fn for_test(timeout: Duration) -> Self {
-        Self::with_timeout(timeout)
-    }
-    pub(crate) fn check() -> Result<(), StoreError> {
-        if OPERATION_CANCEL.with(|c| {
-            c.borrow()
-                .as_ref()
-                .is_some_and(|c| c.load(Ordering::Acquire))
-        }) {
-            return Err(StoreError::OperationAborted(
-                kb_client::ErrorCode::Cancelled,
-            ));
-        }
-        if OPERATION_DEADLINE.get().is_some_and(|d| Self::now() >= d) {
-            return Err(StoreError::DeadlineExceeded);
-        }
-        Ok(())
-    }
-}
-impl Drop for OperationDeadline {
-    fn drop(&mut self) {
-        OPERATION_DEADLINE.set(self.0);
-        OPERATION_CLOCK.set(self.3);
-        OPERATION_CANCEL.set(self.1.clone());
-        if let Some(old) = self.2.take() {
-            TRANSPORT_CONTROL.set(old);
-        }
-    }
 }
 /// Largest tree or commit object read (the TS reader's 8 MiB buffer).
 pub const METADATA_OBJECT_MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -278,55 +143,6 @@ fn parse_sha(text: &[u8]) -> Result<Sha, GitError> {
 }
 
 // ── Supervised children ────────────────────────────────────────────────────
-
-/// A native child retaining its caller's lease until it is reaped.
-/// Git descendants inherit the store lock; dropping this handle cannot unlock
-/// their file description (Unix) or bypass the successor Job drain (Windows).
-/// Credential children keep the caller's lease in the parent and independently
-/// open their effect fence before receiving input.
-pub struct ProcessChild {
-    native: NativeChild,
-    pub stdin: Option<ChildStdin>,
-    pub stdout: Option<ChildStdout>,
-    owner: Option<Arc<crate::locks::LockOwner>>,
-}
-
-impl ProcessChild {
-    pub(crate) fn new(
-        mut native: NativeChild,
-        owner: Option<Arc<crate::locks::LockOwner>>,
-    ) -> Self {
-        Self {
-            stdin: native.stdin.take(),
-            stdout: native.stdout.take(),
-            native,
-            owner,
-        }
-    }
-
-    pub fn id(&self) -> u32 {
-        self.native.id()
-    }
-
-    pub fn kill(&mut self) -> std::io::Result<()> {
-        self.native.kill()
-    }
-
-    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        drop(self.stdin.take());
-        let status = self.native.wait()?;
-        drop(self.owner.take());
-        Ok(status)
-    }
-
-    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        let status = self.native.try_wait()?;
-        if status.is_some() {
-            drop(self.owner.take());
-        }
-        Ok(status)
-    }
-}
 
 /// A spawned Git child with a deadline watchdog. Drop kills and reaps it.
 struct Supervised {
@@ -1344,36 +1160,23 @@ fn supervise(child: ProcessChild, timeout: Duration) -> Supervised {
 fn supervise_shared(child: Arc<Mutex<ProcessChild>>, timeout: Duration) -> Supervised {
     // Keep the real child timeout separate from the enclosing operation clock:
     // an injected operation clock may pause during fixture preflight.
-    let operation_deadline = OPERATION_DEADLINE.get();
-    let clock = OPERATION_CLOCK.get();
+    let scope = ScopeWatch::current();
     let (stop, rx) = mpsc::channel::<()>();
     let watched = Arc::clone(&child);
-    let cancel = OPERATION_CANCEL.with(|c| c.borrow().clone());
     let watchdog = std::thread::spawn(move || {
         let deadline = Instant::now() + timeout;
         loop {
-            if Instant::now() >= deadline
-                || operation_deadline.is_some_and(|d| clock() >= d)
-                || cancel.as_ref().is_some_and(|c| c.load(Ordering::Acquire))
-            {
+            if Instant::now() >= deadline || scope.expired() || scope.cancelled() {
                 if let Ok(mut child) = watched.lock() {
                     let _ = child.kill();
                 }
-                return Some(
-                    if cancel.as_ref().is_some_and(|c| c.load(Ordering::Acquire)) {
-                        ErrorCode::Cancelled
-                    } else {
-                        ErrorCode::DeadlineExceeded
-                    },
-                );
+                return Some(if scope.cancelled() {
+                    ErrorCode::Cancelled
+                } else {
+                    ErrorCode::DeadlineExceeded
+                });
             }
-            let mut remaining = deadline.saturating_duration_since(Instant::now());
-            if let Some(d) = operation_deadline {
-                remaining = remaining.min(d.saturating_duration_since(clock()));
-            }
-            if cancel.is_some() {
-                remaining = remaining.min(Duration::from_millis(10));
-            }
+            let remaining = scope.bound(deadline.saturating_duration_since(Instant::now()));
             match rx.recv_timeout(remaining) {
                 Err(RecvTimeoutError::Timeout) => {}
                 _ => return None,
@@ -2008,45 +1811,6 @@ mod windows_command_tests {
 pub(crate) mod read_fixture;
 
 #[cfg(test)]
-mod operation_clock_tests {
-    use super::*;
-
-    fn paused_clock() -> Instant {
-        static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-        *EPOCH.get_or_init(|| Instant::now() + Duration::from_secs(3600))
-    }
-
-    #[test]
-    fn nested_budgets_and_remaining_use_the_enclosing_operation_clock() {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let outer = OperationDeadline::bounded_with_clock(
-            paused_clock() + Duration::from_secs(30),
-            cancel.clone(),
-            paused_clock,
-        );
-        assert_eq!(
-            OperationDeadline::remaining(),
-            Some(Duration::from_secs(30))
-        );
-        {
-            let _budget = OperationDeadline::budget(Duration::from_secs(2));
-            assert_eq!(OperationDeadline::remaining(), Some(Duration::from_secs(2)));
-            assert!(OperationDeadline::check().is_ok());
-            let _longer = OperationDeadline::budget(Duration::from_secs(60));
-            assert_eq!(OperationDeadline::remaining(), Some(Duration::from_secs(2)));
-        }
-        assert_eq!(
-            OperationDeadline::remaining(),
-            Some(Duration::from_secs(30))
-        );
-        cancel.store(true, Ordering::Release);
-        assert_eq!(OperationDeadline::remaining(), Some(Duration::ZERO));
-        drop(outer);
-        assert_eq!(OperationDeadline::remaining(), None);
-    }
-}
-
-#[cfg(test)]
 mod object_durability_tests {
     use super::*;
 
@@ -2074,6 +1838,7 @@ mod object_durability_tests {
 #[cfg(all(test, unix))]
 mod batch_cancel_tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     #[test]
     fn sealed_control_cancels_a_real_git_batch_and_allows_reentry() {
         let fx = read_fixture::Fixture::new("sealed-control");

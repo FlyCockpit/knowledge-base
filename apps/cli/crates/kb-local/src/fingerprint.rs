@@ -1,8 +1,5 @@
 //! Immutable external embedding space. Credentials cannot be an input.
-use crate::{
-    StoreError,
-    egress::{Endpoint, unavailable},
-};
+use crate::{StoreError, egress::Endpoint, embedder::unavailable};
 pub const EMBEDDING_VERSIONS: [&str; 10] = [
     "l2-f32-v1",
     "source-spans-whitespace-400-80-v1",

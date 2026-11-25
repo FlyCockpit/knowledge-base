@@ -25,11 +25,12 @@ use std::time::{Duration, Instant};
 use kb_client::ErrorCode;
 use kb_client::types::{KbId, Sha};
 
+use crate::StoreError;
 use crate::git_read::GitRepo;
 use crate::git_write;
 use crate::journal::{Delta, Phase};
 use crate::locks::{self, WriteGuard};
-use crate::store::{KbRecord, KbState, Store, StoreError};
+use crate::store::{KbRecord, KbState, Store};
 
 /// Bound for a read waiting on the write lock to finish recovery
 /// (lock acquisition max 5s).
@@ -127,12 +128,12 @@ impl Store {
     /// Resolve every unresolved journal row. Requires the store lock.
     pub fn recover(&self, guard: &WriteGuard) -> Result<RecoveryReport, StoreError> {
         self.check_guard(guard)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         crate::uploads::sweep_transfers(&self.conn, &self.paths, self.now_ms())?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         crate::cas::recover_temps(&self.paths, guard)?;
         git_write::recover_scratch(&self.paths, &self.conn)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         self.reconcile_unregistered_repos()?;
         self.recover_pending(guard, None)
     }
@@ -186,7 +187,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.check_guard(guard)?;
         let budget = git_write::CONSOLIDATE_BUDGET;
-        if crate::git_read::OperationDeadline::remaining()
+        if crate::deadline::OperationDeadline::remaining()
             .is_some_and(|left| left < budget + CONSOLIDATE_MARGIN)
         {
             return Ok(());
@@ -200,7 +201,7 @@ impl Store {
             || git_write::AFTER_ROLLUP_INTENT.with(|p| p.borrow().is_some());
         #[cfg(not(test))]
         let injected = false;
-        let maintenance_end = crate::git_read::OperationDeadline::now() + budget;
+        let maintenance_end = crate::deadline::OperationDeadline::now() + budget;
         // Lock order stays sorted; maintenance starts with the publication's
         // destination (the first requested KB), then probes the other locks.
         let ordered = preferred
@@ -208,9 +209,9 @@ impl Store {
             .chain(guard.kb_ids().iter().filter(|kb| Some(*kb) != preferred));
         for kb in ordered {
             let maintenance_budget = (scheduled && !injected).then(|| {
-                crate::git_read::OperationDeadline::budget(
+                crate::deadline::OperationDeadline::budget(
                     maintenance_end
-                        .saturating_duration_since(crate::git_read::OperationDeadline::now()),
+                        .saturating_duration_since(crate::deadline::OperationDeadline::now()),
                 )
             });
             if self.kb(kb)?.map(|kb| kb.state) != Some(KbState::Active) {
@@ -252,7 +253,7 @@ impl Store {
             drop(maintenance_budget);
             // Outside the nested budget: caller interruption is not a failed
             // maintenance attempt and must not change the retry history.
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             match settle(deferred.as_ref(), &result) {
                 Settle::Nothing => {}
                 Settle::Clear => {
@@ -277,10 +278,10 @@ impl Store {
                 }
             }
             if !no_work {
-                return crate::git_read::OperationDeadline::check();
+                return crate::deadline::OperationDeadline::check();
             }
         }
-        crate::git_read::OperationDeadline::check()
+        crate::deadline::OperationDeadline::check()
     }
 
     /// Recorded rollup deferrals, most recent first (diagnostics).
@@ -336,7 +337,7 @@ impl Store {
             }
             for row in rows {
                 after = Some(row.op_id.clone());
-                crate::git_read::OperationDeadline::check()?;
+                crate::deadline::OperationDeadline::check()?;
                 let create = row.operation == "KB_CREATE";
                 let state = self.kb(&row.kb_id)?.map(|kb| kb.state);
                 if state == Some(KbState::RepairRequired) {
@@ -360,7 +361,7 @@ impl Store {
                 let repo = GitRepo::for_kb(&self.paths, &row.kb_id)?;
                 let actual = git_write::read_ref(&repo, &row.ref_name)?;
                 // A cancelled reader is not evidence of ref divergence.
-                crate::git_read::OperationDeadline::check()?;
+                crate::deadline::OperationDeadline::check()?;
                 match row.phase {
                     Phase::Prepared => {
                         self.abort_intent(&row.op_id, &row.kb_id, create, ErrorCode::Conflict)?;
@@ -449,9 +450,9 @@ impl Store {
     fn lock_for_read_gate(&self, kb: &KbId) -> Result<WriteGuard, StoreError> {
         let deadline = Instant::now() + READ_GATE_TIMEOUT;
         loop {
-            crate::git_read::OperationDeadline::check()?;
+            crate::deadline::OperationDeadline::check()?;
             if let Some(guard) = locks::acquire(&self.paths, std::slice::from_ref(kb), false)? {
-                crate::git_read::OperationDeadline::check()?;
+                crate::deadline::OperationDeadline::check()?;
                 return Ok(guard);
             }
             if Instant::now() >= deadline {
@@ -881,7 +882,7 @@ mod settle_tests {
     /// without a rollup or a record; a caller with time attempts the rollup.
     #[test]
     fn a_rollup_never_spends_a_short_or_cancelled_callers_time() {
-        use crate::git_read::OperationDeadline;
+        use crate::deadline::OperationDeadline;
         let (base, store, kb) = due_store("deadline");
         let due = packs(&store, &kb);
         assert!(due >= git_write::CONSOLIDATE_PACKS);
@@ -947,7 +948,8 @@ mod settle_tests {
     }
 
     fn interrupted_pack_install(interruption: Interruption) {
-        use crate::git_read::{OperationDeadline, PACK_INSTALL_PROBE, PackInstallProbe};
+        use crate::deadline::OperationDeadline;
+        use crate::git_read::{PACK_INSTALL_PROBE, PackInstallProbe};
         use std::sync::{
             Arc, Mutex,
             atomic::{AtomicBool, Ordering},
@@ -1121,7 +1123,7 @@ mod settle_tests {
     }
 
     fn cleanup_retry(fault: CleanupFault) {
-        use crate::git_read::OperationDeadline;
+        use crate::deadline::OperationDeadline;
         let (base, store, kb) = due_store("cleanup");
         let fixture = CleanupFixture(base);
         let mut store = store; // Drop the store before the fixture, including on unwind.
@@ -1448,7 +1450,7 @@ mod settle_tests {
             if stage == 1 {
                 assert!(cleanup_entries(&store, &kb) < 300, "batch made progress");
                 git_write::BEFORE_PRUNE.set(Some(Box::new(|| {
-                    crate::git_read::OperationDeadline::for_test(Duration::ZERO)
+                    crate::deadline::OperationDeadline::for_test(Duration::ZERO)
                 })));
                 assert!(store.consolidate_now_for_tests(&guard).unwrap());
             }
@@ -1643,7 +1645,7 @@ mod settle_tests {
         let fixture = CleanupFixture(base);
         let repo = store.paths().repo_dir(&kb);
         git_write::AFTER_ROLLUP_INSTALL.set(Some(Box::new(|| {
-            Some(crate::git_read::OperationDeadline::for_test(Duration::ZERO))
+            Some(crate::deadline::OperationDeadline::for_test(Duration::ZERO))
         })));
         let guard = store.lock_write(std::slice::from_ref(&kb)).unwrap();
         store.consolidate_now_for_tests(&guard).unwrap();
@@ -1696,7 +1698,7 @@ mod settle_tests {
             ));
         }
         git_write::BEFORE_PRUNE.set(Some(Box::new(|| {
-            crate::git_read::OperationDeadline::for_test(Duration::ZERO)
+            crate::deadline::OperationDeadline::for_test(Duration::ZERO)
         })));
         let guard = store.lock_write(std::slice::from_ref(&kb)).unwrap();
         store.consolidate_now_for_tests(&guard).unwrap();
@@ -1778,7 +1780,7 @@ mod settle_tests {
         ).unwrap();
         let before = packs(&store, &kb);
         git_write::AFTER_ROLLUP_INSTALL.set(Some(Box::new(|| {
-            Some(crate::git_read::OperationDeadline::for_test(Duration::ZERO))
+            Some(crate::deadline::OperationDeadline::for_test(Duration::ZERO))
         })));
         drop(
             store

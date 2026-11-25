@@ -76,16 +76,16 @@ impl SearchControl {
     fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
-    pub(crate) fn git_scope(&self) -> crate::git_read::OperationDeadline {
-        crate::git_read::OperationDeadline::bounded(
+    pub(crate) fn git_scope(&self) -> crate::deadline::OperationDeadline {
+        crate::deadline::OperationDeadline::bounded(
             std::time::Instant::now() + self.remaining(),
             self.cancelled.clone(),
         )
     }
     /// A fresh bound of `grace` (still cancellable) for the work that must
     /// run after the deadline to answer at all: a reply's final recheck.
-    pub(crate) fn reply_scope(&self, grace: Duration) -> crate::git_read::OperationDeadline {
-        crate::git_read::OperationDeadline::bounded(
+    pub(crate) fn reply_scope(&self, grace: Duration) -> crate::deadline::OperationDeadline {
+        crate::deadline::OperationDeadline::bounded(
             std::time::Instant::now() + grace,
             self.cancelled.clone(),
         )
@@ -641,12 +641,12 @@ impl Store {
                 ticket.succeed();
                 unit
             }
-            // Closed classification by purpose (`degradable_for`): only the
+            // Closed classification by purpose (`Purpose::degrades`): only the
             // embedder's own rejection of this query, while the search itself
             // is live, degrades to the lexical arm. Independent admission,
             // lock and storage failures keep their kind; the exhausted search
             // share has already been classified above without blaming the target.
-            Err(e) if e.degradable_for(crate::qwen::Purpose::Query) && ctl.check().is_ok() => {
+            Err(e) if crate::qwen::Purpose::Query.degrades(&e) && ctl.check().is_ok() => {
                 // Only a timeout opens the target's breaker: a failure is
                 // fast, and a too-long query or an invalid vector says
                 // nothing about the next query.
@@ -795,9 +795,9 @@ impl Store {
             return self
                 .search_generation_admitted_once(p, input, ctl, &mut embed, observer)
                 .await
-                .map_err(StoreError::from);
+                .map_err(GenerationReadError::into_store_error);
         }
-        result.map_err(StoreError::from)
+        result.map_err(GenerationReadError::into_store_error)
     }
     async fn search_generation_admitted_once(
         &self,
@@ -911,12 +911,12 @@ impl Store {
             return self
                 .structured_search_generation_admitted_once(p, input, ctl, &mut embed, observer)
                 .await
-                .map_err(StoreError::from);
+                .map_err(GenerationReadError::into_store_error);
         }
         match result {
             // A continuation cannot change its generation or ranking keys.
             Err(GenerationReadError::Repaired(_)) => Err(StoreError::InvalidCursor),
-            result => result.map_err(StoreError::from),
+            result => result.map_err(GenerationReadError::into_store_error),
         }
     }
     async fn structured_search_generation_admitted_once(

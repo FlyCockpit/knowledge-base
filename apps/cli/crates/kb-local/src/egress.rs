@@ -1,7 +1,7 @@
 //! Positive global-address policy matching packages/config/src/egress-address.ts.
 //! DNS is resolved afresh per request; the chosen socket is pinned while the
 //! original URL retains Host/SNI/certificate verification. Never use proxies.
-use crate::{StoreError, credentials::Secret};
+use crate::{StoreError, credentials::Secret, embedder::unavailable};
 use reqwest::Url;
 use std::{
     collections::HashMap,
@@ -11,9 +11,6 @@ use std::{
 };
 use tokio::sync::watch;
 pub type IoFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + 'a>>;
-pub fn unavailable() -> StoreError {
-    StoreError::IndexUnavailable
-}
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {

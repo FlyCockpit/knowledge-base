@@ -81,8 +81,9 @@ pub struct ControlReply {
     pub version: u8,
     pub revoked: bool,
 }
-fn account(s: &Store) -> String {
-    format!("sealed-{}", s.store_uuid())
+/// The keystore account holding this store's sealed-value key.
+fn account(store: &Uuid) -> String {
+    format!("sealed-{store}")
 }
 fn aad(r: &SealedReference) -> String {
     format!(
@@ -131,7 +132,7 @@ impl Store {
         create: Option<u64>,
     ) -> Result<(crate::locks::CredentialFence, Secret), StoreError> {
         ctl.check()?;
-        let a = account(self);
+        let a = account(self.store_uuid());
         let fence = crate::locks::named_model_lock_until(
             &self.paths,
             &format!("{a}.lock"),
@@ -252,7 +253,7 @@ impl Store {
         literal: Literal,
         keys: &dyn Credentials,
     ) -> Result<ControlReply, StoreError> {
-        let _scope = crate::git_read::OperationDeadline::start();
+        let _scope = crate::deadline::OperationDeadline::start();
         crate::journal::parse_key(&c.idempotency_key)?;
         let allocation = literal.expose().len() as u64 + 16;
         {
@@ -297,7 +298,7 @@ impl Store {
             .map_err(|_| unresolved())?;
         ctl.check()?;
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("INSERT INTO sealed_records(namespace,record_id,kb_id,owner_id,version,state,nonce,ciphertext) VALUES(?1,?2,?3,?4,1,'ACTIVE',?5,?6)", (r.namespace().as_str(),r.record_id().as_str(),kb.as_str(),p.id(),nonce.as_slice(),ciphertext.as_slice())).map_err(|e| crate::store::constraint_to_conflict(e,"record identity already exists"))?;
+        tx.execute("INSERT INTO sealed_records(namespace,record_id,kb_id,owner_id,version,state,nonce,ciphertext) VALUES(?1,?2,?3,?4,1,'ACTIVE',?5,?6)", (r.namespace().as_str(),r.record_id().as_str(),kb.as_str(),p.id(),nonce.as_slice(),ciphertext.as_slice())).map_err(|e| crate::error::constraint_to_conflict(e,"record identity already exists"))?;
         crate::uploads::charge_mutation(&tx, &p.actor_key(), kb.as_str(), self.now_ms())?;
         let response = self.sealed_receipt(
             &tx,

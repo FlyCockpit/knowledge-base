@@ -29,13 +29,15 @@ use ring::digest::{SHA256, digest};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 
+use crate::StoreError;
 use crate::bases::{validate_kb_description, validate_kb_name};
+use crate::error::constraint_to_conflict;
 use crate::git_read::GitRepo;
 use crate::git_write::{self, ObjectWriter, Scratch, TreeEdit};
 use crate::locks::WriteGuard;
 use crate::paths::{create_dir_exclusive, sync_dir};
 use crate::state::{LocalPrincipal, new_id, new_uuid_v4, now_utc};
-use crate::store::{KbRecord, KbState, Store, StoreError, constraint_to_conflict};
+use crate::store::{KbRecord, KbState, Store};
 use crate::tree::{MANAGED_GITIGNORE, TreeError, validate_commit};
 
 /// Publication stages, reported to the observer seam in order.
@@ -612,7 +614,7 @@ impl Store {
         )?;
         delta.assets.finalize(&tx, op_id, kb, &actor)?;
         observer(Stage::Finalizing)?;
-        crate::git_read::OperationDeadline::check()?;
+        crate::deadline::OperationDeadline::check()?;
         tx.commit()?;
         git_write::remove_scratch(&self.paths, op_id);
         Ok(())
@@ -912,16 +914,15 @@ impl Store {
             let validated = match validate_commit(
                 &repo,
                 &commit,
-                &crate::manifest::Policy {
-                    store: self,
+                &self.tree_policy(
                     kb,
-                    pending: &[],
-                    base: publication
+                    &[],
+                    publication
                         .base_revision
                         .map(|base| crate::manifest::blob_map(&repo, base))
                         .transpose()?
                         .as_ref(),
-                },
+                ),
             ) {
                 Ok(validated) => validated,
                 Err(TreeError::Invalid(violation)) => {
@@ -963,7 +964,7 @@ impl Store {
                     "main ref changed outside the store".into(),
                 ));
             }
-            crate::git_read::OperationDeadline::reserve_transport()?;
+            crate::deadline::OperationDeadline::reserve_transport()?;
             let changed = self.conn.execute(
                 "UPDATE operation_intents SET phase = 'COMMITTING' \
                  WHERE op_id = ?1 AND phase = 'PREPARED'",
