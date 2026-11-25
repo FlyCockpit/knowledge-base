@@ -185,7 +185,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("fixture executable directory")?
         .join("kb");
     let model_root = s
-        .paths()
         .root()
         .parent()
         .ok_or("fixture store parent")?

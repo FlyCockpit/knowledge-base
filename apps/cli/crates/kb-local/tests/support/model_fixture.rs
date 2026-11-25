@@ -88,9 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("worker start fault".into());
     }
     // Hooks are files in the worker's working directory (the runtime dir).
-    kb_local::embed_service::serve(
-        &host,
-        Box::new(|m, n, cache, artifact, text, purpose, probe, measure| {
+    host.serve(Box::new(
+        |m, n, cache, artifact, text, purpose, probe, measure| {
             let Some(artifact) = artifact else {
                 // A slow release (a large model's memory going away).
                 if Path::new("model-test-slow-release").exists() {
@@ -129,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if measure {
                 return Ok(ModelOutput::TokenCount(
                     text.len()
-                        + m.document_prefix.len()
+                        + m.prefix(kb_local::qwen::Purpose::Document).len()
                         + usize::from(m.add_bos)
                         + usize::from(m.add_eos),
                 ));
@@ -202,7 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pid: std::process::id(),
                 peak_bytes: None,
             }))
-        }),
-    )?;
+        },
+    ))?;
     Ok(())
 }

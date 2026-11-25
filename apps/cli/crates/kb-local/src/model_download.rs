@@ -19,7 +19,7 @@ use crate::{
     StoreError,
     egress::{Dns, NativeDns, is_public, unavailable},
     paths::{is_link, sync_dir},
-    qwen::{ModelDescriptor, data, descriptor},
+    qwen::{ModelDescriptor, data},
 };
 use ring::digest::{Context, SHA256};
 use serde::Serialize;
@@ -226,7 +226,7 @@ pub struct Resident<T> {
     model_id: String,
     found: Artifact,
     loaded: Artifact,
-    pub value: T,
+    value: T,
 }
 impl<T> Resident<T> {
     pub fn new(model_id: &str, found: &Artifact, loaded: &Artifact, value: T) -> Self {
@@ -238,7 +238,12 @@ impl<T> Resident<T> {
         }
     }
     pub fn serves(&self, model_id: &str, found: &Artifact) -> bool {
-        self.model_id == model_id && (*found == self.found || *found == self.loaded)
+        self.serving(model_id, found).is_some()
+    }
+    /// The resident value, only for a request it [serves](Resident::serves).
+    pub fn serving(&self, model_id: &str, found: &Artifact) -> Option<&T> {
+        (self.model_id == model_id && (*found == self.found || *found == self.loaded))
+            .then_some(&self.value)
     }
 }
 impl std::fmt::Debug for PreparedLoad {
@@ -415,18 +420,8 @@ impl ModelCache {
     pub fn private_dir(&self) -> &Path {
         &self.private
     }
-    fn file_name(m: &ModelDescriptor) -> Result<&str, StoreError> {
-        // File names come only from the checked-in registry.
-        if descriptor(&m.model_id)?.file_name != m.file_name
-            || m.file_name.contains(['/', '\\'])
-            || m.file_name.starts_with('.')
-        {
-            return Err(unavailable());
-        }
-        Ok(&m.file_name)
-    }
     pub fn file(&self, m: &ModelDescriptor) -> Result<PathBuf, StoreError> {
-        Ok(self.dir.join(Self::file_name(m)?))
+        Ok(self.dir.join(m.checked_file_name()?))
     }
     /// Where verified private copies live: an owner-only `verified`
     /// directory inside the private cache, distinct from every configured
@@ -436,7 +431,7 @@ impl ModelCache {
     }
     /// The verified private copy of `m` (it may not exist).
     pub fn private_copy(&self, m: &ModelDescriptor) -> Result<PathBuf, StoreError> {
-        Ok(self.copies_dir().join(Self::file_name(m)?))
+        Ok(self.copies_dir().join(m.checked_file_name()?))
     }
     fn private_file(&self, m: &ModelDescriptor) -> Result<Option<PathBuf>, StoreError> {
         self.private_copy(m).map(Some)
@@ -449,7 +444,7 @@ impl ModelCache {
     fn removed_path(&self, m: &ModelDescriptor) -> Result<PathBuf, StoreError> {
         Ok(self
             .private
-            .join(format!(".{}.removed", Self::file_name(m)?)))
+            .join(format!(".{}.removed", m.checked_file_name()?)))
     }
     fn was_removed(&self, m: &ModelDescriptor) -> Result<bool, StoreError> {
         match fs::symlink_metadata(self.removed_path(m)?) {
@@ -513,7 +508,7 @@ impl ModelCache {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(StoreError::Io(e)),
             };
-            let path = parent.join(Self::file_name(m)?);
+            let path = parent.join(m.checked_file_name()?);
             let meta = match fs::symlink_metadata(&path) {
                 Ok(meta) => meta,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -603,7 +598,7 @@ impl ModelCache {
         let private = copies.canonicalize().map_err(StoreError::Io)?;
         check_trusted_chain(&private)?;
         let _lock = lock_at(&private)?;
-        let dest = private.join(Self::file_name(m)?);
+        let dest = private.join(m.checked_file_name()?);
         let (mut temp, _) = partial_at(&private, m)?;
         let ok = hash_handle(&mut file, m.size_bytes, &mut |chunk| {
             temp.file.write_all(chunk).map_err(StoreError::Io)
@@ -859,7 +854,7 @@ impl ModelCache {
     /// file itself anyway; another user can neither redirect nor swap it.
     /// The caller holds the per-model fence.
     fn delete_in_copies(&self, m: &ModelDescriptor) -> Result<Option<PathBuf>, StoreError> {
-        let name = Self::file_name(m)?;
+        let name = m.checked_file_name()?;
         let Some((dir, real)) = self.open_copies_dir()? else {
             return Ok(None);
         };
@@ -912,7 +907,7 @@ impl ModelCache {
         ensure_dir_at(&self.private)?;
         let private = self.private.canonicalize().map_err(StoreError::Io)?;
         check_trusted_chain(&private)?;
-        acquire_lock(&private.join(format!(".{}.mutation.lock", Self::file_name(m)?)))
+        acquire_lock(&private.join(format!(".{}.mutation.lock", m.checked_file_name()?)))
     }
     /// Where publications (downloads, adoptions) create our own inode:
     /// always the private `verified/` directory. A configured `models_dir`
@@ -932,7 +927,7 @@ impl ModelCache {
         };
         Ok(self
             .copies_dir()
-            .join(format!(".{}.{location}.mark", Self::file_name(m)?)))
+            .join(format!(".{}.{location}.mark", m.checked_file_name()?)))
     }
     fn in_copies(&self, path: &Path) -> bool {
         let parent = path.parent().and_then(|p| p.canonicalize().ok());
@@ -1003,7 +998,7 @@ impl ModelCache {
         let mark = Self::creation_mark(dest, &open_no_follow_read(dest)?)?;
         let temp = copies.join(format!(
             ".{}.{}.mark-partial",
-            Self::file_name(m)?,
+            m.checked_file_name()?,
             crate::state::new_uuid_v4()?
         ));
         {
@@ -1153,7 +1148,7 @@ impl ModelCache {
         // the configured directory remains a read-only source (THE rule).
         let target = &self.publish_dir()?;
         let _lock = lock_at(target)?;
-        let dest = target.join(Self::file_name(m)?);
+        let dest = target.join(m.checked_file_name()?);
         if fs::symlink_metadata(&dest).is_ok() {
             // Never destroy possibly user-owned bytes to make room.
             if verify_artifact(&dest, m)? {
@@ -1340,7 +1335,7 @@ fn recover_partials_locked(dir: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 fn partial_at(dir: &Path, m: &ModelDescriptor) -> Result<(Partial, PathBuf), StoreError> {
-    let dest = dir.join(ModelCache::file_name(m)?);
+    let dest = dir.join(m.checked_file_name()?);
     let path = dir.join(format!(
         ".{}.{}.partial",
         m.file_name,
@@ -1386,6 +1381,7 @@ fn finish_at(
 #[cfg(test)]
 mod initialization_tests {
     use super::*;
+    use crate::qwen::descriptor;
 
     struct CacheFixture(PathBuf);
     impl CacheFixture {

@@ -99,8 +99,30 @@ impl ModelHost {
             start_failure: Default::default(),
         })
     }
+    /// The model cache this host's worker loads from (for tests that
+    /// inspect its files; production callers ask the host).
     pub fn cache(&self) -> &ModelCache {
         &self.cache
+    }
+    /// Whether `m`'s weights are in this host's cache now: a cheap stat of
+    /// the file a load would use (size and identity, no hash).
+    pub(crate) fn has_model(&self, m: &ModelDescriptor) -> bool {
+        self.cache.resolve(m).is_ok()
+    }
+    /// Fail early, with the fix, when `m`'s weights are not in the cache.
+    pub(crate) fn require_cached(&self, m: &ModelDescriptor) -> Result<(), StoreError> {
+        if self.cache.cached(m)? != crate::model_download::CachedFile::Present {
+            return Err(StoreError::Explained(
+                kb_client::ErrorCode::IndexUnavailable,
+                format!(
+                    "model `{}` is not in the model cache `{}`; run `kb model download {}`",
+                    m.model_id,
+                    self.cache.dir().display(),
+                    m.model_id
+                ),
+            ));
+        }
+        Ok(())
     }
     pub fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
@@ -1358,188 +1380,190 @@ async fn serve_connection<S: AsyncRead + AsyncWrite>(
     }
 }
 
-/// Run the shared worker through its lifecycle (see [`Lifecycle`]).
-/// Returns at once (Ok) when another worker already serves this identity.
-pub fn serve(host: &ModelHost, engine: Engine) -> Result<(), StoreError> {
-    host.ensure_runtime_dir()?;
-    // The lifecycle lock, shared for this process's whole life (Serving and
-    // Draining): an exclusive holder proves no worker is alive.
-    let alive = host.lock_file("alive.lock")?;
-    let wait = Instant::now() + Duration::from_secs(2);
-    loop {
-        match alive.try_lock_shared() {
-            Ok(()) => break,
-            // A remover's momentary exclusive probe.
-            Err(fs::TryLockError::WouldBlock) if Instant::now() < wait => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(fs::TryLockError::WouldBlock) => return Err(unavailable()),
-            Err(fs::TryLockError::Error(e)) => return Err(StoreError::Io(e)),
-        }
-    }
-    let instance = host.lock_file("lock")?;
-    // A draining predecessor keeps the instance lock until its model is
-    // released (at most its one admitted request, under the watchdog): wait
-    // for it. Exit instead when a Serving worker already answers (this start
-    // raced a healthy instance), or after the watchdog bound.
-    let wait = Instant::now() + MAX_JOB + Duration::from_secs(30);
-    let mut probe = Instant::now() + Duration::from_secs(1);
-    loop {
-        match instance.try_lock() {
-            Ok(()) => break,
-            Err(fs::TryLockError::WouldBlock) if Instant::now() < wait => {
-                if Instant::now() >= probe {
-                    if host.status().is_some() {
-                        return Ok(());
-                    }
-                    probe = Instant::now() + Duration::from_secs(1);
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(fs::TryLockError::WouldBlock) => return Ok(()),
-            Err(fs::TryLockError::Error(e)) => return Err(StoreError::Io(e)),
-        }
-    }
-    let shared = Arc::new(Shared {
-        queues: Mutex::new(Queues::default()),
-        ready: Condvar::new(),
-        last: Mutex::new(Instant::now()),
-        loaded: Mutex::new(None),
-        running: Mutex::new(None),
-        idle: host.idle,
-        changed: tokio::sync::Notify::new(),
-        inflight: std::sync::atomic::AtomicUsize::new(0),
-    });
-    {
-        let shared = shared.clone();
-        let cache = host.cache.clone();
-        std::thread::spawn(move || engine_loop(shared, cache, engine));
-    }
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(StoreError::Io)?;
-    let endpoint = host.endpoint();
-    let models_dir = host.cache.dir().to_path_buf();
-    // A fresh instance key before listening: clients authenticate this
-    // worker by it (a stale endpoint of a dead worker cannot answer).
-    let key = Arc::new(host.write_key()?);
-    let key_path = host.key_path();
-    let watchdog = || {
-        let running = shared.running.lock().ok().and_then(|r| *r);
-        if running.is_some_and(|started| started.elapsed() >= MAX_JOB) {
-            let _ = fs::remove_file(&endpoint);
-            std::process::exit(70);
-        }
-    };
-    let serving = || shared.state() == Lifecycle::Serving;
-    let result = rt.block_on(async {
-        // ── Serving ──
-        #[cfg(unix)]
-        {
-            // We hold the instance lock: any existing socket file is stale.
-            match fs::symlink_metadata(&endpoint) {
-                Ok(meta) if meta.is_dir() => return Err(unavailable()),
-                Ok(_) => fs::remove_file(&endpoint).map_err(StoreError::Io)?,
-                Err(_) => {}
-            }
-            let listener = tokio::net::UnixListener::bind(&endpoint).map_err(StoreError::Io)?;
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))
-                    .map_err(StoreError::Io)?;
-            }
-            let uid = crate::model_download::own_uid()?;
-            let mut tick = tokio::time::interval(Duration::from_millis(50));
-            while serving() {
-                tokio::select! {
-                    accepted = listener.accept() => {
-                        let Ok((stream, _)) = accepted else { continue };
-                        if stream.peer_cred().map(|c| c.uid()).ok() != Some(uid) {
-                            continue;
-                        }
-                        let shared = shared.clone();
-                        let models_dir = models_dir.clone();
-                        let key = key.clone();
-                        tokio::spawn(async move {
-                            let _ = serve_connection(stream, shared, models_dir, key).await;
-                        });
-                    }
-                    _ = shared.changed.notified() => {}
-                    _ = tick.tick() => watchdog(),
-                }
-            }
-            drop(listener);
-        }
-        #[cfg(windows)]
-        {
-            let name = format!(
-                r"\\.\pipe\kb-embed-{}-{}",
-                host.identity(),
-                crate::state::new_uuid_v4()?
-            );
-            let mut server = crate::win::create_private_pipe(&name, true).map_err(StoreError::Io)?;
-            // The runtime directory's inherited owner-only ACL protects the file.
-            let temp = endpoint.with_extension(format!("pipe.{}", crate::state::new_uuid_v4()?));
-            fs::write(&temp, name.as_bytes()).map_err(StoreError::Io)?;
-            fs::rename(&temp, &endpoint).map_err(StoreError::Io)?;
-            let mut tick = tokio::time::interval(Duration::from_millis(50));
-            while serving() {
-                tokio::select! {
-                    connected = server.connect() => {
-                        if connected.is_err() {
-                            server = crate::win::create_private_pipe(&name, false).map_err(StoreError::Io)?;
-                            continue;
-                        }
-                        let next = crate::win::create_private_pipe(&name, false).map_err(StoreError::Io)?;
-                        let stream = std::mem::replace(&mut server, next);
-                        let shared = shared.clone();
-                        let models_dir = models_dir.clone();
-                        let key = key.clone();
-                        tokio::spawn(async move {
-                            let _ = serve_connection(stream, shared, models_dir, key).await;
-                        });
-                    }
-                    _ = shared.changed.notified() => {}
-                    _ = tick.tick() => watchdog(),
-                }
-            }
-            drop(server);
-        }
-        // ── Draining ── handshakes are already refused; unpublish the endpoint
-        // and key. The instance lock is KEPT until the engine has stopped and
-        // released its model: at most one live worker per identity, ever. A
-        // client retry (or a new worker) waits on it, bounded by its own
-        // deadline and cancellation; the wait is at most the one admitted
-        // request, itself bounded by the watchdog.
-        let _ = fs::remove_file(&endpoint);
-        let _ = fs::remove_file(&key_path);
-        // Connections already open keep running: the admitted request and
-        // accepted controls finish and their replies are written.
-        let mut tick = tokio::time::interval(Duration::from_millis(50));
-        let mut stopped_at = None;
+impl ModelHost {
+    /// Run the shared worker through its lifecycle (see [`Lifecycle`]).
+    /// Returns at once (Ok) when another worker already serves this identity.
+    pub fn serve(&self, engine: Engine) -> Result<(), StoreError> {
+        self.ensure_runtime_dir()?;
+        // The lifecycle lock, shared for this process's whole life (Serving and
+        // Draining): an exclusive holder proves no worker is alive.
+        let alive = self.lock_file("alive.lock")?;
+        let wait = Instant::now() + Duration::from_secs(2);
         loop {
-            let stopped = shared.state() == Lifecycle::Stopped;
-            if stopped && stopped_at.is_none() {
-                stopped_at = Some(Instant::now());
-            }
-            let flushed = shared.inflight.load(std::sync::atomic::Ordering::Acquire) == 0;
-            // A reply nobody reads cannot hold the exit for long.
-            if stopped && (flushed || stopped_at.is_some_and(|t| t.elapsed() >= Duration::from_secs(5))) {
-                break;
-            }
-            tokio::select! {
-                _ = shared.changed.notified() => {}
-                _ = tick.tick() => watchdog(),
+            match alive.try_lock_shared() {
+                Ok(()) => break,
+                // A remover's momentary exclusive probe.
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < wait => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(fs::TryLockError::WouldBlock) => return Err(unavailable()),
+                Err(fs::TryLockError::Error(e)) => return Err(StoreError::Io(e)),
             }
         }
-        // Stopped (model released) and replies written: hand over.
-        drop(instance);
-        Ok(())
-    });
-    rt.shutdown_timeout(Duration::ZERO);
-    drop(alive);
-    result
+        let instance = self.lock_file("lock")?;
+        // A draining predecessor keeps the instance lock until its model is
+        // released (at most its one admitted request, under the watchdog): wait
+        // for it. Exit instead when a Serving worker already answers (this start
+        // raced a healthy instance), or after the watchdog bound.
+        let wait = Instant::now() + MAX_JOB + Duration::from_secs(30);
+        let mut probe = Instant::now() + Duration::from_secs(1);
+        loop {
+            match instance.try_lock() {
+                Ok(()) => break,
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < wait => {
+                    if Instant::now() >= probe {
+                        if self.status().is_some() {
+                            return Ok(());
+                        }
+                        probe = Instant::now() + Duration::from_secs(1);
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(fs::TryLockError::WouldBlock) => return Ok(()),
+                Err(fs::TryLockError::Error(e)) => return Err(StoreError::Io(e)),
+            }
+        }
+        let shared = Arc::new(Shared {
+            queues: Mutex::new(Queues::default()),
+            ready: Condvar::new(),
+            last: Mutex::new(Instant::now()),
+            loaded: Mutex::new(None),
+            running: Mutex::new(None),
+            idle: self.idle,
+            changed: tokio::sync::Notify::new(),
+            inflight: std::sync::atomic::AtomicUsize::new(0),
+        });
+        {
+            let shared = shared.clone();
+            let cache = self.cache.clone();
+            std::thread::spawn(move || engine_loop(shared, cache, engine));
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(StoreError::Io)?;
+        let endpoint = self.endpoint();
+        let models_dir = self.cache.dir().to_path_buf();
+        // A fresh instance key before listening: clients authenticate this
+        // worker by it (a stale endpoint of a dead worker cannot answer).
+        let key = Arc::new(self.write_key()?);
+        let key_path = self.key_path();
+        let watchdog = || {
+            let running = shared.running.lock().ok().and_then(|r| *r);
+            if running.is_some_and(|started| started.elapsed() >= MAX_JOB) {
+                let _ = fs::remove_file(&endpoint);
+                std::process::exit(70);
+            }
+        };
+        let serving = || shared.state() == Lifecycle::Serving;
+        let result = rt.block_on(async {
+            // ── Serving ──
+            #[cfg(unix)]
+            {
+                // We hold the instance lock: any existing socket file is stale.
+                match fs::symlink_metadata(&endpoint) {
+                    Ok(meta) if meta.is_dir() => return Err(unavailable()),
+                    Ok(_) => fs::remove_file(&endpoint).map_err(StoreError::Io)?,
+                    Err(_) => {}
+                }
+                let listener = tokio::net::UnixListener::bind(&endpoint).map_err(StoreError::Io)?;
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600))
+                        .map_err(StoreError::Io)?;
+                }
+                let uid = crate::model_download::own_uid()?;
+                let mut tick = tokio::time::interval(Duration::from_millis(50));
+                while serving() {
+                    tokio::select! {
+                        accepted = listener.accept() => {
+                            let Ok((stream, _)) = accepted else { continue };
+                            if stream.peer_cred().map(|c| c.uid()).ok() != Some(uid) {
+                                continue;
+                            }
+                            let shared = shared.clone();
+                            let models_dir = models_dir.clone();
+                            let key = key.clone();
+                            tokio::spawn(async move {
+                                let _ = serve_connection(stream, shared, models_dir, key).await;
+                            });
+                        }
+                        _ = shared.changed.notified() => {}
+                        _ = tick.tick() => watchdog(),
+                    }
+                }
+                drop(listener);
+            }
+            #[cfg(windows)]
+            {
+                let name = format!(
+                    r"\\.\pipe\kb-embed-{}-{}",
+                    self.identity(),
+                    crate::state::new_uuid_v4()?
+                );
+                let mut server = crate::win::create_private_pipe(&name, true).map_err(StoreError::Io)?;
+                // The runtime directory's inherited owner-only ACL protects the file.
+                let temp = endpoint.with_extension(format!("pipe.{}", crate::state::new_uuid_v4()?));
+                fs::write(&temp, name.as_bytes()).map_err(StoreError::Io)?;
+                fs::rename(&temp, &endpoint).map_err(StoreError::Io)?;
+                let mut tick = tokio::time::interval(Duration::from_millis(50));
+                while serving() {
+                    tokio::select! {
+                        connected = server.connect() => {
+                            if connected.is_err() {
+                                server = crate::win::create_private_pipe(&name, false).map_err(StoreError::Io)?;
+                                continue;
+                            }
+                            let next = crate::win::create_private_pipe(&name, false).map_err(StoreError::Io)?;
+                            let stream = std::mem::replace(&mut server, next);
+                            let shared = shared.clone();
+                            let models_dir = models_dir.clone();
+                            let key = key.clone();
+                            tokio::spawn(async move {
+                                let _ = serve_connection(stream, shared, models_dir, key).await;
+                            });
+                        }
+                        _ = shared.changed.notified() => {}
+                        _ = tick.tick() => watchdog(),
+                    }
+                }
+                drop(server);
+            }
+            // ── Draining ── handshakes are already refused; unpublish the endpoint
+            // and key. The instance lock is KEPT until the engine has stopped and
+            // released its model: at most one live worker per identity, ever. A
+            // client retry (or a new worker) waits on it, bounded by its own
+            // deadline and cancellation; the wait is at most the one admitted
+            // request, itself bounded by the watchdog.
+            let _ = fs::remove_file(&endpoint);
+            let _ = fs::remove_file(&key_path);
+            // Connections already open keep running: the admitted request and
+            // accepted controls finish and their replies are written.
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
+            let mut stopped_at = None;
+            loop {
+                let stopped = shared.state() == Lifecycle::Stopped;
+                if stopped && stopped_at.is_none() {
+                    stopped_at = Some(Instant::now());
+                }
+                let flushed = shared.inflight.load(std::sync::atomic::Ordering::Acquire) == 0;
+                // A reply nobody reads cannot hold the exit for long.
+                if stopped && (flushed || stopped_at.is_some_and(|t| t.elapsed() >= Duration::from_secs(5))) {
+                    break;
+                }
+                tokio::select! {
+                    _ = shared.changed.notified() => {}
+                    _ = tick.tick() => watchdog(),
+                }
+            }
+            // Stopped (model released) and replies written: hand over.
+            drop(instance);
+            Ok(())
+        });
+        rt.shutdown_timeout(Duration::ZERO);
+        drop(alive);
+        result
+    }
 }
 
 #[cfg(test)]

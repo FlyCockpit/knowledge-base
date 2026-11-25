@@ -471,7 +471,7 @@ pub struct Store {
     pub(crate) runtime_reconcile: std::cell::RefCell<RuntimeReconcile>,
     /// The per-user model cache, so effective availability
     /// sees whether the built-in's file is actually there.
-    model_cache: std::cell::RefCell<Option<crate::model_download::ModelCache>>,
+    model_host: std::cell::RefCell<Option<crate::qwen::ModelHost>>,
     // Owns shutdown/join; expiry never outlives this handle.
     upload_timer: crate::uploads::UploadTimer,
     /// The write mode this handle's mutations are held to (`kb mcp
@@ -899,7 +899,7 @@ impl Store {
             clock_for_tests: Cell::new(None),
             runtime_identity: Cell::new(crate::qwen::runtime_identity()),
             runtime_reconcile: std::cell::RefCell::new(RuntimeReconcile::new(launched)),
-            model_cache: std::cell::RefCell::new(None),
+            model_host: std::cell::RefCell::new(None),
             upload_timer,
             authoring: Cell::new(kb_client::authoring::AuthoringMode::Both),
             edit_stamp: Cell::new(Some(crate::markdown::ProvenanceStamp::Agent)),
@@ -925,6 +925,11 @@ impl Store {
 
     pub fn paths(&self) -> &StorePaths {
         &self.paths
+    }
+
+    /// The store's canonical root directory.
+    pub fn root(&self) -> &Path {
+        self.paths.root()
     }
 
     /// Stable store identity (never regenerated).
@@ -1074,19 +1079,19 @@ impl Store {
         })
     }
 
-    /// The per-user model cache this store's built-in reads (the host's);
-    /// without it a built-in is never available (fail closed).
-    pub fn attach_model_cache(&self, cache: crate::model_download::ModelCache) {
-        *self.model_cache.borrow_mut() = Some(cache);
+    /// The model host whose per-user cache this store's built-in reads;
+    /// without one a built-in is never available (fail closed).
+    pub(crate) fn attach_model_host(&self, host: &crate::qwen::ModelHost) {
+        *self.model_host.borrow_mut() = Some(host.clone());
     }
     /// Whether the built-in `model_id`'s file is in the cache now: a cheap
     /// stat of the file a load would use (size and identity, no hash).
     pub(crate) fn builtin_present(&self, model_id: &str) -> Result<bool, StoreError> {
-        let cache = self.model_cache.borrow();
-        let Some(cache) = cache.as_ref() else {
+        let host = self.model_host.borrow();
+        let Some(host) = host.as_ref() else {
             return Ok(false);
         };
-        Ok(cache.resolve(&crate::qwen::descriptor(model_id)?).is_ok())
+        Ok(host.has_model(&crate::qwen::descriptor(model_id)?))
     }
 
     /// Forget this store's query-embedding breakers (tests only).

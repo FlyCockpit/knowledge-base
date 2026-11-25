@@ -152,11 +152,10 @@ pub fn run(args: &Args) -> Result<()> {
         _ => crate::local::open_or_create(&root)?,
     };
     // Built-in status reflects whether its file is in the cache.
-    store.attach_model_cache(
-        crate::paths::model_host(config.models_dir.as_deref())?
-            .cache()
-            .clone(),
-    );
+    let _model = kb_local::qwen::ModelRuntime::new(
+        &store,
+        crate::paths::model_host(config.models_dir.as_deref())?,
+    )?;
     let owner = store.owner();
     match &args.command {
         Sub::List { after, limit } => {

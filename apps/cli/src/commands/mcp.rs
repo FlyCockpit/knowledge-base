@@ -146,7 +146,7 @@ fn run_local(
         match store.kb(kb)? {
             None => anyhow::bail!(
                 "`{kb}` is not a knowledge base in `{}`",
-                store.paths().root().display()
+                store.root().display()
             ),
             Some(record) if record.state == kb_local::KbState::Tombstoned => {
                 tracing::warn!("`--kb {kb}` names a deleted knowledge base");
@@ -170,12 +170,10 @@ fn run_local(
     // Record preflight through the same once-per-reason diagnostic
     // state as a later connection failure.
     if store.model_state().is_ok_and(|m| m.enabled)
-        && let Err(e) = model.host().startability()
+        && model.preflight().is_err()
+        && let Some(why) = model.unreported_start_failure()
     {
-        model.host().record_start_failure(e.to_string());
-        if let Some(why) = model.host().unreported_start_failure() {
-            tracing::warn!("embedding worker unavailable, searching by keyword only: {why}");
-        }
+        tracing::warn!("embedding worker unavailable, searching by keyword only: {why}");
     }
     // A CLI upgrade that changed the native embedding runtime re-embedded
     // nothing yet: opening the store scheduled every affected rebuild.
@@ -261,7 +259,7 @@ fn run_local(
                     let result = session.call(name, input, control, scope.kb_set().as_ref());
                     // A worker that cannot start is said once per reason;
                     // searches meanwhile serve keywords with their notice.
-                    if let Some(why) = session.model().host().unreported_start_failure() {
+                    if let Some(why) = session.unreported_start_failure() {
                         tracing::warn!("embedding worker unavailable, searching by keyword only: {why}");
                     }
                     scope.after_result(name, result)
@@ -315,7 +313,7 @@ fn instructions(
     principal: &LocalPrincipal,
     create_listed: bool,
 ) -> anyhow::Result<Option<String>> {
-    let meta = StoreMetadata::open(store.paths(), store.store_uuid())?;
+    let meta = store.metadata()?;
     let found = meta.authority(principal, scope.kb_set().as_ref())?;
     let ids = match found.kbs {
         Some(kbs) => kbs.into_iter().map(|(kb, _)| kb).collect::<Vec<_>>(),
