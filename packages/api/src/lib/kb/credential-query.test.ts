@@ -52,12 +52,19 @@ describe("owned credential SQL", () => {
   /**
    * Connections whose peer answers SQL (except `hang` prefixes; `fail` prefixes
    * reject, as pg's query_timeout does on the cancel connection; `after` delays
-   * a reply until a promise settles) but never closes a socket on `end()`.
+   * a reply until a promise settles; `timeout` statements fail with the given
+   * SQLSTATE once their `SET LOCAL statement_timeout` elapses, as PostgreSQL
+   * cancels them) but never closes a socket on `end()`.
    * Like pg, destroying a socket fails its pending queries and ends its client.
    * The first connection is the transaction's, the second the cancel's.
    */
   function silentPeer(
-    options: { hang?: string[]; fail?: string[]; after?: Record<string, Promise<void>> } = {},
+    options: {
+      hang?: string[];
+      fail?: string[];
+      after?: Record<string, Promise<void>>;
+      timeout?: Record<string, string>;
+    } = {},
   ) {
     const sent: string[] = [];
     const destroyed: number[] = [];
@@ -67,6 +74,7 @@ describe("owned credential SQL", () => {
       const hung = new Set<(error: Error) => void>();
       const enders = new Set<() => void>();
       let closed = false;
+      let statementTimeoutMs = 0;
       const destroy = vi.fn(() => {
         closed = true;
         destroyed.push(index);
@@ -85,6 +93,19 @@ describe("owned credential SQL", () => {
           if (closed) throw new Error("Connection terminated");
           if (options.fail?.some((prefix) => sql.startsWith(prefix)))
             throw new Error("Query read timeout");
+          const limit = /^SET LOCAL statement_timeout = '(\d+)ms'$/.exec(sql);
+          if (limit) statementTimeoutMs = Number(limit[1]);
+          const timedOut = Object.entries(options.timeout ?? {}).find(([prefix]) =>
+            sql.startsWith(prefix),
+          );
+          if (timedOut)
+            return new Promise((_, reject) => {
+              hung.add(reject);
+              setTimeout(() => {
+                hung.delete(reject);
+                reject(Object.assign(new Error("canceling statement"), { code: timedOut[1] }));
+              }, statementTimeoutMs);
+            });
           if (options.hang?.some((prefix) => sql.startsWith(prefix)))
             return new Promise((_, reject) => hung.add(reject));
           const gate = Object.entries(options.after ?? {}).find(([prefix]) =>
@@ -189,6 +210,47 @@ describe("owned credential SQL", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    ["statement timeout", "57014"],
+    ["transaction timeout", "25P04"],
+  ])(
+    "PostgreSQL's %s at the shared deadline is the typed deadline refusal, not a driver error",
+    async (_, code) => {
+      vi.useFakeTimers();
+      try {
+        // PostgreSQL enforces the same 30 s deadline as the process; the server
+        // side may trip first (by a millisecond, or more after a wall-clock step).
+        let locked!: () => void;
+        const lockReply = new Promise<void>((resolve) => {
+          locked = resolve;
+        });
+        const { sent } = silentPeer({
+          timeout: { "SELECT slow": code },
+          after: { "SELECT pg_advisory_xact_lock": lockReply },
+        });
+        const done = credentialQuery("unused")(new AbortController().signal, (query) =>
+          query("SELECT slow"),
+        );
+        done.catch(() => {});
+        await vi.advanceTimersByTimeAsync(0);
+        // A wall-clock step forward after the deadline was taken must not
+        // shorten the statement_timeout handed to the server.
+        vi.setSystemTime(Date.now() + 20_000);
+        locked();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent.at(-1)).toBe("SELECT slow");
+        expect(sent.at(-2)).toMatch(/^SET LOCAL statement_timeout = '(29\d{3}|30000)ms'$/);
+        await vi.advanceTimersByTimeAsync(30_000 + 4 * CREDENTIAL_TEARDOWN_MS);
+        await expect(done).rejects.toMatchObject({
+          code: "STORAGE_UNAVAILABLE",
+          message: "Admission deadline exceeded",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("a COMMIT that answers after the caller's abort still proves completion", async () => {
     vi.useFakeTimers();

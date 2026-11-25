@@ -169,7 +169,10 @@ async function ownedTransaction<T>(
   signal: AbortSignal,
   run: (query: LockQuery) => Promise<T>,
 ): Promise<T> {
-  const deadline = Date.now() + 30_000;
+  // Monotonic, like PostgreSQL's timers and the caller's: a wall-clock step
+  // must not move this deadline relative to the server-side timeouts set from it.
+  const deadline = performance.now() + 30_000;
+  const remaining = () => `${Math.max(1, Math.ceil(deadline - performance.now()))}ms`;
   const applicationName = `kb-admission-${randomUUID()}`;
   const client = new Client({
     connectionString,
@@ -231,14 +234,16 @@ async function ownedTransaction<T>(
   signal.addEventListener("abort", stop, { once: true });
   if (signal.aborted) stop();
   client.on("error", () => {});
+  const expired = () => performance.now() >= deadline;
+  const deadlineExceeded = () =>
+    new KbAdmissionError("STORAGE_UNAVAILABLE", "Admission deadline exceeded");
   const assertOpen = () => {
     signal.throwIfAborted();
-    if (Date.now() >= deadline)
-      throw new KbAdmissionError("STORAGE_UNAVAILABLE", "Admission deadline exceeded");
+    if (expired()) throw deadlineExceeded();
   };
   const query: LockQuery = async <R>(text: string, values: unknown[] = []) => {
     assertOpen();
-    await client.query(`SET LOCAL statement_timeout = '${Math.max(1, deadline - Date.now())}ms'`);
+    await client.query(`SET LOCAL statement_timeout = '${remaining()}'`);
     assertOpen();
     const result = await client.query<R>({ text, values, queryMode: "extended" });
     assertOpen();
@@ -250,7 +255,7 @@ async function ownedTransaction<T>(
     assertOpen();
     pid = (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid;
     assertOpen();
-    await client.query(`SET transaction_timeout = '${Math.max(1, deadline - Date.now())}ms'`);
+    await client.query(`SET transaction_timeout = '${remaining()}'`);
     assertOpen();
     await client.query("BEGIN");
     inTransaction = true;
@@ -264,12 +269,20 @@ async function ownedTransaction<T>(
     // Record the acknowledgement before the freshness check: a COMMIT that
     // answered is proof of completion even if the caller is then refused.
     assertOpen();
-    await client.query(`SET LOCAL statement_timeout = '${Math.max(1, deadline - Date.now())}ms'`);
+    await client.query(`SET LOCAL statement_timeout = '${remaining()}'`);
     assertOpen();
     await client.query({ text: "COMMIT", values: [], queryMode: "extended" });
     committed = true;
     assertOpen();
     return result;
+  } catch (error) {
+    // PostgreSQL enforces this same deadline (statement/transaction timeout),
+    // as does stop() at it; which side trips first is a race of milliseconds.
+    // Past the deadline every failure is that refusal, never the raw driver
+    // error of whichever enforcer won. An abort keeps its own reason.
+    if (!signal.aborted && !(error instanceof KbAdmissionError) && expired())
+      throw deadlineExceeded();
+    throw error;
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", stop);
