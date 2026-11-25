@@ -17,7 +17,7 @@ export const normalizationFixture = JSON.parse(
  * compared with its own recording. Real defects (wrong pooling, the wrong model) land far below
  * 0.999; double normalization keeps the direction and is caught by the raw-magnitude checks
  * instead. The CLI twin is `REAL_MODEL_PARITY_MIN_COSINE` in
- * `apps/cli/crates/kb-local/tests/qwen_model.rs`.
+ * `apps/cli/crates/kb-local/tests/embedding/qwen_model.rs`.
  */
 export const REAL_MODEL_PARITY_MIN_COSINE = 0.9999;
 

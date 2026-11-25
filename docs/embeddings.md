@@ -185,7 +185,7 @@ or a repeatedly observed no-progress stall makes a generation terminal.
 | COMPLETE | attempt expired or cancelled before activation, profile momentarily unusable | stays COMPLETE; recovery (CLI, in serve order, falling through a refused activation) or the job retry (server) activates it under a fresh attempt |
 | active or an outranked COMPLETE generation | another generation activates above it in the serve order | SUPERSEDED at once |
 
-The CLI walks this table in `tests/index.rs`
+The CLI walks this table in `tests/index/index/state_machine.rs`
 (`generation_state_machine_walks_every_transition`), the server in
 `generations.integration.test.ts`, both including an active older hybrid plus
 a new head.

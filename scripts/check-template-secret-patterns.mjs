@@ -64,12 +64,12 @@ const INERT_PRIVATE_KEY_LINES = new Set(
     ],
     // A PEM marker with 1000 repetitions of "opaque-canary", not key bytes.
     [
-      "apps/cli/crates/kb-local/tests/chunks.rs",
+      "apps/cli/crates/kb-local/tests/index/chunks.rs",
       "e1cb1dad5d540c8a7cfb96dba32e54d930d92473e17297da20910053f4e9b8dd",
     ],
     // A PEM marker followed only by the literal "canary" for query rejection.
     [
-      "apps/cli/crates/kb-local/tests/chunks.rs",
+      "apps/cli/crates/kb-local/tests/index/chunks.rs",
       "ddc03155f33ffc66842824b47ae995aaadb0c900863cd6b70ad8dd079dd5f7ee",
     ],
   ].map(([file, digest]) => `${file}:${digest}`),
@@ -260,7 +260,7 @@ function selfTest() {
       "invalid:invalid",
     ],
     [
-      "apps/cli/crates/kb-local/tests/chunks.rs",
+      "apps/cli/crates/kb-local/tests/index/chunks.rs",
       "private-key",
       ["-----BEGIN", " PRIVATE KEY-----"].join(""),
     ],

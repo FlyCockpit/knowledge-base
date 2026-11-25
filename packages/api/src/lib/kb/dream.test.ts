@@ -815,7 +815,7 @@ type GoldenCorpus = {
 
 /**
  * The shared dream golden corpus (`fixtures/dream-golden.json`). The Rust
- * local backend (`apps/cli/crates/kb-local/tests/dream.rs`) asserts the same
+ * local backend (`apps/cli/crates/kb-local/tests/authoring/dream.rs`) asserts the same
  * Markdown bytes, paths, digests and result kinds; this suite pins the
  * server to it so either side drifting fails.
  */

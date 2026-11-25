@@ -1,6 +1,6 @@
 //! Markdown source and restricted YAML front matter — a faithful port of
 //! `packages/api/src/lib/kb/parse-markdown.ts` so local and remote reach the
-//! same decision on every document (shared corpus: `tests/trees.rs`).
+//! same decision on every document (shared corpus: `tests/catalog/trees.rs`).
 //!
 //! The YAML subset decodes quoted keys/scalars, rejects tags, anchors,
 //! aliases, merge keys, directives and duplicate decoded keys anywhere

@@ -1,7 +1,7 @@
 //! Shared kb/1 budgets for the local backend.
 //!
 //! The values are the server's code constants (`packages/api/src/lib/kb/
-//! {limits,cursor}.ts`, `protocol/common.ts`; a test in `tests/bases.rs`
+//! {limits,cursor}.ts`, `protocol/common.ts`; a test in `tests/catalog/bases/lifecycle.rs`
 //! fails on drift). A local store may opt into LOWER limits with
 //! [`LocalLimits::lowered`]; there is no way to raise or unbound one.
 
