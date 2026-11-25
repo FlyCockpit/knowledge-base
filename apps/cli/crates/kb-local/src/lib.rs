@@ -125,6 +125,7 @@ pub mod cas;
 pub mod changes;
 pub mod chunk;
 pub mod citation;
+pub mod converter;
 pub mod credentials;
 mod cursor;
 mod deadline;

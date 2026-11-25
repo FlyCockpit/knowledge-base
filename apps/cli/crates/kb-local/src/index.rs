@@ -513,7 +513,7 @@ impl Store {
             self.authorize(&self.owner, &s.kb_id, kb_client::types::Permission::Read)?;
             let doc = crate::documents::document_from_source(source, &manifest, rev.clone())?;
             let mut source =
-                crate::markdown::convert_markdown_source(&crate::markdown::ConversionInput {
+                crate::converter::convert_markdown_source(&crate::converter::ConversionInput {
                     media_type: "text/markdown",
                     bytes: doc.markdown.as_bytes(),
                     path: &doc.path,

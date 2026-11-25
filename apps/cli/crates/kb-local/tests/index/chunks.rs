@@ -6,8 +6,8 @@ use kb_client::{
 };
 use kb_local::{
     chunk::{chunk_body, citation_snippet},
+    converter::{ConversionInput, convert_source},
     fingerprint::{EMBEDDING_VERSIONS, embedding_fingerprint},
-    markdown::{ConversionInput, convert_source},
     sensitive_text::prepare_embedding_query,
     structured::{
         StructuredFilters, extract_structured_document, extract_table_rows,
@@ -515,7 +515,7 @@ fn markdown_only_converter_source_identity_citations_and_pinned_manifest() {
             "UNSUPPORTED_MEDIA"
         );
         assert_eq!(
-            kb_local::markdown::convert_markdown_source(&input)
+            kb_local::converter::convert_markdown_source(&input)
                 .unwrap_err()
                 .protocol_code(),
             ErrorCode::InvalidArgument
