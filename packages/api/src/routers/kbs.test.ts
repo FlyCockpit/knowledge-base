@@ -30,8 +30,10 @@ import {
   createKnowledgeBase,
   getKnowledgeBaseForViewer,
   listKnowledgeBasesForViewer,
+  mapKbDomainError,
   updateKnowledgeBase,
 } from "../lib/kb/bases";
+import { KbDomainError } from "../lib/kb/errors";
 import { configureKbRuntime, resetKbRuntimeForTests } from "../lib/kb/runtime";
 import { kbsRouter } from "./kbs";
 
@@ -77,6 +79,40 @@ describe("kbs router", () => {
   it("requires authentication", async () => {
     const client = createRouterClient(kbsRouter, { context: () => ({ session: null }) });
     await expect(client.list()).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it("answers the create budget with 429 naming the limit and when it resets", async () => {
+    configureKbRuntime({} as never);
+    const client = createRouterClient(kbsRouter, { context: () => sessionContext() });
+    const limited = new KbDomainError("RATE_LIMITED", "Rate limited", 3532);
+    vi.mocked(createKnowledgeBase).mockRejectedValueOnce(limited);
+    vi.mocked(mapKbDomainError).mockImplementation((error) =>
+      error instanceof KbDomainError ? error : null,
+    );
+    try {
+      const refused = await client
+        .create({
+          name: "Sixth",
+          slug: "sixth",
+          description: "the sixth knowledge base",
+          idempotencyKey: "create-key-6",
+        })
+        .catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ORPCError);
+      expect(refused).toMatchObject({
+        code: "TOO_MANY_REQUESTS",
+        status: 429,
+        message: "You can create 5 knowledge bases per 60 minutes. Try again in 3532s.",
+        data: { reason: "CREATE_LIMIT", limit: 5, windowSeconds: 3600, retryAfterSeconds: 3532 },
+      });
+      // Other procedures keep their code and gain the wait.
+      vi.mocked(updateKnowledgeBase).mockRejectedValueOnce(limited);
+      await expect(
+        client.update({ kbId: "kb", metadataVersion: 1, idempotencyKey: "update-key", name: "N" }),
+      ).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", data: { retryAfterSeconds: 3532 } });
+    } finally {
+      vi.mocked(mapKbDomainError).mockImplementation(() => null);
+    }
   });
 
   it("accepts scalar-boundary metadata at create and update and rejects scalar overflow", async () => {

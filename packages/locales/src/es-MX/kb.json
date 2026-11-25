@@ -31,6 +31,8 @@
     "submit": "Crear",
     "submitting": "Creando…",
     "error": "No se pudo crear la base de conocimiento.",
+    "rateLimited_one": "Puedes crear {{limit}} bases de conocimiento por hora. Vuelve a intentarlo en {{count}} minuto.",
+    "rateLimited_other": "Puedes crear {{limit}} bases de conocimiento por hora. Vuelve a intentarlo en {{count}} minutos.",
     "createdNoRead": "Creada. Tu acceso no incluye leerla."
   },
   "manage": {

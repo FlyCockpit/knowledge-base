@@ -21,6 +21,7 @@ import { toast } from "@knowledge-base/ui/components/sileo";
 import { TextareaField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { BookOpen } from "lucide-react";
 import type * as React from "react";
 import { useRef, useState } from "react";
@@ -202,6 +203,23 @@ export const createSchema = z.object({
   description: z.string().trim().pipe(kbDescriptionSchema),
 });
 
+/** The create budget's refusal names its limit and when it resets; anything else is generic. */
+export function createErrorText(error: unknown, t: TFunction<["kb", "common"]>): string {
+  const data = (error as { code?: unknown; data?: Record<string, unknown> } | null)?.data;
+  if (
+    (error as { code?: unknown } | null)?.code === "TOO_MANY_REQUESTS" &&
+    data?.reason === "CREATE_LIMIT" &&
+    typeof data.limit === "number" &&
+    typeof data.retryAfterSeconds === "number"
+  ) {
+    return t("kb:create.rateLimited", {
+      limit: data.limit,
+      count: Math.max(1, Math.ceil(data.retryAfterSeconds / 60)),
+    });
+  }
+  return t("kb:create.error");
+}
+
 export function KbCreateDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -317,7 +335,7 @@ function KbCreateSession({
           </form.Field>
           {create.isError && (
             <p role="alert" className="text-sm text-destructive">
-              {t("kb:create.error")}
+              {createErrorText(create.error, t)}
             </p>
           )}
           <DialogFooter>

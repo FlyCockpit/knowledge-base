@@ -31,6 +31,8 @@
     "submit": "Create",
     "submitting": "Creating…",
     "error": "Couldn't create the knowledge base.",
+    "rateLimited_one": "You can create {{limit}} knowledge bases per hour. Try again in {{count}} minute.",
+    "rateLimited_other": "You can create {{limit}} knowledge bases per hour. Try again in {{count}} minutes.",
     "createdNoRead": "Created. Your access doesn't include reading it."
   },
   "manage": {

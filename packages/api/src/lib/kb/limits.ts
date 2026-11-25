@@ -173,6 +173,12 @@ export function createRedisRatePort(storeClient: object): RatePort {
   };
 }
 
+/** A rate window's budget: how many points per how many seconds. */
+export function rateWindowOf(kind: RateChargeKind): { points: number; durationSeconds: number } {
+  const { points, durationSeconds } = WINDOWS[kind];
+  return { points, durationSeconds };
+}
+
 export async function chargeRate(port: RatePort, charge: RateCharge): Promise<void> {
   const spec = WINDOWS[charge.kind];
   const result = await port.consume(spec.bucket, charge.key, charge.points ?? 1);

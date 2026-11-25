@@ -12,6 +12,7 @@ import {
 } from "../lib/kb/bases";
 import { KbDomainError } from "../lib/kb/errors";
 import { getIndexProfile } from "../lib/kb/index-status";
+import { rateWindowOf } from "../lib/kb/limits";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { kbDescriptionSchema, kbNameSchema } from "../lib/schemas";
 import { kbMembersProcedures } from "./kb-members";
@@ -55,9 +56,31 @@ function orpcCode(error: KbDomainError): string {
 function toOrpc(error: unknown): never {
   const mapped = mapKbDomainError(error);
   if (mapped) {
-    throw new ORPCError(orpcCode(mapped), { message: mapped.message });
+    throw new ORPCError(orpcCode(mapped), {
+      message: mapped.message,
+      ...(mapped.retryAfterSeconds !== undefined
+        ? { data: { retryAfterSeconds: mapped.retryAfterSeconds } }
+        : {}),
+    });
   }
   throw error;
+}
+
+/**
+ * The create budget's refusal names the limit and when it resets (the web shows
+ * it; an API caller retries with the same key after `retryAfterSeconds`).
+ */
+function createRefusal(error: unknown): never {
+  const mapped = mapKbDomainError(error);
+  if (mapped?.code === "RATE_LIMITED") {
+    const { points: limit, durationSeconds: windowSeconds } = rateWindowOf("create");
+    const retryAfterSeconds = mapped.retryAfterSeconds ?? windowSeconds;
+    throw new ORPCError("TOO_MANY_REQUESTS", {
+      message: `You can create ${limit} knowledge bases per ${windowSeconds / 60} minutes. Try again in ${retryAfterSeconds}s.`,
+      data: { reason: "CREATE_LIMIT", limit, windowSeconds, retryAfterSeconds },
+    });
+  }
+  toOrpc(error);
 }
 
 export const kbsRouter = {
@@ -106,7 +129,7 @@ export const kbsRouter = {
         const result = await createKnowledgeBase(runtime, context.session!.user.id, input);
         return result;
       } catch (error) {
-        toOrpc(error);
+        createRefusal(error);
       }
     }),
   update: protectedProcedure

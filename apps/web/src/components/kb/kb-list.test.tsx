@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   createdKbDestination,
+  createErrorText,
   createSchema,
   type KbItem,
   KbList,
@@ -240,5 +241,37 @@ describe("internal document click gestures", () => {
     routerClick(open)(click);
     expect(open).not.toHaveBeenCalled();
     expect(click.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("create refusal text", () => {
+  const refusal = (retryAfterSeconds: number) => ({
+    code: "TOO_MANY_REQUESTS",
+    data: { reason: "CREATE_LIMIT", limit: 5, windowSeconds: 3600, retryAfterSeconds },
+  });
+  it("names the hourly limit and when it resets, in en-US and es-MX", async () => {
+    const local = createInstance();
+    await local.init({
+      lng: "en-US",
+      fallbackLng: "en-US",
+      ns: ["kb", "common"],
+      defaultNS: "kb",
+      resources: { "en-US": { kb: enKb, common: enCommon }, "es-MX": { kb: esKb } },
+      interpolation: { escapeValue: false },
+    });
+    const t = local.getFixedT("en-US", ["kb", "common"]);
+    expect(createErrorText(refusal(3532), t)).toBe(
+      "You can create 5 knowledge bases per hour. Try again in 59 minutes.",
+    );
+    expect(createErrorText(refusal(20), t)).toBe(
+      "You can create 5 knowledge bases per hour. Try again in 1 minute.",
+    );
+    expect(createErrorText(refusal(3532), local.getFixedT("es-MX", ["kb", "common"]))).toBe(
+      "Puedes crear 5 bases de conocimiento por hora. Vuelve a intentarlo en 59 minutos.",
+    );
+    expect(createErrorText({ code: "CONFLICT" }, t)).toBe("Couldn't create the knowledge base.");
+    expect(createErrorText({ code: "TOO_MANY_REQUESTS", data: {} }, t)).toBe(
+      "Couldn't create the knowledge base.",
+    );
   });
 });
