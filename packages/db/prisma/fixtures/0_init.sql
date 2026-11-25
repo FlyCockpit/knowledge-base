@@ -69,3 +69,8 @@ INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","refere
 INSERT INTO consent_intent (id,"referenceId",nonce,"sessionDigest","queryDigest","actorUserIdSnapshot","userId","clientId","redirectUri",resource,scopes,selection,"grantId","expiresAt","approvedAt") VALUES
  ('fx_consent_write','fx_oauth_write','00000000-0000-4000-8000-0000000000c1','d','q','fx_owner','fx_owner','fx_client','https://client.example.test/cb','https://kb.example.test/mcp',ARRAY['mcp:read','mcp:write','offline_access'],'{"scopes":["mcp:read","mcp:write"],"toolGroups":["read","edit"],"acl":[],"allowCreate":false,"createdKbBits":[]}','00000000-0000-4000-8000-0000000000a4',now(),now()),
  ('fx_consent_read','fx_oauth_read','00000000-0000-4000-8000-0000000000c2','d2','q2','fx_owner','fx_owner','fx_client','https://client.example.test/cb','https://kb.example.test/mcp',ARRAY['mcp:read'],'{"scopes":["mcp:read"],"toolGroups":["read"],"acl":[],"allowCreate":false,"createdKbBits":[]}',NULL,now(),NULL);
+-- An API key whose child flags and expiry are left to the column defaults.
+INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","referenceId",scopes,"toolGroups","createdKbBits") VALUES
+ ('00000000-0000-4000-8000-0000000000b1','fx_owner','fx_owner','API_KEY','kb-api-key','fx_api_key',ARRAY['mcp:read'],ARRAY['read'],ARRAY[]::text[]);
+INSERT INTO api_key (id,"userIdSnapshot","userId",name,"lookupPrefix","secretDigest","grantId",reach,bits,"childToolGroups") VALUES
+ ('fx_api_key','fx_owner','fx_owner','fixture','fx_api_key','fx_api_key_digest','00000000-0000-4000-8000-0000000000b1','CREATED',ARRAY['read'],ARRAY['read']);

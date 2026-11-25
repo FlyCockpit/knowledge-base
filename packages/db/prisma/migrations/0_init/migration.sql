@@ -24,7 +24,7 @@ CREATE TYPE "StagedUploadState" AS ENUM ('WRITING', 'READY', 'CONSUMED', 'EXPIRE
 CREATE TYPE "CasPublicationState" AS ENUM ('PENDING', 'FINALIZED', 'ABORTED');
 
 -- CreateEnum
-CREATE TYPE "ExportArtifactState" AS ENUM ('WRITING', 'READY', 'ABORTED', 'DOWNLOADED');
+CREATE TYPE "ExportArtifactState" AS ENUM ('WRITING', 'READY', 'ABORTED', 'DOWNLOADED', 'PENDING', 'FAILED', 'CANCELLED');
 
 -- CreateEnum
 CREATE TYPE "AssetCacheStatus" AS ENUM ('FILLING', 'READY', 'INVALID', 'EVICTING');
@@ -99,7 +99,10 @@ CREATE TYPE "AuditOutcome" AS ENUM ('SUCCESS', 'FAILURE');
 CREATE TYPE "IndexQuantization" AS ENUM ('INT8', 'BINARY_INT8_RESCORE');
 
 -- CreateEnum
-CREATE TYPE "McpGrantKind" AS ENUM ('PAT', 'OAUTH');
+CREATE TYPE "McpGrantKind" AS ENUM ('PAT', 'OAUTH', 'API_KEY');
+
+-- CreateEnum
+CREATE TYPE "ApiKeyReach" AS ENUM ('ALL', 'SELECTED', 'CREATED');
 
 -- CreateEnum
 CREATE TYPE "McpAuthoringMode" AS ENUM ('DREAM', 'EDIT', 'BOTH');
@@ -305,8 +308,26 @@ CREATE TABLE "export_artifact" (
     "reclaimedAt" TIMESTAMPTZ(3),
     "downloadCompletedAt" TIMESTAMPTZ(3),
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "failureCode" TEXT,
+    "progressBytes" INTEGER NOT NULL DEFAULT 0,
+    "totalBytes" INTEGER,
+    "leaseOwner" TEXT,
+    "leaseUntil" TIMESTAMPTZ(3),
 
     CONSTRAINT "export_artifact_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "export_request_key" (
+    "id" UUID NOT NULL,
+    "actorKey" TEXT NOT NULL,
+    "kbId" TEXT NOT NULL,
+    "idempotencyKey" TEXT NOT NULL,
+    "requestHash" TEXT NOT NULL,
+    "exportId" UUID NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "export_request_key_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -854,6 +875,7 @@ CREATE TABLE "mcp_grant" (
     "toolGroups" TEXT[],
     "allowCreate" BOOLEAN NOT NULL DEFAULT false,
     "createdKbBits" TEXT[],
+    "allKbsBits" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "authoringMode" "McpAuthoringMode",
     "revokedAt" TIMESTAMPTZ(3),
     "revokeReason" TEXT,
@@ -911,8 +933,36 @@ CREATE TABLE "mcp_personal_token" (
     "expiresAt" TIMESTAMPTZ(3),
     "lastUsedAt" TIMESTAMPTZ(3),
     "revokedAt" TIMESTAMPTZ(3),
+    "parentApiKeyId" TEXT,
+    "idempotencyKey" TEXT,
+    "requestHash" TEXT,
 
     CONSTRAINT "mcp_personal_token_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "api_key" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userIdSnapshot" TEXT NOT NULL,
+    "userId" TEXT,
+    "name" TEXT NOT NULL,
+    "lookupPrefix" TEXT NOT NULL,
+    "secretDigest" TEXT NOT NULL,
+    "grantId" UUID NOT NULL,
+    "reach" "ApiKeyReach" NOT NULL,
+    "bits" TEXT[],
+    "allowDelete" BOOLEAN NOT NULL DEFAULT false,
+    "allowMintChildren" BOOLEAN NOT NULL DEFAULT false,
+    "childToolGroups" TEXT[],
+    "childAuthoringMode" "McpAuthoringMode",
+    "childAllowCreate" BOOLEAN NOT NULL DEFAULT false,
+    "childrenEndWithKey" BOOLEAN NOT NULL DEFAULT false,
+    "expiresAt" TIMESTAMPTZ(3),
+    "lastUsedAt" TIMESTAMPTZ(3),
+    "revokedAt" TIMESTAMPTZ(3),
+
+    CONSTRAINT "api_key_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -1198,6 +1248,9 @@ CREATE INDEX "kb_asset_lineage_hash_idx" ON "kb_asset_lineage"("hash");
 CREATE UNIQUE INDEX "kb_asset_lineage_kb_hash_unique" ON "kb_asset_lineage"("kbId", "hash");
 
 -- CreateIndex
+CREATE INDEX "export_artifact_actorKey_kbId_createdAt_idx" ON "export_artifact"("actorKey", "kbId", "createdAt");
+
+-- CreateIndex
 CREATE INDEX "export_artifact_state_expiresAt_idx" ON "export_artifact"("state", "expiresAt");
 
 -- CreateIndex
@@ -1205,6 +1258,12 @@ CREATE INDEX "export_artifact_reclaimedAt_id_idx" ON "export_artifact"("reclaime
 
 -- CreateIndex
 CREATE UNIQUE INDEX "export_artifact_actorKey_kbId_idempotencyKey_key" ON "export_artifact"("actorKey", "kbId", "idempotencyKey");
+
+-- CreateIndex
+CREATE INDEX "export_request_key_exportId_idx" ON "export_request_key"("exportId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "export_request_key_actorKey_kbId_idempotencyKey_key" ON "export_request_key"("actorKey", "kbId", "idempotencyKey");
 
 -- CreateIndex
 CREATE INDEX "asset_cache_owner_cacheId_role_retired_idx" ON "asset_cache_owner"("cacheId", "role", "retired");
@@ -1390,10 +1449,31 @@ CREATE UNIQUE INDEX "mcp_personal_token_grantId_key" ON "mcp_personal_token"("gr
 CREATE INDEX "mcp_personal_token_userId_revokedAt_expiresAt_idx" ON "mcp_personal_token"("userId", "revokedAt", "expiresAt");
 
 -- CreateIndex
+CREATE INDEX "mcp_personal_token_parentApiKeyId_revokedAt_expiresAt_idx" ON "mcp_personal_token"("parentApiKeyId", "revokedAt", "expiresAt");
+
+-- CreateIndex
+CREATE INDEX "mcp_personal_token_parentApiKeyId_id_idx" ON "mcp_personal_token"("parentApiKeyId", "id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "mcp_personal_token_lookup_prefix" ON "mcp_personal_token"("lookupPrefix");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "mcp_personal_token_secret_digest" ON "mcp_personal_token"("secretDigest");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "mcp_personal_token_parent_idempotency" ON "mcp_personal_token"("parentApiKeyId", "idempotencyKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "api_key_grantId_key" ON "api_key"("grantId");
+
+-- CreateIndex
+CREATE INDEX "api_key_userId_revokedAt_expiresAt_idx" ON "api_key"("userId", "revokedAt", "expiresAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "api_key_lookup_prefix" ON "api_key"("lookupPrefix");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "api_key_secret_digest" ON "api_key"("secretDigest");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "consent_intent_referenceId_key" ON "consent_intent"("referenceId");
@@ -1529,6 +1609,9 @@ ALTER TABLE "kb_asset_lineage" ADD CONSTRAINT "kb_asset_lineage_hash_fkey" FOREI
 
 -- AddForeignKey
 ALTER TABLE "export_artifact" ADD CONSTRAINT "export_artifact_kbId_fkey" FOREIGN KEY ("kbId") REFERENCES "knowledge_base"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "export_request_key" ADD CONSTRAINT "export_request_key_exportId_fkey" FOREIGN KEY ("exportId") REFERENCES "export_artifact"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "asset_cache_owner" ADD CONSTRAINT "asset_cache_owner_cacheId_fkey" FOREIGN KEY ("cacheId") REFERENCES "asset_cache_state"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1682,6 +1765,15 @@ ALTER TABLE "mcp_personal_token" ADD CONSTRAINT "mcp_personal_token_userId_fkey"
 
 -- AddForeignKey
 ALTER TABLE "mcp_personal_token" ADD CONSTRAINT "mcp_personal_token_grantId_fkey" FOREIGN KEY ("grantId") REFERENCES "mcp_grant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "mcp_personal_token" ADD CONSTRAINT "mcp_personal_token_parentApiKeyId_fkey" FOREIGN KEY ("parentApiKeyId") REFERENCES "api_key"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "api_key" ADD CONSTRAINT "api_key_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "api_key" ADD CONSTRAINT "api_key_grantId_fkey" FOREIGN KEY ("grantId") REFERENCES "mcp_grant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "consent_intent" ADD CONSTRAINT "consent_intent_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -2103,6 +2195,12 @@ CREATE INDEX IF NOT EXISTS asset_cache_entry_repair_idx
 
 -- A write grant always carries a write mode and a read-only grant never does.
 ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_authoring_mode_matches_write" CHECK (("authoringMode" IS NULL) = NOT (coalesce('mcp:write' = ANY("scopes"), false)));
+
+-- Only an API key's grant reaches every KB its owner can access.
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_all_kbs_bits_api_key_only" CHECK (coalesce(cardinality("allKbsBits"), 0) = 0 OR "kind"::text = 'API_KEY');
+
+-- A child-mint idempotency key exists only on a child token.
+ALTER TABLE "mcp_personal_token" ADD CONSTRAINT "mcp_personal_token_idempotency_child_only" CHECK ("idempotencyKey" IS NULL OR "parentApiKeyId" IS NOT NULL);
 
 -- knowledge-base:commit-marker (lets the runner prove this transaction committed; keep it last)
 DO $knowledge_base$ DECLARE history text := current_setting('knowledge_base.history', true); BEGIN IF history <> '' THEN EXECUTE format('UPDATE %s SET "logs" = %L WHERE "id" = (SELECT "id" FROM %s WHERE "finished_at" IS NULL AND "rolled_back_at" IS NULL ORDER BY "started_at" DESC LIMIT 1)', history::oid::regclass, 'knowledge-base:committed', history::oid::regclass); END IF; END $knowledge_base$;

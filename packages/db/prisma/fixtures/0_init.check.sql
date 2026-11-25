@@ -52,7 +52,10 @@ END $$;
 SELECT 'fixture grants lost' WHERE (SELECT count(*) FROM mcp_grant WHERE id::text LIKE '00000000-0000-4000-8000-0000000000a_') <> 4;
 SELECT 'write grant lost its mode' FROM mcp_grant WHERE 'mcp:write' = ANY(scopes) AND "authoringMode" IS DISTINCT FROM 'BOTH' AND id::text LIKE '00000000-0000-4000-8000-0000000000a_';
 SELECT 'read grant has a write mode' FROM mcp_grant WHERE id='00000000-0000-4000-8000-0000000000a3' AND "authoringMode" IS NOT NULL;
+SELECT 'API key defaults lost' WHERE NOT EXISTS (SELECT FROM api_key WHERE id='fx_api_key' AND NOT "childAllowCreate" AND NOT "childrenEndWithKey" AND NOT "allowDelete" AND NOT "allowMintChildren" AND "expiresAt" IS NULL);
 DO $$ BEGIN
   BEGIN UPDATE mcp_grant SET "authoringMode"=NULL WHERE id='00000000-0000-4000-8000-0000000000a1'; RAISE EXCEPTION 'missing write-mode check (write without mode)'; EXCEPTION WHEN check_violation THEN NULL; END;
   BEGIN UPDATE mcp_grant SET "authoringMode"='DREAM' WHERE id='00000000-0000-4000-8000-0000000000a3'; RAISE EXCEPTION 'missing write-mode check (read with mode)'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE mcp_grant SET "allKbsBits"=ARRAY['read'] WHERE id='00000000-0000-4000-8000-0000000000a1'; RAISE EXCEPTION 'missing API-key-only every-KB reach check'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN INSERT INTO mcp_personal_token (id,"userIdSnapshot",name,"lookupPrefix","secretDigest","grantId",resource,"idempotencyKey") VALUES ('fx_pat','fx_owner','pat','fx_pat','fx_pat_digest','00000000-0000-4000-8000-0000000000a1','https://kb.example.test/mcp','k'); RAISE EXCEPTION 'missing child-only idempotency check'; EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;

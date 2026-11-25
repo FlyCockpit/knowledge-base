@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { cpSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1742,72 +1742,4 @@ describe("api keys: migration constraints", () => {
       prisma.mcpGrant.update({ where: { id: key.key.grantId }, data: { allKbsBits: ["read"] } }),
     ).resolves.toBeDefined();
   });
-});
-
-describe("api keys: migration 20261125130212_api_key_child_lifetime", () => {
-  it("backfills childrenEndWithKey on keys minted before it; later keys default off; expiry becomes optional", async () => {
-    const migrationsDir = resolve(import.meta.dirname, "../../../db/prisma/migrations");
-    const target = "20261125130212_api_key_child_lifetime";
-    const folders = readdirSync(migrationsDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-    expect(folders).toContain(target);
-    const prefix = mkdtempSync(join(tmpdir(), "kb-api-key-migrations-"));
-    for (const name of folders.filter((folder) => folder < target))
-      cpSync(join(migrationsDir, name), join(prefix, name), { recursive: true });
-    cpSync(join(migrationsDir, "migration_lock.toml"), join(prefix, "migration_lock.toml"));
-    const upgraded = await cluster.createDatabase();
-    try {
-      upgraded.applyPrismaSchema({ migrationsDir: prefix });
-      const insertKey = (suffix: string, expiresAt: string) =>
-        upgraded.query(
-          "applier",
-          `WITH g AS (
-             INSERT INTO mcp_grant (id, "actorUserIdSnapshot", "userId", kind, "clientId",
-                                    "referenceId", scopes, "toolGroups", "createdKbBits")
-             VALUES ($1::uuid, 'mig_owner', 'mig_owner', 'API_KEY', $2, $2,
-                     ARRAY['mcp:read'], ARRAY['read'], ARRAY[]::text[])
-             RETURNING id)
-           INSERT INTO api_key (id, "userIdSnapshot", "userId", name, "lookupPrefix", "secretDigest",
-                                "grantId", reach, bits, "childToolGroups", "expiresAt")
-           SELECT $3, 'mig_owner', 'mig_owner', 'pre', $3, 'digest-' || $3, g.id, 'CREATED',
-                  ARRAY['read'], ARRAY['read'], ${expiresAt} FROM g`,
-          [randomUUID(), `apikey:${suffix}`, suffix],
-        );
-      await upgraded.query(
-        "applier",
-        `INSERT INTO "user" (id, name, email, "emailVerified") VALUES ('mig_owner', 'M', 'm@example.invalid', true)`,
-      );
-      const before = "k".repeat(16);
-      const revokedBefore = "r".repeat(16);
-      await insertKey(before, "now() + interval '30 days'");
-      await insertKey(revokedBefore, "now() + interval '30 days'");
-      await upgraded.query("applier", `UPDATE api_key SET "revokedAt" = now() WHERE id = $1`, [
-        revokedBefore,
-      ]);
-      // Before the migration the expiry is required.
-      await expect(insertKey("n".repeat(16), "NULL")).rejects.toThrow();
-
-      upgraded.applyPrismaSchema();
-      const after = "a".repeat(16);
-      const never = "v".repeat(16);
-      await insertKey(after, "now() + interval '30 days'");
-      await insertKey(never, "NULL");
-      const rows = await upgraded.query(
-        "applier",
-        `SELECT id, "childrenEndWithKey", "childAllowCreate", "expiresAt" IS NULL AS never
-           FROM api_key ORDER BY id`,
-      );
-      expect(rows.rows).toEqual([
-        { id: after, childrenEndWithKey: false, childAllowCreate: false, never: false },
-        { id: before, childrenEndWithKey: true, childAllowCreate: false, never: false },
-        { id: revokedBefore, childrenEndWithKey: true, childAllowCreate: false, never: false },
-        { id: never, childrenEndWithKey: false, childAllowCreate: false, never: true },
-      ]);
-    } finally {
-      await upgraded.close();
-      rmSync(prefix, { recursive: true, force: true });
-    }
-  }, 300_000);
 });
