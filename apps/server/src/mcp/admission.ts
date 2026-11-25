@@ -17,7 +17,15 @@ export function createAdmissionGate() {
       if (closed) return null;
       const controller = new AbortController();
       active.add(controller);
-      const cancel = () => controller.abort(client.reason);
+      // The HTTP layer may abort with any reason (a string on a client
+      // disconnect); work reads it through throwIfAborted(), so always hand it
+      // a typed AbortError: a cancelled call is CANCELLED, never INTERNAL.
+      const cancel = () =>
+        controller.abort(
+          client.reason instanceof DOMException && client.reason.name === "TimeoutError"
+            ? client.reason
+            : new DOMException("The client cancelled the request", "AbortError"),
+        );
       client.addEventListener("abort", cancel, { once: true });
       if (client.aborted) cancel();
       const deadlineAt = Date.now() + MCP_REQUEST_DEADLINE_MS;

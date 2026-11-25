@@ -1,5 +1,7 @@
+import { captureLog } from "@knowledge-base/env/log";
 import { describe, expect, it, vi } from "vitest";
 import { createAdmissionGate, MCP_REQUEST_DEADLINE_MS } from "./admission";
+import { toolFailure } from "./tool-dispatch";
 
 describe("admission lifetime", () => {
   it("distinguishes a transport deadline from client cancellation", async () => {
@@ -56,5 +58,32 @@ describe("admission lifetime", () => {
     one.release();
     two.release();
     expect(gate.outstanding).toBe(0);
+  });
+  it("a client cancellation with any reason reaches the work as CANCELLED, logged nowhere", () => {
+    const log = captureLog();
+    try {
+      for (const reason of [
+        "Client connection prematurely closed.",
+        undefined,
+        new Error("reset"),
+      ]) {
+        const client = new AbortController();
+        const permit = createAdmissionGate().admit(client.signal)!;
+        client.abort(reason);
+        let thrown: unknown;
+        try {
+          permit.signal.throwIfAborted();
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toMatchObject({ name: "AbortError" });
+        const result = toolFailure(thrown, { tool: "knowledge_search_all" });
+        expect(result.structuredContent).toMatchObject({ error: { code: "CANCELLED" } });
+        permit.release();
+      }
+      expect(log.records.filter((r) => r.level === "error")).toEqual([]);
+    } finally {
+      log.restore();
+    }
   });
 });
