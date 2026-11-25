@@ -684,6 +684,9 @@ pub fn open_regular_read(path: &Path) -> Result<File, StoreError> {
 /// Open a store-owned file ([`open_regular`] with `options`' access mode);
 /// on Windows it must also carry an owner-only ACL.
 pub(crate) fn open_no_follow(path: &Path, options: &mut OpenOptions) -> Result<File, StoreError> {
+    // A file this open creates takes the token's default owner: the user.
+    #[cfg(windows)]
+    crate::win::user_owns_new_objects().map_err(StoreError::Io)?;
     apply_no_follow(options);
     let file = open_regular(path, options)?;
     #[cfg(windows)]

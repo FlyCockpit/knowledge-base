@@ -356,31 +356,92 @@ impl Drop for LocalAllocation {
     }
 }
 
-fn user_token() -> io::Result<(OwnedHandle, Vec<usize>)> {
+fn process_token(access: u32) -> io::Result<OwnedHandle> {
     let mut token = null_mut();
-    let mut bytes = 0;
-    // SAFETY: current-process pseudo handle is valid; token/output sizes live
-    // through the calls. The buffer is word-aligned for TOKEN_USER.
+    // SAFETY: current-process pseudo handle; the returned handle is owned once.
     unsafe {
-        bool_result(OpenProcessToken(
-            GetCurrentProcess(),
-            TOKEN_QUERY,
-            &mut token,
-        ))?;
-        let token = owned(token)?;
-        GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut bytes);
+        bool_result(OpenProcessToken(GetCurrentProcess(), access, &mut token))?;
+    }
+    owned(token)
+}
+
+/// One token information class, in a word-aligned buffer (for TOKEN_USER,
+/// TOKEN_OWNER and the SIDs they embed).
+fn token_information(
+    token: &OwnedHandle,
+    class: TOKEN_INFORMATION_CLASS,
+) -> io::Result<Vec<usize>> {
+    let mut bytes = 0;
+    // SAFETY: live token handle; the size query writes only `bytes`, and the
+    // buffer outlives the second synchronous call that fills it.
+    unsafe {
+        GetTokenInformation(token.as_raw_handle(), class, null_mut(), 0, &mut bytes);
         if bytes == 0 {
             return Err(io::Error::last_os_error());
         }
         let mut buffer = vec![0usize; (bytes as usize).div_ceil(size_of::<usize>())];
         bool_result(GetTokenInformation(
             token.as_raw_handle(),
-            TokenUser,
+            class,
             buffer.as_mut_ptr().cast(),
             bytes,
             &mut bytes,
         ))?;
-        Ok((token, buffer))
+        Ok(buffer)
+    }
+}
+
+fn user_token() -> io::Result<(OwnedHandle, Vec<usize>)> {
+    user_owns_new_objects()?;
+    let token = process_token(TOKEN_QUERY)?;
+    let user = token_information(&token, TokenUser)?;
+    Ok((token, user))
+}
+
+/// Objects created without a security descriptor (files from `OpenOptions`,
+/// SQLite's journals, Git's objects in children, which start with a copy of
+/// this token) are owned by the token's default owner. For an elevated
+/// administrator on Windows Server that is `BUILTIN\Administrators` (policy
+/// "Default owner for objects created by members of the Administrators
+/// group"), which every owner-only check here refuses, so kb would refuse
+/// the store it just created. Make this user the default owner once per
+/// process, as Cygwin/MSYS do at startup. Every private descriptor and
+/// check reads the token through [`user_token`], and [`crate::paths`]'s
+/// store-file opener calls this before it creates, so it runs before the
+/// first such object. A token whose default owner is already the user (a
+/// standard or non-elevated account) is only read, never adjusted.
+pub(crate) fn user_owns_new_objects() -> io::Result<()> {
+    static RESULT: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
+    RESULT
+        .get_or_init(|| {
+            make_user_default_owner()
+                .map_err(|error| error.raw_os_error().unwrap_or(ERROR_ACCESS_DENIED as i32))
+        })
+        .map_err(io::Error::from_raw_os_error)
+}
+
+fn make_user_default_owner() -> io::Result<()> {
+    let token = process_token(TOKEN_QUERY)?;
+    let user = token_information(&token, TokenUser)?;
+    let owner = token_information(&token, TokenOwner)?;
+    // SAFETY: GetTokenInformation filled both aligned buffers; their embedded
+    // SIDs stay alive for the comparison and the synchronous set below.
+    unsafe {
+        let user = &*user.as_ptr().cast::<TOKEN_USER>();
+        let owner = &*owner.as_ptr().cast::<TOKEN_OWNER>();
+        if EqualSid(owner.Owner, user.User.Sid) != 0 {
+            return Ok(());
+        }
+        let adjust = process_token(TOKEN_ADJUST_DEFAULT)?;
+        let default_owner = TOKEN_OWNER {
+            Owner: user.User.Sid,
+        };
+        bool_result(SetTokenInformation(
+            adjust.as_raw_handle(),
+            TokenOwner,
+            (&default_owner as *const TOKEN_OWNER).cast(),
+            size_of::<TOKEN_OWNER>() as u32,
+        ))
     }
 }
 
@@ -1392,6 +1453,51 @@ mod tests {
             skipped.expect("no add rights: nothing of ours to flush");
         }
         std::fs::remove_dir(&granted).expect("fixture cleanup");
+    }
+
+    /// A file created without a security descriptor is owned by this user,
+    /// also where the token's default owner was `BUILTIN\Administrators`
+    /// (an elevated administrator on Windows Server, such as hosted CI under
+    /// PowerShell), so the owner-only checks accept what kb itself creates.
+    #[test]
+    fn objects_created_without_a_descriptor_are_owned_by_this_user() {
+        user_owns_new_objects().expect("default owner");
+        let token = process_token(TOKEN_QUERY).expect("token");
+        let user = token_information(&token, TokenUser).expect("user");
+        let owner = token_information(&token, TokenOwner).expect("owner");
+        let base = std::env::temp_dir().join(format!(
+            "kb-win-default-owner-{}",
+            crate::state::new_uuid_v4().expect("uuid")
+        ));
+        create_private_dir(&base).expect("private directory");
+        let path = base.join("created.txt");
+        std::fs::write(&path, b"x").expect("plain create");
+        let file = File::open(&path).expect("open");
+        let mut file_owner = null_mut();
+        let mut descriptor = null_mut();
+        // SAFETY: aligned token buffers; live handle; the API-owned descriptor
+        // (which holds `file_owner`) is freed by its guard after the checks.
+        unsafe {
+            let user = &*user.as_ptr().cast::<TOKEN_USER>();
+            let owner = &*owner.as_ptr().cast::<TOKEN_OWNER>();
+            assert_ne!(EqualSid(owner.Owner, user.User.Sid), 0, "default owner");
+            let status = GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut file_owner,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut descriptor,
+            );
+            assert_eq!(status, ERROR_SUCCESS);
+            let _descriptor = LocalAllocation(descriptor);
+            assert_ne!(EqualSid(file_owner, user.User.Sid), 0, "file owner");
+        }
+        assert!(check_private_file(&file).expect("check"));
+        drop(file);
+        std::fs::remove_dir_all(&base).expect("fixture cleanup");
     }
 
     /// The CLI credential shape: set and checked natively, refused when the
