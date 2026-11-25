@@ -21,11 +21,10 @@
 //! * Every child is supervised: stdin closed or owned, stderr discarded,
 //!   stdout read with a byte cap, and a watchdog kills it at its deadline.
 //!   Dropping a handle kills and reaps the child.
-//! * Objects are read through one `git cat-file --batch` session and parsed
-//!   here (raw tree bytes, commit headers), so budgets are checked from the
-//!   object header before any content is read, and tree order/duplicates are
-//!   seen exactly as stored. Modes are canonicalized like Git's tree walker
-//!   (`canon_mode`), matching the TypeScript `ls-tree` reading.
+//! * Objects are read through one `git cat-file --batch` session
+//!   ([`ObjectReader`]) and parsed by kb-local (commit headers here, raw tree
+//!   bytes in [`crate::git_tree`]), so budgets are checked from the object
+//!   header before any content is read.
 //! * A readable revision is a commit object reachable from `refs/heads/*` of
 //!   THIS repository; anything else is `NotFound`.
 //!
@@ -47,13 +46,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use kb_client::ErrorCode;
-use kb_client::host::snapshot::content_hash;
-use kb_client::types::{KbId, KbPath, Sha};
+use kb_client::types::{KbId, Sha};
 
 use crate::StoreError;
 use crate::deadline::{OperationDeadline, ScopeWatch};
 use crate::locks::{ChildStdin, ChildStdout, ProcessChild};
-use crate::markdown::{MarkdownIssue, SourceDocument, parse_markdown};
 use crate::paths::StorePaths;
 
 /// Default wall-clock bound for one Git child (validation bounded
@@ -72,7 +69,7 @@ thread_local! {
 }
 /// Largest tree or commit object read (the TS reader's 8 MiB buffer).
 pub const METADATA_OBJECT_MAX_BYTES: usize = 8 * 1024 * 1024;
-/// Largest document source returned by [`read_document`].
+/// Largest document source returned by [`read_document`](crate::git_source::read_document).
 pub const DOCUMENT_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Maximum nesting of tree objects below the root.
 pub const MAX_TREE_DEPTH: usize = 32;
@@ -1385,397 +1382,6 @@ fn parse_commit(sha: &Sha, body: &[u8]) -> Result<CommitInfo, GitError> {
     })
 }
 
-// ── Trees ──────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntryKind {
-    Blob,
-    Tree,
-    /// Gitlink (submodule) or any mode Git canonicalizes to one.
-    Commit,
-}
-
-/// One tree entry with its full path (no trailing slash).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TreeEntry {
-    /// Canonical six-digit octal mode as `git ls-tree` prints it.
-    pub mode: String,
-    pub kind: EntryKind,
-    pub sha: String,
-    pub path: String,
-}
-
-/// Entry budget of one tree walk (the root counts as one entry).
-#[derive(Clone, Debug)]
-pub struct WalkBudget {
-    pub entries: usize,
-    pub max_entries: usize,
-}
-
-impl WalkBudget {
-    pub fn new(max_entries: usize) -> WalkBudget {
-        WalkBudget {
-            entries: 0,
-            max_entries,
-        }
-    }
-
-    fn charge(&mut self) -> Result<(), GitError> {
-        self.entries += 1;
-        if self.entries > self.max_entries {
-            return Err(GitError::Budget("tree exceeds entry budget".into()));
-        }
-        Ok(())
-    }
-}
-
-/// Aggregate budget over distinct incoming objects shared by a traversal
-/// range. With an `incoming` set, objects outside it (existing history) are
-/// free.
-#[derive(Clone, Debug)]
-pub struct IncomingBudget {
-    seen: HashSet<String>,
-    incoming: Option<HashSet<String>>,
-    pub objects: usize,
-    pub bytes: usize,
-    max_objects: usize,
-    max_bytes: usize,
-}
-
-impl IncomingBudget {
-    pub fn new(
-        max_objects: usize,
-        max_bytes: usize,
-        incoming: Option<HashSet<String>>,
-    ) -> IncomingBudget {
-        IncomingBudget {
-            seen: HashSet::new(),
-            incoming,
-            objects: 0,
-            bytes: 0,
-            max_objects,
-            max_bytes,
-        }
-    }
-
-    /// Charge one object before its content is read.
-    pub fn charge(&mut self, sha: &str, size: usize) -> Result<(), GitError> {
-        if let Some(incoming) = &self.incoming
-            && !incoming.contains(sha)
-        {
-            return Ok(());
-        }
-        if !self.seen.insert(sha.to_owned()) {
-            return Ok(());
-        }
-        self.objects += 1;
-        self.bytes = self.bytes.saturating_add(size);
-        if self.objects > self.max_objects {
-            return Err(GitError::Budget(
-                "object traversal exceeds object budget".into(),
-            ));
-        }
-        if self.bytes > self.max_bytes {
-            return Err(GitError::Budget(
-                "object traversal exceeds uncompressed byte budget".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Git's `canon_mode`: what `ls-tree` reports for a stored mode.
-fn canonical_mode(raw: &[u8]) -> Result<(u32, EntryKind), GitError> {
-    if raw.is_empty() || raw.len() > 7 || !raw.iter().all(|b| (b'0'..=b'7').contains(b)) {
-        return Err(GitError::Structure("malformed mode in tree entry".into()));
-    }
-    let mode = raw
-        .iter()
-        .fold(0u32, |acc, b| acc * 8 + u32::from(b - b'0'));
-    Ok(match mode & 0o170000 {
-        0o100000 => (
-            0o100000 | if mode & 0o100 != 0 { 0o755 } else { 0o644 },
-            EntryKind::Blob,
-        ),
-        0o120000 => (0o120000, EntryKind::Blob),
-        0o040000 => (0o040000, EntryKind::Tree),
-        _ => (0o160000, EntryKind::Commit),
-    })
-}
-
-struct RawChild {
-    mode: String,
-    kind: EntryKind,
-    sha: String,
-    name: Vec<u8>,
-}
-
-fn parse_tree(body: &[u8]) -> Result<Vec<RawChild>, GitError> {
-    let mut out = Vec::new();
-    let mut rest = body;
-    while !rest.is_empty() {
-        let space = rest
-            .iter()
-            .position(|b| *b == b' ')
-            .ok_or_else(|| GitError::Structure("malformed tree entry".into()))?;
-        let (mode, kind) = canonical_mode(&rest[..space])?;
-        let after = &rest[space + 1..];
-        let nul = after
-            .iter()
-            .position(|b| *b == 0)
-            .ok_or_else(|| GitError::Structure("malformed tree entry".into()))?;
-        let name = after[..nul].to_vec();
-        let id = after
-            .get(nul + 1..nul + 21)
-            .ok_or_else(|| GitError::Structure("truncated tree entry".into()))?;
-        if name.is_empty() {
-            return Err(GitError::Structure(
-                "tree entry name must not be empty".into(),
-            ));
-        }
-        out.push(RawChild {
-            mode: format!("{mode:06o}"),
-            kind,
-            sha: id.iter().map(|b| format!("{b:02x}")).collect(),
-            name,
-        });
-        rest = &after[nul + 21..];
-    }
-    Ok(out)
-}
-
-/// Walk every entry of `tree`, depth-first pre-order; directories are
-/// emitted before their children (so empty directories are validated).
-/// Duplicate names, out-of-Git-order entries, names that are not one path
-/// segment and nesting deeper than [`MAX_TREE_DEPTH`] are `Structure`
-/// errors; non-UTF-8 names are `Budget` (TS parity). Each visited tree is
-/// charged to `incoming` before it is parsed, and the walk stops as soon as
-/// the entry budget is exceeded.
-pub fn walk_tree(
-    reader: &mut ObjectReader,
-    tree: &Sha,
-    budget: &mut WalkBudget,
-    incoming: &mut IncomingBudget,
-) -> Result<Vec<TreeEntry>, GitError> {
-    let mut entries = Vec::new();
-    visit(reader, tree.as_str(), "", 0, budget, incoming, &mut entries)?;
-    Ok(entries)
-}
-
-fn visit(
-    reader: &mut ObjectReader,
-    sha: &str,
-    prefix: &str,
-    depth: usize,
-    budget: &mut WalkBudget,
-    incoming: &mut IncomingBudget,
-    entries: &mut Vec<TreeEntry>,
-) -> Result<(), GitError> {
-    let (kind, body) = reader.read_checked(sha, METADATA_OBJECT_MAX_BYTES, &mut |_, size| {
-        incoming.charge(sha, size)
-    })?;
-    if kind != ObjectKind::Tree {
-        return Err(GitError::Structure(
-            "tree entry does not name a tree".into(),
-        ));
-    }
-    budget.charge()?;
-    let mut names: HashSet<Vec<u8>> = HashSet::new();
-    let mut previous: Option<Vec<u8>> = None;
-    for child in parse_tree(&body)? {
-        if !names.insert(child.name.clone()) {
-            return Err(GitError::Structure("duplicate entry name in tree".into()));
-        }
-        let name = String::from_utf8(child.name.clone())
-            .map_err(|_| GitError::Budget("tree path is not valid UTF-8".into()))?;
-        if name.contains('/') {
-            return Err(GitError::Structure(
-                "tree entry name must not contain a slash".into(),
-            ));
-        }
-        if name == "." || name == ".." {
-            return Err(GitError::Structure(
-                "tree entry name must not be a dot segment".into(),
-            ));
-        }
-        if depth + 1 > MAX_TREE_DEPTH {
-            return Err(GitError::Structure(
-                "tree nesting exceeds depth budget".into(),
-            ));
-        }
-        let mut sort_key = child.name.clone();
-        if child.kind == EntryKind::Tree {
-            sort_key.push(b'/');
-        }
-        if previous
-            .as_ref()
-            .is_some_and(|p| p.as_slice() >= sort_key.as_slice())
-        {
-            return Err(GitError::Structure("tree entry is out of order".into()));
-        }
-        previous = Some(sort_key);
-        let path = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-        entries.push(TreeEntry {
-            mode: child.mode,
-            kind: child.kind,
-            sha: child.sha.clone(),
-            path: path.clone(),
-        });
-        if child.kind == EntryKind::Tree {
-            visit(
-                reader,
-                &child.sha,
-                &path,
-                depth + 1,
-                budget,
-                incoming,
-                entries,
-            )?;
-            continue;
-        }
-        budget.charge()?;
-    }
-    Ok(())
-}
-
-// ── Document source reads ──────────────────────────────────────────────────
-
-/// Why a source read failed.
-#[derive(Debug)]
-pub enum SourceError {
-    InvalidPath,
-    /// Unreadable revision (missing, foreign, unreachable) or no such file.
-    NotFound,
-    InvalidMarkdown(MarkdownIssue),
-    TooLarge,
-    Git(GitError),
-}
-
-impl SourceError {
-    pub fn protocol_code(&self) -> ErrorCode {
-        match self {
-            SourceError::InvalidPath | SourceError::InvalidMarkdown(_) | SourceError::TooLarge => {
-                ErrorCode::InvalidArgument
-            }
-            SourceError::NotFound => ErrorCode::NotFound,
-            SourceError::Git(GitError::NotFound) => ErrorCode::NotFound,
-            SourceError::Git(GitError::Budget(_)) => ErrorCode::InvalidArgument,
-            SourceError::Git(GitError::Structure(_)) => ErrorCode::RepairRequired,
-            SourceError::Git(GitError::Timeout) => ErrorCode::DeadlineExceeded,
-            SourceError::Git(GitError::Cancelled) => ErrorCode::Cancelled,
-            SourceError::Git(GitError::Io(_) | GitError::Failed(_)) => {
-                ErrorCode::StorageUnavailable
-            }
-        }
-    }
-}
-
-impl From<GitError> for SourceError {
-    fn from(error: GitError) -> Self {
-        match error {
-            GitError::NotFound => SourceError::NotFound,
-            other => SourceError::Git(other),
-        }
-    }
-}
-
-/// The blob named by `path` in `tree`, matched exactly segment by segment
-/// through the raw tree objects; `None` when absent or not a plain blob.
-pub fn blob_at(
-    reader: &mut ObjectReader,
-    tree: &Sha,
-    path: &KbPath,
-) -> Result<Option<String>, GitError> {
-    let mut current = tree.as_str().to_owned();
-    let segments: Vec<&str> = path.as_str().split('/').collect();
-    for (i, segment) in segments.iter().enumerate() {
-        let body = reader.read(&current, ObjectKind::Tree, METADATA_OBJECT_MAX_BYTES)?;
-        let Some(child) = parse_tree(&body)?
-            .into_iter()
-            .find(|child| child.name == segment.as_bytes())
-        else {
-            return Ok(None);
-        };
-        let last = i + 1 == segments.len();
-        match (child.kind, last) {
-            (EntryKind::Tree, false) => current = child.sha,
-            (EntryKind::Blob, true) => return Ok(Some(child.sha)),
-            _ => return Ok(None),
-        }
-    }
-    Ok(None)
-}
-
-/// Read one document's immutable source at `commit`, which must be readable
-/// (reachable from a branch of this repository). The path is matched
-/// exactly, segment by segment, through the raw tree objects of that commit.
-pub fn read_document(
-    repo: &GitRepo,
-    commit: &Sha,
-    path: &str,
-) -> Result<SourceDocument, SourceError> {
-    let parsed_path = KbPath::parse(path).map_err(|_| SourceError::InvalidPath)?;
-    repo.resolve_readable_commit(commit)?;
-    let mut reader = repo.object_reader()?;
-    let info = reader.read_commit(commit).map_err(referenced_object)?;
-    read_document_at(&mut reader, commit, &info.tree, parsed_path.as_str())
-}
-
-/// Once a revision is proven readable, an unavailable object it references is
-/// a storage fault. Only an absent path is document absence.
-fn referenced_object(error: GitError) -> SourceError {
-    match error {
-        GitError::NotFound => {
-            SourceError::Git(GitError::Failed("referenced object is unavailable".into()))
-        }
-        other => SourceError::from(other),
-    }
-}
-
-/// [`read_document`] through an open reader, for a `commit` the caller
-/// already proved readable and whose root `tree` it read (an index
-/// build reads every document of one revision through one reader).
-pub fn read_document_at(
-    reader: &mut ObjectReader,
-    commit: &Sha,
-    tree: &Sha,
-    path: &str,
-) -> Result<SourceDocument, SourceError> {
-    let path = KbPath::parse(path).map_err(|_| SourceError::InvalidPath)?;
-    let referenced = referenced_object;
-    let blob = blob_at(reader, tree, &path)
-        .map_err(referenced)?
-        .ok_or(SourceError::NotFound)?;
-    let (kind, bytes) = match reader.read_checked(&blob, DOCUMENT_MAX_BYTES, &mut |_, _| Ok(())) {
-        Err(GitError::Budget(_)) => return Err(SourceError::TooLarge),
-        other => other.map_err(referenced)?,
-    };
-    if kind != ObjectKind::Blob {
-        return Err(SourceError::Git(GitError::Failed(
-            "document entry does not name a blob".into(),
-        )));
-    }
-    let parsed = parse_markdown(&bytes).map_err(SourceError::InvalidMarkdown)?;
-    let markdown = String::from_utf8(bytes).map_err(|_| {
-        SourceError::Git(GitError::Failed("validated markdown is not UTF-8".into()))
-    })?;
-    Ok(SourceDocument {
-        content_hash: content_hash(markdown.as_bytes()),
-        blob_sha: Sha::parse(&blob).map_err(|_| GitError::Failed("invalid blob name".into()))?,
-        path,
-        commit_sha: commit.clone(),
-        markdown,
-        front_matter: parsed.front_matter,
-        body_start: parsed.body_start,
-        document_id: parsed.document_id,
-        citations: parsed.citations,
-    })
-}
-
 #[cfg(all(test, windows))]
 mod windows_command_tests {
     use super::*;
@@ -1838,6 +1444,7 @@ mod object_durability_tests {
 #[cfg(all(test, unix))]
 mod batch_cancel_tests {
     use super::*;
+    use crate::git_source::SourceError;
     use std::sync::atomic::{AtomicBool, Ordering};
     #[test]
     fn sealed_control_cancels_a_real_git_batch_and_allows_reentry() {

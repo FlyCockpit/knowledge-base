@@ -2,6 +2,7 @@
 //! and directory fsync -> durable COMPLETE -> desired/attempt activation CAS.
 use crate::{
     Store, StoreError,
+    generation_build::BuildAttempt,
     generations::*,
     index_format::{self, FileMeta, IndexQuantization},
     paths,
@@ -443,17 +444,17 @@ impl Store {
         // chunks.id = insertion order over documents in bytewise path order
         // and chunk_index order, so id order is (path, chunk_index) order.
         let mut reader = repo.object_reader()?;
-        let mut walk = crate::git_read::WalkBudget::new(crate::tree::TREE_LIMITS.max_entries);
-        let mut incoming = crate::git_read::IncomingBudget::new(
+        let mut walk = crate::git_tree::WalkBudget::new(crate::tree::TREE_LIMITS.max_entries);
+        let mut incoming = crate::git_tree::IncomingBudget::new(
             crate::tree::TREE_LIMITS.max_objects,
             crate::tree::TREE_LIMITS.max_uncompressed_object_bytes,
             None,
         );
         let mut paths_at_rev =
-            crate::git_read::walk_tree(&mut reader, &info.tree, &mut walk, &mut incoming)?
+            crate::git_tree::walk_tree(&mut reader, &info.tree, &mut walk, &mut incoming)?
                 .into_iter()
                 .filter(|entry| {
-                    entry.kind == crate::git_read::EntryKind::Blob && entry.path.ends_with(".md")
+                    entry.kind == crate::git_tree::EntryKind::Blob && entry.path.ends_with(".md")
                 })
                 .map(|entry| {
                     KbPath::parse(&entry.path)
@@ -492,7 +493,7 @@ impl Store {
                     let Some(path) = paths.next() else { break };
                     // No store fence while the reader lives (see above).
                     Self::check_build_control(a)?;
-                    let source = crate::git_read::read_document_at(
+                    let source = crate::git_source::read_document_at(
                         &mut reader,
                         &rev,
                         &info.tree,

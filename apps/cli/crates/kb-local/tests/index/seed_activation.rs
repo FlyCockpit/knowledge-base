@@ -43,7 +43,7 @@ fn commit(s: &Store, kb: &KbId, key: &str, path: &str) -> KbId {
 }
 async fn finish(
     s: &Store,
-    claim: kb_local::generations::BuildAttempt,
+    claim: kb_local::generation_build::BuildAttempt,
 ) -> Result<bool, kb_local::StoreError> {
     let built = s
         .build_generation(
@@ -56,7 +56,7 @@ async fn finish(
         .await?;
     s.activate_built(built)
 }
-fn claim(s: &Store, id: &KbId) -> kb_local::generations::BuildAttempt {
+fn claim(s: &Store, id: &KbId) -> kb_local::generation_build::BuildAttempt {
     s.claim_generation(id, Duration::from_secs(120))
         .expect("claim")
 }

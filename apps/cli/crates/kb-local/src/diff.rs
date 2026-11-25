@@ -2,7 +2,8 @@
 //! stream (assets then files, UTF-16 keys) bounds both kinds to <=200/page.
 use crate::{
     StoreError,
-    git_read::{EntryKind, GitRepo, IncomingBudget, ObjectKind, WalkBudget, walk_tree},
+    git_read::{GitRepo, ObjectKind},
+    git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
     tree::{MANIFEST_PATH, TREE_LIMITS, parse_manifest},
 };
 use kb_client::types::{AssetDelta, AssetRef, FileDelta, FileDeltaStatus, KbPath, Sha};

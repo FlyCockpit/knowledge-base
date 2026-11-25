@@ -1,7 +1,8 @@
 //! Immutable manifest snapshots and retained per-KB authority, shared by all publishers.
 use crate::{
     Store, StoreError,
-    git_read::{DOCUMENT_MAX_BYTES, GitRepo, ObjectKind, blob_at},
+    git_read::{DOCUMENT_MAX_BYTES, GitRepo, ObjectKind},
+    git_tree::blob_at,
     tree::{self, ManifestEntry, SealedOccurrence, TreePolicy},
 };
 use kb_client::types::{AssetRef, ContentHash, KbId, KbPath, Mime, Sha};
@@ -101,11 +102,11 @@ pub(crate) fn blob_map(
 ) -> Result<std::collections::HashMap<String, String>, StoreError> {
     let info = repo.read_commit(commit)?;
     let mut reader = repo.object_reader()?;
-    let entries = crate::git_read::walk_tree(
+    let entries = crate::git_tree::walk_tree(
         &mut reader,
         &info.tree,
-        &mut crate::git_read::WalkBudget::new(crate::tree::TREE_LIMITS.max_entries),
-        &mut crate::git_read::IncomingBudget::new(
+        &mut crate::git_tree::WalkBudget::new(crate::tree::TREE_LIMITS.max_entries),
+        &mut crate::git_tree::IncomingBudget::new(
             crate::tree::TREE_LIMITS.max_objects,
             crate::tree::TREE_LIMITS.max_uncompressed_object_bytes,
             None,

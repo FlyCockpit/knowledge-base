@@ -13,10 +13,13 @@ use std::collections::BTreeMap;
 
 use fixture::{Fixture, GITIGNORE, INDEX, MANIFEST, sha, with_required};
 use kb_client::types::Sha;
-use kb_local::git_read::{GitError, GitRepo, IncomingBudget, WalkBudget, walk_tree};
 use kb_local::tree::{
     EmptyAssetsNoSealed, ManifestEntry, SealedOccurrence, TREE_LIMITS, TreeCode, TreeError,
     TreePolicy, validate_commit, validate_newly_reachable,
+};
+use kb_local::{
+    git_read::{GitError, GitRepo},
+    git_tree::{IncomingBudget, WalkBudget, walk_tree},
 };
 
 fn corpus() -> BTreeMap<String, BTreeMap<String, String>> {

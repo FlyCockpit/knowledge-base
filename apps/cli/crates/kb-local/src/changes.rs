@@ -1569,7 +1569,10 @@ fn dangling_asset_links(
     tree: &Sha,
     assets: &[AssetChangeOwned],
 ) -> Result<Vec<kb_client::types::ApplyWarning>, StoreError> {
-    use crate::git_read::{EntryKind, IncomingBudget, ObjectKind, WalkBudget, walk_tree};
+    use crate::{
+        git_read::ObjectKind,
+        git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+    };
     let removed = assets
         .iter()
         .filter_map(|a| match a {

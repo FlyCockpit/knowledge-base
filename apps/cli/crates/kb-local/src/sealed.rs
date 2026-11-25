@@ -430,7 +430,10 @@ impl Store {
         kb: &KbId,
         r: &SealedReference,
     ) -> Result<Vec<String>, StoreError> {
-        use crate::git_read::{EntryKind, IncomingBudget, ObjectKind, WalkBudget, walk_tree};
+        use crate::{
+            git_read::ObjectKind,
+            git_tree::{EntryKind, IncomingBudget, WalkBudget, walk_tree},
+        };
         let record = self.kb(kb)?.ok_or(StoreError::NotFound)?;
         let Some(head) = record.head_sha else {
             return Ok(Vec::new());
@@ -545,7 +548,7 @@ impl Store {
             let (repo, rev) = self
                 .pinned_revision(p, &input.kb_id, input.rev.as_ref())
                 .map_err(|e| resolution_error(e, ctl))?;
-            let doc = crate::git_read::read_document(&repo, &rev, input.path.as_str())
+            let doc = crate::git_source::read_document(&repo, &rev, input.path.as_str())
                 .map_err(|e| resolution_error(crate::documents::source_error(e), ctl))?;
             let parsed = crate::markdown::parse_markdown(doc.markdown.as_bytes())
                 .map_err(|_| unresolved())?;
@@ -627,7 +630,7 @@ mod error_tests {
     use super::*;
     #[test]
     fn resolution_exit_table_preserves_typed_operational_failures() {
-        use crate::git_read::{GitError, SourceError};
+        use crate::{git_read::GitError, git_source::SourceError};
         let ctl = ProviderControl::default();
         for (error, expected) in [
             (StoreError::NotFound, ErrorCode::UnresolvedReference),
