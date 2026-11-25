@@ -97,6 +97,7 @@ function McpCredentialSettings() {
         Promise.all([
           queryClient.invalidateQueries({ queryKey: orpc.mcpTokens.key() }),
           queryClient.invalidateQueries({ queryKey: orpc.mcpGrants.key() }),
+          queryClient.invalidateQueries({ queryKey: orpc.apiKeys.key() }),
         ]),
     }),
   );
@@ -131,7 +132,9 @@ function McpCredentialSettings() {
   const confirmName =
     pending?.kind === "token" ? pending.row.name : (pending?.row.clientId ?? pending?.row.id ?? "");
   const { data: activeCounts } = active;
-  const hasLive = activeCounts !== undefined && activeCounts.tokens + activeCounts.apps > 0;
+  const hasLive =
+    activeCounts !== undefined &&
+    activeCounts.tokens + activeCounts.apps + activeCounts.apiKeys > 0;
   return (
     <>
       {reviewing && active.isError && (

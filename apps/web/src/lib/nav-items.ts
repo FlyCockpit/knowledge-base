@@ -1,6 +1,15 @@
 import { isAdminRole } from "@knowledge-base/auth/roles";
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Boxes, Home, KeyRound, LayoutDashboard, Settings, Shield } from "lucide-react";
+import {
+  BookOpen,
+  Boxes,
+  Home,
+  KeyRound,
+  KeySquare,
+  LayoutDashboard,
+  Settings,
+  Shield,
+} from "lucide-react";
 
 /** `guest`: public pages for signed-out visitors (signed-in users have the dashboard). */
 type NavAudience = "public" | "guest" | "authenticated" | "admin";
@@ -19,6 +28,7 @@ export type AppNavPath =
   | "/admin"
   | "/settings/security"
   | "/settings/mcp"
+  | "/settings/api-keys"
   | "/settings/embedding-providers";
 export type LangNavRoute =
   | "/$lang"
@@ -28,6 +38,7 @@ export type LangNavRoute =
   | "/$lang/admin"
   | "/$lang/settings/security"
   | "/$lang/settings/mcp"
+  | "/$lang/settings/api-keys"
   | "/$lang/settings/embedding-providers";
 
 export type RouteNavItem = {
@@ -147,6 +158,12 @@ export const settingsNavItems: RouteNavItem[] = [
     path: "/settings/mcp",
     labelKey: "settings:navMcp",
     icon: KeyRound,
+    exact: false,
+  },
+  {
+    path: "/settings/api-keys",
+    labelKey: "settings:navApiKeys",
+    icon: KeySquare,
     exact: false,
   },
   {

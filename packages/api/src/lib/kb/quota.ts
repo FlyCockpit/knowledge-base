@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { stat, statfs } from "node:fs/promises";
 import { promisify } from "node:util";
+import { readInstanceLimit } from "./instance-limits";
 import { KB_LIMITS } from "./limits";
 import { HeldLockLease, type LockQuery } from "./lock";
 import { KbAdmissionError } from "./principal";
@@ -67,6 +68,18 @@ export function capacityFor(dimension: QuotaDimension): bigint {
       return exhaustive;
     }
   }
+}
+
+/**
+ * The capacity in force on this transaction: the owned-live-KB limit is an
+ * instance setting (Admin → Limits); every other dimension is compiled.
+ */
+export async function liveCapacityFor(
+  query: LockQuery,
+  dimension: QuotaDimension,
+): Promise<bigint> {
+  if (dimension === "OWNER_LIVE_KB") return BigInt(await readInstanceLimit(query, "ownedLiveKbs"));
+  return capacityFor(dimension);
 }
 
 export function statfsDiskMeter(path: string): DiskMeter {
@@ -319,7 +332,7 @@ export async function reserveQuota(
             dimension: charge.dimension,
             subjectId: charge.subjectId,
             amount: charge.amount,
-            capacity: capacityFor(charge.dimension),
+            capacity: await liveCapacityFor(query, charge.dimension),
             includeCommitted: true,
             opId: input.opId,
             expiresAt: input.expiresAt,
@@ -412,7 +425,7 @@ export async function transferCommittedOwnerLiveKb(
           opId: `${input.opId}:release`,
         },
       );
-      const capacity = capacityFor("OWNER_LIVE_KB");
+      const capacity = await liveCapacityFor(query, "OWNER_LIVE_KB");
       const accountId = randomUUID();
       const charged = await query<{ id: string }>(
         `INSERT INTO "quota_account" (id, dimension, "subjectId", committed, reserved, "updatedAt")

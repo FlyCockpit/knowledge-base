@@ -1,6 +1,18 @@
 enum McpGrantKind {
   PAT
   OAUTH
+  /// The control-plane authority of one REST API key (`api_key`). Accepted only
+  /// with an API-key credential binding; never usable on MCP, Git or assets.
+  API_KEY
+}
+
+/// Which KBs an API key reaches. ALL: every KB the owner can access (capped by
+/// `McpGrant.allKbsBits`); SELECTED: the GrantKbAcl rows chosen at mint; CREATED:
+/// none at mint. Every reach also covers the KBs the key creates.
+enum ApiKeyReach {
+  ALL
+  SELECTED
+  CREATED
 }
 
 /// How a write-capable grant may author content ("write mode" in the UI):
@@ -33,6 +45,10 @@ model McpGrant {
   toolGroups           String[]
   allowCreate          Boolean               @default(false)
   createdKbBits        String[]
+  /// Expanded bits this grant holds on EVERY KB its owner can access (still
+  /// intersected with live owner/share bits). Empty for every PAT and OAuth
+  /// grant; only an API key with reach ALL sets it.
+  allKbsBits           String[]              @default([])
   /// The write mode, live-checked on every mutation like toolGroups.
   authoringMode        McpAuthoringMode?
   revokedAt            DateTime?             @db.Timestamptz(3)
@@ -43,6 +59,7 @@ model McpGrant {
   elevations           McpGrantElevation[]
   consentIntents       ConsentIntent[]
   personalToken        McpPersonalToken?
+  apiKey               ApiKey?
   sealedConsumerGrants SealedConsumerGrant[]
 
   @@unique([actorUserIdSnapshot, clientId, referenceId], map: "mcp_grant_actor_client_reference")
@@ -124,11 +141,58 @@ model McpPersonalToken {
   expiresAt      DateTime? @db.Timestamptz(3)
   lastUsedAt     DateTime? @db.Timestamptz(3)
   revokedAt      DateTime? @db.Timestamptz(3)
+  /// Set for a child token minted through an API key: it is live only while
+  /// that key is, and it is listed and revoked with it.
+  parentApiKeyId String?
+  parentApiKey   ApiKey?   @relation(fields: [parentApiKeyId], references: [id], onDelete: Restrict)
+  /// Child mints only: the caller's Idempotency-Key and the request digest.
+  idempotencyKey String?
+  requestHash    String?
 
   @@unique([lookupPrefix], map: "mcp_personal_token_lookup_prefix")
   @@unique([secretDigest], map: "mcp_personal_token_secret_digest")
+  @@unique([parentApiKeyId, idempotencyKey], map: "mcp_personal_token_parent_idempotency")
   @@index([userId, revokedAt, expiresAt])
+  @@index([parentApiKeyId, revokedAt, expiresAt])
+  /// Child-list keyset pages (by token id), however long a key's history.
+  @@index([parentApiKeyId, id])
   @@map("mcp_personal_token")
+}
+
+/// Human-minted REST API key for the control plane (create, list and delete
+/// KBs; mint, list and revoke child MCP tokens). Holds only the lookup prefix,
+/// the secret digest, its API_KEY grant generation and the ceilings its
+/// children must stay within. Always dated (at most 365 days). Never a second
+/// ACL: the KB ceiling is the grant's GrantKbAcl / allKbsBits.
+model ApiKey {
+  id                 String             @id @default(cuid(2))
+  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
+  userIdSnapshot     String
+  userId             String?
+  user               User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name               String
+  lookupPrefix       String
+  secretDigest       String
+  grantId            String             @unique @db.Uuid
+  grant              McpGrant           @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  reach              ApiKeyReach
+  /// Expanded per-KB ceiling of the key itself and of every child it mints.
+  bits               String[]
+  allowDelete        Boolean            @default(false)
+  allowMintChildren  Boolean            @default(false)
+  /// Child ceilings: tool groups (canonical order, never empty) and the write
+  /// mode (NULL = children are read-only).
+  childToolGroups    String[]
+  childAuthoringMode McpAuthoringMode?
+  expiresAt          DateTime           @db.Timestamptz(3)
+  lastUsedAt         DateTime?          @db.Timestamptz(3)
+  revokedAt          DateTime?          @db.Timestamptz(3)
+  children           McpPersonalToken[]
+
+  @@unique([lookupPrefix], map: "api_key_lookup_prefix")
+  @@unique([secretDigest], map: "api_key_secret_digest")
+  @@index([userId, revokedAt, expiresAt])
+  @@map("api_key")
 }
 
 /// App-owned durable transaction and immutable approval receipt. Never cascades

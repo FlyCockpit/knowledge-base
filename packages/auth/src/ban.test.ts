@@ -63,7 +63,7 @@ describe("isPermanentBanWrite", () => {
 });
 
 describe("revokeUserMcpGrants", () => {
-  it("tombstones only the user's live PATs and grants, never clearing an existing tombstone", async () => {
+  it("tombstones only the user's live PATs, grants and REST API keys, never clearing an existing tombstone", async () => {
     const calls: { sql: string; params: unknown[] }[] = [];
     await revokeUserMcpGrants(
       async (sql, params) => {
@@ -72,9 +72,11 @@ describe("revokeUserMcpGrants", () => {
       "u1",
       "ban",
     );
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0]!.sql).toMatch(/UPDATE "mcp_personal_token"/);
     expect(calls[1]!.sql).toMatch(/UPDATE "mcp_grant"/);
+    // API keys too (their grants and their children's are the two rows above).
+    expect(calls[2]!.sql).toMatch(/UPDATE "api_key"/);
     for (const call of calls) {
       expect(call.params[0]).toBe("u1");
       expect(call.sql).toMatch(/"revokedAt" IS NULL/);

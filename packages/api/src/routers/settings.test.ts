@@ -573,4 +573,72 @@ describe("settingsRouter", () => {
       expect(call.where.key.in).not.toContain("kb.searchAll.limit");
     });
   });
+  describe("instance limits (Admin → Limits)", () => {
+    const admin = () =>
+      createRouterClient(settingsRouter, {
+        context: buildContext({ user: { role: "admin", twoFactorEnabled: true } }),
+      });
+    const notFound = (error: ORPCError<string, unknown>) => {
+      expect(error).toBeInstanceOf(ORPCError);
+      expect(error.code).toBe("NOT_FOUND");
+      return true;
+    };
+
+    it("reads every limit with its default and bounds (absent rows mean the default)", async () => {
+      db.$queryRawUnsafe.mockResolvedValue([]);
+      await expect(admin().instanceLimits()).resolves.toEqual({
+        createsPerHour: { value: 5, default: 5, min: 1, max: 1000 },
+        ownedLiveKbs: { value: 20, default: 20, min: 1, max: 10_000 },
+        childTokensPerApiKey: { value: 200, default: 200, min: 1, max: 10_000 },
+      });
+    });
+
+    it("writes and audits a changed limit in the live-admin transaction", async () => {
+      const stored = new Map<string, string>();
+      db.$queryRawUnsafe.mockImplementation(async (sql: string, ...values: unknown[]) => {
+        if (sql.startsWith("INSERT INTO app_setting"))
+          stored.set(values[0] as string, values[1] as string);
+        if (sql.startsWith("SELECT key, value FROM app_setting"))
+          return [...stored].map(([key, value]) => ({ key, value }));
+        return [];
+      });
+      const result = await admin().setInstanceLimits({ childTokensPerApiKey: 2 });
+      expect(result.childTokensPerApiKey.value).toBe(2);
+      expect(stored.get("kb.limits.childTokensPerApiKey")).toBe("2");
+      const audit = db.$queryRawUnsafe.mock.calls.find(([sql]) =>
+        String(sql).includes('INSERT INTO "audit_event"'),
+      );
+      expect(audit).toContain("instance_limit_update");
+      expect(audit).toContain("user:test-user-id");
+      expect(db.$transaction).toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ createsPerHour: 0 }],
+      [{ createsPerHour: 1001 }],
+      [{ ownedLiveKbs: 10_001 }],
+      [{ childTokensPerApiKey: 1.5 }],
+      [{}],
+      [{ unknownLimit: 3 }],
+    ])("refuses %j without writing", async (patch) => {
+      await expect(admin().setInstanceLimits(patch as never)).rejects.toThrow();
+      expect(db.$queryRawUnsafe.mock.calls.some(([sql]) => String(sql).startsWith("INSERT"))).toBe(
+        false,
+      );
+    });
+
+    it.each([
+      ["unauthenticated", null],
+      ["a non-admin", { user: { role: "user" } }],
+      ["an admin without 2FA", { user: { role: "admin", twoFactorEnabled: false } }],
+      ["an unverified admin", { user: { role: "admin", emailVerified: false } }],
+    ] as const)("answers NOT_FOUND to %s for both procedures", async (_label, session) => {
+      const client = createRouterClient(settingsRouter, {
+        context: buildContext(session as never),
+      });
+      await expect(client.instanceLimits()).rejects.toSatisfy(notFound);
+      await expect(client.setInstanceLimits({ createsPerHour: 3 })).rejects.toSatisfy(notFound);
+      expect(db.$queryRawUnsafe).not.toHaveBeenCalled();
+    });
+  });
 });

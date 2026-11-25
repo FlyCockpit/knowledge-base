@@ -10,6 +10,7 @@ import {
 import { isEmailConfigured } from "@knowledge-base/mailer";
 import type { RouterClient } from "@orpc/server";
 import { publicProcedure } from "../index";
+import { apiKeysRouter } from "./api-keys";
 import { authRouter } from "./auth";
 import { cliCredentialsRouter } from "./cli-credentials";
 import { documentsRouter } from "./documents";
@@ -84,6 +85,7 @@ export const appRouter = {
   embeddingProviders: embeddingProvidersRouter,
   search: searchRouter,
   mcpTokens: mcpTokensRouter,
+  apiKeys: apiKeysRouter,
   mcpGrants: mcpGrantsRouter,
   mcpConsent: mcpConsentRouter,
 };

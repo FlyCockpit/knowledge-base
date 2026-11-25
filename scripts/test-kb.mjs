@@ -332,6 +332,7 @@ export const SUITES = {
   grants: {
     include: [
       "packages/test-utils/src/kb/grants.integration.test.ts",
+      "packages/test-utils/src/kb/api-keys.integration.test.ts",
       "packages/api/src/lib/mcp-token-access.test.ts",
       "packages/api/src/lib/kb/permissions.test.ts",
       "packages/api/src/routers/mcp-tokens.test.ts",

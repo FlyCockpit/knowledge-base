@@ -34,6 +34,7 @@
     "overview": "Overview",
     "users": "Users",
     "jobs": "Jobs",
+    "limits": "Limits",
     "settings": "Settings"
   },
   "jobs": {
@@ -50,6 +51,34 @@
     "noFailureReason": "No failure reason was recorded.",
     "attempts_one": "{{count}} attempt",
     "attempts_other": "{{count}} attempts"
+  },
+  "limits": {
+    "title": "Limits",
+    "description": "Instance-wide limits on creating knowledge bases and on API keys. Changes apply to the next request.",
+    "cardTitle": "Knowledge bases and API keys",
+    "cardDescription": "Every limit is checked live where it is enforced. Lowering a limit never removes what already exists; it only refuses new creates or tokens over it.",
+    "fields": {
+      "createsPerHour": {
+        "label": "Knowledge base creates per person per hour",
+        "description": "Shared by the web app, MCP and the REST API."
+      },
+      "ownedLiveKbs": {
+        "label": "Knowledge bases one person may own",
+        "description": "Counts live knowledge bases, on create and on ownership transfer."
+      },
+      "childTokensPerApiKey": {
+        "label": "Active MCP tokens per API key",
+        "description": "Tokens a REST API key may hold at once."
+      }
+    },
+    "help": "{{description}} From {{min, number}} to {{max, number}}. Default {{default, number}}.",
+    "invalid": "Enter a whole number from {{min, number}} to {{max, number}}.",
+    "loadFailed": "Couldn't load the limits.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Limits saved.",
+    "unchanged": "Nothing changed.",
+    "failed": "Couldn't save the limits. Try again."
   },
   "overview": {
     "title": "Admin overview",

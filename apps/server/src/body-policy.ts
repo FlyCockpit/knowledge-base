@@ -12,6 +12,9 @@ export const UPLOAD_WRITE_JSON_MAX_BYTES = 512 * 1024;
 /** `POST /api/setup/admin` (setup-routes.ts) carries a key and an address only. */
 export const SETUP_ADMIN_MAX_BODY_BYTES = 4 * 1024;
 
+/** REST control-plane bodies are small JSON objects (rest-api.ts reads at most this). */
+export const REST_API_MAX_BODY_BYTES = 16 * 1024;
+
 /** oRPC encodes `kbUploads.write` as `/rpc/kbUploads/write` (and `/__batch__` variants). */
 function isKbUploadWriteRpcPath(pathname: string): boolean {
   const path = pathname.split("?")[0] ?? pathname;
@@ -28,6 +31,9 @@ export function maxBodyBytesForPath(pathname: string): number {
   }
   if (path === "/api/setup/admin") {
     return SETUP_ADMIN_MAX_BODY_BYTES;
+  }
+  if (path.startsWith("/api/v1/")) {
+    return REST_API_MAX_BODY_BYTES;
   }
   return DEFAULT_HTTP_BODY_BYTES;
 }
@@ -154,6 +160,18 @@ export async function readBodyWithLimit(
  * passes the trusted client-IP resolver; it is injected (not imported) so this
  * module stays free of env loading for the many route tests that mount it.
  */
+/**
+ * A transport refusal. The REST API (`/api/v1/`) answers in its own error
+ * format (`{error:{code,message}}`); every other surface keeps plain text.
+ */
+function refuse(c: Context, status: 400 | 408 | 413 | 503, code: string, text: string): Response {
+  if (c.req.path.startsWith("/api/v1/")) {
+    return c.json({ error: { code, message: text } }, status, { "cache-control": "no-store" });
+  }
+  if (status === 400) return c.json({ error: text }, status);
+  return c.text(text, status);
+}
+
 export function bodyPolicyMiddleware(
   options: { clientKey?: (c: Context) => string } = {},
 ): MiddlewareHandler {
@@ -178,10 +196,10 @@ export function bodyPolicyMiddleware(
     if (lengthHeader !== undefined && lengthHeader !== "") {
       const parsed = Number(lengthHeader);
       if (!Number.isFinite(parsed) || parsed < 0) {
-        return c.json({ error: "Invalid Content-Length" }, 400);
+        return refuse(c, 400, "INVALID_ARGUMENT", "Invalid Content-Length");
       }
       if (parsed > maxBytes) {
-        return c.text("Payload Too Large", 413);
+        return refuse(c, 413, "PAYLOAD_TOO_LARGE", "Payload Too Large");
       }
     }
     let release: (() => void) | undefined;
@@ -203,14 +221,14 @@ export function bodyPolicyMiddleware(
     } catch (error) {
       release?.();
       if (error instanceof BodyTooLargeError) {
-        return c.text("Payload Too Large", 413);
+        return refuse(c, 413, "PAYLOAD_TOO_LARGE", "Payload Too Large");
       }
       if (error instanceof BodyBudgetExceededError) {
         c.header("Retry-After", "1");
-        return c.text("Service Unavailable", 503);
+        return refuse(c, 503, "STORAGE_UNAVAILABLE", "Service Unavailable");
       }
       if (error instanceof BodyReadTimeoutError) {
-        return c.text("Request Timeout", 408);
+        return refuse(c, 408, "REQUEST_TIMEOUT", "Request Timeout");
       }
       throw error;
     }

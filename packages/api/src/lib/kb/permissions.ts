@@ -280,7 +280,12 @@ export async function authorize(input: AuthorizeInput): Promise<Authorization> {
     if (!verifier) {
       throw new KbAdmissionError("UNAUTHORIZED", "Credential is not admissible");
     }
-    await assertTokenAdmissible(principal, verifier);
+    const admission = await assertTokenAdmissible(principal, verifier);
+    // An API key's allowDelete binds the key and every child it minted, on
+    // every surface (REST and MCP), before any KB-specific check.
+    if (operation === "delete" && admission.deleteDenied) {
+      throw new KbAdmissionError("FORBIDDEN", "Forbidden");
+    }
     if (!tokenHasOauthScope(principal.scopes, isMutation(operation))) {
       const kbForScope = await store.loadKb(kbId);
       const live =

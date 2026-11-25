@@ -144,7 +144,8 @@ searches more than the one `kbId` it names.
 
 Shares, ownership transfer, provider credentials, mirror configuration/push,
 sealed enrollment/consumer approval, OAuth/PAT management, device approval and
-instance administration remain human control operations. The narrow PAT
+instance administration remain human control operations. The one exception is
+a child token minted with a human-minted REST API key (below). The narrow PAT
 `POST /api/kb/token/revoke-self` revokes only its presented credential, has no
 body, and is used by CLI logout; it is not a generic oRPC gateway or MCP tool.
 OAuth requests for sealed capabilities are rejected. Only an explicitly approved
@@ -152,6 +153,17 @@ CLI/PAT recipient gets exact-record capabilities, also requiring current read
 and the owner's share setting. `knowledge_sealed_resolve` returns recipient
 ciphertext; plaintext never appears in tool output. See
 [the host adapter](./cockpit-adapter.md).
+
+### Child tokens from a REST API key
+
+Automation that manages knowledge bases (one per project, say) uses a REST API
+key from Settings → API keys and the [REST API](./rest-api.md) to create a KB
+and mint a child MCP token for it. A child token is an ordinary personal access
+token for one KB: use it here like any other. It never exceeds its key's
+ceilings or your live access, expires no later than its key, stops working when
+the key is revoked or expires, cannot create KBs and cannot mint anything.
+Children are listed and revoked under their key, not in Settings → MCP. An API
+key itself is refused on `/mcp`, and an MCP token is refused on the REST API.
 
 ## Searching several knowledge bases
 

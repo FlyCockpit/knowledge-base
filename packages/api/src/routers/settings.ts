@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   recordTwoFactorGraceStartForPolicyActivation,
   withOutgoingTwoFactorMcpSettlement,
@@ -11,6 +12,11 @@ import { z } from "zod";
 
 import { adminOr404Procedure, authenticatedProcedure, liveAdminOr404Procedure } from "../index";
 import { prismaAssetQuery } from "../lib/kb/asset-authz";
+import {
+  INSTANCE_LIMITS,
+  readInstanceLimits,
+  writeInstanceLimits,
+} from "../lib/kb/instance-limits";
 import { SEARCH_ALL_DEFAULT_BASES, SEARCH_ALL_MAX_BASES } from "../lib/kb/protocol/common";
 import { readSearchAllLimit, writeSearchAllLimit } from "../lib/kb/search-all";
 import { FORCE_2FA_SETTING_KEYS } from "../lib/two-factor-policy";
@@ -25,6 +31,26 @@ const ADMIN_PROBE_ROWS = 20;
 function searchAllLimitView(limit: number) {
   return { limit, default: SEARCH_ALL_DEFAULT_BASES, max: SEARCH_ALL_MAX_BASES };
 }
+
+/** Admin → Limits: each limit with its default and bounds. */
+function instanceLimitsView(values: Awaited<ReturnType<typeof readInstanceLimits>>) {
+  return {
+    createsPerHour: { value: values.createsPerHour, ...bounds("createsPerHour") },
+    ownedLiveKbs: { value: values.ownedLiveKbs, ...bounds("ownedLiveKbs") },
+    childTokensPerApiKey: {
+      value: values.childTokensPerApiKey,
+      ...bounds("childTokensPerApiKey"),
+    },
+  };
+}
+
+function bounds(name: keyof typeof INSTANCE_LIMITS) {
+  const spec = INSTANCE_LIMITS[name];
+  return { default: spec.default, min: spec.min, max: spec.max };
+}
+
+const limitValue = (name: keyof typeof INSTANCE_LIMITS) =>
+  z.number().int().min(INSTANCE_LIMITS[name].min).max(INSTANCE_LIMITS[name].max).optional();
 
 export const settingsRouter = {
   getAll: authenticatedProcedure.handler(async () => {
@@ -101,6 +127,32 @@ export const settingsRouter = {
     .handler(async ({ input, context }) =>
       searchAllLimitView(
         await writeSearchAllLimit(prismaAssetQuery(context.authorityTx), input.limit),
+      ),
+    ),
+
+  /** Instance-admin only (404 otherwise). */
+  instanceLimits: liveAdminOr404Procedure.handler(async ({ context }) =>
+    instanceLimitsView(await readInstanceLimits(prismaAssetQuery(context.authorityTx))),
+  ),
+
+  /** Validated (never clamped) and audited per changed limit. */
+  setInstanceLimits: liveAdminOr404Procedure
+    .input(
+      z
+        .strictObject({
+          createsPerHour: limitValue("createsPerHour"),
+          ownedLiveKbs: limitValue("ownedLiveKbs"),
+          childTokensPerApiKey: limitValue("childTokensPerApiKey"),
+        })
+        .refine((patch) => Object.values(patch).some((value) => value !== undefined)),
+    )
+    .handler(async ({ input, context }) =>
+      instanceLimitsView(
+        await writeInstanceLimits(
+          prismaAssetQuery(context.authorityTx),
+          { userId: context.session.user.id, opId: randomUUID() },
+          input,
+        ),
       ),
     ),
 

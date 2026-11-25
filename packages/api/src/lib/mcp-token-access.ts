@@ -97,7 +97,7 @@ function digestMatches(raw: string, stored: string): boolean {
   return presented.length === expected.length && timingSafeEqual(presented, expected);
 }
 
-function toDate(value: unknown): Date | null {
+export function toDate(value: unknown): Date | null {
   if (value === null || value === undefined) return null;
   const date = value instanceof Date ? value : new Date(String(value));
   return Number.isNaN(date.getTime()) ? null : date;
@@ -262,10 +262,23 @@ export function createGrantCredentialVerifier(
         tokenId: string | null;
         resource: string | null;
         elevations?: unknown;
+        parentApiKeyId: string | null;
+        parentLive: boolean | null;
+        parentAllowDelete: boolean | null;
+        apiKeyId: string | null;
+        apiKeyLive: boolean | null;
+        apiKeyAllowDelete: boolean | null;
       }>(
         `SELECT g.id::text AS id, g."userId", g.kind::text AS kind, g.scopes, g."toolGroups", g."authoringMode"::text AS "authoringMode", g."revokedAt",
                 g."clientId", t.id AS "tokenId", t.resource,
                 t."revokedAt" AS "tokenRevokedAt", t."expiresAt" AS "tokenExpiresAt",
+                t."parentApiKeyId",
+                (pk.id IS NOT NULL AND pk."revokedAt" IS NULL AND pk."expiresAt" > clock_timestamp()
+                   AND pg."revokedAt" IS NULL AND pk."userId" = g."userId") AS "parentLive",
+                pk."allowDelete" AS "parentAllowDelete",
+                k.id AS "apiKeyId", k."allowDelete" AS "apiKeyAllowDelete",
+                (k.id IS NOT NULL AND k."revokedAt" IS NULL AND k."expiresAt" > clock_timestamp()
+                   AND k."userId" = g."userId") AS "apiKeyLive",
                 (SELECT jsonb_agg(jsonb_build_object(
                           'id', e.id::text, 'toolGroups', e."toolGroups", 'expiresAt', e."expiresAt")
                           ORDER BY e.id)
@@ -273,6 +286,9 @@ export function createGrantCredentialVerifier(
                   WHERE e."grantId" = g.id AND ${ACTIVE_ELEVATION_SQL}) AS elevations
            FROM "mcp_grant" g
            LEFT JOIN "mcp_personal_token" t ON t."grantId" = g.id
+           LEFT JOIN "api_key" pk ON pk.id = t."parentApiKeyId"
+           LEFT JOIN "mcp_grant" pg ON pg.id = pk."grantId"
+           LEFT JOIN "api_key" k ON k."grantId" = g.id
           WHERE g.id = $1::uuid`,
         [principal.grantId],
       );
@@ -286,9 +302,14 @@ export function createGrantCredentialVerifier(
         !row.revokedAt &&
         row.userId === principal.userId &&
         row.id === principal.grantId &&
-        (row.kind === "OAUTH" || row.kind === "PAT") &&
+        (row.kind === "OAUTH" || row.kind === "PAT" || row.kind === "API_KEY") &&
         principal.scopes.every((scope) => row.scopes.includes(scope));
       const binding = principal.credential;
+      // An API key's grant is admitted ONLY for an API-key binding naming that
+      // key: an unbound principal, or one bound as a PAT/OAuth credential, can
+      // never act through it (and an API-key binding never matches a PAT/OAuth
+      // grant, by the kind equality below).
+      if (row?.kind === "API_KEY") generationActive &&= binding?.kind === "API_KEY";
       if (binding)
         generationActive &&=
           !!row &&
@@ -296,7 +317,8 @@ export function createGrantCredentialVerifier(
           row.clientId === binding.clientId &&
           (policy.resource === undefined || binding.resource === policy.resource) &&
           (binding.kind !== "PAT" ||
-            (row.tokenId === binding.tokenId && row.resource === binding.resource));
+            (row.tokenId === binding.tokenId && row.resource === binding.resource)) &&
+          (binding.kind !== "API_KEY" || row.apiKeyId === binding.tokenId);
       if (row && row.kind === "PAT") {
         // NULL token expiry = never expires; a present unreadable value fails closed.
         const tokenExpiry = toDate(row.tokenExpiresAt);
@@ -304,7 +326,12 @@ export function createGrantCredentialVerifier(
           row.tokenId !== null &&
           !row.tokenRevokedAt &&
           (row.tokenExpiresAt === null || (!!tokenExpiry && tokenExpiry > at));
+        // A child token lives only while its API key does (same statement,
+        // database clock): revocation and expiry of the key end every child
+        // even before the revoke cascade's tombstones are read.
+        if (row.parentApiKeyId !== null) generationActive &&= row.parentLive === true;
       }
+      if (row && row.kind === "API_KEY") generationActive &&= row.apiKeyLive === true;
       if (!generationActive) return { ...inactive, consumerKind };
       // One read of the elevations in force: groups, ids and expiry all come from it.
       const elevations = parseElevations(row?.elevations);
@@ -318,6 +345,10 @@ export function createGrantCredentialVerifier(
         banned: identity ? identity.banned : true,
         twoFactorSatisfied: identity?.twoFactorSatisfied ?? false,
         consumerKind,
+        // A key without allowDelete, and every child it minted, never deletes.
+        deleteDenied:
+          (row?.kind === "API_KEY" && row.apiKeyAllowDelete !== true) ||
+          (row?.kind === "PAT" && row.parentApiKeyId !== null && row.parentAllowDelete !== true),
         // The write mode is the base grant's own: elevations never change it.
         authoringMode: authoringModeFromDb(row?.authoringMode),
         // Effective groups: the base grant united with every active elevation
@@ -338,11 +369,14 @@ export function createGrantCredentialVerifier(
     },
     async grantBits(principal, kbId) {
       if (!UUID.test(principal.grantId)) return [];
-      // The base GrantKbAcl united with every active elevation's bits for this KB.
+      // The base GrantKbAcl united with every active elevation's bits for this
+      // KB, and the grant's every-KB ceiling (API keys with reach ALL only).
       const result = await guarded<{ bits: string[] | null }>(
         `SELECT ARRAY(SELECT DISTINCT x.b FROM (
                   SELECT unnest(a.bits) AS b FROM "grant_kb_acl" a
                    WHERE a."grantId" = $1::uuid AND a."kbId" = $2
+                  UNION ALL
+                  SELECT unnest(g."allKbsBits") FROM "mcp_grant" g WHERE g.id = $1::uuid
                   UNION ALL
                   SELECT unnest(ea.bits) FROM "grant_elevation_kb_acl" ea
                     JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId"
@@ -382,8 +416,8 @@ export async function validateAclAgainstLive(
   return out;
 }
 
-const kbIdSchema = z.string().regex(/^[a-z0-9]{24,32}$/);
-const permissionSchema = z.enum(PERMISSIONS);
+export const kbIdSchema = z.string().regex(/^[a-z0-9]{24,32}$/);
+export const permissionSchema = z.enum(PERMISSIONS);
 
 export const patMintInput = z.strictObject({
   name: patDisplayName,
@@ -439,15 +473,17 @@ function asDomainError(error: unknown): unknown {
         ? error.code
         : "FORBIDDEN",
       "Forbidden",
+      // A rate refusal keeps its reset (REST answers Retry-After from it).
+      error.code === "RATE_LIMITED" ? error.retryAfterSeconds : undefined,
     );
   }
   if (isUniqueViolation(error)) return new KbDomainError("CONFLICT", "Credential conflict");
   return error;
 }
 
-type Runtime = Pick<KbRuntimeConfig, "coordinator" | "canonicalOrigin">;
+export type Runtime = Pick<KbRuntimeConfig, "coordinator" | "canonicalOrigin">;
 
-async function inAuthorityTransaction<T>(
+export async function inAuthorityTransaction<T>(
   runtime: Runtime,
   run: (query: LockQuery, opId: string) => Promise<T>,
 ): Promise<T> {
@@ -463,7 +499,7 @@ async function inAuthorityTransaction<T>(
   }
 }
 
-async function lockLiveUser(query: LockQuery, userId: string): Promise<void> {
+export async function lockLiveUser(query: LockQuery, userId: string): Promise<void> {
   const locked = await query(`SELECT id FROM "user" WHERE id = $1 FOR UPDATE`, [userId]);
   if (locked.rows.length !== 1) throw new KbDomainError("FORBIDDEN", "Forbidden");
   assertLiveIdentity(await sqlAuthorityStore(query).loadIdentity(userId));
@@ -495,13 +531,26 @@ export async function mintPersonalToken(
 }
 
 /** Internal mint boundary; caller owns authority lock and committing transaction. */
+/**
+ * A child token's parent API key. The caller (`mintApiKeyChild`) has already
+ * admitted the key on this transaction and checked the request against its
+ * ceilings; the child skips the per-user PAT cap (the key's own cap applies).
+ */
+export type PatParent = {
+  apiKeyId: string;
+  /** The key's grant generation: the audit actor of the mint. */
+  apiKeyGrantId: string;
+  idempotencyKey: string;
+  requestHash: string;
+};
+
 export async function mintPersonalTokenInTransaction(
   query: LockQuery,
   opId: string,
   canonicalOrigin: string,
   userId: string,
   raw: PatMintInput,
-  deps: { generateSecret?: () => PatSecret; now?: () => Date } = {},
+  deps: { generateSecret?: () => PatSecret; now?: () => Date; parent?: PatParent } = {},
 ): Promise<MintedPersonalToken & { grantId: string }> {
   const parsed = patMintInput.safeParse(raw);
   if (!parsed.success) throw invalidSelection();
@@ -525,15 +574,20 @@ export async function mintPersonalTokenInTransaction(
 
   await lockLiveUser(query, userId);
   const acl = await validateAclAgainstLive(sqlAuthorityStore(query), userId, ceiling.acl);
-  const live = await query<{ count: number }>(
-    `SELECT COUNT(*)::int AS count
-         FROM "mcp_personal_token" t JOIN "mcp_grant" g ON g.id = t."grantId"
-        WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND g."revokedAt" IS NULL
-          AND (t."expiresAt" IS NULL OR t."expiresAt" > now())`,
-    [userId],
-  );
-  if ((live.rows[0]?.count ?? 0) >= MCP_PAT_MAX_ACTIVE_PER_USER) {
-    throw new KbDomainError("QUOTA_EXCEEDED", "Active token limit reached");
+  const parent = deps.parent;
+  if (!parent) {
+    // Child tokens count toward their API key's cap, not this one.
+    const live = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+           FROM "mcp_personal_token" t JOIN "mcp_grant" g ON g.id = t."grantId"
+          WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND g."revokedAt" IS NULL
+            AND t."parentApiKeyId" IS NULL
+            AND (t."expiresAt" IS NULL OR t."expiresAt" > now())`,
+      [userId],
+    );
+    if ((live.rows[0]?.count ?? 0) >= MCP_PAT_MAX_ACTIVE_PER_USER) {
+      throw new KbDomainError("QUOTA_EXCEEDED", "Active token limit reached");
+    }
   }
   await query(
     `INSERT INTO "mcp_grant"
@@ -563,8 +617,9 @@ export async function mintPersonalTokenInTransaction(
   await query(
     `INSERT INTO "mcp_personal_token"
          (id, "userIdSnapshot", "userId", name, "lookupPrefix", "secretDigest", "grantId",
-          scopes, resource, "expiresAt", "createdAt")
-       VALUES ($1, $2, $2, $3, $4, $5, $6::uuid, $7::text[], $8, $9, now())`,
+          scopes, resource, "expiresAt", "parentApiKeyId", "idempotencyKey", "requestHash",
+          "createdAt")
+       VALUES ($1, $2, $2, $3, $4, $5, $6::uuid, $7::text[], $8, $9, $10, $11, $12, now())`,
     [
       tokenId,
       userId,
@@ -575,25 +630,41 @@ export async function mintPersonalTokenInTransaction(
       ceiling.scopes,
       resource,
       expiresAt,
+      parent?.apiKeyId ?? null,
+      parent?.idempotencyKey ?? null,
+      parent?.requestHash ?? null,
     ],
   );
   await recordAuditEvent(query, {
     opId,
-    action: "pat_mint",
+    action: parent ? "api_key_child_mint" : "pat_mint",
     outcome: "SUCCESS",
-    actorKey: `user:${userId}`,
+    // A child is minted by its API key (the owner's control-plane credential).
+    actorKey: parent ? `grant:${parent.apiKeyGrantId}` : `user:${userId}`,
     actorUserIdSnapshot: userId,
     actorUserId: userId,
     grantIdSnapshot: grantId,
-    metadata: { requestId: tokenId },
+    metadata: parent ? { requestId: tokenId, apiKeyId: parent.apiKeyId } : { requestId: tokenId },
   });
   return { token: { id: tokenId, name: input.name, expiresAt, lookupPrefix }, secret, grantId };
 }
 
-async function tombstoneGrant(
+/**
+ * Permanent tombstone of one grant generation and its credential row. When
+ * the grant is an API key's, the key row and every child token it minted are
+ * tombstoned in the same transaction (cascade), each child audited.
+ * `actorKey` defaults to the owner; an API key revoking its own child passes
+ * `grant:<keyGrantId>`.
+ */
+/** Audit actions of an API key revocation and of every child token revocation. */
+export const API_KEY_REVOKE_ACTION = "api_key_revoke";
+export const API_KEY_CHILD_REVOKE_ACTION = "api_key_child_revoke";
+
+export async function tombstoneGrant(
   query: LockQuery,
-  input: { userId: string; grantId: string; opId: string; action: string },
-): Promise<void> {
+  input: { userId: string; grantId: string; opId: string; action: string; actorKey?: string },
+): Promise<{ children: number }> {
+  const actorKey = input.actorKey ?? `user:${input.userId}`;
   await query(
     `UPDATE "mcp_personal_token" SET "revokedAt" = COALESCE("revokedAt", now())
       WHERE "grantId" = $1::uuid AND "revokedAt" IS NULL`,
@@ -608,11 +679,46 @@ async function tombstoneGrant(
     opId: input.opId,
     action: input.action,
     outcome: "SUCCESS",
-    actorKey: `user:${input.userId}`,
+    actorKey,
     actorUserIdSnapshot: input.userId,
     actorUserId: input.userId,
     grantIdSnapshot: input.grantId,
   });
+  const key = await query<{ id: string }>(
+    `UPDATE "api_key" SET "revokedAt" = COALESCE("revokedAt", now())
+      WHERE "grantId" = $1::uuid RETURNING id`,
+    [input.grantId],
+  );
+  const apiKeyId = key.rows[0]?.id;
+  if (!apiKeyId) return { children: 0 };
+  // The key's tombstone above already ends every child (the verifier requires
+  // a live parent). Tombstone every child not yet tombstoned too, set-based:
+  // each child mint tombstones the key's expired children first, so these are
+  // at most the per-key cap (an instance limit, at most 10 000) plus one.
+  const children = await query<{ grantId: string }>(
+    `WITH tokens AS (
+       UPDATE "mcp_personal_token" SET "revokedAt" = now()
+        WHERE "parentApiKeyId" = $1 AND "revokedAt" IS NULL
+        RETURNING "grantId"
+     ), grants AS (
+       UPDATE "mcp_grant" g SET "revokedAt" = now(), "revokeReason" = 'api_key_revoke'
+         FROM tokens WHERE g.id = tokens."grantId" AND g."revokedAt" IS NULL
+       RETURNING g.id
+     ), audited AS (
+       INSERT INTO "audit_event"
+         (id, "createdAt", "opId", action, outcome, "actorKey", "actorUserIdSnapshot",
+          "actorUserId", "grantIdSnapshot", "kbId", revision, metadata)
+       SELECT substr(replace(gen_random_uuid()::text, '-', ''), 1, 24), now(),
+              $2 || ':' || grants.id::text, $5, 'SUCCESS'::"AuditOutcome",
+              $3, $4, $4, grants.id::text, NULL, NULL,
+              jsonb_build_object('apiKeyId', $1::text, 'reasonCode', 'api_key_revoke')
+         FROM grants
+       ON CONFLICT ("opId", action, outcome) DO NOTHING
+     )
+     SELECT id::text AS "grantId" FROM grants`,
+    [apiKeyId, input.opId, actorKey, input.userId, API_KEY_CHILD_REVOKE_ACTION],
+  );
+  return { children: children.rows.length };
 }
 
 const tokenNotFound = () => new KbDomainError("NOT_FOUND", "Token not found");
@@ -645,11 +751,14 @@ export async function revokeGrant(
   if (!UUID.test(grantId)) throw tokenNotFound();
   return inAuthorityTransaction(runtime, async (query, opId) => {
     await lockLiveUser(query, userId);
-    const found = await query<{ userId: string | null }>(
-      `SELECT "userId" FROM "mcp_grant" WHERE id = $1::uuid FOR UPDATE`,
+    const found = await query<{ userId: string | null; kind: string }>(
+      `SELECT "userId", kind::text AS kind FROM "mcp_grant" WHERE id = $1::uuid FOR UPDATE`,
       [grantId],
     );
-    if (found.rows[0]?.userId !== userId) throw tokenNotFound();
+    // An API key is revoked as a key (apiKeys.revoke), never as an MCP grant.
+    if (found.rows[0]?.userId !== userId || found.rows[0]?.kind === "API_KEY") {
+      throw tokenNotFound();
+    }
     await tombstoneGrant(query, { userId, grantId, opId, action: "grant_revoke" });
     return { id: grantId, revoked: true as const };
   });
@@ -666,19 +775,27 @@ const REVOKE_ALL_BATCH = 100;
 export async function countActiveCredentials(
   runtime: Runtime,
   userId: string,
-): Promise<{ tokens: number; apps: number }> {
+): Promise<{ tokens: number; apps: number; apiKeys: number }> {
   return inAuthorityTransaction(runtime, async (query) => {
     await lockLiveUser(query, userId);
-    const { rows } = await query<{ tokens: number; apps: number }>(
+    // Child tokens are counted with nothing: revoking their API key ends them.
+    const { rows } = await query<{ tokens: number; apps: number; apiKeys: number }>(
       `SELECT
          (SELECT count(*)::int FROM mcp_personal_token t
-           WHERE t."userId" = $1 AND t."revokedAt" IS NULL
+           WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND t."parentApiKeyId" IS NULL
              AND (t."expiresAt" IS NULL OR t."expiresAt" > now())) AS tokens,
          (SELECT count(*)::int FROM mcp_grant g
-           WHERE g."userId" = $1 AND g.kind::text = 'OAUTH' AND g."revokedAt" IS NULL) AS apps`,
+           WHERE g."userId" = $1 AND g.kind::text = 'OAUTH' AND g."revokedAt" IS NULL) AS apps,
+         (SELECT count(*)::int FROM api_key k JOIN mcp_grant g ON g.id = k."grantId"
+           WHERE k."userId" = $1 AND k."revokedAt" IS NULL AND g."revokedAt" IS NULL
+             AND k."expiresAt" > now()) AS "apiKeys"`,
       [userId],
     );
-    return { tokens: rows[0]?.tokens ?? 0, apps: rows[0]?.apps ?? 0 };
+    return {
+      tokens: rows[0]?.tokens ?? 0,
+      apps: rows[0]?.apps ?? 0,
+      apiKeys: rows[0]?.apiKeys ?? 0,
+    };
   });
 }
 
@@ -691,47 +808,62 @@ export async function countActiveCredentials(
 export async function revokeAllCredentials(
   runtime: Runtime,
   userId: string,
-): Promise<{ tokens: number; apps: number }> {
-  const revoked = { tokens: 0, apps: 0 };
-  await forEachPage<{ id: string; kind: "PAT" | "OAUTH" }>(
-    ({ take, afterId }) =>
-      inAuthorityTransaction(runtime, async (query) => {
-        const { rows } = await query<{ id: string; kind: "PAT" | "OAUTH" }>(
-          `SELECT g.id::text AS id, g.kind::text AS kind FROM mcp_grant g
-            WHERE g."userId" = $1 AND g."revokedAt" IS NULL
-              AND ($2::uuid IS NULL OR g.id > $2::uuid)
-            ORDER BY g.id LIMIT $3`,
-          [userId, afterId ?? null, take],
-        );
-        return rows;
-      }),
-    REVOKE_ALL_BATCH,
-    (rows) =>
-      inAuthorityTransaction(runtime, async (query, opId) => {
-        await lockLiveUser(query, userId);
-        for (const row of rows) {
-          // Re-check inside the locked transaction: a row revoked meanwhile
-          // is skipped (not counted twice), never resurrected.
-          const live = await query(
-            `SELECT 1 FROM mcp_grant WHERE id = $1::uuid AND "userId" = $2
-               AND "revokedAt" IS NULL FOR UPDATE`,
-            [row.id, userId],
+): Promise<{ tokens: number; apps: number; apiKeys: number }> {
+  // The panic button includes REST API keys (and so their children): a live
+  // key could otherwise mint new MCP tokens right after the reset.
+  const revoked = { tokens: 0, apps: 0, apiKeys: 0 };
+  type Row = { id: string; kind: "PAT" | "OAUTH" | "API_KEY" };
+  // Two sweeps, keys first: a key's tombstone ends all of its children at
+  // once (the verifier requires a live parent) and its cascade tombstones the
+  // live ones set-based. Child grants are never walked one by one here, so a
+  // key with a long child history cannot delay or roll back the reset.
+  const sweep = (keys: boolean) =>
+    forEachPage<Row>(
+      ({ take, afterId }) =>
+        inAuthorityTransaction(runtime, async (query) => {
+          const { rows } = await query<Row>(
+            `SELECT g.id::text AS id, g.kind::text AS kind
+               FROM mcp_grant g
+              WHERE g."userId" = $1 AND g."revokedAt" IS NULL
+                AND ($2::uuid IS NULL OR g.id > $2::uuid)
+                AND (g.kind::text = 'API_KEY') = $4
+                AND NOT EXISTS (SELECT 1 FROM mcp_personal_token c
+                                 WHERE c."grantId" = g.id AND c."parentApiKeyId" IS NOT NULL)
+              ORDER BY g.id LIMIT $3`,
+            [userId, afterId ?? null, take, keys],
           );
-          if (live.rows.length === 0) continue;
-          // One audit identity per credential: audit rows are unique on
-          // (opId, action, outcome), so a shared batch opId would record only
-          // the first revocation (same scheme as account-removal tombstones).
-          await tombstoneGrant(query, {
-            userId,
-            grantId: row.id,
-            opId: `${opId}:${row.id}`,
-            action: "grant_revoke",
-          });
-          if (row.kind === "OAUTH") revoked.apps++;
-          else revoked.tokens++;
-        }
-      }),
-  );
+          return rows;
+        }),
+      REVOKE_ALL_BATCH,
+      (rows) =>
+        inAuthorityTransaction(runtime, async (query, opId) => {
+          await lockLiveUser(query, userId);
+          for (const row of rows) {
+            // Re-check inside the locked transaction: a row revoked meanwhile
+            // is skipped (not counted twice), never resurrected.
+            const live = await query(
+              `SELECT 1 FROM mcp_grant WHERE id = $1::uuid AND "userId" = $2
+                 AND "revokedAt" IS NULL FOR UPDATE`,
+              [row.id, userId],
+            );
+            if (live.rows.length === 0) continue;
+            // One audit identity per credential: audit rows are unique on
+            // (opId, action, outcome), so a shared batch opId would record only
+            // the first revocation (same scheme as account-removal tombstones).
+            await tombstoneGrant(query, {
+              userId,
+              grantId: row.id,
+              opId: `${opId}:${row.id}`,
+              action: "grant_revoke",
+            });
+            if (row.kind === "OAUTH") revoked.apps++;
+            else if (row.kind === "API_KEY") revoked.apiKeys++;
+            else revoked.tokens++;
+          }
+        }),
+    );
+  await sweep(true);
+  await sweep(false);
   return revoked;
 }
 
@@ -854,10 +986,11 @@ export async function updateGrant(
       tokenId: string | null;
       tokenRevokedAt: Date | string | null;
       tokenExpiresAt: Date | string | null;
+      parentApiKeyId: string | null;
     }>(
       `SELECT g."userId", g.kind::text AS kind, g.scopes, g."toolGroups", g."allowCreate",
               g."createdKbBits", g."authoringMode"::text AS "authoringMode", g."revokedAt",
-              t.id AS "tokenId",
+              t.id AS "tokenId", t."parentApiKeyId",
               t."revokedAt" AS "tokenRevokedAt", t."expiresAt" AS "tokenExpiresAt"
          FROM "mcp_grant" g
          LEFT JOIN "mcp_personal_token" t ON t."grantId" = g.id
@@ -866,7 +999,10 @@ export async function updateGrant(
       [input.id],
     );
     const row = found.rows[0];
-    if (!row || row.userId !== userId) throw tokenNotFound();
+    if (!row || row.userId !== userId || row.kind === "API_KEY") throw tokenNotFound();
+    // A child token stays within its API key's ceiling: it is never edited,
+    // only revoked (and re-minted through the key).
+    if (row.parentApiKeyId) throw invalidSelection();
     const at = (deps.now ?? (() => new Date()))();
     const storedGroups = parseStoredToolGroups(row.toolGroups);
     const tokenExpiry = toDate(row.tokenExpiresAt);
@@ -1425,7 +1561,7 @@ export async function listPersonalTokens(
               t."grantId"::text AS "grantId", t."createdAt", t."expiresAt",
               t."revokedAt", g."widenedAt", ${ACTIVE_ELEVATIONS_JSON_SQL} AS elevations
          FROM mcp_personal_token t JOIN mcp_grant g ON g.id = t."grantId"
-        WHERE t."userId" = $1 AND ($2::text IS NULL OR t.id > $2)
+        WHERE t."userId" = $1 AND t."parentApiKeyId" IS NULL AND ($2::text IS NULL OR t.id > $2)
         ORDER BY t.id LIMIT $3`,
       [userId, cursor, take + 1],
     );
@@ -1487,6 +1623,10 @@ export async function listGrants(
                  ORDER BY x."kbId" LIMIT $4) a), '[]'::jsonb) AS acl
          FROM mcp_grant g WHERE g."userId" = $1 AND ($2::uuid IS NULL OR g.id > $2::uuid)
           AND ($5::text IS NULL OR g.kind::text = $5)
+          -- API keys and their children are listed under Settings → API keys.
+          AND g.kind::text <> 'API_KEY'
+          AND NOT EXISTS (SELECT 1 FROM mcp_personal_token c
+                           WHERE c."grantId" = g.id AND c."parentApiKeyId" IS NOT NULL)
          ORDER BY g.id LIMIT $3`,
       [userId, cursor, take + 1, MCP_GRANT_MAX_ACL_ENTRIES + 1, kind ?? null],
     );

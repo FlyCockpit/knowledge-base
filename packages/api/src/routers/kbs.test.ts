@@ -37,6 +37,10 @@ import { KbDomainError } from "../lib/kb/errors";
 import { configureKbRuntime, resetKbRuntimeForTests } from "../lib/kb/runtime";
 import { kbsRouter } from "./kbs";
 
+const { default: prisma } = await import("@knowledge-base/db");
+const queryRawUnsafe = (prisma as unknown as { $queryRawUnsafe: ReturnType<typeof vi.fn> })
+  .$queryRawUnsafe;
+
 function sessionContext(): Context {
   return {
     session: {
@@ -82,7 +86,9 @@ describe("kbs router", () => {
   });
 
   it("answers the create budget with 429 naming the limit and when it resets", async () => {
-    configureKbRuntime({} as never);
+    // No Admin → Limits row: the compiled default (5 per hour).
+    queryRawUnsafe.mockResolvedValue([]);
+    configureKbRuntime({ prisma } as never);
     const client = createRouterClient(kbsRouter, { context: () => sessionContext() });
     const limited = new KbDomainError("RATE_LIMITED", "Rate limited", 3532);
     vi.mocked(createKnowledgeBase).mockRejectedValueOnce(limited);
@@ -112,6 +118,37 @@ describe("kbs router", () => {
       ).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS", data: { retryAfterSeconds: 3532 } });
     } finally {
       vi.mocked(mapKbDomainError).mockImplementation(() => null);
+    }
+  });
+
+  it("names the live Admin → Limits create budget, not the compiled default", async () => {
+    queryRawUnsafe.mockImplementation(async (_sql: string, key: unknown) =>
+      key === "kb.limits.createsPerHour" ? [{ value: "2" }] : [],
+    );
+    configureKbRuntime({ prisma } as never);
+    const client = createRouterClient(kbsRouter, { context: () => sessionContext() });
+    vi.mocked(createKnowledgeBase).mockRejectedValueOnce(
+      new KbDomainError("RATE_LIMITED", "Rate limited", 60),
+    );
+    vi.mocked(mapKbDomainError).mockImplementation((error) =>
+      error instanceof KbDomainError ? error : null,
+    );
+    try {
+      await expect(
+        client.create({
+          name: "Third",
+          slug: "third",
+          description: "the third knowledge base",
+          idempotencyKey: "create-key-3",
+        }),
+      ).rejects.toMatchObject({
+        code: "TOO_MANY_REQUESTS",
+        message: "You can create 2 knowledge bases per 60 minutes. Try again in 60s.",
+        data: { reason: "CREATE_LIMIT", limit: 2, windowSeconds: 3600, retryAfterSeconds: 60 },
+      });
+    } finally {
+      vi.mocked(mapKbDomainError).mockImplementation(() => null);
+      queryRawUnsafe.mockReset();
     }
   });
 

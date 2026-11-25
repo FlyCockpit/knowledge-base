@@ -215,6 +215,35 @@ describe("createRateLimiterMiddleware", () => {
 // both by stubbing a limiter whose `consume` rejects with a plain Error.
 // ---------------------------------------------------------------------------
 
+describe("createRateLimiterMiddleware — surface-specific refusal body", () => {
+  it("formats a 429 with the surface's error contract and keeps Retry-After", async () => {
+    envMock.TRUST_PROXY_HOPS = undefined;
+    mockGetConnInfo.mockReturnValue({ remote: { address: "10.0.0.77" } });
+    const limiter = new RateLimiterMemory({ keyPrefix: "test-body", points: 1, duration: 60 });
+    const app = new Hono();
+    app.use(
+      "/*",
+      createRateLimiterMiddleware(limiter, {
+        refusalBody: (status, retryAfterSeconds) => ({
+          error: {
+            code: status === 429 ? "RATE_LIMITED" : "STORAGE_UNAVAILABLE",
+            retryAfterSeconds,
+          },
+        }),
+      }),
+    );
+    app.get("/ping", (c) => c.text("pong"));
+    expect((await app.request("/ping")).status).toBe(200);
+    const rejected = await app.request("/ping");
+    expect(rejected.status).toBe(429);
+    const retryAfter = Number(rejected.headers.get("Retry-After"));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(await rejected.json()).toEqual({
+      error: { code: "RATE_LIMITED", retryAfterSeconds: retryAfter },
+    });
+  });
+});
+
 describe("createRateLimiterMiddleware — Redis outage handling", () => {
   function makeApp(consumeReject: unknown, options?: { failClosed?: boolean }) {
     const limiter = {

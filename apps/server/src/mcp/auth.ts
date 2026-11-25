@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  API_KEY_PREFIX,
+  authenticateApiKey,
+  canonicalApiResource,
+} from "@knowledge-base/api/lib/api-keys";
 import type { CredentialQuery } from "@knowledge-base/api/lib/kb/credential-query";
 import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import { getOperationLease, type LockQuery } from "@knowledge-base/api/lib/kb/lock";
@@ -191,6 +196,14 @@ export function createBearerAdmission(options: {
    * own authority-locked transaction.
    */
   identityDb?: Pick<PrismaClient, "$transaction">;
+  /**
+   * Which credential family this admitter accepts. `mcp` (default: /mcp, Git,
+   * assets, exports, PAT self-revoke) takes PATs and OAuth access tokens and
+   * refuses REST API keys; `api_key` (the /api/v1 control plane) takes only
+   * REST API keys. The grant verifier enforces the same split on the stored
+   * grant kind, so a leaked grant id cannot cross it either.
+   */
+  credential?: "mcp" | "api_key";
 }): BearerAdmitter {
   if (!options.withQuery && !options.query) throw new Error("Missing credential query port");
   const sql: CredentialQuery = options.withQuery ?? (async (_signal, run) => run(options.query!));
@@ -225,7 +238,10 @@ export function createBearerAdmission(options: {
     });
   };
   const withQuery: CredentialQuery = (signal, run) => owned(signal, (active) => sql(active, run));
-  const resource = canonicalMcpResource(options.origin);
+  const apiKeyMode = options.credential === "api_key";
+  const resource = apiKeyMode
+    ? canonicalApiResource(options.origin)
+    : canonicalMcpResource(options.origin);
   // The outer OAuth permit owns signature/JWKS/reservation work. Supply its
   // SQL port directly to avoid reacquiring an admission permit during close.
   const verifyOAuth = options.verifyOAuth ?? oauthVerifier(options.origin, sql, options.loadJwks);
@@ -241,7 +257,14 @@ export function createBearerAdmission(options: {
     if (!match) throw unauthorized();
     const raw = match[2]!;
     let principal: TokenPrincipal | null;
-    if (raw.startsWith("kbp_")) {
+    if (apiKeyMode || raw.startsWith(API_KEY_PREFIX)) {
+      // REST API keys only here, and only here: before any OAuth/JWKS work.
+      if (!apiKeyMode || !raw.startsWith(API_KEY_PREFIX)) throw unauthorized();
+      if (match[1]!.toLowerCase() !== "bearer" || mode.selfRevoke) throw unauthorized();
+      principal = await withQuery(request.signal, (query) =>
+        authenticateApiKey(query, raw, now(), resource),
+      );
+    } else if (raw.startsWith("kbp_")) {
       if (match[1]!.toLowerCase() !== "bearer") throw unauthorized();
       principal = await withQuery(request.signal, (query) =>
         authenticatePersonalToken(query, raw, now()),

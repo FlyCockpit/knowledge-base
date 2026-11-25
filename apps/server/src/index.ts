@@ -89,6 +89,7 @@ import {
 } from "./rate-limit.js";
 import { requestLog } from "./request-log.js";
 import { validateSameSiteJsonRequest } from "./request-origin.js";
+import { createRestApi, REST_API_BASE, restLimiterRefusal } from "./rest-api.js";
 import { mountSecurityHeaders } from "./security-headers.js";
 import { registerSeoRoutes } from "./seo.js";
 import { sessionMiddleware } from "./session-middleware.js";
@@ -233,8 +234,10 @@ app.get("/health", (c) => c.json({ ok: true }));
 // Its OWN bucket, not a remount of `rpcLimiter`: readiness and app traffic are
 // exactly the two things that must stay independent during an incident.
 const bearerGate = createAdmissionGate();
+// One credential connection port (and its connection cap) for every bearer family.
+const bearerQuery = credentialQuery(env.DATABASE_URL.reveal());
 const bearer = createBearerAdmission({
-  withQuery: credentialQuery(env.DATABASE_URL.reveal()),
+  withQuery: bearerQuery,
   gate: bearerGate,
   origin: new URL(env.BETTER_AUTH_URL).origin,
   isClosing: () => bearerGate.closed,
@@ -307,6 +310,40 @@ app.route(
       await selfRevokeLimiter.consume(resolveKey(c));
     },
     revoke: (userId, tokenId) => revokePersonalToken(getKbRuntime(), userId, tokenId),
+  }),
+);
+
+// REST control plane (/api/v1): REST API keys only. Its own admitter (the
+// api_key credential family) on the same bearer gate, so shutdown drains it
+// with MCP; its own limiter bucket, fail closed like every bearer surface.
+const apiKeyBearer = createBearerAdmission({
+  withQuery: bearerQuery,
+  gate: bearerGate,
+  origin: new URL(env.BETTER_AUTH_URL).origin,
+  isClosing: () => bearerGate.closed,
+  credential: "api_key",
+});
+const restApiLimiter = new RateLimiterRedis({
+  storeClient: redisConnection,
+  keyPrefix: "rl:api-v1",
+  points: 120,
+  duration: 60,
+});
+app.use(
+  `${REST_API_BASE}/*`,
+  createRateLimiterMiddleware(restApiLimiter, {
+    failClosed: true,
+    refusalBody: restLimiterRefusal,
+  }),
+);
+app.route(
+  "/",
+  createRestApi({
+    admit: apiKeyBearer,
+    runtime: getKbRuntime,
+    origin: new URL(env.BETTER_AUTH_URL).origin,
+    gate: bearerGate,
+    isClosing: () => bearerGate.closed,
   }),
 );
 

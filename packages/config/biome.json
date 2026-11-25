@@ -19,6 +19,7 @@
       "!!**/routeTree.gen.ts",
       "!!**/packages/api/src/lib/kb/protocol/schema.json",
       "!!**/packages/api/src/lib/kb/protocol/fixtures.json",
+      "!!**/docs/rest-api.openapi.json",
       "!!**/pnpm-lock.yaml",
       "!!**/apps/cli/vendor/**/*.yml",
       "!!**/apps/cli/vendor/**/*.yaml",

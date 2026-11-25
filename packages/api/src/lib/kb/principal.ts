@@ -56,7 +56,18 @@ export type TokenPrincipal = {
   expiresAt: Date | null;
   storedAcl: ReadonlyMap<string, readonly string[]>;
   /** Server-verified binding, retained through delayed/locked reauthorization. */
-  credential?: { kind: "PAT" | "OAUTH"; clientId: string; resource: string; tokenId?: string };
+  credential?: {
+    /**
+     * `API_KEY` is the REST control plane's credential (kbk_): only the REST
+     * API builds it, and the grant verifier admits an API_KEY grant only for
+     * this binding, so it can never pass as a PAT/OAuth grant or the reverse.
+     */
+    kind: "PAT" | "OAUTH" | "API_KEY";
+    clientId: string;
+    resource: string;
+    /** PAT id, or the API key id for an API_KEY binding. */
+    tokenId?: string;
+  };
   /**
    * Tool-group demands of the operation this principal is acting for: each
    * entry is satisfied by any one of its groups, and every entry must be.
@@ -91,6 +102,12 @@ export type TokenAdmission = {
    * force; it has no other meaning.
    */
   elevations?: { ids: readonly string[]; validUntil: Date | null };
+  /**
+   * The credential may never delete a KB, whatever its bits: a REST API key
+   * without `allowDelete`, or a child token of one. Read on the same live
+   * grant row; enforced by authorize() for `delete`, lock-held rechecks included.
+   */
+  deleteDenied?: boolean;
 };
 
 /**

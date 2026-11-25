@@ -99,6 +99,13 @@ export async function revokeUserMcpGrants(
       WHERE "userId" = $1 AND "revokedAt" IS NULL`,
     [userId, reason],
   );
+  // REST API keys: their grants (and their children's) are tombstoned above;
+  // the key rows follow so lists show them revoked.
+  await exec(
+    `UPDATE "api_key" SET "revokedAt" = COALESCE("revokedAt", now())
+      WHERE "userId" = $1 AND "revokedAt" IS NULL`,
+    [userId],
+  );
 }
 
 /**

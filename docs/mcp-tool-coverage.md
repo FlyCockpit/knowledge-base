@@ -47,6 +47,11 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 
 | oRPC leaf | Human/control-plane exclusion |
 | --- | --- |
+| apiKeys.create | human credential mint |
+| apiKeys.listChildrenMine | human credential management |
+| apiKeys.listMine | human credential management |
+| apiKeys.revokeChildMine | human credential management |
+| apiKeys.revokeMine | human credential management |
 | appConfig | public browser configuration |
 | auth.passwordCapabilities | browser authentication |
 | auth.updateLocale | browser preference |
@@ -115,8 +120,10 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | queue.listFailed | instance administration |
 | settings.adminSetupStatus | browser settings |
 | settings.getAll | browser settings |
+| settings.instanceLimits | instance administration |
 | settings.kbSearchAllLimit | instance administration |
 | settings.myNotificationPreferences | browser preferences |
+| settings.setInstanceLimits | instance administration |
 | settings.setKbSearchAllLimit | instance administration |
 | settings.setupKeyStatus | instance administration |
 | settings.update | instance administration |

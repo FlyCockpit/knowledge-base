@@ -2,6 +2,7 @@
   "navProfile": "Profile",
   "navSecurity": "Security",
   "navMcp": "MCP access",
+  "navApiKeys": "API keys",
   "navProviders": "Embedding providers",
   "title": "Settings",
   "profile": {
@@ -297,15 +298,15 @@
     "editAccessFor": "Edit access for {{name}}",
     "revokeFor": "Revoke {{name}}",
     "resetReviewTitle": "Review access after your password reset",
-    "resetReviewMessage": "Your password reset signed out every browser session, but these personal access tokens and connected apps still work. Revoke any you don't recognize, or revoke them all.",
-    "resetReviewNone": "Your password reset signed out every browser session. No personal access tokens or connected apps are active.",
-    "resetReviewLoadError": "Couldn't check which tokens and apps still work after your password reset.",
+    "resetReviewMessage": "Your password reset signed out every browser session, but these personal access tokens, connected apps and API keys still work. Revoke any you don't recognize, or revoke them all.",
+    "resetReviewNone": "Your password reset signed out every browser session. No personal access tokens, connected apps or API keys are active.",
+    "resetReviewLoadError": "Couldn't check which tokens, apps and API keys still work after your password reset.",
     "revokeAll": "Revoke all",
-    "revokeAllTitle": "Revoke every token and connected app?",
-    "revokeAllDescription": "Every personal access token stops working and every connected app is disconnected immediately. Tools and agents that use them must be set up again. This can't be undone.",
+    "revokeAllTitle": "Revoke every token, connected app and API key?",
+    "revokeAllDescription": "Every personal access token and API key (with the MCP tokens it minted) stops working and every connected app is disconnected immediately. Tools, agents and automation that use them must be set up again. This can't be undone.",
     "revokeAllTypePrompt": "Type “revoke all” to confirm",
     "revokeAllConfirmToken": "revoke all",
-    "revokeAllSuccess": "All tokens and connected apps were revoked.",
+    "revokeAllSuccess": "All tokens, connected apps and API keys were revoked.",
     "revokeAllError": "Some credentials were not revoked. Review the list and try again.",
     "revokeAllCopyConfirm": "Copy confirmation text",
     "writeMode": {
@@ -328,6 +329,109 @@
         }
       }
     }
+  },
+  "apiKeys": {
+    "intro": "A REST API key (kbk_…) lets your own automation create, list and delete knowledge bases and mint MCP tokens for them through /api/v1. It never reads or writes documents itself, and it can't be used as an MCP token.",
+    "introMcp": "For an agent or MCP client, create a personal access token instead in",
+    "listTitle": "API keys",
+    "create": "Create API key",
+    "noKeys": "No API keys yet.",
+    "listLoadError": "Couldn't load your API keys.",
+    "createTitle": "Create API key",
+    "createDescription": "Choose what the key may reach and do. A key can't be edited afterwards: revoke it and create a new one instead.",
+    "expiryHelp": "An API key always expires, at most {{max}} days from now.",
+    "reach": {
+      "legend": "Reach",
+      "all": {
+        "label": "All knowledge bases I can access",
+        "description": "Every knowledge base you can access now or later, within the permissions below."
+      },
+      "selected": {
+        "label": "Chosen knowledge bases",
+        "description": "Only the knowledge bases you pick below."
+      },
+      "created": {
+        "label": "Only knowledge bases this key creates",
+        "description": "No existing knowledge base. Needs Create knowledge bases."
+      }
+    },
+    "bitsLegend": "Permissions",
+    "bitsHint": "The most the key, and every token it mints, may do on a knowledge base in its reach. It never does more than you can do yourself at that moment.",
+    "kbsLegend": "Knowledge bases",
+    "kbsHint": "You can only choose a knowledge base where you hold every permission above.",
+    "noKbs": "You don't have access to any knowledge bases yet.",
+    "kbYourAccess": "Your access: {{bits}}",
+    "kbLacks": "You don't hold {{bits}} here.",
+    "capabilitiesLegend": "What the key may do",
+    "allowCreate": {
+      "label": "Create knowledge bases",
+      "description": "New knowledge bases belong to you and are added to the key's reach."
+    },
+    "allowDelete": {
+      "label": "Delete knowledge bases",
+      "description": "Only knowledge bases you still own.",
+      "needsManage": "Needs Manage in the permissions above."
+    },
+    "allowMint": {
+      "label": "Mint MCP tokens",
+      "description": "Tokens for one knowledge base each, within the limits below. They stop working when the key is revoked or expires."
+    },
+    "childHint": "Limits for the MCP tokens this key mints. Each token is for one knowledge base, chosen when it is minted, and never gets sealed values.",
+    "childWrites": {
+      "label": "Tokens may change content",
+      "description": "Without this, minted tokens are read-only."
+    },
+    "issues": {
+      "reachRequired": "Choose the key's reach.",
+      "kbRequired": "Choose at least one knowledge base.",
+      "kbLacksBits": "A chosen knowledge base lacks one of the permissions. Remove it or lower the permissions.",
+      "bitsRequired": "Choose at least one permission.",
+      "createdNeedsCreate": "A key limited to knowledge bases it creates needs Create knowledge bases.",
+      "deleteNeedsManage": "Deleting knowledge bases needs Manage in the permissions.",
+      "toolGroupRequired": "Choose at least one tool group for minted tokens.",
+      "writeModeRequired": "Choose a write mode for minted tokens."
+    },
+    "createSubmit": "Create key",
+    "createError": "The API key wasn't created. Check your choices and try again.",
+    "createQuota": "You already have the most active API keys allowed. Revoke one first.",
+    "createUncertain": "We couldn't confirm whether \"{{name}}\" was created. Check the list before trying again.",
+    "secretOnce": "Copy this API key now. It won't be shown again, and closing this dialog removes it from this page.",
+    "copySecret": "Copy API key",
+    "reachSummary": {
+      "all": "Reach: all knowledge bases you can access",
+      "selected_one": "Reach: {{count}} chosen knowledge base",
+      "selected_other": "Reach: {{count}} chosen knowledge bases",
+      "created_one": "Reach: {{count}} knowledge base it created",
+      "created_other": "Reach: {{count}} knowledge bases it created"
+    },
+    "bitsSummary": "Permissions: {{bits}}",
+    "can": {
+      "list": "May: {{items}}",
+      "none": "May only list and read knowledge base details",
+      "create": "create knowledge bases",
+      "delete": "delete knowledge bases",
+      "mint": "mint MCP tokens"
+    },
+    "childGroupsSummary": "Token tools: {{groups}}",
+    "childReadOnly": "Tokens are read-only",
+    "childWriteMode": "Token write mode: {{mode}}",
+    "liveChildren_one": "{{count}} active token",
+    "liveChildren_other": "{{count}} active tokens",
+    "expired": "Expired {{date}}",
+    "lastUsed": "Last used {{date}}",
+    "neverUsed": "Never used",
+    "details": "Details",
+    "detailsFor": "Details for {{name}}",
+    "kbsTitle": "Knowledge bases",
+    "kbsLoadError": "Couldn't load the key's knowledge bases.",
+    "childrenTitle": "MCP tokens minted by this key",
+    "noChildren": "This key hasn't minted any tokens.",
+    "revokeChildSuccess": "Token revoked.",
+    "revokeTitle": "Revoke API key?",
+    "revokeDescription_one": "\"{{name}}\" stops working immediately, and so does the {{count}} active MCP token it minted. This can't be undone.",
+    "revokeDescription_other": "\"{{name}}\" stops working immediately, and so do all {{count}} active MCP tokens it minted. This can't be undone.",
+    "revokeSuccess_one": "API key revoked, with {{count}} token.",
+    "revokeSuccess_other": "API key revoked, with {{count}} tokens."
   },
   "providers": {
     "title": "Embedding providers",

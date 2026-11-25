@@ -7,6 +7,7 @@ import {
   capacityFor,
   commitQuota,
   expireQuota,
+  liveCapacityFor,
   type QuotaSession,
   releaseQuota,
   reserveQuota,
@@ -39,6 +40,8 @@ function scripted(
       }
       if (text.includes("SELECT id, reserved"))
         return { rows: [{ id: "disk", reserved: "0" }], rowCount: 1 };
+      // Admin → Limits (instance-limits.ts): no row, so the compiled default.
+      if (text.includes("FROM app_setting")) return { rows: [], rowCount: 0 };
       const handler = handlers[index];
       index += 1;
       const result = handler?.(text);
@@ -72,6 +75,54 @@ describe("quota capacities", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+  });
+});
+
+describe("live owner capacity (Admin → Limits)", () => {
+  const settingQuery =
+    (value: string | null) =>
+    async <R>(text: string, values?: unknown[]) => {
+      expect(text).toContain("FROM app_setting");
+      expect(values).toEqual(["kb.limits.ownedLiveKbs"]);
+      return { rows: (value === null ? [] : [{ value }]) as R[], rowCount: value === null ? 0 : 1 };
+    };
+
+  it("reads OWNER_LIVE_KB from the setting, falling back to the default on absent or garbage", async () => {
+    expect(await liveCapacityFor(settingQuery("3"), "OWNER_LIVE_KB")).toBe(3n);
+    expect(await liveCapacityFor(settingQuery(null), "OWNER_LIVE_KB")).toBe(20n);
+    expect(await liveCapacityFor(settingQuery("0"), "OWNER_LIVE_KB")).toBe(20n);
+    expect(await liveCapacityFor(settingQuery("lots"), "OWNER_LIVE_KB")).toBe(20n);
+    // Every other dimension stays compiled and reads nothing.
+    const none = vi.fn();
+    expect(await liveCapacityFor(none, "KB_BRANCH")).toBe(100n);
+    expect(none).not.toHaveBeenCalled();
+  });
+
+  it("reserveQuota charges against the live owner capacity", async () => {
+    const charged: unknown[][] = [];
+    const session: QuotaSession = {
+      transactionQuery: async (text, values) => {
+        if (/^(SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT) /.test(text))
+          return { rows: [], rowCount: 0 };
+        if (text.includes("SELECT id, reserved"))
+          return { rows: [{ id: "disk", reserved: "0" }], rowCount: 1 };
+        if (text.includes("FROM app_setting")) return { rows: [{ value: "1" }], rowCount: 1 };
+        if (text.includes('INSERT INTO "quota_account"')) {
+          charged.push(values ?? []);
+          return { rows: [{ id: "acct" }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    await reserveQuota(session, {
+      opId: "op-live",
+      charges: [{ dimension: "OWNER_LIVE_KB", subjectId: "user1", amount: 1n }],
+      expiresAt: new Date("2099-01-01"),
+      disks: [{ path: testDir, bytes: 0n, meter: plenty }],
+    });
+    // [accountId, dimension, subjectId, amount, includeCommitted, capacity]
+    const owner = charged.find((values) => values[1] === "OWNER_LIVE_KB");
+    expect(owner?.[5]).toBe("1");
   });
 });
 

@@ -1692,6 +1692,61 @@ function prValidationWorkflowFailures(): string[] {
   return failures;
 }
 
+// -- REST control plane ------------------------------------------------------
+
+const REST_SOURCE = resolve(ROOT, "apps/server/src/rest-api.ts");
+const REST_SOURCE_REL = "apps/server/src/rest-api.ts";
+const REST_ROW = /^\|\s*`(GET|POST|DELETE) (\/api\/v1\/[^`]*)`\s*\|([^|]*)\|/;
+const REST_ROUTE_DECL = /method:\s*"(get|post|delete)",\s*\n\s*path:\s*"([^"]+)"/g;
+
+/**
+ * The REST API (`/api/v1`) is not oRPC, so the procedure gate cannot see it.
+ * Its routes are declared once in `REST_ROUTES`; this proves the matrix lists
+ * exactly those routes, that every row's credential cell is `API key` (a
+ * REST route never takes a session, a PAT or an OAuth token), and that no
+ * REST route mints, edits or lists API keys themselves: keys are minted only
+ * by a human browser session (`apiKeys.create`).
+ */
+function restRouteFailures(matrix: string, restSource: string): string[] {
+  const failures: string[] = [];
+  const declared = new Set<string>();
+  for (const match of restSource.matchAll(REST_ROUTE_DECL)) {
+    declared.add(`${match[1]!.toUpperCase()} /api/v1${match[2]}`);
+  }
+  if (declared.size === 0)
+    return [`${REST_SOURCE_REL} declares no REST_ROUTES the checker can read.`];
+  const listed = new Map<string, string>();
+  for (const line of matrix.split("\n")) {
+    const row = REST_ROW.exec(line);
+    if (!row) continue;
+    const route = `${row[1]} ${row[2]}`;
+    if (listed.has(route)) failures.push(`${NOTES_REL} lists REST route \`${route}\` twice.`);
+    listed.set(route, row[3]!.trim());
+  }
+  for (const route of declared) {
+    if (!listed.has(route))
+      failures.push(`REST route \`${route}\` (${REST_SOURCE_REL}) has no row in ${NOTES_REL}.`);
+    if (
+      /^(POST|DELETE) \/api\/v1\/(api-)?keys?\b/.test(route) ||
+      /^GET \/api\/v1\/keys\b/.test(route)
+    )
+      failures.push(
+        `REST route \`${route}\` manages API keys; keys are minted, listed and revoked only through a browser session (apiKeys.*).`,
+      );
+  }
+  for (const [route, credential] of listed) {
+    if (!declared.has(route))
+      failures.push(
+        `${NOTES_REL} lists REST route \`${route}\`, which ${REST_SOURCE_REL} does not declare.`,
+      );
+    if (credential !== "API key")
+      failures.push(
+        `${NOTES_REL} REST route \`${route}\` must name exactly \`API key\` as its credential (found \`${credential}\`).`,
+      );
+  }
+  return failures;
+}
+
 // -- self-test --------------------------------------------------------------
 
 function fakeMap(entries: Record<string, [string | undefined, ...string[]]>): RouterMap {
@@ -3087,6 +3142,39 @@ function runSelfTest(): void {
     stranded.join(", "),
   );
 
+  console.log("-- REST control plane rows --");
+  const restDecl = `{\n    method: "get",\n    path: "/kbs",\n  },{\n    method: "delete",\n    path: "/tokens/{tokenId}",\n  }`;
+  const restRows =
+    "| `GET /api/v1/kbs` | API key | read |\n| `DELETE /api/v1/tokens/{tokenId}` | API key | key's child |";
+  check(
+    "REST rows matching the declared routes pass",
+    restRouteFailures(restRows, restDecl).length === 0,
+  );
+  check(
+    "a declared REST route without a row fails",
+    restRouteFailures("| `GET /api/v1/kbs` | API key | read |", restDecl).length === 1,
+  );
+  check(
+    "a REST row for an undeclared route fails",
+    restRouteFailures(`${restRows}\n| \`POST /api/v1/kbs\` | API key | x |`, restDecl).length === 1,
+  );
+  check(
+    "a REST row taking another credential fails",
+    restRouteFailures(restRows.replace("| API key | read", "| API key or PAT | read"), restDecl)
+      .length === 1,
+  );
+  check(
+    "a REST route that mints API keys fails",
+    restRouteFailures(
+      `${restRows}\n| \`POST /api/v1/keys\` | API key | x |`,
+      `${restDecl},{\n    method: "post",\n    path: "/keys",\n  }`,
+    ).some((failure) => failure.includes("manages API keys")),
+  );
+  check(
+    "the live REST routes match the live matrix",
+    restRouteFailures(readFileSync(NOTES, "utf8"), readFileSync(REST_SOURCE, "utf8")).length === 0,
+  );
+
   if (failures > 0) {
     console.error(`access-matrix self-test FAILED (${failures}).`);
     process.exit(1);
@@ -3178,6 +3266,15 @@ function main(): void {
     console.error(
       "Fix the procedure (use a stricter builder) or fix the matrix row — do not weaken the matrix to match the code.",
     );
+    process.exit(1);
+  }
+
+  const restFailures = restRouteFailures(source, readFileSync(REST_SOURCE, "utf8"));
+  if (restFailures.length > 0) {
+    console.error(
+      `POLICY VIOLATION: ${NOTES_REL} does not match the REST routes in ${REST_SOURCE_REL}:`,
+    );
+    for (const failure of restFailures) console.error(`  ${failure}`);
     process.exit(1);
   }
 

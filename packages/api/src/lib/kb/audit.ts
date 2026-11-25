@@ -24,6 +24,12 @@ export const AUDIT_METADATA_KEYS = [
   "expiresAt",
   // Elevations a narrowing ended (JSON array, at most MCP_ELEVATION_MAX_ACTIVE ids).
   "elevationIds",
+  // REST API keys: the key, its reach and its permission toggles (comma list).
+  "apiKeyId",
+  "reach",
+  "flags",
+  // Instance limits (Admin → Limits): which limit changed.
+  "limit",
 ] as const;
 
 export type AuditMetadataKey = (typeof AUDIT_METADATA_KEYS)[number];

@@ -352,6 +352,12 @@
     "./lib/mcp-token-access": {
       "default": "./src/lib/mcp-token-access.ts"
     },
+    "./lib/api-keys": {
+      "default": "./src/lib/api-keys.ts"
+    },
+    "./lib/kb/instance-limits": {
+      "default": "./src/lib/kb/instance-limits.ts"
+    },
     "./lib/kb/protocol/reads": {
       "default": "./src/lib/kb/protocol/reads.ts"
     },

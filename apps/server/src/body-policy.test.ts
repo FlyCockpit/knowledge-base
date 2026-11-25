@@ -9,6 +9,7 @@ import {
   bufferedBodyBytes,
   MCP_MAX_BODY_BYTES,
   maxBodyBytesForPath,
+  REST_API_MAX_BODY_BYTES,
   readBodyWithLimit,
   SETUP_ADMIN_MAX_BODY_BYTES,
   UPLOAD_WRITE_JSON_MAX_BYTES,
@@ -74,6 +75,39 @@ describe("maxBodyBytesForPath", () => {
   it("caps the first-admin setup route at 4 KiB", () => {
     expect(maxBodyBytesForPath("/api/setup/admin")).toBe(SETUP_ADMIN_MAX_BODY_BYTES);
     expect(SETUP_ADMIN_MAX_BODY_BYTES).toBe(4096);
+  });
+
+  it("refuses an oversized REST body in the REST error format; other surfaces keep plain text", async () => {
+    const app = new Hono();
+    app.use("*", bodyPolicyMiddleware());
+    app.post("*", (c) => c.text("ok"));
+    const big = "x".repeat(REST_API_MAX_BODY_BYTES + 1);
+    const rest = await app.request("/api/v1/kbs", {
+      method: "POST",
+      headers: { "content-length": String(big.length) },
+      body: big,
+    });
+    expect(rest.status).toBe(413);
+    expect(await rest.json()).toEqual({
+      error: { code: "PAYLOAD_TOO_LARGE", message: "Payload Too Large" },
+    });
+    const streamed = await app.request("/api/v1/kbs", { method: "POST", body: big });
+    expect(streamed.status).toBe(413);
+    expect(await streamed.json()).toMatchObject({ error: { code: "PAYLOAD_TOO_LARGE" } });
+    const other = await app.request("/rpc/x", {
+      method: "POST",
+      headers: { "content-length": String(11 * 1024 * 1024) },
+      body: "x",
+    });
+    expect(other.status).toBe(413);
+    expect(await other.text()).toBe("Payload Too Large");
+  });
+
+  it("caps the REST control plane at 16 KiB (only under /api/v1/)", () => {
+    expect(maxBodyBytesForPath("/api/v1/kbs")).toBe(REST_API_MAX_BODY_BYTES);
+    expect(maxBodyBytesForPath("/api/v1/kbs/abc/tokens?x=1")).toBe(REST_API_MAX_BODY_BYTES);
+    expect(REST_API_MAX_BODY_BYTES).toBe(16 * 1024);
+    expect(maxBodyBytesForPath("/api/v1x")).not.toBe(REST_API_MAX_BODY_BYTES);
   });
 });
 

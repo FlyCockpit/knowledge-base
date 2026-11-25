@@ -339,7 +339,7 @@ async function listKbRowsKeyset(
       SELECT kb.id, kb.name, kb.slug, kb.description, kb."headSha", kb."metadataVersion",
              kb.state::text AS state, kb."ownerId", kb."activeGenerationId"
         FROM "knowledge_base" kb
-       WHERE (${grantId}::uuid IS NULL OR EXISTS (SELECT 1 FROM "grant_kb_acl" a WHERE a."grantId" = ${grantId}::uuid AND a."kbId" = kb.id) OR EXISTS (SELECT 1 FROM "grant_elevation_kb_acl" ea JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId" WHERE e."grantId" = ${grantId}::uuid AND ea."kbId" = kb.id AND e.id = ANY(${elevationIds}::uuid[]) AND e."revokedAt" IS NULL))
+       WHERE (${grantId}::uuid IS NULL OR EXISTS (SELECT 1 FROM "mcp_grant" g WHERE g.id = ${grantId}::uuid AND cardinality(g."allKbsBits") > 0) OR EXISTS (SELECT 1 FROM "grant_kb_acl" a WHERE a."grantId" = ${grantId}::uuid AND a."kbId" = kb.id) OR EXISTS (SELECT 1 FROM "grant_elevation_kb_acl" ea JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId" WHERE e."grantId" = ${grantId}::uuid AND ea."kbId" = kb.id AND e.id = ANY(${elevationIds}::uuid[]) AND e."revokedAt" IS NULL))
          AND kb.state IN ('ACTIVE'::"KnowledgeBaseState", 'REPAIR_REQUIRED'::"KnowledgeBaseState")
          AND (NOT ${usableOnly}::boolean OR (kb.state = 'ACTIVE'::"KnowledgeBaseState" AND kb."headSha" IS NOT NULL))
          AND (
@@ -360,7 +360,7 @@ async function listKbRowsKeyset(
     SELECT kb.id, kb.name, kb.slug, kb.description, kb."headSha", kb."metadataVersion",
            kb.state::text AS state, kb."ownerId", kb."activeGenerationId"
       FROM "knowledge_base" kb
-     WHERE (${grantId}::uuid IS NULL OR EXISTS (SELECT 1 FROM "grant_kb_acl" a WHERE a."grantId" = ${grantId}::uuid AND a."kbId" = kb.id) OR EXISTS (SELECT 1 FROM "grant_elevation_kb_acl" ea JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId" WHERE e."grantId" = ${grantId}::uuid AND ea."kbId" = kb.id AND e.id = ANY(${elevationIds}::uuid[]) AND e."revokedAt" IS NULL))
+     WHERE (${grantId}::uuid IS NULL OR EXISTS (SELECT 1 FROM "mcp_grant" g WHERE g.id = ${grantId}::uuid AND cardinality(g."allKbsBits") > 0) OR EXISTS (SELECT 1 FROM "grant_kb_acl" a WHERE a."grantId" = ${grantId}::uuid AND a."kbId" = kb.id) OR EXISTS (SELECT 1 FROM "grant_elevation_kb_acl" ea JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId" WHERE e."grantId" = ${grantId}::uuid AND ea."kbId" = kb.id AND e.id = ANY(${elevationIds}::uuid[]) AND e."revokedAt" IS NULL))
          AND kb.state IN ('ACTIVE'::"KnowledgeBaseState", 'REPAIR_REQUIRED'::"KnowledgeBaseState")
          AND (NOT ${usableOnly}::boolean OR (kb.state = 'ACTIVE'::"KnowledgeBaseState" AND kb."headSha" IS NOT NULL))
        AND (
@@ -541,6 +541,9 @@ async function snapshotCeilings(
     SELECT x."kbId", array_agg(DISTINCT x.b) AS bits FROM (
       SELECT a."kbId", unnest(a.bits) AS b FROM "grant_kb_acl" a
        WHERE a."grantId" = ${grantId}::uuid AND a."kbId" = ANY(${kbIds}::text[])
+      UNION ALL
+      SELECT k."kbId", unnest(g."allKbsBits") FROM "mcp_grant" g, unnest(${kbIds}::text[]) AS k("kbId")
+       WHERE g.id = ${grantId}::uuid
       UNION ALL
       SELECT ea."kbId", unnest(ea.bits) FROM "grant_elevation_kb_acl" ea
         JOIN "mcp_grant_elevation" e ON e.id = ea."elevationId"

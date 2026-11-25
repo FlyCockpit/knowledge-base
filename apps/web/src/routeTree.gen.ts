@@ -28,11 +28,13 @@ import { Route as LangAppAuthDashboardRouteImport } from './routes/$lang/_app/_a
 import { Route as LangAppAuthSettingsRouteImport } from './routes/$lang/_app/_auth/settings'
 import { Route as LangAppAdminIndexRouteImport } from './routes/$lang/_app/admin/index'
 import { Route as LangAppAdminJobsRouteImport } from './routes/$lang/_app/admin/jobs'
+import { Route as LangAppAdminLimitsRouteImport } from './routes/$lang/_app/admin/limits'
 import { Route as LangAppAdminSettingsRouteImport } from './routes/$lang/_app/admin/settings'
 import { Route as LangAppAdminUsersRouteImport } from './routes/$lang/_app/admin/users'
 import { Route as LangAppAuthKbsIndexRouteImport } from './routes/$lang/_app/_auth/kbs/index'
 import { Route as LangAppAuthKbsKbIdRouteImport } from './routes/$lang/_app/_auth/kbs/$kbId'
 import { Route as LangAppAuthSettingsIndexRouteImport } from './routes/$lang/_app/_auth/settings/index'
+import { Route as LangAppAuthSettingsApiKeysRouteImport } from './routes/$lang/_app/_auth/settings/api-keys'
 import { Route as LangAppAuthSettingsEmbeddingProvidersRouteImport } from './routes/$lang/_app/_auth/settings/embedding-providers'
 import { Route as LangAppAuthSettingsMcpRouteImport } from './routes/$lang/_app/_auth/settings/mcp'
 import { Route as LangAppAuthSettingsSecurityRouteImport } from './routes/$lang/_app/_auth/settings/security'
@@ -133,6 +135,11 @@ const LangAppAdminJobsRoute = LangAppAdminJobsRouteImport.update({
   path: '/jobs',
   getParentRoute: () => LangAppAdminRoute,
 } as any)
+const LangAppAdminLimitsRoute = LangAppAdminLimitsRouteImport.update({
+  id: '/limits',
+  path: '/limits',
+  getParentRoute: () => LangAppAdminRoute,
+} as any)
 const LangAppAdminSettingsRoute = LangAppAdminSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -157,6 +164,12 @@ const LangAppAuthSettingsIndexRoute =
   LangAppAuthSettingsIndexRouteImport.update({
     id: '/',
     path: '/',
+    getParentRoute: () => LangAppAuthSettingsRoute,
+  } as any)
+const LangAppAuthSettingsApiKeysRoute =
+  LangAppAuthSettingsApiKeysRouteImport.update({
+    id: '/api-keys',
+    path: '/api-keys',
     getParentRoute: () => LangAppAuthSettingsRoute,
   } as any)
 const LangAppAuthSettingsEmbeddingProvidersRoute =
@@ -217,10 +230,12 @@ export interface FileRoutesByFullPath {
   '/$lang/dashboard': typeof LangAppAuthDashboardRoute
   '/$lang/settings': typeof LangAppAuthSettingsRouteWithChildren
   '/$lang/admin/jobs': typeof LangAppAdminJobsRoute
+  '/$lang/admin/limits': typeof LangAppAdminLimitsRoute
   '/$lang/admin/settings': typeof LangAppAdminSettingsRoute
   '/$lang/admin/users': typeof LangAppAdminUsersRoute
   '/$lang/admin/': typeof LangAppAdminIndexRoute
   '/$lang/kbs/$kbId': typeof LangAppAuthKbsKbIdRouteWithChildren
+  '/$lang/settings/api-keys': typeof LangAppAuthSettingsApiKeysRoute
   '/$lang/settings/embedding-providers': typeof LangAppAuthSettingsEmbeddingProvidersRoute
   '/$lang/settings/mcp': typeof LangAppAuthSettingsMcpRoute
   '/$lang/settings/security': typeof LangAppAuthSettingsSecurityRoute
@@ -244,10 +259,12 @@ export interface FileRoutesByTo {
   '/$lang/verify-email': typeof LangAppVerifyEmailRoute
   '/$lang/dashboard': typeof LangAppAuthDashboardRoute
   '/$lang/admin/jobs': typeof LangAppAdminJobsRoute
+  '/$lang/admin/limits': typeof LangAppAdminLimitsRoute
   '/$lang/admin/settings': typeof LangAppAdminSettingsRoute
   '/$lang/admin/users': typeof LangAppAdminUsersRoute
   '/$lang/admin': typeof LangAppAdminIndexRoute
   '/$lang/kbs/$kbId': typeof LangAppAuthKbsKbIdRouteWithChildren
+  '/$lang/settings/api-keys': typeof LangAppAuthSettingsApiKeysRoute
   '/$lang/settings/embedding-providers': typeof LangAppAuthSettingsEmbeddingProvidersRoute
   '/$lang/settings/mcp': typeof LangAppAuthSettingsMcpRoute
   '/$lang/settings/security': typeof LangAppAuthSettingsSecurityRoute
@@ -278,10 +295,12 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/dashboard': typeof LangAppAuthDashboardRoute
   '/$lang/_app/_auth/settings': typeof LangAppAuthSettingsRouteWithChildren
   '/$lang/_app/admin/jobs': typeof LangAppAdminJobsRoute
+  '/$lang/_app/admin/limits': typeof LangAppAdminLimitsRoute
   '/$lang/_app/admin/settings': typeof LangAppAdminSettingsRoute
   '/$lang/_app/admin/users': typeof LangAppAdminUsersRoute
   '/$lang/_app/admin/': typeof LangAppAdminIndexRoute
   '/$lang/_app/_auth/kbs/$kbId': typeof LangAppAuthKbsKbIdRouteWithChildren
+  '/$lang/_app/_auth/settings/api-keys': typeof LangAppAuthSettingsApiKeysRoute
   '/$lang/_app/_auth/settings/embedding-providers': typeof LangAppAuthSettingsEmbeddingProvidersRoute
   '/$lang/_app/_auth/settings/mcp': typeof LangAppAuthSettingsMcpRoute
   '/$lang/_app/_auth/settings/security': typeof LangAppAuthSettingsSecurityRoute
@@ -310,10 +329,12 @@ export interface FileRouteTypes {
     | '/$lang/dashboard'
     | '/$lang/settings'
     | '/$lang/admin/jobs'
+    | '/$lang/admin/limits'
     | '/$lang/admin/settings'
     | '/$lang/admin/users'
     | '/$lang/admin/'
     | '/$lang/kbs/$kbId'
+    | '/$lang/settings/api-keys'
     | '/$lang/settings/embedding-providers'
     | '/$lang/settings/mcp'
     | '/$lang/settings/security'
@@ -337,10 +358,12 @@ export interface FileRouteTypes {
     | '/$lang/verify-email'
     | '/$lang/dashboard'
     | '/$lang/admin/jobs'
+    | '/$lang/admin/limits'
     | '/$lang/admin/settings'
     | '/$lang/admin/users'
     | '/$lang/admin'
     | '/$lang/kbs/$kbId'
+    | '/$lang/settings/api-keys'
     | '/$lang/settings/embedding-providers'
     | '/$lang/settings/mcp'
     | '/$lang/settings/security'
@@ -370,10 +393,12 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/dashboard'
     | '/$lang/_app/_auth/settings'
     | '/$lang/_app/admin/jobs'
+    | '/$lang/_app/admin/limits'
     | '/$lang/_app/admin/settings'
     | '/$lang/_app/admin/users'
     | '/$lang/_app/admin/'
     | '/$lang/_app/_auth/kbs/$kbId'
+    | '/$lang/_app/_auth/settings/api-keys'
     | '/$lang/_app/_auth/settings/embedding-providers'
     | '/$lang/_app/_auth/settings/mcp'
     | '/$lang/_app/_auth/settings/security'
@@ -525,6 +550,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppAdminJobsRouteImport
       parentRoute: typeof LangAppAdminRoute
     }
+    '/$lang/_app/admin/limits': {
+      id: '/$lang/_app/admin/limits'
+      path: '/limits'
+      fullPath: '/$lang/admin/limits'
+      preLoaderRoute: typeof LangAppAdminLimitsRouteImport
+      parentRoute: typeof LangAppAdminRoute
+    }
     '/$lang/_app/admin/settings': {
       id: '/$lang/_app/admin/settings'
       path: '/settings'
@@ -558,6 +590,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/$lang/settings/'
       preLoaderRoute: typeof LangAppAuthSettingsIndexRouteImport
+      parentRoute: typeof LangAppAuthSettingsRoute
+    }
+    '/$lang/_app/_auth/settings/api-keys': {
+      id: '/$lang/_app/_auth/settings/api-keys'
+      path: '/api-keys'
+      fullPath: '/$lang/settings/api-keys'
+      preLoaderRoute: typeof LangAppAuthSettingsApiKeysRouteImport
       parentRoute: typeof LangAppAuthSettingsRoute
     }
     '/$lang/_app/_auth/settings/embedding-providers': {
@@ -613,6 +652,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface LangAppAuthSettingsRouteChildren {
+  LangAppAuthSettingsApiKeysRoute: typeof LangAppAuthSettingsApiKeysRoute
   LangAppAuthSettingsEmbeddingProvidersRoute: typeof LangAppAuthSettingsEmbeddingProvidersRoute
   LangAppAuthSettingsMcpRoute: typeof LangAppAuthSettingsMcpRoute
   LangAppAuthSettingsSecurityRoute: typeof LangAppAuthSettingsSecurityRoute
@@ -620,6 +660,7 @@ interface LangAppAuthSettingsRouteChildren {
 }
 
 const LangAppAuthSettingsRouteChildren: LangAppAuthSettingsRouteChildren = {
+  LangAppAuthSettingsApiKeysRoute: LangAppAuthSettingsApiKeysRoute,
   LangAppAuthSettingsEmbeddingProvidersRoute:
     LangAppAuthSettingsEmbeddingProvidersRoute,
   LangAppAuthSettingsMcpRoute: LangAppAuthSettingsMcpRoute,
@@ -667,6 +708,7 @@ const LangAppAuthRouteWithChildren = LangAppAuthRoute._addFileChildren(
 
 interface LangAppAdminRouteChildren {
   LangAppAdminJobsRoute: typeof LangAppAdminJobsRoute
+  LangAppAdminLimitsRoute: typeof LangAppAdminLimitsRoute
   LangAppAdminSettingsRoute: typeof LangAppAdminSettingsRoute
   LangAppAdminUsersRoute: typeof LangAppAdminUsersRoute
   LangAppAdminIndexRoute: typeof LangAppAdminIndexRoute
@@ -674,6 +716,7 @@ interface LangAppAdminRouteChildren {
 
 const LangAppAdminRouteChildren: LangAppAdminRouteChildren = {
   LangAppAdminJobsRoute: LangAppAdminJobsRoute,
+  LangAppAdminLimitsRoute: LangAppAdminLimitsRoute,
   LangAppAdminSettingsRoute: LangAppAdminSettingsRoute,
   LangAppAdminUsersRoute: LangAppAdminUsersRoute,
   LangAppAdminIndexRoute: LangAppAdminIndexRoute,

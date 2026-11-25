@@ -14,6 +14,7 @@ type SettingsRoute =
   | "/$lang/settings"
   | "/$lang/settings/security"
   | "/$lang/settings/mcp"
+  | "/$lang/settings/api-keys"
   | "/$lang/settings/embedding-providers";
 
 function SettingsLayout() {

@@ -53,6 +53,7 @@ model User {
   oauthConsents           OauthConsent[]
   mcpGrants               McpGrant[]
   mcpPersonalTokens       McpPersonalToken[]
+  apiKeys                 ApiKey[]
 
   @@unique([email])
   @@index([role])

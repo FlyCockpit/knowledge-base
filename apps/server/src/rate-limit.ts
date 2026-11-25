@@ -634,7 +634,16 @@ export function setRateLimitHeaders(
  */
 export function createRateLimiterMiddleware(
   limiter: RateLimiter,
-  options?: { failClosed?: boolean; resolveKey?: (c: Context) => string },
+  options?: {
+    failClosed?: boolean;
+    resolveKey?: (c: Context) => string;
+    /**
+     * The JSON body of a refusal, for a surface with its own error contract
+     * (the REST API's `{error:{code,message}}`). Status and Retry-After are
+     * unchanged.
+     */
+    refusalBody?: (status: 429 | 503, retryAfterSeconds: number) => unknown;
+  },
 ) {
   const failClosed = options?.failClosed ?? false;
   const keyFor = options?.resolveKey ?? resolveKey;
@@ -651,6 +660,7 @@ export function createRateLimiterMiddleware(
         setRateLimitHeaders(c, limiter, rlResult);
         const retryAfter = Math.ceil(rlResult.msBeforeNext / 1000);
         c.header("Retry-After", String(retryAfter));
+        if (options?.refusalBody) return c.json(options.refusalBody(429, retryAfter), 429);
         return c.json({ error: "Too many attempts. Please wait a moment and try again." }, 429);
       }
 
@@ -661,6 +671,9 @@ export function createRateLimiterMiddleware(
         // to let credential-stuffing / signup-spam through unthrottled.
         logInternalError("rate-limit.store", rlResult, { mode: "fail-closed" });
         c.header("Retry-After", String(FAIL_CLOSED_RETRY_AFTER_SECONDS));
+        if (options?.refusalBody) {
+          return c.json(options.refusalBody(503, FAIL_CLOSED_RETRY_AFTER_SECONDS), 503);
+        }
         return c.json(
           { error: "Service temporarily unavailable. Please try again in a moment." },
           503,

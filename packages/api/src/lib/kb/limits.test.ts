@@ -76,6 +76,41 @@ describe("rate charging", () => {
     ).rejects.toMatchObject({ code: "STORAGE_UNAVAILABLE" });
   });
 
+  it("charges the create window against a live budget when one is given", async () => {
+    const port = createMemoryRatePort();
+    // Admin → Limits lowered the hourly create budget to 2.
+    await chargeRate(port, { kind: "create", key: "user2", limit: 2 });
+    await chargeRate(port, { kind: "create", key: "user2", limit: 2 });
+    await expect(
+      chargeRate(port, { kind: "create", key: "user2", limit: 2 }),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 3600 });
+    // Raising it applies to the window in progress (one shared counter).
+    await expect(chargeRate(port, { kind: "create", key: "user2", limit: 3 })).resolves.toBe(
+      undefined,
+    );
+    expect(port.counts.get("kb:create:user2")).toBe(3);
+    // chargeRate hands the budget to the port.
+    const seen: unknown[] = [];
+    await chargeRate(
+      {
+        async consume(...args) {
+          seen.push(args);
+          return { ok: true };
+        },
+      },
+      { kind: "create", key: "u", limit: 7 },
+    );
+    expect(seen).toEqual([["kb:create", "u", 1, 7]]);
+  });
+
+  it("the Redis port fails closed on an unusable budget", async () => {
+    const port = createRedisRatePort({});
+    for (const limit of [0, -1, 1.5, Number.NaN])
+      await expect(port.consume("kb:create", "u", 1, limit)).resolves.toEqual({
+        unavailable: true,
+      });
+  });
+
   it("caps in-flight queries per user", async () => {
     let held = 0;
     const slots = {

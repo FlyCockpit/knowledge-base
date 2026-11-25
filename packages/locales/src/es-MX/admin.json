@@ -44,11 +44,40 @@
     "attempts_one": "{{count}} intento",
     "attempts_other": "{{count}} intentos"
   },
+  "limits": {
+    "title": "Límites",
+    "description": "Límites de toda la instancia para crear bases de conocimiento y para las claves de API. Los cambios se aplican desde la siguiente solicitud.",
+    "cardTitle": "Bases de conocimiento y claves de API",
+    "cardDescription": "Cada límite se comprueba en vivo donde se aplica. Reducir un límite nunca elimina lo que ya existe; solo rechaza nuevas creaciones o tokens que lo superen.",
+    "fields": {
+      "createsPerHour": {
+        "label": "Bases de conocimiento creadas por persona por hora",
+        "description": "Compartido por la app web, MCP y la API REST."
+      },
+      "ownedLiveKbs": {
+        "label": "Bases de conocimiento que una persona puede tener",
+        "description": "Cuenta las bases de conocimiento activas, al crear y al transferir la propiedad."
+      },
+      "childTokensPerApiKey": {
+        "label": "Tokens MCP activos por clave de API",
+        "description": "Tokens que una clave de API REST puede tener a la vez."
+      }
+    },
+    "help": "{{description}} De {{min, number}} a {{max, number}}. Predeterminado: {{default, number}}.",
+    "invalid": "Ingresa un número entero de {{min, number}} a {{max, number}}.",
+    "loadFailed": "No se pudieron cargar los límites.",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "saved": "Límites guardados.",
+    "unchanged": "No hubo cambios.",
+    "failed": "No se pudieron guardar los límites. Inténtalo de nuevo."
+  },
   "nav": {
     "ariaLabel": "Secciones de administrador",
     "overview": "Descripción general",
     "users": "Usuarios",
     "jobs": "Trabajos",
+    "limits": "Límites",
     "settings": "Configuración"
   },
   "overview": {

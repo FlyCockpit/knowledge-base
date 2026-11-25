@@ -1,7 +1,7 @@
 import { SelectorRow } from "@knowledge-base/ui/components/selector-row";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { createFileRoute, Link, notFound, Outlet } from "@tanstack/react-router";
-import { LayoutDashboard, ListX, Settings, Users } from "lucide-react";
+import { Gauge, LayoutDashboard, ListX, Settings, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
@@ -52,6 +52,12 @@ function AdminNav() {
       to: "/$lang/admin/jobs" as const,
       label: t("nav.jobs"),
       icon: ListX,
+      exact: false,
+    },
+    {
+      to: "/$lang/admin/limits" as const,
+      label: t("nav.limits"),
+      icon: Gauge,
       exact: false,
     },
     {

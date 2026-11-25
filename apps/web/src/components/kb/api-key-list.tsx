@@ -1,0 +1,399 @@
+import type { AppRouterClient } from "@knowledge-base/api/routers/index";
+import { Button } from "@knowledge-base/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@knowledge-base/ui/components/dialog";
+import { toast } from "@knowledge-base/ui/components/sileo";
+import { Skeleton } from "@knowledge-base/ui/components/skeleton";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
+import { KeyRound, Plus } from "lucide-react";
+import type * as React from "react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { InlineRetry } from "@/components/inline-retry";
+import { AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
+import { expired, TokenStatePill } from "@/components/kb/credential-list";
+import { presetFor } from "@/components/kb/tool-group-picker";
+import { LoadMore } from "@/components/load-more";
+import { useLiveKbOptions } from "@/hooks/use-mcp-consent";
+import { orpc } from "@/utils/orpc";
+
+type Client = AppRouterClient;
+export type ApiKeyRow = Awaited<ReturnType<Client["apiKeys"]["listMine"]>>["items"][number];
+export type ChildTokenRow = Awaited<
+  ReturnType<Client["apiKeys"]["listChildrenMine"]>
+>["items"][number];
+
+function useDateFormat(lang: string) {
+  return (value: Date | string) =>
+    new Date(value).toLocaleDateString(lang, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** The key's ceiling and what it may do, in words (shared by the list and details). */
+function ApiKeySummary({ apiKey, lang }: { apiKey: ApiKeyRow; lang: string }) {
+  const { t } = useTranslation("settings");
+  const date = useDateFormat(lang);
+  const capabilities = [
+    apiKey.allowCreate ? t("apiKeys.can.create") : null,
+    apiKey.allowDelete ? t("apiKeys.can.delete") : null,
+    apiKey.allowMintChildren ? t("apiKeys.can.mint") : null,
+  ].filter((value): value is string => value !== null);
+  return (
+    <>
+      <p className="text-xs">
+        {t(`apiKeys.reachSummary.${apiKey.reach}`, { count: apiKey.kbCount })}
+      </p>
+      <p className="text-xs">
+        {t("apiKeys.bitsSummary", {
+          bits: apiKey.bits.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", "),
+        })}
+      </p>
+      <p className="text-xs">
+        {capabilities.length === 0
+          ? t("apiKeys.can.none")
+          : t("apiKeys.can.list", { items: capabilities.join(", ") })}
+      </p>
+      {apiKey.allowMintChildren && (
+        <>
+          <p className="text-xs">
+            {t("apiKeys.childGroupsSummary", { groups: groupsLabel(apiKey.childToolGroups, t) })}
+          </p>
+          <p className="text-xs">
+            {apiKey.childAuthoringMode === null
+              ? t("apiKeys.childReadOnly")
+              : t("apiKeys.childWriteMode", {
+                  mode: t(`credentials.writeMode.modes.${apiKey.childAuthoringMode}.label`),
+                })}
+          </p>
+          <p className="text-xs">{t("apiKeys.liveChildren", { count: apiKey.liveChildren })}</p>
+        </>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {apiKey.revokedAt
+          ? t("credentials.revoked")
+          : t(expired(apiKey.expiresAt) ? "apiKeys.expired" : "credentials.expires", {
+              date: date(apiKey.expiresAt),
+            })}{" "}
+        ·{" "}
+        {apiKey.lastUsedAt
+          ? t("apiKeys.lastUsed", { date: date(apiKey.lastUsedAt) })
+          : t("apiKeys.neverUsed")}
+      </p>
+    </>
+  );
+}
+
+function groupsLabel(groups: readonly string[], t: TFunction<"settings">) {
+  const preset = presetFor(groups);
+  return preset === "custom"
+    ? groups.map((group) => t(`credentials.picker.groups.${group}.label`)).join(", ")
+    : t(`credentials.picker.presets.${preset}.label`);
+}
+
+type ApiKeyListProps = {
+  lang: string;
+  keys: readonly ApiKeyRow[];
+  onCreate: () => void;
+  onDetails: (key: ApiKeyRow) => void;
+  onRevoke: (key: ApiKeyRow) => void;
+  footer?: React.ReactNode;
+};
+
+/** The signed-in user's own REST API keys. Rows never carry a secret. */
+export function ApiKeyList({ lang, keys, onCreate, onDetails, onRevoke, footer }: ApiKeyListProps) {
+  const { t } = useTranslation("settings");
+  return (
+    <section className="space-y-3" aria-labelledby="api-keys-title">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="api-keys-title" className="text-lg font-semibold">
+          {t("apiKeys.listTitle")}
+        </h2>
+        <Button className="min-h-[44px]" onClick={onCreate}>
+          <Plus className="size-4" />
+          {t("apiKeys.create")}
+        </Button>
+      </div>
+      {keys.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("apiKeys.noKeys")}</p>
+      ) : (
+        <ul className="grid min-w-0 gap-3">
+          {keys.map((apiKey) => (
+            <li
+              key={apiKey.id}
+              className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <KeyRound className="size-4" aria-hidden />
+              </span>
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="truncate font-medium">{apiKey.name}</span>
+                  <TokenStatePill revokedAt={apiKey.revokedAt} expiresAt={apiKey.expiresAt} />
+                </p>
+                <p className="truncate font-mono text-xs text-muted-foreground">
+                  kbk_{apiKey.lookupPrefix}
+                </p>
+                <ApiKeySummary apiKey={apiKey} lang={lang} />
+              </div>
+              <Button
+                variant="outline"
+                className="min-h-[44px]"
+                aria-label={t("apiKeys.detailsFor", { name: apiKey.name })}
+                onClick={() => onDetails(apiKey)}
+              >
+                {t("apiKeys.details")}
+              </Button>
+              {!apiKey.revokedAt && (
+                <Button
+                  variant="outline"
+                  className="min-h-[44px]"
+                  aria-label={t("credentials.revokeFor", { name: apiKey.name })}
+                  onClick={() => onRevoke(apiKey)}
+                >
+                  {t("credentials.revoke")}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {footer}
+    </section>
+  );
+}
+
+/** View details → Dialog: the key's knowledge bases and the tokens it minted. */
+export function ApiKeyDetailsDialog({
+  apiKey,
+  lang,
+  onOpenChange,
+}: {
+  apiKey: ApiKeyRow | null;
+  lang: string;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation(["settings", "common"]);
+  return (
+    <Dialog open={apiKey !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+        {apiKey && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{apiKey.name}</DialogTitle>
+              <DialogDescription className="font-mono">kbk_{apiKey.lookupPrefix}</DialogDescription>
+            </DialogHeader>
+            <div className="min-w-0 space-y-1">
+              <ApiKeySummary apiKey={apiKey} lang={lang} />
+            </div>
+            {apiKey.kbCount > 0 && <ApiKeyKbs grantId={apiKey.grantId} />}
+            <ApiKeyChildren apiKey={apiKey} lang={lang} />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-[44px]"
+                onClick={() => onOpenChange(false)}
+              >
+                {t("common:actions.close")}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The chosen and created KBs of the key's grant, with their names. */
+function ApiKeyKbs({ grantId }: { grantId: string }) {
+  const { t } = useTranslation("settings");
+  const kbs = useInfiniteQuery(
+    orpc.mcpGrants.listAclMine.infiniteOptions({
+      input: (cursor: string | null) => ({ grantId, limit: 50, cursor }),
+      initialPageParam: null,
+      getNextPageParam: (last) => last.nextCursor,
+    }),
+  );
+  const { data, isPending, isError, hasNextPage, isFetchingNextPage } = kbs;
+  const entries = data?.pages.flatMap((page) => page.items) ?? [];
+  return (
+    <section className="min-w-0 space-y-2" aria-labelledby={`api-key-kbs-${grantId}`}>
+      <h3 id={`api-key-kbs-${grantId}`} className="text-sm font-medium">
+        {t("apiKeys.kbsTitle")}
+      </h3>
+      {isPending ? (
+        <Skeleton className="h-10 w-full" />
+      ) : (
+        <ul className="space-y-0.5 text-xs">
+          {entries.map((entry) => (
+            <li key={entry.kbId} className="min-w-0 break-words">
+              {entry.name ? (
+                <span>{entry.name}</span>
+              ) : (
+                <span className="font-mono">{entry.kbId}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {isError && <InlineRetry message={t("apiKeys.kbsLoadError")} onRetry={() => kbs.refetch()} />}
+      <LoadMore
+        onLoadMore={() => kbs.fetchNextPage()}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+      />
+    </section>
+  );
+}
+
+/** The key's child MCP tokens, newest page last, each revocable on its own. */
+function ApiKeyChildren({ apiKey, lang }: { apiKey: ApiKeyRow; lang: string }) {
+  const { t } = useTranslation("settings");
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState<ChildTokenRow | null>(null);
+  const children = useInfiniteQuery(
+    orpc.apiKeys.listChildrenMine.infiniteOptions({
+      input: (cursor: string | null) => ({ apiKeyId: apiKey.id, limit: 20, cursor }),
+      initialPageParam: null,
+      getNextPageParam: (last) => last.nextCursor,
+    }),
+  );
+  // Names for the KBs the user can still see; any other KB shows its id.
+  const { live } = useLiveKbOptions();
+  const names = new Map(live.map((kb) => [kb.kbId, kb.name]));
+  const revoke = useMutation(
+    orpc.apiKeys.revokeChildMine.mutationOptions({
+      onSuccess: () => {
+        setPending(null);
+        toast.success(t("apiKeys.revokeChildSuccess"));
+      },
+      onError: () => toast.error(t("credentials.revokeError")),
+      onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.apiKeys.key() }),
+    }),
+  );
+  const { data, isPending, isError, hasNextPage, isFetchingNextPage } = children;
+  const rows = data?.pages.flatMap((page) => page.items) ?? [];
+  return (
+    <section className="min-w-0 space-y-2" aria-labelledby={`api-key-children-${apiKey.id}`}>
+      <h3 id={`api-key-children-${apiKey.id}`} className="text-sm font-medium">
+        {t("apiKeys.childrenTitle")}
+      </h3>
+      {isPending ? (
+        <div className="space-y-2">
+          <Skeleton className="h-14 w-full rounded-md" />
+          <Skeleton className="h-14 w-full rounded-md" />
+        </div>
+      ) : isError && data === undefined ? (
+        <InlineRetry message={t("credentials.listLoadError")} onRetry={() => children.refetch()} />
+      ) : (
+        <ChildTokenList
+          rows={rows}
+          lang={lang}
+          kbName={(kbId) => names.get(kbId)}
+          onRevoke={setPending}
+        />
+      )}
+      {isError && data !== undefined && (
+        <InlineRetry
+          message={t("credentials.listLoadError")}
+          onRetry={() => children.fetchNextPage()}
+        />
+      )}
+      <LoadMore
+        onLoadMore={() => children.fetchNextPage()}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+      />
+      <ConfirmDeleteDialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open && !revoke.isPending) setPending(null);
+        }}
+        title={t("credentials.revokeTokenTitle")}
+        description={t("credentials.revokeTokenDescription", { name: pending?.name ?? "" })}
+        confirmToken={pending?.name ?? ""}
+        typePrompt={t("credentials.revokeTypePrompt")}
+        copyAriaLabel={t("credentials.copyConfirm")}
+        inputMode="text"
+        confirmLabel={t("credentials.revoke")}
+        pendingLabel={t("credentials.revoking")}
+        isPending={revoke.isPending}
+        onConfirm={() => {
+          if (pending) revoke.mutate({ apiKeyId: apiKey.id, tokenId: pending.id });
+        }}
+      />
+    </section>
+  );
+}
+
+/** Child token rows; exported for tests. */
+export function ChildTokenList({
+  rows,
+  lang,
+  kbName,
+  onRevoke,
+}: {
+  rows: readonly ChildTokenRow[];
+  lang: string;
+  kbName: (kbId: string) => string | undefined;
+  onRevoke: (row: ChildTokenRow) => void;
+}) {
+  const { t } = useTranslation("settings");
+  const date = useDateFormat(lang);
+  if (rows.length === 0) {
+    return <p className="text-sm text-muted-foreground">{t("apiKeys.noChildren")}</p>;
+  }
+  return (
+    <ul className="divide-y rounded-md border">
+      {rows.map((row) => {
+        const name = row.kbId ? kbName(row.kbId) : undefined;
+        return (
+          <li key={row.id} className="flex min-w-0 flex-wrap items-start gap-3 p-3">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="truncate font-medium">{row.name}</span>
+                <TokenStatePill revokedAt={row.revokedAt} expiresAt={row.expiresAt} />
+              </p>
+              <p className="text-xs break-words">
+                {name ? name : <span className="font-mono">{row.kbId ?? "—"}</span>}
+                {row.bits.length > 0 &&
+                  `: ${row.bits.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ")}`}
+              </p>
+              <p className="text-xs">
+                {t("credentials.toolGroupsSummary", { groups: groupsLabel(row.toolGroups, t) })}
+              </p>
+              <AuthoringModeSummary mode={row.authoringMode} />
+              <p className="text-xs text-muted-foreground">
+                {row.revokedAt
+                  ? t("credentials.revoked")
+                  : row.expiresAt === null
+                    ? t("credentials.neverExpires")
+                    : t(expired(row.expiresAt) ? "apiKeys.expired" : "credentials.expires", {
+                        date: date(row.expiresAt),
+                      })}
+              </p>
+            </div>
+            {!row.revokedAt && (
+              <Button
+                variant="outline"
+                className="min-h-[44px]"
+                aria-label={t("credentials.revokeFor", { name: row.name })}
+                onClick={() => onRevoke(row)}
+              >
+                {t("credentials.revoke")}
+              </Button>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

@@ -10,6 +10,7 @@ export const LOG_SITES = {
   // The request paths that answered only with a generic code.
   "mcp.tool": ["error", "MCP tool call failed with an internal error"],
   "mcp.endpoint": ["error", "MCP endpoint failed before answering"],
+  "rest-api.request": ["error", "REST API request failed with an internal error"],
   "mcp.oauth": ["error", "signing-key service unavailable"],
   "git-http": ["error", "Git smart-HTTP request failed with a server error"],
   "git-http.refused": ["info", "Git push refused"],

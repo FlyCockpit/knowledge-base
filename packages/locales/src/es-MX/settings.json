@@ -2,6 +2,7 @@
   "navProfile": "Perfil",
   "navSecurity": "Seguridad",
   "navMcp": "Acceso MCP",
+  "navApiKeys": "Claves de API",
   "navProviders": "Proveedores de embeddings",
   "profile": {
     "title": "Perfil",
@@ -297,15 +298,15 @@
     "editAccessFor": "Editar acceso de {{name}}",
     "revokeFor": "Revocar {{name}}",
     "resetReviewTitle": "Revisa el acceso después de restablecer tu contraseña",
-    "resetReviewMessage": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador, pero estos tokens de acceso personal y apps conectadas siguen funcionando. Revoca los que no reconozcas o revócalos todos.",
-    "resetReviewNone": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador. No hay tokens de acceso personal ni apps conectadas activos.",
-    "resetReviewLoadError": "No se pudo comprobar qué tokens y apps siguen funcionando después de restablecer tu contraseña.",
+    "resetReviewMessage": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador, pero estos tokens de acceso personal, apps conectadas y claves de API siguen funcionando. Revoca los que no reconozcas o revócalos todos.",
+    "resetReviewNone": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador. No hay tokens de acceso personal, apps conectadas ni claves de API activos.",
+    "resetReviewLoadError": "No se pudo comprobar qué tokens, apps y claves de API siguen funcionando después de restablecer tu contraseña.",
     "revokeAll": "Revocar todo",
-    "revokeAllTitle": "¿Revocar todos los tokens y apps conectadas?",
-    "revokeAllDescription": "Todos los tokens de acceso personal dejan de funcionar y todas las apps conectadas se desconectan de inmediato. Las herramientas y agentes que los usan deberán configurarse de nuevo. Esto no se puede deshacer.",
+    "revokeAllTitle": "¿Revocar todos los tokens, apps conectadas y claves de API?",
+    "revokeAllDescription": "Todos los tokens de acceso personal y claves de API (con los tokens MCP que emitieron) dejan de funcionar y todas las apps conectadas se desconectan de inmediato. Las herramientas, agentes y automatizaciones que los usan deberán configurarse de nuevo. Esto no se puede deshacer.",
     "revokeAllTypePrompt": "Escribe “revocar todo” para confirmar",
     "revokeAllConfirmToken": "revocar todo",
-    "revokeAllSuccess": "Se revocaron todos los tokens y apps conectadas.",
+    "revokeAllSuccess": "Se revocaron todos los tokens, apps conectadas y claves de API.",
     "revokeAllError": "Algunas credenciales no se revocaron. Revisa la lista e inténtalo de nuevo.",
     "revokeAllCopyConfirm": "Copiar texto de confirmación",
     "writeMode": {
@@ -328,6 +329,109 @@
         }
       }
     }
+  },
+  "apiKeys": {
+    "intro": "Una clave de API REST (kbk_…) permite que tu propia automatización cree, liste y elimine bases de conocimiento y emita tokens MCP para ellas mediante /api/v1. Nunca lee ni escribe documentos por sí misma y no se puede usar como token MCP.",
+    "introMcp": "Para un agente o cliente MCP, crea en su lugar un token de acceso personal en",
+    "listTitle": "Claves de API",
+    "create": "Crear clave de API",
+    "noKeys": "Aún no tienes claves de API.",
+    "listLoadError": "No se pudieron cargar tus claves de API.",
+    "createTitle": "Crear clave de API",
+    "createDescription": "Elige a qué puede llegar la clave y qué puede hacer. Una clave no se puede editar después: revócala y crea una nueva.",
+    "expiryHelp": "Una clave de API siempre vence, a más tardar en {{max}} días.",
+    "reach": {
+      "legend": "Alcance",
+      "all": {
+        "label": "Todas las bases de conocimiento a las que tengo acceso",
+        "description": "Cada base de conocimiento a la que tengas acceso ahora o después, dentro de los permisos de abajo."
+      },
+      "selected": {
+        "label": "Bases de conocimiento elegidas",
+        "description": "Solo las bases de conocimiento que elijas abajo."
+      },
+      "created": {
+        "label": "Solo las bases de conocimiento que cree esta clave",
+        "description": "Ninguna base de conocimiento existente. Requiere Crear bases de conocimiento."
+      }
+    },
+    "bitsLegend": "Permisos",
+    "bitsHint": "Lo máximo que la clave, y cada token que emita, puede hacer en una base de conocimiento de su alcance. Nunca hace más de lo que tú puedes hacer en ese momento.",
+    "kbsLegend": "Bases de conocimiento",
+    "kbsHint": "Solo puedes elegir una base de conocimiento en la que tengas todos los permisos de arriba.",
+    "noKbs": "Todavía no tienes acceso a ninguna base de conocimiento.",
+    "kbYourAccess": "Tu acceso: {{bits}}",
+    "kbLacks": "Aquí no tienes {{bits}}.",
+    "capabilitiesLegend": "Qué puede hacer la clave",
+    "allowCreate": {
+      "label": "Crear bases de conocimiento",
+      "description": "Las nuevas bases de conocimiento te pertenecen y se agregan al alcance de la clave."
+    },
+    "allowDelete": {
+      "label": "Eliminar bases de conocimiento",
+      "description": "Solo las bases de conocimiento que sigan siendo tuyas.",
+      "needsManage": "Requiere Administrar en los permisos de arriba."
+    },
+    "allowMint": {
+      "label": "Emitir tokens MCP",
+      "description": "Tokens para una base de conocimiento cada uno, dentro de los límites de abajo. Dejan de funcionar cuando la clave se revoca o vence."
+    },
+    "childHint": "Límites para los tokens MCP que emite esta clave. Cada token es para una base de conocimiento, elegida al emitirlo, y nunca obtiene valores sellados.",
+    "childWrites": {
+      "label": "Los tokens pueden cambiar contenido",
+      "description": "Sin esto, los tokens emitidos son de solo lectura."
+    },
+    "issues": {
+      "reachRequired": "Elige el alcance de la clave.",
+      "kbRequired": "Elige al menos una base de conocimiento.",
+      "kbLacksBits": "A una base de conocimiento elegida le falta uno de los permisos. Quítala o reduce los permisos.",
+      "bitsRequired": "Elige al menos un permiso.",
+      "createdNeedsCreate": "Una clave limitada a las bases de conocimiento que crea necesita Crear bases de conocimiento.",
+      "deleteNeedsManage": "Eliminar bases de conocimiento requiere Administrar en los permisos.",
+      "toolGroupRequired": "Elige al menos un grupo de herramientas para los tokens emitidos.",
+      "writeModeRequired": "Elige un modo de escritura para los tokens emitidos."
+    },
+    "createSubmit": "Crear clave",
+    "createError": "No se creó la clave de API. Revisa tus opciones e inténtalo de nuevo.",
+    "createQuota": "Ya tienes el máximo de claves de API activas permitidas. Revoca una primero.",
+    "createUncertain": "No pudimos confirmar si se creó \"{{name}}\". Revisa la lista antes de intentarlo de nuevo.",
+    "secretOnce": "Copia esta clave de API ahora. No se volverá a mostrar y al cerrar este cuadro se elimina de esta página.",
+    "copySecret": "Copiar clave de API",
+    "reachSummary": {
+      "all": "Alcance: todas las bases de conocimiento a las que tienes acceso",
+      "selected_one": "Alcance: {{count}} base de conocimiento elegida",
+      "selected_other": "Alcance: {{count}} bases de conocimiento elegidas",
+      "created_one": "Alcance: {{count}} base de conocimiento creada por la clave",
+      "created_other": "Alcance: {{count}} bases de conocimiento creadas por la clave"
+    },
+    "bitsSummary": "Permisos: {{bits}}",
+    "can": {
+      "list": "Puede: {{items}}",
+      "none": "Solo puede listar y leer los detalles de las bases de conocimiento",
+      "create": "crear bases de conocimiento",
+      "delete": "eliminar bases de conocimiento",
+      "mint": "emitir tokens MCP"
+    },
+    "childGroupsSummary": "Herramientas de los tokens: {{groups}}",
+    "childReadOnly": "Los tokens son de solo lectura",
+    "childWriteMode": "Modo de escritura de los tokens: {{mode}}",
+    "liveChildren_one": "{{count}} token activo",
+    "liveChildren_other": "{{count}} tokens activos",
+    "expired": "Venció el {{date}}",
+    "lastUsed": "Último uso: {{date}}",
+    "neverUsed": "Nunca se ha usado",
+    "details": "Detalles",
+    "detailsFor": "Detalles de {{name}}",
+    "kbsTitle": "Bases de conocimiento",
+    "kbsLoadError": "No se pudieron cargar las bases de conocimiento de la clave.",
+    "childrenTitle": "Tokens MCP emitidos por esta clave",
+    "noChildren": "Esta clave no ha emitido ningún token.",
+    "revokeChildSuccess": "Token revocado.",
+    "revokeTitle": "¿Revocar la clave de API?",
+    "revokeDescription_one": "\"{{name}}\" deja de funcionar de inmediato, igual que el {{count}} token MCP activo que emitió. Esto no se puede deshacer.",
+    "revokeDescription_other": "\"{{name}}\" deja de funcionar de inmediato, igual que los {{count}} tokens MCP activos que emitió. Esto no se puede deshacer.",
+    "revokeSuccess_one": "Clave de API revocada, con {{count}} token.",
+    "revokeSuccess_other": "Clave de API revocada, con {{count}} tokens."
   },
   "providers": {
     "title": "Proveedores de embeddings",

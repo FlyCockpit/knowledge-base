@@ -1,4 +1,5 @@
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { digestApiKeySecret, generateApiKeySecret } from "@knowledge-base/api/lib/api-keys";
 import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-query";
 import type { LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import { authorize, type LiveAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
@@ -44,6 +45,11 @@ function fixture(kind: "PAT" | "OAUTH" = "PAT") {
     tokenExpiresAt: new Date("2099-01-01"),
     tokenId: "t",
     resource: `${origin}/mcp`,
+    // Not a REST API key's child, and not an API key's grant.
+    parentApiKeyId: null as string | null,
+    parentLive: null as boolean | null,
+    apiKeyId: null as string | null,
+    apiKeyLive: null as boolean | null,
   };
   const token = {
     ...grant,
@@ -65,12 +71,13 @@ function fixture(kind: "PAT" | "OAUTH" = "PAT") {
   let bits = ["manage"];
   let closing = false;
   const query: LockQuery = async <R>(sql: string) => ({
+    // grantBits also reads the grant's every-KB ceiling (FROM "mcp_grant"): route it first.
     rows: (sql.includes('FROM "mcp_personal_token"')
       ? [token]
-      : sql.includes('FROM "mcp_grant"')
-        ? [grant]
-        : sql.includes('FROM "grant_kb_acl"')
-          ? [{ bits }]
+      : sql.includes('FROM "grant_kb_acl"')
+        ? [{ bits }]
+        : sql.includes('FROM "mcp_grant"')
+          ? [grant]
           : sql.includes('FROM "user"')
             ? [user]
             : []) as R[],
@@ -398,6 +405,134 @@ describe("unified credential admission", () => {
       return f.claims;
     });
     await expect(f.admit(f.request())).rejects.toBeDefined();
+  });
+});
+
+/**
+ * One live REST API key (kbk_) and one live PAT behind a SQL fake. Both are
+ * valid credentials: every refusal below is the credential-family split alone.
+ */
+function crossFixture(credential: "mcp" | "api_key") {
+  const key = generateApiKeySecret();
+  const pat = generatePatSecret();
+  const keyGrantId = randomUUID();
+  const keyRow = {
+    id: "a".repeat(24),
+    userId: "owner",
+    grantId: keyGrantId,
+    secretDigest: digestApiKeySecret(key.secret),
+    expiresAt: new Date("2099-01-01"),
+    revokedAt: null,
+  };
+  const keyGrant = {
+    id: keyGrantId,
+    userId: "owner",
+    kind: "API_KEY",
+    clientId: `apikey:${keyRow.id}`,
+    scopes: ["mcp:write"],
+    toolGroups: ["kb_admin"],
+    authoringMode: "EDIT",
+    revokedAt: null,
+    tokenId: null,
+    resource: null,
+    tokenRevokedAt: null,
+    tokenExpiresAt: null,
+    parentApiKeyId: null,
+    parentLive: null,
+    apiKeyId: keyRow.id,
+    apiKeyLive: true,
+  };
+  const user = {
+    banned: false,
+    banExpires: null,
+    twoFactorEnabled: true,
+    role: "user",
+    createdAt: new Date(0),
+    forceInternal: "false",
+    forcePublic: "false",
+  };
+  const query = vi.fn(async (sql: string) => ({
+    rows: sql.includes('FROM "api_key" WHERE "lookupPrefix"')
+      ? [keyRow]
+      : sql.includes('FROM "mcp_grant"')
+        ? [keyGrant]
+        : sql.includes('FROM "user"')
+          ? [user]
+          : [],
+    rowCount: 1,
+  }));
+  const verifyOAuth = vi.fn(async () => ({}) as Record<string, unknown>);
+  const admit = createBearerAdmission({
+    query: query as unknown as LockQuery,
+    origin,
+    verifyOAuth,
+    credential,
+    identityDb: { $transaction: async () => undefined } as never,
+  });
+  const request = (authorization: string, path = "/mcp") =>
+    new Request(`${origin}${path}`, { headers: { authorization } });
+  return { admit, query, verifyOAuth, request, key: key.secret, pat: pat.secret, keyGrant };
+}
+
+describe("credential families never cross (REST API keys vs MCP credentials)", () => {
+  it("the mcp admitter (MCP, Git, assets, exports, self-revoke) refuses kbk_ before any lookup", async () => {
+    const f = crossFixture("mcp");
+    for (const selfRevoke of [false, true])
+      for (const scheme of ["Bearer", "DPoP", "bearer"])
+        for (const path of ["/mcp", "/git/kb.git/info/refs", "/kb-assets/x/y", "/api/kb-exports/x"])
+          await expect(
+            f.admit(f.request(`${scheme} ${f.key}`, path), { selfRevoke }),
+          ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    // Refused up front: no key lookup, no grant read, no OAuth/JWKS work.
+    expect(f.query).not.toHaveBeenCalled();
+    expect(f.verifyOAuth).not.toHaveBeenCalled();
+  });
+
+  it("the same key is admitted by the api_key admitter, bound as an API_KEY credential", async () => {
+    const f = crossFixture("api_key");
+    const admitted = await f.admit(f.request(`Bearer ${f.key}`, "/api/v1/kbs"));
+    expect(admitted.principal.credential).toEqual({
+      kind: "API_KEY",
+      clientId: f.keyGrant.clientId,
+      resource: `${origin}/api/v1`,
+      tokenId: f.keyGrant.apiKeyId,
+    });
+    expect(admitted.principal.grantId).toBe(f.keyGrant.id);
+    expect(f.verifyOAuth).not.toHaveBeenCalled();
+  });
+
+  it("the api_key admitter refuses kbp_, OAuth bearers, DPoP and self-revoke before any lookup", async () => {
+    const f = crossFixture("api_key");
+    for (const authorization of [
+      `Bearer ${f.pat}`,
+      "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJvd25lciJ9.c2ln",
+      "DPoP eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJvd25lciJ9.c2ln",
+      `DPoP ${f.key}`,
+      "Bearer kbk_malformed",
+    ])
+      await expect(f.admit(f.request(authorization, "/api/v1/kbs"))).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+    await expect(
+      f.admit(f.request(`Bearer ${f.key}`, "/api/v1/kbs"), { selfRevoke: true }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(f.query).not.toHaveBeenCalled();
+    expect(f.verifyOAuth).not.toHaveBeenCalled();
+  });
+
+  it("a kbk_ whose grant row is not an API_KEY grant (or is a dead key) is not admitted", async () => {
+    for (const patch of [
+      { kind: "PAT" },
+      { kind: "OAUTH" },
+      { apiKeyLive: false },
+      { apiKeyId: "b".repeat(24) },
+    ]) {
+      const f = crossFixture("api_key");
+      Object.assign(f.keyGrant, patch);
+      await expect(f.admit(f.request(`Bearer ${f.key}`, "/api/v1/kbs"))).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+    }
   });
 });
 

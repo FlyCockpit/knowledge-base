@@ -29,6 +29,12 @@ export const KB_LIMITS = {
   branchesPerKb: 100,
   sharesPerKb: 1024,
   activePatsPerUser: 10,
+  /** Live REST API keys per user (minted in Settings → API keys). */
+  activeApiKeysPerUser: 10,
+  /** Default live child MCP tokens per API key (Admin → Limits changes it). */
+  childTokensPerApiKey: 200,
+  /** Child MCP token mints per API key per hour (bounds child-row growth). */
+  childMintsPerHourPerApiKey: 200,
   providersPerUser: 20,
   /** Immutable revision rows per provider (create + probes). */
   providerRevisionsPerProvider: 50,
@@ -79,12 +85,25 @@ export const KB_INDEX_RESCORE = {
   chunksPerCandidate: 200,
 } as const;
 
-export type RateChargeKind = "create" | "query" | "rebuild" | "probe" | "mutation" | "upload";
+export type RateChargeKind =
+  | "create"
+  | "query"
+  | "rebuild"
+  | "probe"
+  | "mutation"
+  | "upload"
+  | "childMint";
 
 export type RateCharge = {
   kind: RateChargeKind;
   key: string;
   points?: number;
+  /**
+   * The window's budget when an instance setting replaces the compiled one
+   * (the create rate, Admin → Limits). Counters are shared per bucket, so a
+   * changed budget applies to the window already in progress.
+   */
+  limit?: number;
 };
 
 export type RateConsumeResult =
@@ -93,7 +112,7 @@ export type RateConsumeResult =
   | { unavailable: true };
 
 export type RatePort = {
-  consume(bucket: string, key: string, points: number): Promise<RateConsumeResult>;
+  consume(bucket: string, key: string, points: number, limit?: number): Promise<RateConsumeResult>;
 };
 
 const WINDOWS: Record<RateChargeKind, { bucket: string; points: number; durationSeconds: number }> =
@@ -115,6 +134,11 @@ const WINDOWS: Record<RateChargeKind, { bucket: string; points: number; duration
       points: KB_LIMITS.mutationsPerMinutePerActorKb,
       durationSeconds: 60,
     },
+    childMint: {
+      bucket: "kb:child-mint",
+      points: KB_LIMITS.childMintsPerHourPerApiKey,
+      durationSeconds: 3600,
+    },
     upload: {
       bucket: "kb:upload",
       points: Number(KB_LIMITS.uploadBytesPerHourPerUser),
@@ -126,12 +150,12 @@ export function createMemoryRatePort(): RatePort & { counts: Map<string, number>
   const counts = new Map<string, number>();
   return {
     counts,
-    async consume(bucket, key, points) {
+    async consume(bucket, key, points, limit) {
       const window = Object.values(WINDOWS).find((item) => item.bucket === bucket);
       if (!window) return { unavailable: true };
       const id = `${bucket}:${key}`;
       const next = (counts.get(id) ?? 0) + points;
-      if (next > window.points) return { retryAfterSeconds: window.durationSeconds };
+      if (next > (limit ?? window.points)) return { retryAfterSeconds: window.durationSeconds };
       counts.set(id, next);
       return { ok: true };
     },
@@ -139,29 +163,34 @@ export function createMemoryRatePort(): RatePort & { counts: Map<string, number>
 }
 
 export function createRedisRatePort(storeClient: object): RatePort {
+  // One limiter per (bucket, budget). Every limiter of a bucket shares its key
+  // prefix, so they read and write the same per-key counter.
   const limiters = new Map<string, RateLimiterRedis>();
-  const limiter = (kind: RateChargeKind): RateLimiterRedis => {
+  const limiter = (kind: RateChargeKind, budget: number): RateLimiterRedis => {
     const spec = WINDOWS[kind];
-    let found = limiters.get(spec.bucket);
+    const id = `${spec.bucket}:${budget}`;
+    let found = limiters.get(id);
     if (!found) {
       found = new RateLimiterRedis({
         storeClient,
         keyPrefix: spec.bucket,
-        points: spec.points,
+        points: budget,
         duration: spec.durationSeconds,
       });
-      limiters.set(spec.bucket, found);
+      limiters.set(id, found);
     }
     return found;
   };
   return {
-    async consume(bucket, key, points) {
+    async consume(bucket, key, points, limit) {
       const kind = (Object.keys(WINDOWS) as RateChargeKind[]).find(
         (item) => WINDOWS[item].bucket === bucket,
       );
       if (!kind) return { unavailable: true };
+      const budget = limit ?? WINDOWS[kind].points;
+      if (!Number.isSafeInteger(budget) || budget < 1) return { unavailable: true };
       try {
-        await limiter(kind).consume(key, points);
+        await limiter(kind, budget).consume(key, points);
         return { ok: true };
       } catch (error) {
         if (error instanceof RateLimiterRes) {
@@ -181,7 +210,12 @@ export function rateWindowOf(kind: RateChargeKind): { points: number; durationSe
 
 export async function chargeRate(port: RatePort, charge: RateCharge): Promise<void> {
   const spec = WINDOWS[charge.kind];
-  const result = await port.consume(spec.bucket, charge.key, charge.points ?? 1);
+  const points = charge.points ?? 1;
+  // The budget argument exists only when a setting replaces the compiled one.
+  const result =
+    charge.limit === undefined
+      ? await port.consume(spec.bucket, charge.key, points)
+      : await port.consume(spec.bucket, charge.key, points, charge.limit);
   if ("ok" in result) return;
   if ("unavailable" in result) {
     throw new KbAdmissionError("STORAGE_UNAVAILABLE", "Rate limiter unavailable");

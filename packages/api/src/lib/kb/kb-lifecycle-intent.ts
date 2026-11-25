@@ -12,6 +12,7 @@ import {
   publishInitialMainRef,
   writeInitialMainCommitLoose,
 } from "./git-write";
+import { readInstanceLimit } from "./instance-limits";
 import { chargeRate, createMemoryRatePort, type RatePort } from "./limits";
 import type { HeldLockLease, LockQuery } from "./lock";
 import {
@@ -278,7 +279,13 @@ export function createKbCreatePublication(raw: KbCreatePublicationInput): {
           };
           return;
         }
-        await chargeRate(ratePort, { kind: "create", key: input.principal.userId });
+        // One owner budget for every create path (browser, MCP, REST API key);
+        // the budget is the live instance setting (Admin → Limits).
+        await chargeRate(ratePort, {
+          kind: "create",
+          key: input.principal.userId,
+          limit: await readInstanceLimit(lease.query, "createsPerHour"),
+        });
         await lease.transaction(async (query) => {
           const slugClash = await query<{ id: string }>(
             `SELECT id FROM "knowledge_base"

@@ -217,6 +217,7 @@ describe("appRouter surface", () => {
   it("keeps the remaining live routers", () => {
     expect(Object.keys(appRouter).sort()).toEqual(
       [
+        "apiKeys",
         "appConfig",
         "auth",
         "cliCredentials",

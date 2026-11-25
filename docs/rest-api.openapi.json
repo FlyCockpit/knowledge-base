@@ -1,0 +1,1844 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Knowledge Base control-plane API",
+    "version": "1",
+    "description": "Create, list and delete knowledge bases and mint child MCP tokens with a REST API key (kbk_…). Content stays on MCP."
+  },
+  "servers": [
+    {
+      "url": "https://kb.example.com/api/v1"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A REST API key from Settings → API keys (kbk_…). MCP tokens are refused."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable error code, e.g. NOT_FOUND, RATE_LIMITED"
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryAfterSeconds": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "windowSeconds": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  },
+  "paths": {
+    "/key": {
+      "get": {
+        "operationId": "getApiKey",
+        "summary": "The presented API key: its reach, toggles and child ceilings",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "lookupPrefix": {
+                      "type": "string"
+                    },
+                    "grantId": {
+                      "type": "string"
+                    },
+                    "reach": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "selected",
+                        "created"
+                      ]
+                    },
+                    "bits": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "propose",
+                          "write",
+                          "review",
+                          "manage"
+                        ]
+                      }
+                    },
+                    "allowCreate": {
+                      "type": "boolean"
+                    },
+                    "allowDelete": {
+                      "type": "boolean"
+                    },
+                    "allowMintChildren": {
+                      "type": "boolean"
+                    },
+                    "childToolGroups": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "childAuthoringMode": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "dream",
+                            "edit",
+                            "both"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    "lastUsedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "revokedAt": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "liveChildren": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "kbCount": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "lookupPrefix",
+                    "grantId",
+                    "reach",
+                    "bits",
+                    "allowCreate",
+                    "allowDelete",
+                    "allowMintChildren",
+                    "childToolGroups",
+                    "childAuthoringMode",
+                    "createdAt",
+                    "expiresAt",
+                    "lastUsedAt",
+                    "revokedAt",
+                    "liveChildren",
+                    "kbCount"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kbs": {
+      "get": {
+        "operationId": "listKbs",
+        "summary": "List the KBs this key reaches (its ceiling ∩ your live access)",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of KBs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "defaultBranch": {
+                            "type": "string",
+                            "const": "main"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "metadataVersion": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "propose",
+                                "write",
+                                "review",
+                                "manage"
+                              ]
+                            },
+                            "description": "The key's live bits on this KB"
+                          },
+                          "writeMode": {
+                            "type": "string"
+                          },
+                          "embeddingGeneration": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "attachmentLocator": {
+                            "type": "string",
+                            "description": "The MCP attachment locator for this KB"
+                          },
+                          "sealedNamespace": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "slug",
+                          "description",
+                          "defaultBranch",
+                          "headSha",
+                          "metadataVersion",
+                          "capabilities",
+                          "writeMode",
+                          "embeddingGeneration",
+                          "attachmentLocator",
+                          "sealedNamespace"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createKb",
+        "summary": "Create a KB you own (needs the key's allowCreate); the key reaches it afterwards",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Retry a mutation with the same key and body to get the same result; a refusal stores nothing, so the same key may be retried",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "slug": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "name",
+                  "slug",
+                  "description"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created (or the replay of the same Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "operationId": {
+                      "type": "string"
+                    },
+                    "kb": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "slug": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string",
+                          "const": "main"
+                        },
+                        "headSha": {
+                          "type": "string"
+                        },
+                        "metadataVersion": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "capabilities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "propose",
+                              "write",
+                              "review",
+                              "manage"
+                            ]
+                          },
+                          "description": "The key's live bits on this KB"
+                        },
+                        "writeMode": {
+                          "type": "string"
+                        },
+                        "embeddingGeneration": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "attachmentLocator": {
+                          "type": "string",
+                          "description": "The MCP attachment locator for this KB"
+                        },
+                        "sealedNamespace": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "slug",
+                        "description",
+                        "defaultBranch",
+                        "headSha",
+                        "metadataVersion",
+                        "capabilities",
+                        "writeMode",
+                        "embeddingGeneration",
+                        "attachmentLocator",
+                        "sealedNamespace"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "kb"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's ceiling or your live access does not allow this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: idempotency mismatch, quota exceeded, metadata version or slug conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kbs/{kbId}": {
+      "get": {
+        "operationId": "getKb",
+        "summary": "Read one KB's metadata",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kbId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]{24,32}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The KB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "defaultBranch": {
+                      "type": "string",
+                      "const": "main"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "metadataVersion": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "propose",
+                          "write",
+                          "review",
+                          "manage"
+                        ]
+                      },
+                      "description": "The key's live bits on this KB"
+                    },
+                    "writeMode": {
+                      "type": "string"
+                    },
+                    "embeddingGeneration": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "attachmentLocator": {
+                      "type": "string",
+                      "description": "The MCP attachment locator for this KB"
+                    },
+                    "sealedNamespace": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "slug",
+                    "description",
+                    "defaultBranch",
+                    "headSha",
+                    "metadataVersion",
+                    "capabilities",
+                    "writeMode",
+                    "embeddingGeneration",
+                    "attachmentLocator",
+                    "sealedNamespace"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteKb",
+        "summary": "Delete (tombstone) a KB you own: needs the key's allowDelete and live manage; same rules as knowledge_bases_delete",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kbId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]{24,32}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Retry a mutation with the same key and body to get the same result; a refusal stores nothing, so the same key may be retried",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metadataVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "confirm": {
+                    "type": "string",
+                    "const": "DELETE"
+                  }
+                },
+                "required": [
+                  "metadataVersion",
+                  "confirm"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tombstoned (or the replay of the same Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "operationId": {
+                      "type": "string"
+                    },
+                    "tombstoned": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "operationId",
+                    "tombstoned"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's ceiling or your live access does not allow this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: idempotency mismatch, quota exceeded, metadata version or slug conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kbs/{kbId}/tokens": {
+      "post": {
+        "operationId": "mintChildToken",
+        "summary": "Mint a child MCP token for one KB (within the key's ceilings and your live access); the secret is shown once",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kbId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]{24,32}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Retry a mutation with the same key and body to get the same result; a refusal stores nothing, so the same key may be retried",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "bits": {
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "propose",
+                        "write",
+                        "review",
+                        "manage"
+                      ]
+                    }
+                  },
+                  "toolGroups": {
+                    "minItems": 1,
+                    "maxItems": 7,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "edit",
+                        "assets",
+                        "export",
+                        "pull_requests",
+                        "index_admin",
+                        "kb_admin"
+                      ]
+                    }
+                  },
+                  "authoringMode": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "dream",
+                          "edit",
+                          "both"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "expiresAt": {}
+                },
+                "required": [
+                  "name",
+                  "bits",
+                  "toolGroups"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Minted. A replay of the same Idempotency-Key returns 200 with the same token and secret null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "lookupPrefix": {
+                          "type": "string"
+                        },
+                        "grantId": {
+                          "type": "string"
+                        },
+                        "apiKeyId": {
+                          "type": "string"
+                        },
+                        "kbId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "bits": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "propose",
+                              "write",
+                              "review",
+                              "manage"
+                            ]
+                          }
+                        },
+                        "scopes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "mcp:read",
+                              "mcp:write"
+                            ]
+                          }
+                        },
+                        "toolGroups": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "authoringMode": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "dream",
+                                "edit",
+                                "both"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp"
+                        },
+                        "expiresAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "description": "ISO 8601 timestamp"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "revokedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "description": "ISO 8601 timestamp"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "lookupPrefix",
+                        "grantId",
+                        "apiKeyId",
+                        "kbId",
+                        "bits",
+                        "scopes",
+                        "toolGroups",
+                        "authoringMode",
+                        "createdAt",
+                        "expiresAt",
+                        "revokedAt"
+                      ]
+                    },
+                    "secret": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "secret",
+                    "replayed"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key's ceiling or your live access does not allow this",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: idempotency mismatch, quota exceeded, metadata version or slug conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listKbChildTokens",
+        "summary": "List this key's child tokens for one KB (revoked and expired included)",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "kbId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]{24,32}$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of child tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "lookupPrefix": {
+                            "type": "string"
+                          },
+                          "grantId": {
+                            "type": "string"
+                          },
+                          "apiKeyId": {
+                            "type": "string"
+                          },
+                          "kbId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "bits": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "propose",
+                                "write",
+                                "review",
+                                "manage"
+                              ]
+                            }
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "mcp:read",
+                                "mcp:write"
+                              ]
+                            }
+                          },
+                          "toolGroups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "authoringMode": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "dream",
+                                  "edit",
+                                  "both"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp"
+                          },
+                          "expiresAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "ISO 8601 timestamp"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "revokedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "ISO 8601 timestamp"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "lookupPrefix",
+                          "grantId",
+                          "apiKeyId",
+                          "kbId",
+                          "bits",
+                          "scopes",
+                          "toolGroups",
+                          "authoringMode",
+                          "createdAt",
+                          "expiresAt",
+                          "revokedAt"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokens": {
+      "get": {
+        "operationId": "listChildTokens",
+        "summary": "List every child token of this key (revoked and expired included)",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of child tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "lookupPrefix": {
+                            "type": "string"
+                          },
+                          "grantId": {
+                            "type": "string"
+                          },
+                          "apiKeyId": {
+                            "type": "string"
+                          },
+                          "kbId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "bits": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "propose",
+                                "write",
+                                "review",
+                                "manage"
+                              ]
+                            }
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "mcp:read",
+                                "mcp:write"
+                              ]
+                            }
+                          },
+                          "toolGroups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "authoringMode": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "dream",
+                                  "edit",
+                                  "both"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp"
+                          },
+                          "expiresAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "ISO 8601 timestamp"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "revokedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "ISO 8601 timestamp"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "lookupPrefix",
+                          "grantId",
+                          "apiKeyId",
+                          "kbId",
+                          "bits",
+                          "scopes",
+                          "toolGroups",
+                          "authoringMode",
+                          "createdAt",
+                          "expiresAt",
+                          "revokedAt"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokens/{tokenId}": {
+      "delete": {
+        "operationId": "revokeChildToken",
+        "summary": "Revoke one child token of this key (idempotent)",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{24}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "Retry a mutation with the same key and body to get the same result; a refusal stores nothing, so the same key may be retried",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "revoked": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revoked"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, or not reachable by this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

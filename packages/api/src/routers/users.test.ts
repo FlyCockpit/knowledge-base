@@ -534,6 +534,7 @@ describe("usersRouter", () => {
         "ban",
         "mcp_personal_token:other-user-id",
         "mcp_grant:other-user-id",
+        "api_key:other-user-id",
       ]);
     });
 

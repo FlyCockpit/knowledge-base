@@ -1081,6 +1081,7 @@ describe("ban writes through the Better Auth adapter", () => {
       "lapse:u1",
       "mcp_personal_token:u1",
       "mcp_grant:u1",
+      "api_key:u1",
       "commit",
     ]);
   });

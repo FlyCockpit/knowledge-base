@@ -51,8 +51,8 @@ export type GrantRow = Awaited<ReturnType<Client["mcpGrants"]["listMine"]>>["ite
 export const PAT_LIST_QUERY_ROOT: readonly unknown[] = orpc.mcpTokens.key();
 
 const DAY_MS = 86_400_000;
-const MAX_TTL_DAYS = 365;
-const EXPIRY_PRESETS = ["30", "90", "365"] as const;
+export const MAX_TTL_DAYS = 365;
+export const EXPIRY_PRESETS = ["30", "90", "365"] as const;
 const EXPIRY_CHOICES = [...EXPIRY_PRESETS, "custom", "none"] as const;
 export type PatExpiryChoice = (typeof EXPIRY_CHOICES)[number];
 const DEFAULT_EXPIRY: PatExpiryChoice = "90";
@@ -95,18 +95,20 @@ export function patExpiresAtFromChoice(
 export function withPatSecretHygiene<TData, TError, TVariables>(
   queryClient: QueryClient,
   options: MutationObserverOptions<TData, TError, TVariables>,
+  /** The list refetched after the mint (REST API keys pass their own). */
+  listRoot: readonly unknown[] = PAT_LIST_QUERY_ROOT,
 ): MutationObserverOptions<TData, TError, TVariables> {
   return {
     ...options,
     gcTime: 0,
     onSuccess: async (...args) => {
       await options.onSuccess?.(...args);
-      await queryClient.invalidateQueries({ queryKey: [...PAT_LIST_QUERY_ROOT] });
+      await queryClient.invalidateQueries({ queryKey: [...listRoot] });
     },
     // The mint may have committed even if its reply was lost. Never replay a secret.
     onError: async (...args) => {
       await options.onError?.(...args);
-      await queryClient.invalidateQueries({ queryKey: [...PAT_LIST_QUERY_ROOT] });
+      await queryClient.invalidateQueries({ queryKey: [...listRoot] });
     },
   };
 }
@@ -335,11 +337,11 @@ export function CredentialList({
   );
 }
 
-const expired = (expiresAt: Date | string | null) =>
+export const expired = (expiresAt: Date | string | null) =>
   expiresAt !== null && new Date(expiresAt).getTime() <= Date.now();
 
 /** Active / Expired / Revoked, next to the token name (the text still says the dates). */
-function TokenStatePill({
+export function TokenStatePill({
   revokedAt,
   expiresAt,
 }: {

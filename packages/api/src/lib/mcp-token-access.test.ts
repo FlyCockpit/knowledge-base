@@ -122,6 +122,11 @@ describe("grant credential verifier (full validity callback)", () => {
     revokedAt: null,
     tokenRevokedAt: null,
     tokenExpiresAt: principal.expiresAt,
+    // Not a REST API key's child and not an API key's grant.
+    parentApiKeyId: null,
+    parentLive: null,
+    apiKeyId: null,
+    apiKeyLive: null,
   };
   const user = {
     banned: false,
@@ -241,6 +246,145 @@ describe("grant credential verifier (full validity callback)", () => {
     expect(await verifier.grantBits?.(principal, "kb1")).toEqual(["read", "propose"]);
     const none = createGrantCredentialVerifier(fakeQuery({}));
     expect(await none.grantBits?.(principal, "kb1")).toEqual([]);
+  });
+});
+
+describe("grant credential verifier: REST API keys and their children", () => {
+  const keyId = "k".repeat(24);
+  const grantId = "22222222-2222-4222-8222-222222222222";
+  const resource = "https://kb.example.invalid/api/v1";
+  const keyBinding = {
+    kind: "API_KEY" as const,
+    clientId: `apikey:${keyId}`,
+    resource,
+    tokenId: keyId,
+  };
+  const keyPrincipal: TokenPrincipal = {
+    kind: "token",
+    userId: "u1",
+    grantId,
+    grantGeneration: grantId,
+    scopes: ["mcp:write"],
+    expiresAt: new Date(Date.now() + 60_000),
+    storedAcl: new Map(),
+    credential: keyBinding,
+  };
+  const keyGrant = {
+    id: grantId,
+    userId: "u1",
+    kind: "API_KEY",
+    clientId: `apikey:${keyId}`,
+    scopes: ["mcp:write"],
+    toolGroups: ["kb_admin"],
+    revokedAt: null,
+    tokenId: null,
+    resource: null,
+    tokenRevokedAt: null,
+    tokenExpiresAt: null,
+    parentApiKeyId: null,
+    parentLive: null,
+    apiKeyId: keyId,
+    apiKeyLive: true,
+  };
+  const user = {
+    banned: false,
+    banExpires: null,
+    twoFactorEnabled: true,
+    role: "user",
+    createdAt: new Date(),
+    forcePublic: null,
+    forceInternal: null,
+  };
+  const inspect = (row: Record<string, unknown>, principal: TokenPrincipal) =>
+    createGrantCredentialVerifier(fakeQuery({ mcp_grant: [row], '"user"': [user] }), undefined, {
+      resource,
+    }).inspect(principal);
+
+  it("admits an API_KEY grant only for an API_KEY binding naming that live key", async () => {
+    expect(await inspect(keyGrant, keyPrincipal)).toMatchObject({
+      generationActive: true,
+      toolGroups: ["kb_admin"],
+    });
+    const { credential: _none, ...unbound } = keyPrincipal;
+    for (const [label, principal, row] of [
+      ["no binding", unbound, keyGrant],
+      [
+        "a PAT binding",
+        { ...keyPrincipal, credential: { ...keyBinding, kind: "PAT" as const } },
+        keyGrant,
+      ],
+      [
+        "an OAuth binding",
+        {
+          ...keyPrincipal,
+          credential: { kind: "OAUTH" as const, clientId: keyBinding.clientId, resource },
+        },
+        keyGrant,
+      ],
+      [
+        "another key's id",
+        { ...keyPrincipal, credential: { ...keyBinding, tokenId: "x".repeat(24) } },
+        keyGrant,
+      ],
+      ["a revoked or expired key row", keyPrincipal, { ...keyGrant, apiKeyLive: false }],
+      ["a missing key row", keyPrincipal, { ...keyGrant, apiKeyId: null, apiKeyLive: null }],
+      ["a PAT grant", keyPrincipal, { ...keyGrant, kind: "PAT" }],
+      ["an OAuth grant", keyPrincipal, { ...keyGrant, kind: "OAUTH" }],
+    ] as const) {
+      expect(
+        (await inspect(row as Record<string, unknown>, principal as TokenPrincipal))
+          .generationActive,
+        label,
+      ).toBe(false);
+    }
+  });
+
+  it("admits a child PAT only while its parent key and key grant are live", async () => {
+    const child = {
+      id: grantId,
+      userId: "u1",
+      kind: "PAT",
+      clientId: "pat:t",
+      scopes: ["mcp:read"],
+      toolGroups: ["read"],
+      revokedAt: null,
+      tokenId: "t",
+      resource: "https://kb.example.invalid/mcp",
+      tokenRevokedAt: null,
+      tokenExpiresAt: new Date(Date.now() + 60_000),
+      parentApiKeyId: keyId,
+      parentLive: true,
+      apiKeyId: null,
+      apiKeyLive: null,
+    };
+    const childPrincipal: TokenPrincipal = {
+      ...keyPrincipal,
+      scopes: ["mcp:read"],
+      credential: {
+        kind: "PAT",
+        clientId: "pat:t",
+        resource: "https://kb.example.invalid/mcp",
+        tokenId: "t",
+      },
+    };
+    const mcp = (row: Record<string, unknown>) =>
+      createGrantCredentialVerifier(fakeQuery({ mcp_grant: [row], '"user"': [user] })).inspect(
+        childPrincipal,
+      );
+    expect((await mcp(child)).generationActive).toBe(true);
+    expect((await mcp({ ...child, parentLive: false })).generationActive).toBe(false);
+    expect((await mcp({ ...child, parentLive: null })).generationActive).toBe(false);
+  });
+
+  it("reads the parent and key liveness on the database clock in the same statement", async () => {
+    let sql = "";
+    await createGrantCredentialVerifier(async <R>(text: string) => {
+      if (text.includes('FROM "mcp_grant" g')) sql = text;
+      return { rows: [] as R[], rowCount: 0 };
+    }).inspect(keyPrincipal);
+    expect(sql).toContain('pk."expiresAt" > clock_timestamp()');
+    expect(sql).toContain('k."expiresAt" > clock_timestamp()');
+    expect(sql).toContain('pg."revokedAt" IS NULL');
   });
 });
 
