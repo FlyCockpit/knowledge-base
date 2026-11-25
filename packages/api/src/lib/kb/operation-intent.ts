@@ -306,6 +306,33 @@ export async function reserveKbCreateIntent(
   if (row.requestHash !== input.requestHash) {
     throw new OperationIntentError("IDEMPOTENCY_MISMATCH", "kb create body mismatch");
   }
+  // A create refused before it linked anything (rate limit, slug clash, a lost
+  // preparation) is aborted by the recovery sweep with no KB row, quota or
+  // delta behind it. The same request with the same key is a retry of that
+  // refusal, not a new operation: re-open it, so a caller that keeps its key
+  // through a retryable refusal can still create (docs/mcp.md).
+  if (
+    row.phase === "ABORTED" &&
+    row.kbId === null &&
+    row.preparedDelta === null &&
+    row.reservedKbId === input.reservedKbId
+  ) {
+    await query(
+      `UPDATE "operation_intent"
+          SET phase = 'PREPARED'::"OperationIntentPhase",
+              "abortReason" = NULL,
+              "resultStatus" = NULL,
+              "finishedAt" = NULL,
+              "compactedAt" = NULL,
+              "updatedAt" = now()
+        WHERE "opId" = $1 AND phase = 'ABORTED'::"OperationIntentPhase"
+          AND "kbId" IS NULL AND "preparedDelta" IS NULL`,
+      [row.opId],
+    );
+    const reopened = await loadKbCreateIntent(query, input.actorKey, input.idempotencyKey);
+    if (!reopened) throw new Error("failed to reopen kb create intent");
+    return reopened;
+  }
   return row;
 }
 

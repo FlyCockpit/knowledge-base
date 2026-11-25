@@ -315,6 +315,90 @@ describe("kb lifecycle integration", () => {
       expect(ownerLive[0]?.committed).toBe(1n);
     }));
 
+  it.each(["rate limit", "slug clash"])(
+    "creates with the same key after a retryable %s refusal was swept",
+    (refusal) =>
+      runOwnedAction(async () => {
+        setKbRecoveryComplete(true);
+        const user = await owner();
+        const slug = `kept-${crypto.randomUUID().slice(0, 8)}`;
+        const request = {
+          name: "Kept key",
+          slug,
+          description: "integration test knowledge base",
+          idempotencyKey: `kept-${crypto.randomUUID()}`,
+        };
+        let limited = refusal === "rate limit";
+        const refusingRuntime = {
+          ...runtime,
+          ratePort: {
+            consume: async () => (limited ? { retryAfterSeconds: 60 } : ({ ok: true } as const)),
+          },
+        };
+        let clash: string | undefined;
+        if (refusal === "slug clash") {
+          const other = await createKnowledgeBase(runtime, user.id, {
+            ...request,
+            idempotencyKey: `other-${crypto.randomUUID()}`,
+          });
+          clash = other.kb.id as string;
+        }
+        await expect(createKnowledgeBase(refusingRuntime, user.id, request)).rejects.toMatchObject({
+          code: limited ? "RATE_LIMITED" : "CONFLICT",
+        });
+        // The recovery sweep settles the unlinked reservation the refusal left.
+        await runJournalRecoverySweep(
+          prisma,
+          reposDir,
+          runtime.assetsDir,
+          db.urls.runtime,
+          () => {},
+        );
+        const swept = await prisma.operationIntent.findFirstOrThrow({
+          where: { idempotencyKey: request.idempotencyKey, operation: "KB_CREATE" },
+          select: { phase: true, kbId: true },
+        });
+        expect(swept).toEqual({ phase: "ABORTED", kbId: null });
+        // Retention may have compacted the aborted row meanwhile.
+        await prisma.operationIntent.updateMany({
+          where: { idempotencyKey: request.idempotencyKey, operation: "KB_CREATE" },
+          data: { compactedAt: new Date() },
+        });
+
+        // The window passes, or the slug is free again: the same key creates.
+        limited = false;
+        if (clash) {
+          const kb = await prisma.knowledgeBase.findUniqueOrThrow({ where: { id: clash } });
+          await deleteKnowledgeBase(runtime, user.id, {
+            kbId: clash,
+            metadataVersion: kb.metadataVersion,
+            idempotencyKey: `del-${crypto.randomUUID()}`,
+            confirm: "DELETE",
+          });
+        }
+        const created = await createKnowledgeBase(refusingRuntime, user.id, request);
+        const kbId = created.kb.id as string;
+        expect((await prisma.knowledgeBase.findUniqueOrThrow({ where: { id: kbId } })).state).toBe(
+          "ACTIVE",
+        );
+        // And it is the one operation: the receipt replays.
+        const replay = await createKnowledgeBase(runtime, user.id, request);
+        expect(replay.operationId).toBe(created.operationId);
+        expect(
+          await prisma.operationIntent.count({
+            where: { idempotencyKey: request.idempotencyKey, operation: "KB_CREATE" },
+          }),
+        ).toBe(1);
+        // Re-opened, it is a live row again: retention compacts it afresh later.
+        expect(
+          await prisma.operationIntent.findFirstOrThrow({
+            where: { idempotencyKey: request.idempotencyKey, operation: "KB_CREATE" },
+            select: { phase: true, compactedAt: true },
+          }),
+        ).toEqual({ phase: "FINALIZED", compactedAt: null });
+      }),
+  );
+
   it("replays a finalized tombstone receipt and audits update/tombstone", () =>
     runOwnedAction(async () => {
       setKbRecoveryComplete(true);

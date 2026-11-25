@@ -276,7 +276,10 @@ and a text item containing the same JSON envelope. Failure has `isError:true`
 and `{schemaVersion:"kb/1",error:{code,message,retryable,details}}` in both places.
 Errors are fixed/redacted; do not infer absence of a commit from a lost reply.
 For a mutation, retain the same actor, exact payload and idempotency key through
-retry. Different bytes with the same key fail IDEMPOTENCY_MISMATCH. Receipts
+retry. A `knowledge_bases_create` refused before it created anything (RATE_LIMITED
+from the per-user budget of 5 creates an hour, with `retryAfterSeconds`, or a
+slug CONFLICT) keeps its key usable: the same call after the wait, or once the
+slug is free, creates the KB. Different bytes with the same key fail IDEMPOTENCY_MISMATCH. Receipts
 recheck current authority. A conflict requires inspecting the new revisions
 before starting a deliberately new operation. Ordinary calls have bounded
 cancellation/deadlines; the Rust forwarder makes one network attempt.
