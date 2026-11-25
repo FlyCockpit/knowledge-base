@@ -10,6 +10,32 @@ export type CredentialQuery = <T>(
 ) => Promise<T>;
 
 /**
+ * `client.connect()`, settled by the socket closing too. pg@8 never settles
+ * `connect()` once `end()` ran before the startup handshake finished (its end
+ * handler skips the connect callback while ending), so an abort in that window
+ * would hold the caller's admission permit forever. No SQL ran on the socket.
+ */
+function connectUntilEnd(client: Client): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ended = () => {
+      client.removeListener("end", ended);
+      reject(new KbAdmissionError("STORAGE_UNAVAILABLE", "Admission closed"));
+    };
+    client.on("end", ended);
+    client.connect().then(
+      () => {
+        client.removeListener("end", ended);
+        resolve();
+      },
+      (error: unknown) => {
+        client.removeListener("end", ended);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
  * Permit -> one PG transaction -> authority lock. No KB locks or network bodies.
  * PostgreSQL bounds the whole transaction, including idle/lost-reply time.
  * Cancellation terminates only this owned backend and joins its acknowledgement;
@@ -86,7 +112,7 @@ export function credentialQuery(connectionString: string): CredentialQuery {
       return result;
     };
     try {
-      await client.connect();
+      await connectUntilEnd(client);
       connected = true;
       assertOpen();
       pid = (await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid;
