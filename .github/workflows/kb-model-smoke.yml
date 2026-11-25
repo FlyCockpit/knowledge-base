@@ -6,7 +6,9 @@
 # built Node26-slim worker image for that runner's native architecture.
 #
 # `pnpm gate` never downloads weights; these explicit lanes acquire and verify
-# them. No path filters: the required `qwen-model-smoke` status is
+# them, from the cache (one curl download fills it on a miss). The live
+# production-downloader check of the pins is the weekly, non-gating
+# kb-model-live-download.yml. No path filters: the required `qwen-model-smoke` status is
 # reported on every push/PR/tag, and it is green only when BOTH architecture
 # legs succeeded and uploaded matching evidence — a skipped, cancelled or
 # missing leg cannot be called release-ready.

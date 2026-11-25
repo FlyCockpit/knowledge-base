@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { GEMMA_MODEL, QWEN_MODEL } from "../packages/api/src/lib/kb/builtin-model.ts";
+import type { DownloadModelArtifactInput } from "../packages/api/src/lib/kb/model-artifact.ts";
+import {
+  checkLiveDownloads,
+  LIVE_DOWNLOAD_TIMEOUT_MS,
+  type LiveArtifact,
+} from "./check-model-download.ts";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const scratch = mkdtempSync(join(tmpdir(), "kb-model-live-test-"));
+after(() => rmSync(scratch, { recursive: true, force: true }));
+
+function artifact(modelId: string, bytes: string): LiveArtifact & { bytes: string } {
+  return {
+    modelId,
+    fileName: `${modelId}.gguf`,
+    sizeBytes: Buffer.byteLength(bytes),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    url: `https://huggingface.co/example/${modelId}.gguf`,
+    bytes,
+  };
+}
+const a = artifact("model-a", "alpha bytes");
+const b = artifact("model-b", "bravo bytes!");
+
+/** Publishes `bytes` (default: the pinned ones) the way the downloader does. */
+function publishing(bytes: Record<string, string> = {}) {
+  const calls: DownloadModelArtifactInput[] = [];
+  const download = async (input: DownloadModelArtifactInput) => {
+    calls.push(input);
+    assert.deepEqual(readdirSync(input.dir), [], "each artifact starts from an empty directory");
+    assert.equal(input.signal.aborted, false);
+    const model = [a, b].find((m) => m.fileName === input.expected.fileName)!;
+    const path = join(input.dir, input.expected.fileName);
+    writeFileSync(path, bytes[model.modelId] ?? model.bytes);
+    return { outcome: "PUBLISHED" as const, path };
+  };
+  return { calls, download };
+}
+
+describe("checkLiveDownloads", () => {
+  test("downloads every pin into an empty directory and re-hashes it", async () => {
+    const lines: string[] = [];
+    const { calls, download } = publishing();
+    await checkLiveDownloads({ models: [a, b], download, scratch, log: (l) => lines.push(l) });
+    assert.deepEqual(
+      calls.map((c) => c.expected),
+      [a, b],
+    );
+    assert.match(lines[0]!, /^model-a: PUBLISHED 11 bytes sha256 [0-9a-f]{64} in /);
+    assert.match(lines[1]!, /^model-b: PUBLISHED 12 bytes/);
+    for (const call of calls) assert.equal(existsSync(call.dir), false);
+    assert.deepEqual(readdirSync(scratch), [], "scratch is removed");
+  });
+
+  test("a published file whose bytes differ from the pin fails, and the other pin is still checked", async () => {
+    const { calls, download } = publishing({ "model-a": "alpha bytez" });
+    await assert.rejects(
+      checkLiveDownloads({ models: [a, b], download, scratch, log: () => {} }),
+      (error: Error) => {
+        assert.match(error.message, /model-a: sha256 [0-9a-f]{64}, pinned /);
+        assert.doesNotMatch(error.message, /model-b/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 2);
+    assert.deepEqual(readdirSync(scratch), []);
+  });
+
+  test("a size mismatch fails before hashing", async () => {
+    const { download } = publishing({ "model-b": "short" });
+    await assert.rejects(
+      checkLiveDownloads({ models: [b], download, scratch, log: () => {} }),
+      /model-b: 5 bytes, pinned 12/,
+    );
+  });
+
+  test("ALREADY_PRESENT from an empty directory is a failure, not a pass", async () => {
+    await assert.rejects(
+      checkLiveDownloads({
+        models: [a],
+        download: async (input) => ({
+          outcome: "ALREADY_PRESENT",
+          path: join(input.dir, input.expected.fileName),
+        }),
+        scratch,
+        log: () => {},
+      }),
+      /model-a: expected PUBLISHED, got ALREADY_PRESENT/,
+    );
+  });
+
+  test("a downloader error is reported with its code and cause", async () => {
+    await assert.rejects(
+      checkLiveDownloads({
+        models: [a, b],
+        download: async (input) => {
+          if (input.expected.fileName === a.fileName)
+            throw new Error("MODEL_HTTP_STATUS", { cause: new Error("404 from huggingface.co") });
+          return publishing().download(input);
+        },
+        scratch,
+        log: () => {},
+      }),
+      /live model download failed:\nmodel-a: MODEL_HTTP_STATUS \(404 from huggingface\.co\)$/,
+    );
+  });
+
+  test("the per-artifact budget is the former test's 290 s and aborts the download", async () => {
+    assert.equal(LIVE_DOWNLOAD_TIMEOUT_MS, 290_000);
+    await assert.rejects(
+      checkLiveDownloads({
+        models: [a],
+        timeoutMs: 20,
+        download: (input) =>
+          new Promise((_, reject) => {
+            // AbortSignal.timeout's timer is unreferenced; a real download's socket keeps
+            // the process alive, and this referenced timer stands in for it.
+            const alive = setTimeout(() => reject(new Error("budget never fired")), 10_000);
+            input.signal.addEventListener("abort", () => {
+              clearTimeout(alive);
+              reject(new Error("MODEL_CANCELLED"));
+            });
+          }),
+        scratch,
+        log: () => {},
+      }),
+      /model-a: MODEL_CANCELLED/,
+    );
+  });
+});
+
+describe("live download placement", () => {
+  const workflow = readFileSync(join(ROOT, ".github/workflows/kb-model-live-download.yml"), "utf8");
+  const smoke = readFileSync(join(ROOT, ".github/workflows/kb-model-smoke.yml"), "utf8");
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+
+  test("the weekly workflow runs only on its schedule or on demand", () => {
+    const on = /^on:\n((?: .*\n|\n)*)/m.exec(workflow)?.[1] ?? "";
+    assert.deepEqual(
+      on
+        .split("\n")
+        .filter((line) => /^ {2}\S/.test(line))
+        .map((line) => line.trim()),
+      ["schedule:", "workflow_dispatch:"],
+    );
+    assert.match(on, /- cron: "17 4 \* \* 1"/);
+    assert.match(workflow, /run: pnpm kb:models:live-download\n/);
+    assert.equal(
+      pkg.scripts["kb:models:live-download"],
+      "node --import tsx scripts/check-model-download.ts",
+    );
+  });
+
+  test("the per-run model lane never downloads; it reads the cached, verified artifacts", () => {
+    // The lane's files, from its registration in scripts/test-kb.mjs.
+    const runner = readFileSync(join(ROOT, "scripts/test-kb.mjs"), "utf8");
+    const lane = /\n {2}"qwen-model": \{\n {4}include: \[([^\]]*)\]/.exec(runner)?.[1] ?? "";
+    const files = [...lane.matchAll(/"([^"]+)"/g)].map((match) => match[1]!);
+    assert.ok(files.length >= 2, "qwen-model lane files found");
+    for (const file of files) {
+      const source = readFileSync(join(ROOT, file), "utf8");
+      assert.doesNotMatch(source, /downloadModelArtifact/, file);
+    }
+  });
+
+  test("the CI cache keys and cache-miss URLs are the pins this check downloads", () => {
+    const env = (name: string) => new RegExp(`^ {2}${name}: (\\S+)$`, "m").exec(smoke)?.[1];
+    for (const [kind, model] of [
+      ["QWEN", QWEN_MODEL],
+      ["GEMMA", GEMMA_MODEL],
+    ] as const) {
+      assert.equal(env(`${kind}_SHA256`), model.sha256, kind);
+      assert.equal(env(`${kind}_FILE`), model.fileName, kind);
+      assert.equal(env(`${kind}_URL`), model.url, kind);
+    }
+  });
+
+  test("push/PR workflows fetch weights only to fill an empty cache", () => {
+    const dir = join(ROOT, ".github/workflows");
+    for (const name of readdirSync(dir)) {
+      const source = readFileSync(join(dir, name), "utf8");
+      if (name !== "kb-model-live-download.yml")
+        assert.doesNotMatch(source, /kb:models:live-download|check-model-download/, name);
+      // Every step that fetches a pinned URL runs only when the SHA-keyed cache missed.
+      for (const step of source
+        .split(/\n {6}- /)
+        .filter((s) => /_URL\b/.test(s) && /curl /.test(s)))
+        assert.match(
+          step,
+          /if: steps\.[\w-]+\.outputs\.cache-hit != 'true'|if \[ ! -f "\$dest" \]; then\n\s+curl /,
+          `${name}: ${step.split("\n")[0]}`,
+        );
+    }
+    for (const script of ["test", "verify", "verify:fast", "gate"])
+      assert.doesNotMatch(pkg.scripts[script], /live-download|qwen-model/, script);
+  });
+});

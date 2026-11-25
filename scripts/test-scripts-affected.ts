@@ -151,6 +151,8 @@ export const RULES: readonly Rule[] = [
       "scripts/check-doc-citations.ts",
       "scripts/check-docker-copy.ts",
       "scripts/check-load-dotenv-contract.ts",
+      "scripts/check-model-download.test.ts",
+      "scripts/check-model-download.ts",
       "scripts/check-pnpm-script-names.ts",
       "scripts/check-prisma-query-cast-policy.ts",
       "scripts/check-queue-wiring.ts",

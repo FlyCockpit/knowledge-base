@@ -7,7 +7,6 @@ import {
   scoreRetrieval,
   unitVector,
 } from "@knowledge-base/api/lib/kb/index-file/testing";
-import { downloadModelArtifact } from "@knowledge-base/api/lib/kb/model-artifact";
 import { estimateBuiltinPeakBytes } from "@knowledge-base/api/lib/kb/qwen-runtime-config";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildArtifactPath, requireBuiltArtifact } from "./build-artifacts.mjs";
@@ -71,26 +70,9 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 const cosine = (a: number[], b: number[]) =>
   a.reduce((s, v, i) => s + v * b[i]!, 0) / (Math.hypot(...a) * Math.hypot(...b));
 describe("real Gemma runtime", () => {
-  it.each([QWEN_MODEL, GEMMA_MODEL])(
-    "downloads $modelId through production HTTPS/DNS/redirect/hash publication from an empty volume",
-    { timeout: 300_000 },
-    async (model) => {
-      const dir = mkdtempSync(join(scratch, "download-"));
-      try {
-        const result = await downloadModelArtifact({
-          dir,
-          epoch: 1,
-          expected: model,
-          signal: AbortSignal.timeout(290_000),
-          onProgress: () => {},
-        });
-        expect(result.outcome).toBe("PUBLISHED");
-        expect(result.path).toBe(join(dir, model.fileName));
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
+  // The live production-network download of both pins is the weekly
+  // kb-model-live-download workflow (scripts/check-model-download.ts); this
+  // lane runs on the SHA-verified cached artifacts.
   it(
     "READY capability probe at the smallest tier accepts Gemma query/document and reaps the child",
     {

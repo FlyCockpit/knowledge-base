@@ -1,0 +1,46 @@
+# Weekly live download of the pinned built-in model artifacts.
+#
+# Push and PR runs of KB model smoke use the SHA-256-keyed, re-verified CI
+# cache and do not download from Hugging Face unless that cache is empty. This
+# workflow checks the production network path instead: both pinned GGUFs from
+# their production URLs through the production downloader (allowlisted HTTPS,
+# DNS, redirects, exact size and SHA-256, publication), each hashed again
+# (scripts/check-model-download.ts). An upstream move or hash change turns
+# only this workflow red; it has no push/pull_request trigger and gates nothing.
+name: KB model live download
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kb-model-live-download
+  cancel-in-progress: false
+
+jobs:
+  live-download:
+    name: live-download
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Download both pinned artifacts through the production downloader
+        run: pnpm kb:models:live-download
