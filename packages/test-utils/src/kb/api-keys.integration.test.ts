@@ -47,6 +47,7 @@ import {
   authenticatePersonalToken,
   countActiveCredentials,
   createGrantCredentialVerifier,
+  listGrantAcl,
   listGrants,
   listPersonalTokens,
   mintPersonalToken,
@@ -556,6 +557,15 @@ describe("api keys: authority is the key ceiling ∩ live bits, rechecked", () =
     const childP = await childPrincipal(child.secret);
     await expect(can(childP, kb.id, "propose")).resolves.toBeDefined();
     await expect(can(childP, kb.id, "write")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Settings → API keys names the shared KB for the member while the share is live.
+    const memberNames = async () => ({
+      acl: (await listGrantAcl(runtime, member.id, { grantId: key.key.grantId })).items,
+      children: (await listApiKeyChildrenForOwner(runtime, member.id, key.key.id, {})).items,
+    });
+    expect(await memberNames()).toEqual({
+      acl: [expect.objectContaining({ kbId: kb.id, name: kb.name })],
+      children: [expect.objectContaining({ kbId: kb.id, kbName: kb.name })],
+    });
 
     // Downgrade the live share to read: the key and the child lose propose/write.
     await setShare(kb.id, member.id, { bits: ["read"] });
@@ -583,6 +593,15 @@ describe("api keys: authority is the key ceiling ∩ live bits, rechecked", () =
     await expect(can(childP, kb.id, "read")).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(mintChild(key.principal, kb.id)).rejects.toMatchObject(unreachableKb);
     expect(await prisma.mcpPersonalToken.count({ where: { parentApiKeyId: key.key.id } })).toBe(1);
+    // A former member never sees a later rename of the still-live KB.
+    await prisma.knowledgeBase.update({ where: { id: kb.id }, data: { name: "Renamed later" } });
+    expect(await memberNames()).toEqual({
+      acl: [expect.objectContaining({ kbId: kb.id, name: null })],
+      children: [expect.objectContaining({ kbId: kb.id, kbName: null })],
+    });
+    expect(
+      (await listApiKeyChildren(runtime, key.principal, RESOURCE, {})).items[0],
+    ).not.toHaveProperty("kbName");
   });
 
   it("all: every KB the owner can access now, capped at the key's bits", async () => {
@@ -652,6 +671,10 @@ describe("api keys: authority is the key ceiling ∩ live bits, rechecked", () =
       expect.objectContaining({ grantId: key.key.grantId }),
     ]);
     expect(await listedIds(key.principal)).toEqual([kbId]);
+    const keyAcl = () => listGrantAcl(runtime, owner.id, { grantId: key.key.grantId });
+    expect((await keyAcl()).items).toEqual([
+      expect.objectContaining({ kbId, name: "Made by key" }),
+    ]);
     await expect(keyCan(key.principal, kbId, "manage")).resolves.toBeDefined();
     await expect(keyCan(noCreate.principal, kbId, "read")).rejects.toMatchObject({
       code: "NOT_FOUND",
@@ -677,6 +700,8 @@ describe("api keys: authority is the key ceiling ∩ live bits, rechecked", () =
       "TOMBSTONED",
     );
     expect(await listedIds(key.principal)).toEqual([]);
+    // Settings → API keys: the tombstoned KB stays in the ACL with no name (no rename leak).
+    expect((await keyAcl()).items).toEqual([expect.objectContaining({ kbId, name: null })]);
   });
 });
 
@@ -1229,6 +1254,11 @@ describe("api keys: child tokens", () => {
     const theirs = await mintChild(other.key.principal, other.kb.id);
     const listed = await listApiKeyChildren(runtime, key.principal, RESOURCE, { limit: 10 });
     expect(listed.items.map((item) => item.id)).toEqual([mine.token.id]);
+    expect(listed.items[0]).not.toHaveProperty("kbName");
+    const ownerView = () => listApiKeyChildrenForOwner(runtime, owner.id, key.key.id, {});
+    expect((await ownerView()).items).toEqual([
+      expect.objectContaining({ id: mine.token.id, kbId: kb.id, kbName: kb.name }),
+    ]);
     expect(
       (await listApiKeyChildren(runtime, key.principal, RESOURCE, { kbId: other.kb.id })).items,
     ).toEqual([]);
@@ -1247,6 +1277,11 @@ describe("api keys: child tokens", () => {
       where: { action: "api_key_child_revoke", actorUserId: owner.id },
     });
     expect(event.actorKey).toBe(`user:${owner.id}`);
+    // A deleted KB keeps the child's row but no longer names it.
+    await prisma.knowledgeBase.update({ where: { id: kb.id }, data: { state: "TOMBSTONED" } });
+    expect((await ownerView()).items).toEqual([
+      expect.objectContaining({ id: mine.token.id, kbId: kb.id, kbName: null }),
+    ]);
   });
 });
 

@@ -109,7 +109,11 @@ const grants: GrantRow[] = [
     elevations: [],
     aclSnapshot: "first-inspection",
     aclNextCursor: null,
-    acl: [{ kbId: "a".repeat(24), bits: ["read", "review"], name: "Engineering Notes" }],
+    acl: [
+      { kbId: "a".repeat(24), bits: ["read", "review"], name: "Engineering Notes" },
+      // A deleted or unshared KB: the projection withholds its name.
+      { kbId: "c".repeat(24), bits: ["read"], name: null },
+    ],
   },
   {
     id: "00000000-0000-4000-8000-000000000004",
@@ -234,6 +238,9 @@ describe("CredentialList", () => {
     const markup = html();
     expect(markup).toContain("e2e OAuth agent");
     expect(markup).toContain("Engineering Notes");
+    expect(markup).toContain(`<span>${enSettings.credentials.kbUnavailable}</span>: Read`);
+    expect(markup).toContain("<span>Engineering Notes</span>");
+    expect(markup).not.toContain("c".repeat(24));
     expect(markup).not.toContain("a".repeat(24));
     // Without a registered name the client id is the title.
     expect(markup).toContain("client-empty");

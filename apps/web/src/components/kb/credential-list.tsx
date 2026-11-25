@@ -513,12 +513,7 @@ function GrantPermissions({ grant }: { grant: GrantRow }) {
         <ul className="space-y-0.5 text-xs">
           {entries.map((entry) => (
             <li key={entry.kbId} className="min-w-0 break-words">
-              {entry.name ? (
-                <span>{entry.name}</span>
-              ) : (
-                <span className="font-mono">{entry.kbId}</span>
-              )}
-              :{" "}
+              <span>{entry.name ?? t("settings:credentials.kbUnavailable")}</span>:{" "}
               {entry.bits
                 .map((bit) => t(`settings:credentials.picker.bits.${bit}.label`))
                 .join(", ")}

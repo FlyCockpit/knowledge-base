@@ -25,6 +25,7 @@ import { assertTokenAdmissible, KbAdmissionError, type TokenPrincipal } from "./
 import {
   API_KEY_CHILD_REVOKE_ACTION,
   API_KEY_REVOKE_ACTION,
+  aclKbNameSql,
   createGrantCredentialVerifier,
   inAuthorityTransaction,
   kbIdSchema,
@@ -972,7 +973,24 @@ export async function listApiKeyChildrenForOwner(
       [apiKeyId],
     );
     if (owner.rows[0]?.userId !== userId) throw keyNotFound();
-    return listChildrenOf(query, apiKeyId, input);
+    const page = await listChildrenOf(query, apiKeyId, input);
+    // Names only in the owner's view, under the grant ACL's visibility rule.
+    const kbIds = [...new Set(page.items.flatMap((item) => (item.kbId ? [item.kbId] : [])))];
+    const names = new Map<string, string | null>();
+    if (kbIds.length > 0) {
+      const { rows } = await query<{ kbId: string; name: string | null }>(
+        `SELECT x."kbId", ${aclKbNameSql("$2")} AS name FROM unnest($1::text[]) AS x("kbId")`,
+        [kbIds, userId],
+      );
+      for (const row of rows) names.set(row.kbId, row.name);
+    }
+    return {
+      ...page,
+      items: page.items.map((item) => ({
+        ...item,
+        kbName: item.kbId ? (names.get(item.kbId) ?? null) : null,
+      })),
+    };
   });
 }
 

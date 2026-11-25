@@ -24,7 +24,6 @@ import { CheckRow } from "@/components/kb/check-row";
 import { expired, TokenStatePill } from "@/components/kb/credential-list";
 import { presetFor } from "@/components/kb/tool-group-picker";
 import { LoadMore } from "@/components/load-more";
-import { useLiveKbOptions } from "@/hooks/use-mcp-consent";
 import { orpc } from "@/utils/orpc";
 
 type Client = AppRouterClient;
@@ -244,21 +243,7 @@ function ApiKeyKbs({ grantId }: { grantId: string }) {
       <h3 id={`api-key-kbs-${grantId}`} className="text-sm font-medium">
         {t("apiKeys.kbsTitle")}
       </h3>
-      {isPending ? (
-        <Skeleton className="h-10 w-full" />
-      ) : (
-        <ul className="space-y-0.5 text-xs">
-          {entries.map((entry) => (
-            <li key={entry.kbId} className="min-w-0 break-words">
-              {entry.name ? (
-                <span>{entry.name}</span>
-              ) : (
-                <span className="font-mono">{entry.kbId}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {isPending ? <Skeleton className="h-10 w-full" /> : <ApiKeyKbNames entries={entries} />}
       {isError && <InlineRetry message={t("apiKeys.kbsLoadError")} onRetry={() => kbs.refetch()} />}
       <LoadMore
         onLoadMore={() => kbs.fetchNextPage()}
@@ -266,6 +251,27 @@ function ApiKeyKbs({ grantId }: { grantId: string }) {
         isFetchingNextPage={isFetchingNextPage}
       />
     </section>
+  );
+}
+
+/**
+ * A key's KBs by name; a KB the owner can no longer read (deleted or unshared)
+ * has no name and shows a label, never its id. Exported for tests.
+ */
+export function ApiKeyKbNames({
+  entries,
+}: {
+  entries: readonly { kbId: string; name: string | null }[];
+}) {
+  const { t } = useTranslation("settings");
+  return (
+    <ul className="space-y-0.5 text-xs">
+      {entries.map((entry) => (
+        <li key={entry.kbId} className="min-w-0 break-words">
+          {entry.name ?? t("credentials.kbUnavailable")}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -282,9 +288,6 @@ function ApiKeyChildren({ apiKey, lang }: { apiKey: ApiKeyRow; lang: string }) {
       getNextPageParam: (last) => last.nextCursor,
     }),
   );
-  // Names for the KBs the user can still see; any other KB shows its id.
-  const { live } = useLiveKbOptions();
-  const names = new Map(live.map((kb) => [kb.kbId, kb.name]));
   const revoke = useMutation(
     orpc.apiKeys.revokeChildMine.mutationOptions({
       onSuccess: () => {
@@ -336,12 +339,7 @@ function ApiKeyChildren({ apiKey, lang }: { apiKey: ApiKeyRow; lang: string }) {
       ) : isError && data === undefined ? (
         <InlineRetry message={t("credentials.listLoadError")} onRetry={() => children.refetch()} />
       ) : (
-        <ChildTokenList
-          rows={rows}
-          lang={lang}
-          kbName={(kbId) => names.get(kbId)}
-          onRevoke={setPending}
-        />
+        <ChildTokenList rows={rows} lang={lang} onRevoke={setPending} />
       )}
       {isError && data !== undefined && (
         <InlineRetry
@@ -380,12 +378,10 @@ function ApiKeyChildren({ apiKey, lang }: { apiKey: ApiKeyRow; lang: string }) {
 export function ChildTokenList({
   rows,
   lang,
-  kbName,
   onRevoke,
 }: {
   rows: readonly ChildTokenRow[];
   lang: string;
-  kbName: (kbId: string) => string | undefined;
   onRevoke: (row: ChildTokenRow) => void;
 }) {
   const { t } = useTranslation("settings");
@@ -396,7 +392,8 @@ export function ChildTokenList({
   return (
     <ul className="divide-y rounded-md border">
       {rows.map((row) => {
-        const name = row.kbId ? kbName(row.kbId) : undefined;
+        // A KB the owner can no longer read (deleted or unshared) has no name.
+        const kb = row.kbId === null ? "—" : (row.kbName ?? t("credentials.kbUnavailable"));
         return (
           <li key={row.id} className="flex min-w-0 flex-wrap items-start gap-3 p-3">
             <div className="min-w-0 flex-1 space-y-1">
@@ -405,7 +402,7 @@ export function ChildTokenList({
                 <TokenStatePill revokedAt={row.revokedAt} expiresAt={row.expiresAt} />
               </p>
               <p className="text-xs break-words">
-                {name ? name : <span className="font-mono">{row.kbId ?? "—"}</span>}
+                {kb}
                 {row.bits.length > 0 &&
                   `: ${row.bits.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ")}`}
               </p>

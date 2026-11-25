@@ -92,6 +92,7 @@
     "approved": "Aprobada el {{date}}",
     "widenedOn": "Acceso ampliado el {{date}}",
     "grantNoKbs": "Ninguna base de conocimiento existente.",
+    "kbUnavailable": "Base de conocimiento eliminada o no disponible",
     "grantCreates": "Puede crear bases de conocimiento y recibe: {{bits}}",
     "picker": {
       "scopesLegend": "Tipo de acceso",

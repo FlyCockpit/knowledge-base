@@ -1,0 +1,60 @@
+diff --git a/dist/index.js b/dist/index.js
+index 79aa792998ed2f8917d4b46725af2b0bbab692e0..21b6998eb19edc1b4742a22f625f6b6244aaca98 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -52,10 +52,9 @@ const Icon = (_0)=>{
+         strokeWidth: "2",
+         strokeLinecap: "round",
+         strokeLinejoin: "round",
++        "aria-hidden": "true",
++        focusable: "false",
+         children: [
+-            /*#__PURE__*/ jsxRuntime.jsx("title", {
+-                children: title
+-            }),
+             children
+         ]
+     }));
+@@ -607,10 +606,9 @@ const GooeyDefs = /*#__PURE__*/ react.memo(function GooeyDefs({ filterId, blur,
+                     width: WIDTH,
+                     height: svgHeight,
+                     viewBox: viewBox,
++                    "aria-hidden": "true",
++                    focusable: "false",
+                     children: [
+-                        /*#__PURE__*/ jsxRuntime.jsx("title", {
+-                            children: "sileo notification"
+-                        }),
+                         /*#__PURE__*/ jsxRuntime.jsx(GooeyDefs, {
+                             filterId: filterId,
+                             blur: blur,
+diff --git a/dist/index.mjs b/dist/index.mjs
+index f687f84725d587b4c539fccb2f86568a9c18294d..9762bd15c2e8d7b46be3c5da98c652cf56a5d233 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -50,10 +50,9 @@ const Icon = (_0)=>{
+         strokeWidth: "2",
+         strokeLinecap: "round",
+         strokeLinejoin: "round",
++        "aria-hidden": "true",
++        focusable: "false",
+         children: [
+-            /*#__PURE__*/ jsx("title", {
+-                children: title
+-            }),
+             children
+         ]
+     }));
+@@ -605,10 +604,9 @@ const GooeyDefs = /*#__PURE__*/ memo(function GooeyDefs({ filterId, blur, width,
+                     width: WIDTH,
+                     height: svgHeight,
+                     viewBox: viewBox,
++                    "aria-hidden": "true",
++                    focusable: "false",
+                     children: [
+-                        /*#__PURE__*/ jsx("title", {
+-                            children: "sileo notification"
+-                        }),
+                         /*#__PURE__*/ jsx(GooeyDefs, {
+                             filterId: filterId,
+                             blur: blur,

@@ -187,6 +187,10 @@ catalog:
   remark-gfm: 4.0.1
 patchedDependencies:
   braces@3.0.3: patches/braces@3.0.3.patch
+  # Sileo labels its decorative SVGs in English ("sileo notification", "Check"),
+  # which prefixes every toast's accessible name; the patch hides them so the
+  # name is the localized message alone. Re-check on any sileo upgrade.
+  sileo@0.1.6: patches/sileo@0.1.6.patch
 
 auditConfig:
   ignoreGhsas:

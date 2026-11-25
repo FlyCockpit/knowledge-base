@@ -92,6 +92,7 @@
     "approved": "Approved {{date}}",
     "widenedOn": "Access widened on {{date}}",
     "grantNoKbs": "No existing knowledge bases.",
+    "kbUnavailable": "Deleted or unavailable knowledge base",
     "grantCreates": "May create knowledge bases, getting: {{bits}}",
     "picker": {
       "scopesLegend": "Access type",

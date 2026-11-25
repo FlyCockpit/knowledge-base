@@ -377,6 +377,7 @@ overrides:
 
 patchedDependencies:
   braces@3.0.3: e3552c5f7f0d1b0460431f5580a23216fbf3234657bfc1669aea1aedf0c29a4c
+  sileo@0.1.6: 61862578ad092a894c9c30cc71eccb39a8b18e67450543f72618e94960bae75c
 
 importers:
 
@@ -629,7 +630,7 @@ importers:
         version: 4.0.1
       sileo:
         specifier: 'catalog:'
-        version: 0.1.6(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 0.1.6(patch_hash=61862578ad092a894c9c30cc71eccb39a8b18e67450543f72618e94960bae75c)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       zod:
         specifier: 'catalog:'
         version: 4.6.7
@@ -1116,7 +1117,7 @@ importers:
         version: 19.3.1(react@19.3.1)
       sileo:
         specifier: 'catalog:'
-        version: 0.1.6(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 0.1.6(patch_hash=61862578ad092a894c9c30cc71eccb39a8b18e67450543f72618e94960bae75c)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       tailwind-merge:
         specifier: 'catalog:'
         version: 3.7.0
@@ -15758,7 +15759,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  sileo@0.1.6(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  sileo@0.1.6(patch_hash=61862578ad092a894c9c30cc71eccb39a8b18e67450543f72618e94960bae75c)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       motion: 12.43.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       react: 19.3.1

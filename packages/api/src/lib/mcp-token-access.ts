@@ -1663,10 +1663,10 @@ type GrantAclEntry = { kbId: string; bits: string[]; name: string | null };
 /**
  * The KB's name for a grant ACL row `x`, only while the viewer (the `viewer`
  * bind parameter) can still read that KB (ACTIVE, owned or live-shared);
- * otherwise null and the UI shows the id. A revoked share never discloses
- * later renames.
+ * otherwise null and the UI shows a "deleted or unavailable" label, never the
+ * id. A revoked share never discloses later renames.
  */
-const aclKbNameSql = (viewer: "$1" | "$4") => `(SELECT kb.name FROM knowledge_base kb
+export const aclKbNameSql = (viewer: "$1" | "$2" | "$4") => `(SELECT kb.name FROM knowledge_base kb
     WHERE kb.id = x."kbId" AND kb.state = 'ACTIVE'::"KnowledgeBaseState"
       AND (kb."ownerId" = ${viewer} OR EXISTS (SELECT 1 FROM kb_share s
             WHERE s."kbId" = kb.id AND s."userId" = ${viewer} AND s."revokedAt" IS NULL)))`;

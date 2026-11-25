@@ -1,4 +1,5 @@
 import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
+import esSettings from "@knowledge-base/locales/src/es-MX/settings.json";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
@@ -7,6 +8,7 @@ import { I18nextProvider } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ApiKeyKbNames,
   ApiKeyList,
   ApiKeyRevokeChildren,
   ApiKeyRevokeDialog,
@@ -72,6 +74,7 @@ const child = (patch: Partial<ChildTokenRow>): ChildTokenRow => ({
   grantId: "00000000-0000-4000-8000-000000000002",
   apiKeyId: "0".repeat(24),
   kbId: "a".repeat(24),
+  kbName: "Engineering",
   bits: ["read", "propose"],
   scopes: ["mcp:read", "mcp:write"],
   toolGroups: ["read", "edit", "pull_requests"],
@@ -171,19 +174,66 @@ describe("ApiKeyList", () => {
             id: "tok2",
             name: "Revoked token",
             kbId: "b".repeat(24),
+            kbName: null,
             revokedAt: new Date("2026-02-01T00:00:00Z"),
           }),
+          child({ id: "tok3", name: "No KB", kbId: null, kbName: null, bits: [] }),
         ]}
-        kbName={(kbId) => (kbId === "a".repeat(24) ? "Engineering" : undefined)}
         onRevoke={() => undefined}
       />,
     );
     expect(markup).toContain("Engineering: Read, Propose");
-    expect(markup).toContain("b".repeat(24));
+    // A deleted or unshared KB is labeled, never shown by its raw id.
+    expect(markup).toContain(`${enSettings.credentials.kbUnavailable}: Read, Propose`);
+    expect(markup).not.toContain("b".repeat(24));
+    expect(markup).toContain("—");
     expect(markup).toContain("Write mode: Direct edits only");
     expect(markup).toContain('aria-label="Revoke Agent token"');
     expect(markup).not.toContain('aria-label="Revoke Revoked token"');
     expect(markup).not.toContain(enSettings.apiKeys.childCanCreate);
+  });
+
+  it("names a key's KBs and labels a deleted or unshared one, never its id", () => {
+    const entries = [
+      { kbId: "a".repeat(24), name: "Engineering" },
+      { kbId: "b".repeat(24), name: null },
+    ];
+    const markup = render(<ApiKeyKbNames entries={entries} />);
+    expect(markup).toContain("Engineering");
+    expect(markup).toContain(enSettings.credentials.kbUnavailable);
+    expect(markup).not.toContain("b".repeat(24));
+  });
+
+  it("labels an unavailable KB in every shipped locale", async () => {
+    const locales = { "en-US": enSettings, "es-MX": esSettings };
+    for (const [lng, settings] of Object.entries(locales)) {
+      const local = createInstance();
+      await local.init({
+        lng,
+        ns: ["settings"],
+        defaultNS: "settings",
+        resources: { [lng]: { settings } },
+        interpolation: { escapeValue: false },
+        react: { useSuspense: false },
+      });
+      const html = (node: ReactNode) =>
+        renderToStaticMarkup(<I18nextProvider i18n={local}>{node}</I18nextProvider>);
+      const label = settings.credentials.kbUnavailable;
+      expect(label).toBeTruthy();
+      expect(html(<ApiKeyKbNames entries={[{ kbId: "b".repeat(24), name: null }]} />)).toContain(
+        label,
+      );
+      expect(
+        html(
+          <ChildTokenList
+            lang={lng}
+            rows={[child({ kbName: null, bits: [] })]}
+            onRevoke={() => undefined}
+          />,
+        ),
+      ).toContain(label);
+    }
+    expect(esSettings.credentials.kbUnavailable).not.toBe(enSettings.credentials.kbUnavailable);
   });
 
   it("says when a child token can create knowledge bases", () => {
@@ -191,7 +241,6 @@ describe("ApiKeyList", () => {
       <ChildTokenList
         lang="en-US"
         rows={[child({ allowCreate: true, expiresAt: null })]}
-        kbName={() => "Engineering"}
         onRevoke={() => undefined}
       />,
     );
@@ -205,7 +254,6 @@ describe("ApiKeyList", () => {
         <ChildTokenList
           lang="en-US"
           rows={[child({ allowCreate: true, createdKbBits: ["read"], kbCount })]}
-          kbName={() => "Engineering"}
           onRevoke={() => undefined}
         />,
       );
