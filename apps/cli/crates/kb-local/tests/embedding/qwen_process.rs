@@ -1345,8 +1345,11 @@ fn an_unload_behind_long_inference_survives_its_caller_and_removal_waits_for_it(
     // The request finishes; the abandoned control still runs.
     std::fs::write(model_host::hook(&host, "model-test-release"), b"x").expect("release");
     let pid = long.join().expect("long").expect("long inference served");
+    // The hook is written inside the engine's release; the worker reports the
+    // model gone only once that call has returned.
     wait_until("abandoned unload ran", || {
         model_host::hook(&host, "model-test-unloaded").exists()
+            && host.status().is_some_and(|status| status.loaded.is_none())
     });
     let status = host.status().expect("same worker");
     assert_eq!((status.pid, status.loaded), (pid, None));
