@@ -55,7 +55,8 @@ vi.mock("rate-limiter-flexible", async (importOriginal) => {
   };
 });
 
-const { createRateLimiterMiddleware } = await import("./rate-limit.js");
+const { createRateLimiterMiddleware, createRpcRateLimiterMiddleware, KB_UPLOAD_WRITE_PATH } =
+  await import("./rate-limit.js");
 
 // ---------------------------------------------------------------------------
 // Test: rate limiter middleware returns 429 with correct headers
@@ -356,5 +357,47 @@ describe("rate-limit budget families", () => {
     expect(l.emailRecipientLimiter.points).toBe(0);
     expect(l.signupRecipientLimiter.points).toBe(0);
     expect(l.signinRecipientLimiter.points).toBe(0);
+  });
+});
+
+describe("createRpcRateLimiterMiddleware", () => {
+  function rpcApp(signedIn: boolean) {
+    const rpc = new RateLimiterMemory({ keyPrefix: "rpc", points: 2, duration: 60 });
+    const frames = new RateLimiterMemory({ keyPrefix: "frames", points: 5, duration: 60 });
+    const app = new Hono();
+    app.use("/rpc/*", async (c, next) => {
+      c.set("session" as never, (signedIn ? { user: { id: "u1" } } : null) as never);
+      await next();
+    });
+    app.use("/rpc/*", createRpcRateLimiterMiddleware(rpc, frames));
+    app.all("/rpc/*", (c) => c.text("ok"));
+    const send = (path: string, headers: Record<string, string> = {}) =>
+      app.request(path, { method: "POST", headers });
+    return { send };
+  }
+
+  it("counts signed-in upload frames in their own bucket, never in the generic one", async () => {
+    const { send } = rpcApp(true);
+    for (let i = 0; i < 5; i++) expect((await send(KB_UPLOAD_WRITE_PATH)).status).toBe(200);
+    const refused = await send(KB_UPLOAD_WRITE_PATH);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("X-RateLimit-Limit")).toBe("5");
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+    // The generic budget is untouched by the frames and keeps its own size.
+    expect((await send("/rpc/kbUploads/begin")).headers.get("X-RateLimit-Limit")).toBe("2");
+    expect((await send("/rpc/kbs/list")).status).toBe(200);
+    expect((await send("/rpc/kbs/list")).status).toBe(429);
+  });
+
+  it("keeps batches, other procedures and anonymous frames in the generic bucket", async () => {
+    const signedIn = rpcApp(true);
+    const batch = await signedIn.send(KB_UPLOAD_WRITE_PATH, { "x-orpc-batch": "streaming" });
+    expect(batch.headers.get("X-RateLimit-Limit")).toBe("2");
+    const nested = await signedIn.send(`${KB_UPLOAD_WRITE_PATH}/__batch__`);
+    expect(nested.headers.get("X-RateLimit-Limit")).toBe("2");
+    expect((await signedIn.send("/rpc/kbUploads/finish")).status).toBe(429);
+
+    const anonymous = rpcApp(false);
+    expect((await anonymous.send(KB_UPLOAD_WRITE_PATH)).headers.get("X-RateLimit-Limit")).toBe("2");
   });
 });

@@ -313,9 +313,10 @@ type StageSpec = {
   /** Raw bytes acknowledged so far, after every accepted frame. */
   onProgress?: (sent: number, total: number) => void;
   /**
-   * Waits out the upload rate budget (`rl:kb-upload`) instead of failing: a
-   * refused request is repeated after the server's `retryAfterSeconds`, from
-   * the last acknowledged chunk. Without it a refusal ends the attempt.
+   * Waits out the upload rate budgets (`rl:kb-upload`, `rl:kb-upload-http`)
+   * instead of failing: a refused request is repeated after the server's
+   * `retryAfterSeconds` or `Retry-After`, from the last acknowledged chunk.
+   * Without it a refusal ends the attempt.
    */
   budget?: { sleep: (ms: number) => Promise<void>; onWait?: (seconds: number) => void };
 };
@@ -325,11 +326,26 @@ export const UPLOAD_BUDGET_MAX_WAITS = 8;
 /** Longest single wait honoured; the upload budget's window is 60 s. */
 const UPLOAD_BUDGET_MAX_WAIT_MS = 120_000;
 
-/** The server's wait for a TOO_MANY_REQUESTS refusal, in ms, else null. */
+/** Whole seconds of an HTTP `Retry-After` header value, else undefined. */
+function retryAfterHeaderSeconds(value: unknown): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" && /^\d{1,6}$/.test(raw.trim()) ? Number(raw.trim()) : undefined;
+}
+
+/**
+ * The server's wait for a TOO_MANY_REQUESTS refusal, in ms, else null: the
+ * procedure budget's `retryAfterSeconds`, or the `Retry-After` header of an
+ * HTTP limiter's plain 429 (oRPC keeps that response's headers in `data`).
+ */
 export function retryAfterMs(error: unknown): number | null {
   if (errorCode(error) !== "TOO_MANY_REQUESTS") return null;
-  const seconds = (error as { data?: { retryAfterSeconds?: unknown } } | null)?.data
-    ?.retryAfterSeconds;
+  const data = (
+    error as { data?: { retryAfterSeconds?: unknown; headers?: Record<string, unknown> } } | null
+  )?.data;
+  const seconds =
+    data?.retryAfterSeconds !== undefined
+      ? data.retryAfterSeconds
+      : retryAfterHeaderSeconds(data?.headers?.["retry-after"]);
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return null;
   const ms = Math.max(1, Math.ceil(seconds)) * 1000;
   return ms <= UPLOAD_BUDGET_MAX_WAIT_MS ? ms : null;

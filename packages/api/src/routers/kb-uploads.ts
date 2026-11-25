@@ -4,6 +4,7 @@ import { z } from "zod";
 import { protectedProcedure } from "../index";
 import { mapKbDomainError } from "../lib/kb/bases";
 import { getKbRuntime } from "../lib/kb/runtime";
+import { UPLOAD_BUDGET_WINDOW_SECONDS, UPLOAD_PROCEDURE_POINTS } from "../lib/kb/upload-budget";
 import { UPLOAD_MAX_CHUNK_BYTES, uploadBegin, uploadFinish, uploadWrite } from "../lib/kb/uploads";
 import { createProcedureBudget } from "../lib/procedure-budget";
 
@@ -18,8 +19,9 @@ const uploadId = z.string().uuid();
 
 const consumeUploadBudget = createProcedureBudget({
   keyPrefix: "rl:kb-upload",
-  points: 120,
-  durationSeconds: 60,
+  // Sized for one maximal editor save (upload-budget.ts).
+  points: UPLOAD_PROCEDURE_POINTS,
+  durationSeconds: UPLOAD_BUDGET_WINDOW_SECONDS,
   failClosed: true,
   overBudgetMessage: (retryAfterSeconds) =>
     `Too many upload requests. Try again in ${retryAfterSeconds}s.`,

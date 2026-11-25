@@ -40,6 +40,9 @@
     "./lib/rate-limit-families": {
       "default": "./src/lib/rate-limit-families.ts"
     },
+    "./lib/kb/upload-budget": {
+      "default": "./src/lib/kb/upload-budget.ts"
+    },
     "./lib/kb/push-validation": {
       "default": "./src/lib/kb/push-validation.ts"
     },

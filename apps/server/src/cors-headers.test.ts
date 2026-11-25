@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { describe, expect, it } from "vitest";
 
-import { CORS_ALLOW_HEADERS } from "./cors-headers";
+import { CORS_ALLOW_HEADERS, CORS_EXPOSE_HEADERS } from "./cors-headers";
 
 const APP_ORIGIN = "https://app.example.com";
 
@@ -19,10 +19,15 @@ function buildApp() {
       origin: APP_ORIGIN,
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: [...CORS_ALLOW_HEADERS],
+      exposeHeaders: [...CORS_EXPOSE_HEADERS],
       credentials: true,
     }),
   );
   app.post("/api/auth/sign-in/email", (c) => c.json({ ok: true }));
+  app.post("/rpc/kbUploads/write", (c) => {
+    c.header("Retry-After", "7");
+    return c.json({ error: "Too many attempts. Please wait a moment and try again." }, 429);
+  });
   return app;
 }
 
@@ -81,5 +86,13 @@ describe("CORS_ALLOW_HEADERS", () => {
     const res = await preflight("x-csrf-token");
     const allowed = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
     expect(allowed).toContain("x-csrf-token");
+  });
+  it("lets the web origin read Retry-After on a limiter's 429", async () => {
+    const res = await buildApp().request("/rpc/kbUploads/write", {
+      method: "POST",
+      headers: { Origin: APP_ORIGIN },
+    });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("access-control-expose-headers")?.toLowerCase()).toBe("retry-after");
   });
 });

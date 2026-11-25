@@ -32,3 +32,10 @@ export const CORS_ALLOW_HEADERS = [
   "x-device-approval-nonce",
   APP_LOCALE_HEADER,
 ] as const;
+
+/**
+ * Response headers cross-origin browser code may read. Only `Retry-After`: the
+ * editor waits out a limiter's plain 429 by it (apps/web/src/hooks/use-kb-editor.ts),
+ * and a split-origin browser otherwise hides it. Not a credential or identifier.
+ */
+export const CORS_EXPOSE_HEADERS = ["Retry-After"] as const;

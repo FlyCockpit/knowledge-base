@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  UPLOAD_BUDGET_WINDOW_SECONDS,
+  UPLOAD_FRAME_HTTP_POINTS,
+} from "@knowledge-base/api/lib/kb/upload-budget";
+import {
   authRateFamily,
   emailRateFamily,
   rpcRateFamily,
@@ -489,8 +493,9 @@ function createSurfaceLimiter(name: string, member: ScaledMember): RateLimiterRe
 }
 
 /**
- * RPC limiter — applied to /rpc/*, /api-reference/*, /sw/* and
- * /api/auth/get-session for normal API traffic. 100 requests / 60 s per key.
+ * RPC limiter — applied to /rpc/* (except signed-in upload frames, see
+ * `kbUploadFrameLimiter`), /api-reference/*, /sw/* and /api/auth/get-session
+ * for normal API traffic. 100 requests / 60 s per key.
  *
  * That list is exhaustive. If you mount this on a fifth route, update this
  * line — a stale docstring here is how the shared-bucket bug got missed the
@@ -503,6 +508,39 @@ function createSurfaceLimiter(name: string, member: ScaledMember): RateLimiterRe
  * mind before lowering this budget.
  */
 export const rpcLimiter = createSurfaceLimiter("rpc", rpcBudget);
+
+/** The one procedure path whose unbatched requests count in `kbUploadFrameLimiter`. */
+export const KB_UPLOAD_WRITE_PATH = "/rpc/kbUploads/write";
+
+/**
+ * Upload-frame limiter — the HTTP requests of `kbUploads.write`, its own surface.
+ *
+ * The editor sends an image as 192 KiB frames, one request each: a 25 MiB image
+ * is 134 requests, which the generic `/rpc` bucket (100 / 60 s) refused partway
+ * with a plain 429. Frames are already charged per user by the procedure
+ * budget `rl:kb-upload`; this bucket bounds their HTTP requests, sized for one
+ * maximal save (`@knowledge-base/api/lib/kb/upload-budget`), not loosening
+ * `rpcLimiter` for anything else. Fail-open with insurance, like the generic
+ * bucket these requests used to count in; the procedure budget fails closed.
+ */
+export const kbUploadFrameLimiter = createSurfaceLimiter("kb-upload-http", {
+  points: UPLOAD_FRAME_HTTP_POINTS,
+  durationSeconds: UPLOAD_BUDGET_WINDOW_SECONDS,
+  blockSeconds: 0,
+});
+
+/**
+ * Whether a `/rpc/*` request is one signed-in, unbatched upload frame. oRPC
+ * reads a batch from the `x-orpc-batch` header on any path, so a batch never
+ * qualifies (it could carry other procedures); neither does an anonymous
+ * request (no extra budget without an account).
+ */
+export function isKbUploadFrameRequest(c: Context): boolean {
+  if (c.req.method !== "POST" || c.req.path !== KB_UPLOAD_WRITE_PATH) return false;
+  if (c.req.header("x-orpc-batch") !== undefined) return false;
+  const session = c.get("session") as Session | null | undefined;
+  return !!session?.user?.id;
+}
 
 /**
  * Readiness limiter — /ready.
@@ -635,6 +673,20 @@ export function createRateLimiterMiddleware(
       await next();
     }
   };
+}
+
+/**
+ * The `/rpc/*` limiter: a signed-in, unbatched upload frame counts in
+ * `uploadFrames`, every other request in the generic `rpc` bucket.
+ */
+export function createRpcRateLimiterMiddleware(
+  rpc: RateLimiter = rpcLimiter,
+  uploadFrames: RateLimiter = kbUploadFrameLimiter,
+) {
+  const generic = createRateLimiterMiddleware(rpc);
+  const frames = createRateLimiterMiddleware(uploadFrames);
+  return (c: Context, next: Next) =>
+    isKbUploadFrameRequest(c) ? frames(c, next) : generic(c, next);
 }
 
 // Independent OAuth surfaces; fail closed at their mounts in index.ts.

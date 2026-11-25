@@ -27,6 +27,7 @@ import {
   proposalAfterAdopt,
   proposalAfterSave,
   recheckKbAccess,
+  retryAfterMs,
   runEditorOp,
   runImageStage,
   runSave,
@@ -899,6 +900,23 @@ describe("image staging", () => {
   });
 });
 
+describe("retryAfterMs", () => {
+  const tooMany = (data: unknown) => ({ code: "TOO_MANY_REQUESTS", status: 429, data });
+  it("reads the procedure budget's seconds and an HTTP limiter's Retry-After", () => {
+    expect(retryAfterMs(tooMany({ retryAfterSeconds: 3 }))).toBe(3_000);
+    expect(retryAfterMs(tooMany({ headers: { "retry-after": "12" } }))).toBe(12_000);
+    expect(retryAfterMs(tooMany({ headers: { "retry-after": ["5"] } }))).toBe(5_000);
+  });
+  it("refuses to wait without a usable delay or beyond the cap", () => {
+    expect(retryAfterMs(tooMany({ headers: {} }))).toBeNull();
+    expect(
+      retryAfterMs(tooMany({ headers: { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" } })),
+    ).toBeNull();
+    expect(retryAfterMs(tooMany({ headers: { "retry-after": "600" } }))).toBeNull();
+    expect(retryAfterMs({ code: "CONFLICT", data: { retryAfterSeconds: 1 } })).toBeNull();
+  });
+});
+
 // Base64-encoding up to 75 MiB is slow on a loaded CI runner.
 describe("image upload rate budget", { timeout: 60_000 }, () => {
   const CHUNK = 196_608;
@@ -910,8 +928,8 @@ describe("image upload rate budget", { timeout: 60_000 }, () => {
       status: 429,
     });
   /**
-   * The server's kb-upload budget: 120 requests per minute per user, shared by
-   * begin, write and finish. A refused request is not
+   * The server's kb-upload budget: 160 requests per minute per user, shared by
+   * begin, write and finish (packages/api/src/lib/kb/upload-budget.ts). A refused request is not
    * charged; the window resets when the client waits retryAfterSeconds.
    */
   function server() {
@@ -921,7 +939,7 @@ describe("image upload rate budget", { timeout: 60_000 }, () => {
     let used = 0;
     let n = 0;
     const charge = () => {
-      if (used >= 120) throw limited(60);
+      if (used >= 160) throw limited(60);
       used += 1;
     };
     const deps = {
@@ -960,7 +978,7 @@ describe("image upload rate budget", { timeout: 60_000 }, () => {
     return { name: "big.png", type: "image/png", bytes };
   };
 
-  it("uploads a 25 MiB image past the 120/min budget by waiting, never restarting", async () => {
+  it("uploads a 25 MiB image within one budget window, each chunk once", async () => {
     const { calls, sleeps, deps } = server();
     const waits: number[] = [];
     const run = await runImageStage(deps, {
@@ -973,8 +991,8 @@ describe("image upload rate budget", { timeout: 60_000 }, () => {
     expect(writes.length).toBe(Math.ceil(MAX / CHUNK)); // 134: each chunk sent once
     expect(writes).toEqual(writes.map((_, i) => i * CHUNK));
     expect(calls.filter((c) => c.op === "uploadBegin")).toHaveLength(1);
-    expect(sleeps).toEqual([60_000]);
-    expect(waits).toEqual([60]);
+    expect(sleeps).toEqual([]);
+    expect(waits).toEqual([]);
   });
 
   it("shares the budget across a batch of images", async () => {
@@ -988,8 +1006,41 @@ describe("image upload rate budget", { timeout: 60_000 }, () => {
     }
     expect(calls.filter((c) => c.op === "uploadFinish")).toHaveLength(3);
     expect(calls.filter((c) => c.op === "uploadBegin")).toHaveLength(3);
-    // 3 × (1 + 134 + 1) = 408 budgeted requests need three waits.
-    expect(sleeps).toEqual([60_000, 60_000, 60_000]);
+    // 3 × (1 + 134 + 1) = 408 budgeted requests need two waits.
+    expect(sleeps).toEqual([60_000, 60_000]);
+  });
+
+  it("waits out an HTTP limiter's plain 429 by its Retry-After, from the last frame", async () => {
+    const { calls, sleeps, deps } = server();
+    const write = deps.uploadWrite;
+    let refusals = 0;
+    // What oRPC's link throws for the /rpc limiter's non-oRPC 429 body.
+    const plain429 = Object.assign(new Error("Too Many Requests"), {
+      code: "TOO_MANY_REQUESTS",
+      status: 429,
+      data: { status: 429, headers: { "retry-after": "7" }, body: undefined },
+    });
+    const httpLimited = {
+      ...deps,
+      uploadWrite: async (input: Parameters<typeof write>[0]) => {
+        if (input.offset === 50 * CHUNK && refusals < 2) {
+          refusals += 1;
+          throw plain429;
+        }
+        return write(input);
+      },
+    };
+    const waits: number[] = [];
+    const run = await runImageStage(httpLimited, {
+      kbId: KB,
+      file: image(MAX),
+      onWait: (seconds) => waits.push(seconds),
+    });
+    expect(run.ok).toBe(true);
+    expect(sleeps).toEqual([7_000, 7_000]);
+    expect(waits).toEqual([7, 7]);
+    const offsets = calls.filter((c) => c.op === "uploadWrite").map((c) => c.input.offset);
+    expect(offsets).toEqual(offsets.map((_, i) => i * CHUNK));
   });
 
   it("gives up after repeated refusals and resumes the staged upload on the next insert", async () => {

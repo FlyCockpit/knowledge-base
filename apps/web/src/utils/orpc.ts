@@ -13,6 +13,9 @@ import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 
 const isExportAcknowledgement = (path: readonly string[]) =>
   path[0] === "kbExports" && path[1] === "complete";
+// Upload frames go unbatched to their own path, which the server counts in a
+// bucket sized for one maximal upload (apps/server/src/rate-limit.ts).
+const isUploadFrame = (path: readonly string[]) => path[0] === "kbUploads" && path[1] === "write";
 
 const link = new RPCLink({
   url: `${env.VITE_SERVER_URL}/rpc`,
@@ -35,7 +38,7 @@ const link = new RPCLink({
       maxSize: ORPC_BATCH_MAX_SIZE,
       // A batch aborts only when every member aborts. Keep the post-save
       // deadline owned by this ACK without cancelling unrelated procedures.
-      exclude: ({ path }) => isExportAcknowledgement(path),
+      exclude: ({ path }) => isExportAcknowledgement(path) || isUploadFrame(path),
     }),
     new DedupeRequestsPlugin({
       groups: [

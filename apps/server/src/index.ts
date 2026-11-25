@@ -45,7 +45,7 @@ import { bodyPolicyMiddleware } from "./body-policy.js";
 import { readBuildCommit } from "./build-commit.js";
 import { registerCliInstallRoutes } from "./cli-install.js";
 import { resolveClientIp } from "./client-ip.js";
-import { CORS_ALLOW_HEADERS } from "./cors-headers.js";
+import { CORS_ALLOW_HEADERS, CORS_EXPOSE_HEADERS } from "./cors-headers.js";
 import { guardDeviceApproval } from "./device-approval-gate";
 import {
   EMAIL_RECIPIENT_PATHS,
@@ -74,6 +74,7 @@ import { deviceStartLimiter } from "./rate-limit";
 import {
   authLimiter,
   createRateLimiterMiddleware,
+  createRpcRateLimiterMiddleware,
   credentialBurstLimiter,
   credentialLimiter,
   mcpConsentLimiter,
@@ -212,6 +213,7 @@ if (env.CORS_ORIGIN) {
       // the preflight fails and the request never leaves the browser — a
       // failure mode invisible in local dev. See cors-headers.ts.
       allowHeaders: [...CORS_ALLOW_HEADERS],
+      exposeHeaders: [...CORS_EXPOSE_HEADERS],
       credentials: true,
     }),
   );
@@ -581,7 +583,8 @@ app.use("/sw/*", sessionMiddleware);
 
 // Rate limit RPC endpoint — general API traffic.
 // Uses Redis-backed limiter with in-memory insurance fallback (fail-open).
-app.use("/rpc/*", createRateLimiterMiddleware(rpcLimiter));
+// Upload frames count in their own bucket (rate-limit.ts `kbUploadFrameLimiter`).
+app.use("/rpc/*", createRpcRateLimiterMiddleware());
 app.use("/api-reference/*", createRateLimiterMiddleware(rpcLimiter));
 
 // In production the OpenAPI reference is admin-only: it documents every
