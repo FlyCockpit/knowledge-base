@@ -103,7 +103,12 @@ export function toDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Identification only: the returned principal still needs verifier-backed authorize(). */
+/**
+ * Identification only: the returned principal still needs verifier-backed
+ * authorize(). Null means no live PAT matches (unknown, revoked or expired), so
+ * it can never be admitted; an unreadable stored expiry fails closed with a
+ * plain refusal instead, as it does not prove that.
+ */
 export async function authenticatePersonalToken(
   query: LockQuery,
   raw: string,
@@ -130,7 +135,9 @@ export async function authenticatePersonalToken(
   // NULL expiry = never expires. A present but unreadable value fails closed.
   const expiresAt = row.expiresAt === null ? null : toDate(row.expiresAt);
   if (row.revokedAt || !row.userId) return null;
-  if (row.expiresAt !== null && (!expiresAt || expiresAt <= now)) return null;
+  if (row.expiresAt !== null && !expiresAt)
+    throw new KbAdmissionError("UNAUTHORIZED", "Credential is not admissible");
+  if (expiresAt && expiresAt <= now) return null;
   return {
     kind: "token",
     userId: row.userId,
@@ -323,23 +330,30 @@ export function createGrantCredentialVerifier(
           (binding.kind !== "PAT" ||
             (row.tokenId === binding.tokenId && row.resource === binding.resource)) &&
           (binding.kind !== "API_KEY" || row.apiKeyId === binding.tokenId);
+      // Only a missing row, a tombstone or an expiry is final; a stale principal
+      // (scopes narrowed since it was read) or a binding mismatch is not.
+      let ended = !row || !!row.revokedAt;
       if (row && row.kind === "PAT") {
         // NULL token expiry = never expires; a present unreadable value fails closed.
         const tokenExpiry = toDate(row.tokenExpiresAt);
+        const tokenEnded = !!row.tokenRevokedAt || (!!tokenExpiry && tokenExpiry <= at);
+        ended ||= tokenEnded;
         generationActive &&=
-          row.tokenId !== null &&
-          !row.tokenRevokedAt &&
-          (row.tokenExpiresAt === null || (!!tokenExpiry && tokenExpiry > at));
+          row.tokenId !== null && !tokenEnded && (row.tokenExpiresAt === null || !!tokenExpiry);
         // A child of a key whose children end with it lives only while that key
         // does (same statement, database clock): the key's revocation or expiry
         // ends every such child even before any tombstone is read. A child of
         // any other key is independent and stands on its own tombstone/expiry.
         if (row.parentApiKeyId !== null && row.parentBinds !== false) {
           generationActive &&= row.parentLive === true;
+          ended ||= row.parentLive !== true;
         }
       }
-      if (row && row.kind === "API_KEY") generationActive &&= row.apiKeyLive === true;
-      if (!generationActive) return { ...inactive, consumerKind };
+      if (row && row.kind === "API_KEY") {
+        generationActive &&= row.apiKeyLive === true;
+        ended ||= row.apiKeyLive !== true;
+      }
+      if (!generationActive) return { ...inactive, consumerKind, ended };
       // One read of the elevations in force: groups, ids and expiry all come from it.
       const elevations = parseElevations(row?.elevations);
       const identity = await sqlAuthorityStore(guarded).loadIdentity(principal.userId);

@@ -13,8 +13,22 @@ export type KbAdmissionCode =
   | "QUOTA_EXCEEDED"
   | "STORAGE_UNAVAILABLE";
 
-/** Why a FORBIDDEN admission was refused, when the caller can act on it. */
-export type KbAdmissionDetails = { reason: "WRITE_MODE"; required: McpAuthoringNeed };
+/**
+ * Why an admission was refused, when the caller can act on it: a FORBIDDEN
+ * write-mode refusal, or an UNAUTHORIZED credential that can never be admitted
+ * again (unknown, revoked or expired; its grant or parent key ended). A
+ * suspension (owner banned for a while, 2FA unmet) carries no detail.
+ */
+export type KbAdmissionDetails =
+  | { reason: "WRITE_MODE"; required: McpAuthoringNeed }
+  | { reason: "CREDENTIAL_ENDED" };
+
+/** The UNAUTHORIZED refusal of a credential that can never be admitted again. */
+export function credentialEnded(): KbAdmissionError {
+  return new KbAdmissionError("UNAUTHORIZED", "Credential is not admissible", undefined, {
+    reason: "CREDENTIAL_ENDED",
+  });
+}
 
 export class KbAdmissionError extends Error {
   readonly name = "KbAdmissionError";
@@ -108,6 +122,13 @@ export type TokenAdmission = {
    * grant row; enforced by authorize() for `delete`, lock-held rechecks included.
    */
   deleteDenied?: boolean;
+  /**
+   * The credential can never be admitted again: its grant generation or PAT is
+   * gone, revoked or expired, or the REST API key behind it ended. Never set
+   * for a refusal that may pass on a later request (a stale principal, a
+   * suspended owner).
+   */
+  ended?: boolean;
 };
 
 /**
@@ -233,10 +254,16 @@ export async function assertTokenAdmissible(
   verifier: CredentialVerifier,
 ): Promise<TokenAdmission> {
   const admission = await verifier.inspect(principal);
+  // Only a readable past expiry is final; an unreadable one just fails closed.
+  const expiredForGood =
+    admission.expired &&
+    principal.expiresAt !== null &&
+    Number.isFinite(principal.expiresAt.getTime());
+  if (admission.ended || expiredForGood) throw credentialEnded();
   if (
     !admission.generationActive ||
-    !admission.instanceEnabled ||
     admission.expired ||
+    !admission.instanceEnabled ||
     admission.banned ||
     !admission.twoFactorSatisfied
   ) {

@@ -9,6 +9,7 @@ import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-q
 import { getOperationLease, type LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import {
   type CredentialVerifier,
+  credentialEnded,
   KbAdmissionError,
   type TokenPrincipal,
 } from "@knowledge-base/api/lib/kb/principal";
@@ -269,6 +270,8 @@ export function createBearerAdmission(options: {
       principal = await withQuery(request.signal, (query) =>
         authenticatePersonalToken(query, raw, now()),
       );
+      // No live row matches: unknown, revoked or expired, never admitted again.
+      if (!principal) throw credentialEnded();
     } else {
       if (mode.selfRevoke) throw unauthorized();
       let claims: Record<string, unknown>;

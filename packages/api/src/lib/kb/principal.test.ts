@@ -68,7 +68,58 @@ describe("principal", () => {
           };
         },
       }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", details: { reason: "CREDENTIAL_ENDED" } });
+  });
+
+  it("marks only a credential that can never be admitted again as ended", async () => {
+    const refusal = (patch: Record<string, boolean>) =>
+      assertTokenAdmissible(token, {
+        async inspect() {
+          return {
+            generationActive: true,
+            instanceEnabled: true,
+            expired: false,
+            banned: false,
+            twoFactorSatisfied: true,
+            ...patch,
+          };
+        },
+      }).catch((error: unknown) => error);
+    const ended = { code: "UNAUTHORIZED", details: { reason: "CREDENTIAL_ENDED" } };
+    // Revoked/tombstoned or expired: terminal (even with a banned owner).
+    expect(await refusal({ generationActive: false, ended: true })).toMatchObject(ended);
+    expect(await refusal({ expired: true })).toMatchObject(ended);
+    expect(await refusal({ generationActive: false, ended: true, banned: true })).toMatchObject(
+      ended,
+    );
+    // An unreadable expiry fails closed but proves nothing.
+    const unreadable = await assertTokenAdmissible(
+      { ...token, expiresAt: new Date(Number.NaN) },
+      {
+        async inspect() {
+          return {
+            generationActive: true,
+            instanceEnabled: true,
+            expired: true,
+            banned: false,
+            twoFactorSatisfied: true,
+          };
+        },
+      },
+    ).catch((error: unknown) => error);
+    expect(unreadable).toMatchObject({ code: "UNAUTHORIZED" });
+    expect((unreadable as { details?: unknown }).details).toBeUndefined();
+    // A stale principal or a suspension of a live credential: a plain refusal.
+    for (const patch of [
+      { generationActive: false },
+      { banned: true },
+      { twoFactorSatisfied: false },
+      { instanceEnabled: false },
+    ]) {
+      const error = await refusal(patch);
+      expect(error).toMatchObject({ code: "UNAUTHORIZED" });
+      expect((error as { details?: unknown }).details).toBeUndefined();
+    }
   });
 });
 

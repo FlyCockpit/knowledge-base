@@ -294,7 +294,11 @@ servers.
   to the attachment's own resource.
 
 Default logout self-revokes the presented PAT before deleting matching local
-state. Network failure retains it for retry and reports uncertain revocation.
+state. When the server answers that the credential has ended (unknown, revoked
+or expired), logout removes it locally, prints that it was already revoked and
+exits 0. Network failure, timeout, any other 401 (a temporarily banned owner, a
+proxy) or any other status retains it for retry, reports uncertain revocation
+and points to `--local`.
 `kb logout --local` deletes local material only and states that remote authority
 remains active. A concurrent re-login's replacement credential is preserved.
 EOF/cancellation drains in-flight HTTP; sealed forwarding keeps ciphertext.

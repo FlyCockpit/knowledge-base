@@ -148,6 +148,9 @@ instance administration remain human control operations. The one exception is
 a child token minted with a human-minted REST API key (below). The narrow PAT
 `POST /api/kb/token/revoke-self` revokes only its presented credential, has no
 body, and is used by CLI logout; it is not a generic oRPC gateway or MCP tool.
+A credential that can never be admitted again (unknown, revoked or expired)
+gets `401 {"error":"UNAUTHORIZED","credential":"ended"}`, so logout can drop it
+locally; a suspended one (owner banned for a while) gets the plain 401.
 OAuth requests for sealed capabilities are rejected. Only an explicitly approved
 CLI/PAT recipient gets exact-record capabilities, also requiring current read
 and the owner's share setting. `knowledge_sealed_resolve` returns recipient

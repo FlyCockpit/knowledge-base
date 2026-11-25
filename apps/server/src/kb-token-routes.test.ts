@@ -1,4 +1,4 @@
-import { KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
+import { credentialEnded, KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
 import { describe, expect, it, vi } from "vitest";
 import { createKbTokenRoutes } from "./kb-token-routes";
 
@@ -39,9 +39,21 @@ describe("narrow PAT self-revoke route", () => {
     expect((await call()).status).toBe(204);
     expect(admit).toHaveBeenCalledWith(expect.any(Request), { selfRevoke: true });
     expect(revoke).toHaveBeenCalledExactlyOnceWith("u", "t");
+    // A suspended credential: the plain refusal (the client keeps it).
     admit.mockRejectedValueOnce(new KbAdmissionError("UNAUTHORIZED", "denied"));
-    expect((await call()).status).toBe(401);
-    expect(charge).toHaveBeenCalledTimes(3);
+    const suspended = await call();
+    expect(suspended.status).toBe(401);
+    expect(await suspended.json()).toEqual({ error: "UNAUTHORIZED" });
+    expect(suspended.headers.has("www-authenticate")).toBe(false);
+    // An ended credential (unknown, revoked, expired) says so, so logout drops it.
+    admit.mockRejectedValueOnce(credentialEnded());
+    const ended = await call();
+    expect(ended.status).toBe(401);
+    expect(await ended.json()).toEqual({ error: "UNAUTHORIZED", credential: "ended" });
+    expect(ended.headers.get("cache-control")).toBe("no-store");
+    expect(ended.headers.has("www-authenticate")).toBe(false);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(charge).toHaveBeenCalledTimes(4);
   });
   it("shutdown prevents both admission and revocation", async () => {
     const admit = vi.fn();

@@ -344,6 +344,71 @@ fn offline_keeps_retryable_local_state_and_local_only_warns_without_network() {
 }
 
 #[test]
+fn logout_of_a_server_revoked_pat_removes_it_but_unknown_outcomes_retain_it() {
+    let dir = support::canonical_tempdir();
+    let store = CredentialStore::new(dir.path().join("data/credentials"));
+    let revoked = Server::new(|_, _, _| {
+        let body = r#"{"error":"UNAUTHORIZED","credential":"ended"}"#;
+        (401, String::new(), body.into())
+    });
+    import(dir.path(), &revoked.origin);
+    let out = remote(dir.path(), "logout", &revoked.origin)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "credential was already revoked on the server; removed locally"
+    );
+    assert_eq!(revoked.seen.lock().unwrap().len(), 1);
+    assert!(store.load(&resource(&revoked.origin)).unwrap().is_none());
+    import(dir.path(), &revoked.origin);
+    let out = remote(dir.path(), "logout", &revoked.origin)
+        .args(["--json"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["removed"], true);
+    assert_eq!(json["already_revoked"], true);
+    assert!(store.load(&resource(&revoked.origin)).unwrap().is_none());
+    // Any other 401 proves nothing: a suspended owner (plain refusal) or a
+    // proxy's Basic-auth challenge. Like 403/429/5xx it keeps the credential.
+    let answers = [
+        (401, "", r#"{"error":"UNAUTHORIZED"}"#),
+        (
+            401,
+            "www-authenticate: Basic realm=\"proxy\"\r\n",
+            "<html>401</html>",
+        ),
+        (401, "", ""),
+        (401, "", r#"{"error":"FORBIDDEN","credential":"ended"}"#),
+        (403, "", r#"{"error":"FORBIDDEN"}"#),
+        (429, "", r#"{"error":"RATE_LIMITED"}"#),
+        (500, "", ""),
+        (503, "", ""),
+    ];
+    for (status, headers, body) in answers {
+        let server = Server::new(move |_, _, _| (status, headers.into(), body.into()));
+        import(dir.path(), &server.origin);
+        let out = remote(dir.path(), "logout", &server.origin)
+            .assert()
+            .failure()
+            .get_output()
+            .clone();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("remote revocation is unknown (HTTP {status})")),
+            "{stderr}"
+        );
+        assert!(stderr.contains("kb logout --local"), "{stderr}");
+        assert!(store.load(&resource(&server.origin)).unwrap().is_some());
+    }
+}
+
+#[test]
 fn canonical_state_binding_debug_redaction_and_corrupt_state_fail_closed() {
     let dir = support::canonical_tempdir();
     let store = CredentialStore::new(dir.path().join("credentials"));

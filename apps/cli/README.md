@@ -175,8 +175,10 @@ checked natively; unavailable protection fails closed. All platforms reject syml
 No token, device code, or remote error body is printed or saved to config.
 
 Default logout calls the bearer-only, bodyless PAT self-revoke endpoint,
-then deletes matching local state. Failed revocation reports the unknown
-remote outcome and retains local state for retry. `kb logout --local` makes
+then deletes matching local state. When the server answers that the token has
+ended (unknown, revoked or expired), logout deletes it locally and exits 0. Any
+other 401 (a temporarily banned owner, a proxy) or other failure reports the
+unknown remote outcome and retains local state for retry or `--local`. `kb logout --local` makes
 no network request and warns that the remote token remains active. A
 concurrent re-login's replacement credential is retained.
 

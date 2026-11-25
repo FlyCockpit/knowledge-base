@@ -327,18 +327,61 @@ impl Remote {
         header.set_sensitive(true);
         Ok(header)
     }
-    pub async fn revoke(&self, token: &SecretToken) -> Result<()> {
+    /// Revokes the presented PAT. Only the endpoint's own "credential ended"
+    /// 401 (`{"error":"UNAUTHORIZED","credential":"ended"}`: unknown, revoked or
+    /// expired, never admitted again) proves it is dead. Any other outcome is
+    /// unknown, including a plain 401: a suspended owner (a ban that lifts) or
+    /// something in front of the server.
+    pub async fn revoke(&self, token: &SecretToken) -> Result<Revocation> {
+        const RETRY: &str = "retry logout, or run `kb logout --local` to remove it locally";
+        let unknown =
+            || anyhow::anyhow!("remote revocation is unknown; local credential retained; {RETRY}");
         let header = Self::bearer(token)?;
-        let response = self.post("/api/kb/token/revoke-self").header(AUTHORIZATION, header).send().await
-            .map_err(|_| anyhow::anyhow!("remote revocation is unknown; local credential retained; retry logout or use `--local`"))?;
-        if response.status() != StatusCode::NO_CONTENT {
-            bail!(
-                "remote revocation is unknown (HTTP {}); local credential retained",
-                response.status().as_u16()
-            );
+        let mut response = self
+            .post("/api/kb/token/revoke-self")
+            .header(AUTHORIZATION, header)
+            .send()
+            .await
+            .map_err(|_| unknown())?;
+        let status = response.status();
+        if status == StatusCode::NO_CONTENT {
+            return Ok(Revocation::Revoked);
         }
-        Ok(())
+        if status == StatusCode::UNAUTHORIZED {
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| unknown())? {
+                if body.len() + chunk.len() > 1024 {
+                    body.clear();
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            if is_credential_ended(&body) {
+                return Ok(Revocation::AlreadyRevoked);
+            }
+        }
+        bail!(
+            "remote revocation is unknown (HTTP {}); local credential retained; {RETRY}",
+            status.as_u16()
+        )
     }
+}
+/// The revoke endpoint's refusal of a credential that ended (apps/server kb-token-routes).
+fn is_credential_ended(body: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Refusal {
+        error: String,
+        credential: Option<String>,
+    }
+    serde_json::from_slice::<Refusal>(body).is_ok_and(|refusal| {
+        refusal.error == "UNAUTHORIZED" && refusal.credential.as_deref() == Some("ended")
+    })
+}
+/// Remote outcome of a self-revocation that proved the token is dead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Revocation {
+    Revoked,
+    AlreadyRevoked,
 }
 async fn read_response(
     request: reqwest::RequestBuilder,

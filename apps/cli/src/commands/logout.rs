@@ -1,6 +1,6 @@
 //! `kb logout`: revoke only the presented PAT, then remove matching local state.
 use crate::{
-    auth::{Remote, ServerArgs},
+    auth::{Remote, Revocation, ServerArgs},
     config::Config,
     output,
     state::CredentialStore,
@@ -29,16 +29,19 @@ pub fn run(args: &Args) -> Result<()> {
                 resource: resource.as_string(),
                 removed: false,
                 remote_revoked: false,
+                already_revoked: false,
             });
         }
         return output::line("no local credential for this server");
     };
-    if args.local {
+    let revocation = if args.local {
         output::diagnostic("local-only logout: remote token remains active")?;
+        None
     } else {
         let remote = Remote::new(resource.clone(), config.proxy.as_deref())?;
-        crate::runtime()?.block_on(remote.revoke(&token))?;
-    }
+        Some(crate::runtime()?.block_on(remote.revoke(&token))?)
+    };
+    let already_revoked = revocation == Some(Revocation::AlreadyRevoked);
     let removed = store.remove_if_matches(&resource, &token)?;
     if !removed {
         output::diagnostic("credential changed during logout; current local credential retained")?;
@@ -48,7 +51,10 @@ pub fn run(args: &Args) -> Result<()> {
             resource: resource.as_string(),
             removed,
             remote_revoked: !args.local,
+            already_revoked,
         })
+    } else if already_revoked && removed {
+        output::line("credential was already revoked on the server; removed locally")
     } else {
         output::line("logged out")
     }
@@ -58,4 +64,5 @@ struct LogoutOutput {
     resource: String,
     removed: bool,
     remote_revoked: bool,
+    already_revoked: bool,
 }

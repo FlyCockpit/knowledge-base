@@ -98,6 +98,16 @@ describe("authenticatePersonalToken is identification, not admission", () => {
       ).toBeNull();
     }
   });
+
+  it("refuses an unreadable stored expiry plainly, never as an ended (null) token", async () => {
+    const refusal = await authenticatePersonalToken(
+      fakeQuery({ mcp_personal_token: [{ ...row, expiresAt: "not a date" }] }),
+      secret,
+      new Date(),
+    ).catch((error: unknown) => error);
+    expect(refusal).toMatchObject({ code: "UNAUTHORIZED" });
+    expect((refusal as { details?: unknown }).details).toBeUndefined();
+  });
 });
 
 const E1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -172,6 +182,41 @@ describe("grant credential verifier (full validity callback)", () => {
       fakeQuery({ mcp_grant: [liveGrant], '"user"': [{ ...user, banned: true }] }),
     );
     expect((await banned.inspect(principal)).banned).toBe(true);
+  });
+
+  it("reports ended only for a missing row, a tombstone or a readable past expiry", async () => {
+    const inspect = (patch: Record<string, unknown> | null, value = principal) =>
+      createGrantCredentialVerifier(
+        fakeQuery({
+          ...(patch ? { mcp_grant: [{ ...liveGrant, ...patch }] } : {}),
+          '"user"': [user],
+        }),
+      ).inspect(value);
+    for (const patch of [
+      null,
+      { revokedAt: new Date() },
+      { tokenRevokedAt: new Date() },
+      { tokenExpiresAt: new Date(Date.now() - 1) },
+      { parentApiKeyId: "k".repeat(24), parentBinds: true, parentLive: false },
+      { kind: "API_KEY", apiKeyLive: false },
+    ]) {
+      expect(await inspect(patch)).toMatchObject({ generationActive: false, ended: true });
+    }
+    // Refused now, but not final: a stale principal, an unreadable expiry, a
+    // binding or owner mismatch, a corrupt group set, or a live but banned owner.
+    for (const patch of [
+      { scopes: ["mcp:read"] },
+      { tokenExpiresAt: "not a date" },
+      { userId: "someone-else" },
+      { toolGroups: null },
+    ]) {
+      expect(await inspect(patch)).toMatchObject({ generationActive: false, ended: false });
+    }
+    expect((await inspect({})).ended).toBeUndefined();
+    // An independent child outlives its dead key.
+    expect(
+      await inspect({ parentApiKeyId: "k".repeat(24), parentBinds: false, parentLive: false }),
+    ).toMatchObject({ generationActive: true });
   });
 
   it("unites live elevation groups with the base groups, canonical and fail-closed", async () => {

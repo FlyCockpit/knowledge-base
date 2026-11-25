@@ -1,3 +1,4 @@
+import { KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
 import { type Context, Hono } from "hono";
 import { RateLimiterRes } from "rate-limiter-flexible";
 import { createAdmissionGate } from "./mcp/admission";
@@ -51,6 +52,13 @@ export function createKbTokenRoutes(options: {
       if (error instanceof RateLimiterRes)
         return c.json({ error: "RATE_LIMITED" }, 429, {
           "Retry-After": String(Math.ceil(error.msBeforeNext / 1000)),
+        });
+      // A credential that can never be admitted again is already as good as
+      // revoked: say so, so `kb logout` can drop it. A suspended one (owner
+      // banned for a while) stays a plain 401 and is kept by the client.
+      if (error instanceof KbAdmissionError && error.details?.reason === "CREDENTIAL_ENDED")
+        return c.json({ error: "UNAUTHORIZED", credential: "ended" }, 401, {
+          "cache-control": "no-store",
         });
       // This endpoint never advertises OAuth as a way to revoke a PAT.
       const response = admissionErrorResponse(error, new URL(c.req.url).origin);

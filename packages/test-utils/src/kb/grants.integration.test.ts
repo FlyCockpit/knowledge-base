@@ -16,7 +16,7 @@ import type { GitMutatingExecutor } from "@knowledge-base/api/lib/kb/git-write";
 import { createMemoryRatePort } from "@knowledge-base/api/lib/kb/limits";
 import type { LockQuery } from "@knowledge-base/api/lib/kb/lock";
 import { authorize, prismaAuthorityStore } from "@knowledge-base/api/lib/kb/permissions";
-import type { TokenPrincipal } from "@knowledge-base/api/lib/kb/principal";
+import { assertTokenAdmissible, type TokenPrincipal } from "@knowledge-base/api/lib/kb/principal";
 import {
   runJournalRecoverySweep,
   setKbRecoveryComplete,
@@ -97,7 +97,7 @@ const {
     verifyOAuth(): Promise<Record<string, unknown>>;
     now?: () => Date;
     identityDb?: typeof prisma;
-  }): (request: Request) => Promise<{ principal: TokenPrincipal }>;
+  }): (request: Request, mode?: { selfRevoke?: boolean }) => Promise<{ principal: TokenPrincipal }>;
 } = await import(
   pathToFileURL(resolve(import.meta.dirname, "../../../../apps/server/src/mcp/auth.ts")).href
 );
@@ -678,6 +678,12 @@ describe("grants: in-place edit (mcpGrants.updateMine)", () => {
     ).resolves.toEqual({ id: first.grantId, widened: false, narrowed: true });
     expect((await verifier.inspect(second)).generationActive).toBe(false);
     await expect(can(second, kb.id, "read")).rejects.toBeDefined();
+    // A stale principal is refused, but never as an ended credential: the same
+    // secret is admitted again (`kb logout` must not drop it as revoked).
+    expect(await verifier.inspect(second)).toMatchObject({ ended: false });
+    const stale = await assertTokenAdmissible(second, verifier).catch((error: unknown) => error);
+    expect(stale).toMatchObject({ code: "UNAUTHORIZED" });
+    expect((stale as { details?: unknown }).details).toBeUndefined();
     // The token itself stays valid at its narrowed scope.
     const third = await nextCall(minted.secret);
     expect(third.scopes).toEqual(["mcp:read"]);
@@ -1794,6 +1800,16 @@ describe("grants: ban suspension vs revocation", () => {
     });
     await expect(admit(bearer(kept.secret))).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(admit(bearer(killed.secret))).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    // Self-revocation (`kb logout`) tells an ended PAT from a suspended one:
+    // only the revoked or unknown one is reported as ended.
+    const selfRevoke = (secret: string) =>
+      admit(bearer(secret), { selfRevoke: true }).catch((error: unknown) => error);
+    const suspendedRefusal = await selfRevoke(kept.secret);
+    expect(suspendedRefusal).toMatchObject({ code: "UNAUTHORIZED" });
+    expect((suspendedRefusal as { details?: unknown }).details).toBeUndefined();
+    const ended = { code: "UNAUTHORIZED", details: { reason: "CREDENTIAL_ENDED" } };
+    expect(await selfRevoke(killed.secret)).toMatchObject(ended);
+    expect(await selfRevoke(`${kept.secret.slice(0, -4)}AAAA`)).toMatchObject(ended);
     // Suspended, not revoked.
     const keptRow = await prisma.mcpPersonalToken.findUniqueOrThrow({
       where: { id: kept.token.id },
