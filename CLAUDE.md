@@ -81,6 +81,16 @@ Dependencies: pin versions in the pnpm catalog (`pnpm-workspace.yaml`) whenever 
 
 Read `apps/cli/AGENTS.md`. Outside the pnpm/turbo graph — no `package.json`. CI is `.github/workflows/cli-ci.yml`. Images never include it (`.dockerignore`). Hand off only after the cargo gate from `apps/cli`: `cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --workspace --all-targets --locked`. Binary name is `kb`.
 
+#### deslop-please (Rust structure lint, `apps/cli`)
+
+Known debt is listed in `apps/cli/.deslop-please.allow`; run `deslop-please --allow .deslop-please.allow` from `apps/cli`.
+
+- Run `deslop-please` to check for sloppy code structure.
+- Errors flagged by `deslop-please` must be fixed from first principles, don't do mechanical moves to hide them.
+  - `module-cycle` & `tangle`: what is the intended layer of abstraction? Which module should be at which layer?
+  - `field-leak` & `shallow-module`: Why we have these fields/functions at all? What are the patterns of use? Can they be hidden behind a narrow interface? Don't fix each leak one at a time, fix them holistically.
+- Draw a diagram to help user understand the before and proposed after structure.
+
 ### PWA
 
 Treat it like a native app.
