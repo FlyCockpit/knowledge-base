@@ -19,7 +19,7 @@
 //!    `Store::reconcile_checkpoint` removes the file once no semantic
 //!    generation is resumable (supersession, revocation, lexical activation,
 //!    retention, activation).
-use crate::{StoreError, StorePaths, generations::ProfileSnapshot, paths};
+use crate::{StoreError, StorePaths, paths};
 use kb_client::types::KbId;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::{fs::OpenOptions, path::PathBuf};
@@ -185,17 +185,18 @@ fn schema_valid(conn: &Connection) -> rusqlite::Result<bool> {
 
 /// `(generation_id, stalls, baseline)` of a checkpoint.
 type CacheRecord = (String, i64, i64);
-/// Opens the checkpoint of `pin`'s profile: a file of another fingerprint or
+/// Opens the checkpoint of the profile `fingerprint` (`dimensions` wide): a file of another fingerprint or
 /// dimension count is useless, so it is removed whole and started afresh
 /// (never an unqualified DELETE). Returns the connection and its meta row
 /// `(generation_id, stalls, baseline)` when it belongs to this profile.
 fn open_profile(
     paths: &StorePaths,
     kb: &KbId,
-    pin: &ProfileSnapshot,
+    fingerprint: &str,
+    dimensions: usize,
 ) -> Result<(Connection, Option<CacheRecord>), StoreError> {
     paths.ensure_index_dir(kb)?;
-    let dims = i64::try_from(pin.dimensions).map_err(|_| StoreError::IndexUnavailable)?;
+    let dims = i64::try_from(dimensions).map_err(|_| StoreError::IndexUnavailable)?;
     for _ in 0..2 {
         let conn = open_file(paths, kb, true)?.ok_or(StoreError::IndexUnavailable)?;
         let meta: Option<(String, i64, String, i64, i64)> = conn
@@ -210,7 +211,7 @@ fn open_profile(
                 r.get(0)
             })?;
         match meta {
-            Some((f, d, g, stalls, baseline)) if f == pin.fingerprint && d == dims => {
+            Some((f, d, g, stalls, baseline)) if f == fingerprint && d == dims => {
                 return Ok((conn, Some((g, stalls, baseline))));
             }
             None if empty => return Ok((conn, None)),
@@ -228,7 +229,8 @@ fn unit_bytes(unit: &[f32]) -> Vec<u8> {
 }
 
 impl VectorCache {
-    /// Opens (creating) the KB's checkpoint for `generation` under `pin`. A
+    /// Opens (creating) the KB's checkpoint for `generation` under the profile
+    /// `fingerprint` (`dimensions` wide). A
     /// checkpoint of another fingerprint or dimension count is replaced; a new
     /// generation starts with no stalls. The attempt's baseline is the number
     /// of vectors it starts with.
@@ -236,10 +238,11 @@ impl VectorCache {
         paths: &StorePaths,
         kb: &KbId,
         generation: &KbId,
-        pin: &ProfileSnapshot,
+        fingerprint: &str,
+        dimensions: usize,
     ) -> Result<Self, StoreError> {
-        let (conn, meta) = open_profile(paths, kb, pin)?;
-        let dims = i64::try_from(pin.dimensions).map_err(|_| StoreError::IndexUnavailable)?;
+        let (conn, meta) = open_profile(paths, kb, fingerprint, dimensions)?;
+        let dims = i64::try_from(dimensions).map_err(|_| StoreError::IndexUnavailable)?;
         let tx = conn.unchecked_transaction()?;
         let count: i64 = tx.query_row("SELECT count(*) FROM cache_units", [], |r| r.get(0))?;
         if meta
@@ -250,14 +253,11 @@ impl VectorCache {
         } else {
             tx.execute(
                 "INSERT INTO cache_meta VALUES(1,?1,?2,?3,0,?4) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,dimensions=excluded.dimensions,generation_id=excluded.generation_id,stalls=0,baseline=excluded.baseline",
-                params![pin.fingerprint, dims, generation.as_str(), count],
+                params![fingerprint, dims, generation.as_str(), count],
             )?;
         }
         tx.commit()?;
-        Ok(Self {
-            conn,
-            dimensions: pin.dimensions,
-        })
+        Ok(Self { conn, dimensions })
     }
 
     pub(crate) fn get(&self, hash: &[u8; 32]) -> Result<Option<Vec<f32>>, StoreError> {
@@ -362,11 +362,12 @@ impl VectorCache {
         paths: &StorePaths,
         kb: &KbId,
         generation: &KbId,
-        pin: &ProfileSnapshot,
+        fingerprint: &str,
+        dimensions: usize,
         progressed: bool,
     ) -> Result<i64, StoreError> {
-        let (conn, meta) = open_profile(paths, kb, pin)?;
-        let dims = i64::try_from(pin.dimensions).map_err(|_| StoreError::IndexUnavailable)?;
+        let (conn, meta) = open_profile(paths, kb, fingerprint, dimensions)?;
+        let dims = i64::try_from(dimensions).map_err(|_| StoreError::IndexUnavailable)?;
         let tx = conn.unchecked_transaction()?;
         let count: i64 = tx.query_row("SELECT count(*) FROM cache_units", [], |r| r.get(0))?;
         let stalls = match meta {
@@ -381,7 +382,7 @@ impl VectorCache {
         };
         tx.execute(
             "INSERT INTO cache_meta VALUES(1,?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,dimensions=excluded.dimensions,generation_id=excluded.generation_id,stalls=excluded.stalls,baseline=excluded.baseline",
-            params![pin.fingerprint, dims, generation.as_str(), stalls, count],
+            params![fingerprint, dims, generation.as_str(), stalls, count],
         )?;
         tx.commit()?;
         Ok(stalls)
@@ -414,6 +415,7 @@ impl VectorCache {
 mod tests {
     use super::*;
     use crate::Store;
+    use crate::generations::ProfileSnapshot;
 
     #[test]
     fn checkpoint_damage_classification_preserves_storage_failures() {
@@ -481,7 +483,9 @@ mod tests {
             }
             std::fs::write(dir.join("vectors.sqlite-journal"), b"").expect("disposable journal");
             paths::take_directory_syncs();
-            let cache = VectorCache::open(paths, &kb, &generation, &pin).expect("fresh checkpoint");
+            let cache =
+                VectorCache::open(paths, &kb, &generation, &pin.fingerprint, pin.dimensions)
+                    .expect("fresh checkpoint");
             assert_eq!(cache.get(&[1; 32]).expect("empty"), None);
             assert!(paths::take_directory_syncs().contains(&dir));
             cache

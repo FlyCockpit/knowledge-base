@@ -4,7 +4,8 @@
 use kb_client::ErrorCode;
 use kb_local::{
     Store,
-    qwen::{ModelHost, ModelRuntime, Purpose, descriptor, options},
+    model_catalog::{Purpose, descriptor, options},
+    qwen::{ModelHost, ModelRuntime},
 };
 use std::{
     process::{Command, Stdio},
@@ -72,7 +73,7 @@ fn descriptors_tiers_memory_and_default_optional() {
     assert!(!s.model_state().expect("task 58 fixture").enabled);
     assert_eq!(
         s.model_state().expect("task 58 fixture").model_id,
-        kb_local::qwen::default_model()
+        kb_local::model_catalog::default_model()
     );
     assert_eq!(
         s.model_state().expect("task 58 fixture").context_tokens,
@@ -833,7 +834,7 @@ fn killed_probe_recovers_last_good_before_reentry() {
 
 #[test]
 fn available_memory_obeys_nested_cgroups_and_unknown_usage_fails_closed() {
-    use kb_local::qwen::linux_available_memory;
+    use kb_local::model_catalog::linux_available_memory;
     use std::collections::BTreeMap;
     let mut files = BTreeMap::from([
         (

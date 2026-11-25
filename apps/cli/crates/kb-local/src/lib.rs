@@ -157,6 +157,7 @@ pub mod manifest;
 pub mod markdown;
 pub mod metadata;
 pub mod mime;
+pub mod model_catalog;
 pub mod model_download;
 pub mod paths;
 pub mod plain_snippet;

@@ -125,7 +125,7 @@ pub struct Store {
     /// Explicitly frozen test clock (seconds) for cursor expiry.
     clock_for_tests: Cell<Option<u64>>,
     /// The native embedding runtime this handle pins built-in profiles to:
-    /// always [`crate::qwen::runtime_identity`] outside tests.
+    /// always [`crate::model_catalog::runtime_identity`] outside tests.
     runtime_identity: Cell<&'static str>,
     /// The launch's upgrade reconcile this handle runs when owed: the
     /// launch's own, or one a reopened handle shares; a reopen's own is
@@ -550,7 +550,7 @@ impl Store {
             response_limit: Cell::new(crate::limits::RESPONSE_MAX_BYTES),
             pending_index_recovery: Cell::new(true),
             clock_for_tests: Cell::new(None),
-            runtime_identity: Cell::new(crate::qwen::runtime_identity()),
+            runtime_identity: Cell::new(crate::model_catalog::runtime_identity()),
             runtime_reconcile: std::cell::RefCell::new(RuntimeReconcile::new(launched)),
             model_host: std::cell::RefCell::new(None),
             upload_timer,
@@ -744,7 +744,7 @@ impl Store {
         let Some(host) = host.as_ref() else {
             return Ok(false);
         };
-        Ok(host.has_model(&crate::qwen::descriptor(model_id)?))
+        Ok(host.has_model(&crate::model_catalog::descriptor(model_id)?))
     }
 
     /// Forget this store's query-embedding breakers (tests only).

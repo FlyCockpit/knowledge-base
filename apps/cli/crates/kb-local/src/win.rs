@@ -1523,7 +1523,8 @@ mod tests {
             flush_directory_handle(&readonly).is_err(),
             "a failed native barrier must propagate"
         );
-        let mut model = crate::qwen::descriptor("embeddinggemma-2-q8_0").expect("descriptor");
+        let mut model =
+            crate::model_catalog::descriptor("embeddinggemma-2-q8_0").expect("descriptor");
         model.size_bytes = 3;
         model.sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into();
         // The per-user model cache publishes durably beside the store.
@@ -1561,7 +1562,8 @@ mod tests {
             .output()
             .expect("fixture ACL");
         assert!(output.status.success(), "{output:?}");
-        let mut model = crate::qwen::descriptor("embeddinggemma-2-q8_0").expect("descriptor");
+        let mut model =
+            crate::model_catalog::descriptor("embeddinggemma-2-q8_0").expect("descriptor");
         model.size_bytes = 3;
         model.sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into();
         let cache =

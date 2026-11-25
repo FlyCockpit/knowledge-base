@@ -20,8 +20,8 @@
 use crate::{
     StoreError,
     embedder::unavailable,
+    model_catalog::{ModelDescriptor, Purpose, descriptor},
     model_download::ModelCache,
-    qwen::{Embedding, ModelDescriptor, ModelOutput, Purpose, descriptor},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -33,6 +33,20 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Embedding {
+    /// Raw (unnormalized) model output; normalized once by the index spec.
+    pub vector: Vec<f32>,
+    pub tokens: Vec<i32>,
+    pub pid: u32,
+    pub peak_bytes: Option<u64>,
+}
+pub enum ModelOutput {
+    Embedding(Embedding),
+    TokenCount(usize),
+}
 
 /// Bump on any wire change; part of the worker identity.
 pub const PROTOCOL: u32 = 1;
@@ -154,7 +168,7 @@ impl ModelHost {
     fn identity(&self) -> String {
         let text = format!(
             "{PROTOCOL}\0{VERSION}\0{}\0{}\0{}\0{}",
-            crate::qwen::runtime_identity(),
+            crate::model_catalog::runtime_identity(),
             self.canonical_executable.display(),
             self.cache.dir().display(),
             self.cache.private_dir().display()
@@ -1325,7 +1339,7 @@ async fn serve_connection<S: AsyncRead + AsyncWrite>(
         let limit = if job.measure {
             crate::git_read::DOCUMENT_MAX_BYTES
         } else {
-            crate::qwen::MAX_TEXT_BYTES
+            crate::model_catalog::MAX_TEXT_BYTES
         };
         if job.text.len() > limit
             || (job.probe && job.measure)

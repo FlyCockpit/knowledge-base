@@ -89,7 +89,7 @@ async fn d9_builtin_search_falls_back_to_lexical_when_the_worker_cannot_start() 
         .embed(
             &f.store,
             "hello",
-            kb_local::qwen::Purpose::Query,
+            kb_local::model_catalog::Purpose::Query,
             Duration::from_secs(5),
         )
         .expect("warm")
@@ -265,7 +265,7 @@ async fn host_builtin_query_and_explicit_identity_lexical_mode() {
                 .embed(
                     &store,
                     "park",
-                    kb_local::qwen::Purpose::Document,
+                    kb_local::model_catalog::Purpose::Document,
                     Duration::from_secs(20),
                 )
                 .expect("valid fixture");

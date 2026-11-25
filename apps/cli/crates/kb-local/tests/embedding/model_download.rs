@@ -1,9 +1,9 @@
 //! Task 58 executable contract fixture: the per-user model cache.
 use kb_local::{
+    model_catalog::{ModelDescriptor, descriptor},
     model_download::{
         CachedFile, ModelCache, Verification, validate_addresses, validate_hop, verify_artifact,
     },
-    qwen::{ModelDescriptor, descriptor},
 };
 use std::{io::Cursor, net::IpAddr};
 #[path = "../support"]

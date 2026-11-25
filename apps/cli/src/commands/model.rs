@@ -7,8 +7,8 @@ use crate::{config::Config, local::RootArg, output};
 use anyhow::Result;
 use kb_local::{
     Store,
+    model_catalog::{ModelState, available_memory, descriptor, options},
     model_download::{CachedFile, Verification},
-    qwen::{ModelState, available_memory, descriptor, options},
 };
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -28,7 +28,7 @@ pub struct Args {
 fn model_help() -> String {
     format!(
         "Built-in model ID: {}",
-        kb_local::qwen::model_ids().join(", ")
+        kb_local::model_catalog::model_ids().join(", ")
     )
 }
 
@@ -43,16 +43,16 @@ enum Sub {
     /// Download a pinned, checksum-verified model into the shared cache
     /// without enabling it.
     Download {
-        #[arg(default_value_t = kb_local::qwen::default_model(), help = model_help())]
+        #[arg(default_value_t = kb_local::model_catalog::default_model(), help = model_help())]
         model: String,
     },
     /// Download (if needed) and enable one built-in for the store; attach
     /// knowledge bases with `kb providers attach --provider builtin`.
     Enable {
-        #[arg(default_value_t = kb_local::qwen::default_model(), help = model_help())]
+        #[arg(default_value_t = kb_local::model_catalog::default_model(), help = model_help())]
         model: String,
         /// Context tokens per chunk: 1024, 2048, 4096 or 8192.
-        #[arg(long, default_value_t = kb_local::qwen::default_context())]
+        #[arg(long, default_value_t = kb_local::model_catalog::default_context())]
         context: u32,
         /// Enable a configuration whose memory estimate is above 70% of
         /// available memory.
@@ -82,7 +82,7 @@ enum Sub {
 #[serde(rename_all = "camelCase")]
 struct ListRow {
     #[serde(flatten)]
-    option: kb_local::qwen::ModelOption,
+    option: kb_local::model_catalog::ModelOption,
     downloaded: bool,
 }
 
@@ -205,7 +205,7 @@ fn preflight_enable(
     let row = options(budget)?
         .into_iter()
         .find(|row| row.model_id == model && row.context_tokens == context)
-        .ok_or_else(|| kb_local::qwen::unsupported(model, Some(context)))?;
+        .ok_or_else(|| kb_local::model_catalog::unsupported(model, Some(context)))?;
     if !matches!(row.level, "ok" | "warn") || (row.level == "warn" && !acknowledge_memory_warning) {
         return Err(kb_local::StoreError::InvalidArgument(format!(
             "memory budget {}: estimated {} MiB for `{}` at {} tokens{}",
@@ -295,7 +295,7 @@ pub fn run(a: &Args) -> Result<()> {
                 None => None,
             };
             let mut models = Vec::new();
-            for id in kb_local::qwen::model_ids() {
+            for id in kb_local::model_catalog::model_ids() {
                 let m = descriptor(&id)?;
                 // The file actually inspected (a private copy when present).
                 let (cached, file) = cache.cached_file(&m)?;
@@ -461,7 +461,7 @@ pub fn run(a: &Args) -> Result<()> {
         Sub::Verify { model } => {
             let ids = match model {
                 Some(m) => vec![descriptor(m)?.model_id],
-                None => kb_local::qwen::model_ids(),
+                None => kb_local::model_catalog::model_ids(),
             };
             let mut rows = Vec::new();
             for id in ids {
@@ -557,8 +557,8 @@ mod tests {
             std::time::Duration::from_secs(60),
         )
         .unwrap();
-        let model = kb_local::qwen::default_model();
-        let context = kb_local::qwen::default_context();
+        let model = kb_local::model_catalog::default_model();
+        let context = kb_local::model_catalog::default_context();
         let bytes = descriptor(&model).unwrap().estimate_bytes(context).unwrap();
         let warning_budget = bytes * 5 / 4;
         for (budget, ack, reason) in [
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn enable_preflight_preserves_model_and_context_errors() {
-        let model = kb_local::qwen::default_model();
+        let model = kb_local::model_catalog::default_model();
         let invalid_model = preflight_enable("unsupported", 1024, true, None).unwrap_err();
         assert_eq!(
             invalid_model.to_string(),

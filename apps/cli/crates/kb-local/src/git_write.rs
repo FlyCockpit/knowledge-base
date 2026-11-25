@@ -934,19 +934,21 @@ fn sync_ref_parents(repo: &GitRepo, mut dir: PathBuf) -> Result<(), StoreError> 
     Ok(())
 }
 
-/// The pending COMMITTING CAS is the ownership record for the exact loose
-/// ref lock. Never sweep wildcard locks or touch the persistent store locks.
+/// The pending COMMITTING CAS (its `ref_name` and `intended_new`) is the
+/// ownership record for the exact loose ref lock. Never sweep wildcard locks
+/// or touch the persistent store locks.
 pub(crate) fn recover_ref_lock(
     paths: &StorePaths,
     repo: &GitRepo,
-    row: &crate::journal::Pending,
+    ref_name: &str,
+    intended_new: Option<&Sha>,
     guard: &WriteGuard,
 ) -> Result<(), StoreError> {
     use std::io::Read;
     if !guard.matches(paths)? {
         return Err(StoreError::LockNotHeld);
     }
-    let mut name = ref_path(repo, &row.ref_name)?.into_os_string();
+    let mut name = ref_path(repo, ref_name)?.into_os_string();
     name.push(".lock");
     let path = PathBuf::from(name);
     paths.check_no_follow(&path)?;
@@ -964,7 +966,7 @@ pub(crate) fn recover_ref_lock(
         .take(42)
         .read_to_end(&mut bytes)
         .map_err(StoreError::Io)?;
-    let expected = row.intended_new.as_ref().map(|s| format!("{s}\n"));
+    let expected = intended_new.map(|s| format!("{s}\n"));
     if !bytes.is_empty() && expected.as_deref().map(str::as_bytes) != Some(bytes.as_slice()) {
         return Err(StoreError::RecoveryRequired(
             "unrecognized ref lock contents".into(),

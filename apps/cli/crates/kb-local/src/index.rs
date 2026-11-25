@@ -675,8 +675,13 @@ impl Store {
         let unit = |raw: Vec<f64>| index_format::unit_vector(&raw, dims);
         let checkpoint = match &s.profile {
             Some(pin) if !lexical => {
-                let cache =
-                    crate::vector_cache::VectorCache::open(&self.paths, &s.kb_id, &s.id, pin)?;
+                let cache = crate::vector_cache::VectorCache::open(
+                    &self.paths,
+                    &s.kb_id,
+                    &s.id,
+                    &pin.fingerprint,
+                    pin.dimensions,
+                )?;
                 // Invariant 2: only this generation's chunks stay checkpointed.
                 let mut hashes = Vec::with_capacity(usize::try_from(chunks).unwrap_or(0));
                 for id in 1..=chunks {
@@ -1258,7 +1263,7 @@ fn fit_context(
             if count == 0 {
                 return Err(StoreError::IndexUnavailable);
             }
-            if count <= limit && text.len() <= crate::qwen::MAX_TEXT_BYTES {
+            if count <= limit && text.len() <= crate::model_catalog::MAX_TEXT_BYTES {
                 done.push((range, text));
                 continue;
             }
@@ -1268,7 +1273,7 @@ fn fit_context(
             let count = count.max(
                 text.len()
                     .saturating_mul(limit)
-                    .div_ceil(crate::qwen::MAX_TEXT_BYTES),
+                    .div_ceil(crate::model_catalog::MAX_TEXT_BYTES),
             );
             let first = tokens.partition_point(|r| r.start < range.start);
             let last = tokens.partition_point(|r| r.end <= range.end);
@@ -1461,7 +1466,7 @@ mod context_tests {
         .expect("compressed tokens fit");
         assert!(fitted.chunks.len() > 1);
         for chunk in fitted.chunks {
-            assert!(chunk.text.len() <= crate::qwen::MAX_TEXT_BYTES);
+            assert!(chunk.text.len() <= crate::model_catalog::MAX_TEXT_BYTES);
             assert!(chunk.text.len().div_ceil(64) + 4 <= 8192);
             assert_eq!(
                 &body[chunk.span.start_byte as usize..chunk.span.end_byte as usize],

@@ -79,7 +79,7 @@ pub struct ProfileSnapshot {
     pub fingerprint: String,
     pub model: String,
     pub name: String,
-    pub builtin: Option<crate::qwen::ModelState>,
+    pub builtin: Option<crate::model_catalog::ModelState>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenerationSnapshot {
@@ -101,7 +101,7 @@ impl GenerationSnapshot {
         self.profile.is_none()
     }
     /// The pinned built-in model state of a hybrid built-in generation.
-    pub fn builtin(&self) -> Option<&crate::qwen::ModelState> {
+    pub fn builtin(&self) -> Option<&crate::model_catalog::ModelState> {
         self.profile.as_ref().and_then(|p| p.builtin.as_ref())
     }
     pub(crate) fn hybrid_profile(&self) -> Result<&ProfileSnapshot, StoreError> {
@@ -396,10 +396,10 @@ impl Store {
     /// names, at `revision`.
     pub(crate) fn builtin_pin(
         id: &KbId,
-        b: crate::qwen::ModelState,
+        b: crate::model_catalog::ModelState,
         revision: i64,
     ) -> Result<ProfileSnapshot, StoreError> {
-        let d = crate::qwen::descriptor(&b.model_id)?;
+        let d = crate::model_catalog::descriptor(&b.model_id)?;
         // The native runtime is part of the vector space (server
         // `builtinModelIdentity`): a CLI that runs another one re-embeds.
         let fingerprint = kb_client::host::snapshot::content_hash(
@@ -701,7 +701,7 @@ impl Store {
         if !b.enabled || b.reloading {
             return Ok(None);
         }
-        let d = crate::qwen::descriptor(&b.model_id)?;
+        let d = crate::model_catalog::descriptor(&b.model_id)?;
         let present = self.builtin_present(&b.model_id)?;
         Ok(Some(ProviderSummary {
             provider_id: ProviderRef::builtin(),

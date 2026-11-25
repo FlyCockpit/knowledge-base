@@ -647,7 +647,7 @@ impl Store {
             // is live, degrades to the lexical arm. Independent admission,
             // lock and storage failures keep their kind; the exhausted search
             // share has already been classified above without blaming the target.
-            Err(e) if crate::qwen::Purpose::Query.degrades(&e) && ctl.check().is_ok() => {
+            Err(e) if crate::model_catalog::Purpose::Query.degrades(&e) && ctl.check().is_ok() => {
                 // Only a timeout opens the target's breaker: a failure is
                 // fast, and a too-long query or an invalid vector says
                 // nothing about the next query.
@@ -1358,7 +1358,9 @@ impl Store {
 }
 fn context(pin: &Pin) -> Context<'_> {
     Context {
-        snapshot: &pin.lease.snapshot,
+        kb_id: &pin.lease.snapshot.kb_id,
+        generation_id: &pin.lease.snapshot.id,
+        commit_sha: &pin.lease.snapshot.commit_sha,
         name: &pin.name,
         freshness: pin.status.freshness,
         mode: if pin.lexical() {

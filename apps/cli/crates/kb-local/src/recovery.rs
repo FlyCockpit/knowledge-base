@@ -378,13 +378,25 @@ impl Store {
                         // Only the exact pending CAS can own this Git temporary
                         // ref lock. All descendants are drained under `guard`.
                         if actual.is_some() && actual == row.intended_new {
-                            git_write::recover_ref_lock(&self.paths, &repo, &row, guard)?;
+                            git_write::recover_ref_lock(
+                                &self.paths,
+                                &repo,
+                                &row.ref_name,
+                                row.intended_new.as_ref(),
+                                guard,
+                            )?;
                             git_write::sync_ref(&repo, &row.ref_name)?;
                             let delta = Delta::parse(row.delta.as_deref().unwrap_or(""))?;
                             self.finalize_intent(&row.op_id, &row.kb_id, &delta, &mut |_| Ok(()))?;
                             report.finalized += 1;
                         } else if actual == row.expected_old {
-                            git_write::recover_ref_lock(&self.paths, &repo, &row, guard)?;
+                            git_write::recover_ref_lock(
+                                &self.paths,
+                                &repo,
+                                &row.ref_name,
+                                row.intended_new.as_ref(),
+                                guard,
+                            )?;
                             self.abort_intent(&row.op_id, &row.kb_id, create, ErrorCode::Conflict)?;
                             report.aborted += 1;
                         } else {

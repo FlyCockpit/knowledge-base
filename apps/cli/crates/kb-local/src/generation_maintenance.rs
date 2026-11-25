@@ -86,7 +86,7 @@ impl Store {
                     };
                     let target = match runtime {
                         PinRuntime::Current => live.clone(),
-                        PinRuntime::Kept => crate::qwen::ModelState {
+                        PinRuntime::Kept => crate::model_catalog::ModelState {
                             runtime_identity: b.runtime_identity.clone(),
                             ..live.clone()
                         },
@@ -116,7 +116,7 @@ impl Store {
     }
     /// Upgrade reconcile (store guard held): a KB pinned to the built-in
     /// under another native runtime (a CLI upgrade changed
-    /// [`crate::qwen::runtime_identity`]) is re-pinned to the current one and
+    /// [`crate::model_catalog::runtime_identity`]) is re-pinned to the current one and
     /// its generation re-embedded, exactly as for a model change. Until the
     /// new generation activates, its old one serves keyword search only
     /// (`EMBEDDING_MODEL_CHANGED`): old document vectors never meet query

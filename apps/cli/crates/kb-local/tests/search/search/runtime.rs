@@ -12,7 +12,7 @@ use super::*;
 #[tokio::test]
 async fn runtime_upgrade_reembeds_builtin_kbs_and_serves_keywords_meanwhile() {
     let old_runtime: &'static str = Box::leak(format!("sha256:{}", "0".repeat(64)).into());
-    let current = kb_local::qwen::runtime_identity();
+    let current = kb_local::model_catalog::runtime_identity();
     assert_ne!(old_runtime, current);
     let f = Fixture::new(2);
     publish(
@@ -197,7 +197,7 @@ async fn runtime_upgrade_reembeds_builtin_kbs_and_serves_keywords_meanwhile() {
 #[tokio::test]
 async fn abandoned_probe_recovery_keeps_each_pins_runtime() {
     let foreign: &'static str = Box::leak(format!("sha256:{}", "f".repeat(64)).into());
-    assert_ne!(foreign, kb_local::qwen::runtime_identity());
+    assert_ne!(foreign, kb_local::model_catalog::runtime_identity());
     let f = Fixture::new(2);
     publish(
         &f,

@@ -254,7 +254,10 @@ fn global_slots_and_superseded_kb_attempts_remain_exclusive() {
 
 #[tokio::test]
 async fn builtin_disable_changed_model_and_pinned_runtime_dispatch() {
-    use kb_local::qwen::{ModelConfiguration, ModelRuntime, Purpose};
+    use kb_local::{
+        model_catalog::Purpose,
+        qwen::{ModelConfiguration, ModelRuntime},
+    };
     let f = Fixture::new(2);
     let runtime = ModelRuntime::new(
         &f.store,
