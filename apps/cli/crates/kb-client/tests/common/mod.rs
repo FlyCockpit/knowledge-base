@@ -76,6 +76,12 @@ pub fn err(code: kb_client::ErrorCode, details: Value) -> Value {
     }})
 }
 
+/// A handler answer that makes the server reply with a bare HTTP 429 (the
+/// limiter's plain JSON body), with `Retry-After` when `retry_after` is given.
+pub fn http_429(retry_after: Option<u64>) -> Value {
+    json!({"__http429": retry_after})
+}
+
 async fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
@@ -160,6 +166,22 @@ pub async fn tool_server(
                         all.len() - 1
                     };
                     let structured = handler(&tool, &arguments, index);
+                    if let Some(retry_after) = structured.get("__http429") {
+                        let body =
+                            r#"{"error":"Too many attempts. Please wait a moment and try again."}"#;
+                        let header = retry_after
+                            .as_u64()
+                            .map(|s| format!("retry-after: {s}\r\n"))
+                            .unwrap_or_default();
+                        let reply = format!(
+                            "HTTP/1.1 429 Too Many Requests\r\ncontent-type: application/json\r\n{header}content-length: {}\r\n\r\n{body}",
+                            body.len()
+                        );
+                        if stream.write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     let is_error = structured.get("error").is_some();
                     let result = json!({
                         "content": [{"type": "text", "text": structured.to_string()}],

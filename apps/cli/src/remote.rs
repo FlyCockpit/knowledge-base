@@ -364,7 +364,7 @@ fn failure_of(error: &ClientError) -> Failure {
         | ClientError::CredentialMismatch => {
             Failure::new(ServerStatus::LoggedOut, Some(ErrorCode::Forbidden))
         }
-        ClientError::HttpStatus(429) => {
+        ClientError::HttpRateLimited { .. } => {
             Failure::new(ServerStatus::RateLimited, Some(ErrorCode::RateLimited))
         }
         // Down, unreachable, or a reply that is not the pinned shape.
@@ -444,6 +444,7 @@ fn left_out_reason(error: &anyhow::Error) -> &'static str {
         Some(
             ClientError::Transport
             | ClientError::HttpStatus(_)
+            | ClientError::HttpRateLimited { .. }
             | ClientError::Redirected
             | ClientError::Kb(kb_client::KbError::DeadlineExceeded),
         ) => "it could not be reached",
@@ -1072,7 +1073,7 @@ fn error_code(error: &ClientError) -> ErrorCode {
         ClientError::Transport | ClientError::HttpStatus(502..=504) => {
             ErrorCode::StorageUnavailable
         }
-        ClientError::HttpStatus(429) => ErrorCode::RateLimited,
+        ClientError::HttpRateLimited { .. } => ErrorCode::RateLimited,
         ClientError::RequestTooLarge | ClientError::ResponseTooLarge => ErrorCode::QuotaExceeded,
         _ => ErrorCode::Internal,
     }
@@ -1180,7 +1181,9 @@ mod tests {
                 Some(ErrorCode::Forbidden),
             ),
             (
-                ClientError::HttpStatus(429),
+                ClientError::HttpRateLimited {
+                    retry_after_seconds: Some(7),
+                },
                 ServerStatus::RateLimited,
                 Some(ErrorCode::RateLimited),
             ),

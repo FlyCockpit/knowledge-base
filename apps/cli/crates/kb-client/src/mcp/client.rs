@@ -22,7 +22,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
 use reqwest::{StatusCode, Url};
 use serde_json::{Map, Value};
 
@@ -352,6 +352,17 @@ impl McpClient {
         match status {
             StatusCode::UNAUTHORIZED => return Err(ClientError::Unauthorized),
             StatusCode::FORBIDDEN => return Err(ClientError::Forbidden),
+            // A server limiter's refusal; only its `Retry-After` (whole
+            // seconds) is read, never the body.
+            StatusCode::TOO_MANY_REQUESTS => {
+                return Err(ClientError::HttpRateLimited {
+                    retry_after_seconds: response
+                        .headers()
+                        .get(RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.trim().parse::<u64>().ok()),
+                });
+            }
             s if s.is_redirection() => return Err(ClientError::Redirected),
             _ => {}
         }
@@ -393,15 +404,11 @@ impl McpClient {
     }
 }
 
-/// Wait before a retry: the server's `retryAfterSeconds` when given, else a
-/// short fixed pause. The caller clamps it to the remaining deadline.
+/// Wait before a retry: the server's rate-limit wait (`retryAfterSeconds` or
+/// `Retry-After`) when given, else a short fixed pause. The caller clamps it to
+/// the remaining deadline.
 fn retry_after(error: &ClientError) -> Duration {
-    if let ClientError::Kb(KbError::Tool(tool)) = error
-        && let crate::error::ErrorDetails::RateLimited {
-            retry_after_seconds,
-        } = tool.details()
-    {
-        return Duration::from_secs(*retry_after_seconds);
-    }
-    Duration::from_millis(100)
+    error
+        .rate_limit_wait()
+        .unwrap_or(Duration::from_millis(100))
 }

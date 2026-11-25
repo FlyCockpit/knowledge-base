@@ -29,8 +29,15 @@ use crate::{
 const DEFAULT_WAIT_SECS: u64 = 35 * 60;
 /// Bound for one start/status/cancel exchange (with its retries).
 const CALL_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-/// Bound for downloading a ready artifact (256 MiB of bounded frames).
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// Bound for downloading a ready artifact: a base plus one second per frame
+/// (192 KiB), so a 256 MiB artifact may wait out the server's per-minute
+/// request budget (about 120 frames a minute) for its whole length.
+const DOWNLOAD_BASE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const DOWNLOAD_FRAME_BYTES: u64 = 196_608;
+
+fn download_timeout(size: u64) -> Duration {
+    DOWNLOAD_BASE_TIMEOUT + Duration::from_secs(size.div_ceil(DOWNLOAD_FRAME_BYTES))
+}
 
 /// Export a remote knowledge base as a ZIP.
 ///
@@ -148,6 +155,27 @@ fn coded(error: ExportError) -> anyhow::Error {
     }
 }
 
+/// The server selection of this run as flags for a command to copy: the same
+/// `--server` (shell-quoted) and loopback opt-in, or nothing for the default.
+fn server_flags(server: &ServerArgs) -> String {
+    let mut flags = String::new();
+    if let Some(value) = &server.server {
+        let safe = !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.:/@%+=".contains(c));
+        if safe {
+            flags.push_str(&format!(" --server {value}"));
+        } else {
+            flags.push_str(&format!(" --server '{}'", value.replace('\'', "'\\''")));
+        }
+    }
+    if server.allow_loopback_http {
+        flags.push_str(" --allow-loopback-http");
+    }
+    flags
+}
+
 pub fn run(args: &Args) -> Result<()> {
     let config = Config::load()?;
     let resource = args.server.resolve(&config)?;
@@ -251,10 +279,30 @@ pub fn run(args: &Args) -> Result<()> {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| std::path::Path::new("."));
         let mut temp = NamedTempFile::new_in(parent).context("creating private export file")?;
-        let ctl = CallControl::timeout(DOWNLOAD_TIMEOUT);
-        let verified = download_export(&client, &args.kb, &ready, temp.as_file_mut(), &ctl)
-            .await
-            .map_err(coded)?;
+        let ctl = CallControl::timeout(download_timeout(ready.size.unwrap_or(0)));
+        let verified = download_export(&client, &args.kb, &ready, temp.as_file_mut(), &ctl, |wait| {
+            let _ = output::diagnostic(format!(
+                "the server's rate limit paused the download; waiting {}s, then continuing from the last saved frame",
+                wait.as_secs()
+            ));
+        })
+        .await
+        .map_err(|error| {
+            // A server that kept refusing or could not be reached: the job is
+            // still ready there, so say how to fetch it again.
+            let again = matches!(&error, ExportError::Client(client) if client.retryable());
+            let error = coded(error);
+            if again {
+                error.context(format!(
+                    "the export stays ready on the server until it expires; download it again with `kb export{} --kb {} --transfer {} --output <FILE>`",
+                    server_flags(&args.server),
+                    args.kb.as_str(),
+                    id.as_str()
+                ))
+            } else {
+                error
+            }
+        })?;
         temp.as_file()
             .sync_all()
             .context("syncing verified export")?;
@@ -278,4 +326,27 @@ pub fn run(args: &Args) -> Result<()> {
             output::line(format!("saved export to `{}`", output_path.display()))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flags(server: Option<&str>, allow_loopback_http: bool) -> String {
+        server_flags(&ServerArgs {
+            server: server.map(str::to_owned),
+            allow_loopback_http,
+        })
+    }
+
+    #[test]
+    fn the_resume_hint_keeps_the_selected_server() {
+        assert_eq!(flags(None, false), "");
+        assert_eq!(flags(Some("staging"), false), " --server staging");
+        assert_eq!(
+            flags(Some("http://127.0.0.1:3000"), true),
+            " --server http://127.0.0.1:3000 --allow-loopback-http"
+        );
+        assert_eq!(flags(Some("it's here"), false), r" --server 'it'\''s here'");
+    }
 }

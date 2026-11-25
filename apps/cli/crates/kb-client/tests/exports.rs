@@ -8,7 +8,7 @@ use kb_client::host::export::{
 };
 use kb_client::host::snapshot::content_hash;
 use kb_client::types::{ExportJob, ExportPrepareInput, ExportState, KbId};
-use kb_client::{CancellationToken, ClientError, ErrorCode, KbError};
+use kb_client::{CallControl, CancellationToken, ClientError, ErrorCode, KbError};
 use serde_json::{Value, json};
 use std::io::{self, Write};
 use std::time::Duration;
@@ -70,6 +70,7 @@ async fn exact_bounded_bytes_verify_before_explicit_completion_and_failed_ack_is
         &ready_job(&bytes),
         &mut saved,
         &common::ctl(),
+        |_| {},
     )
     .await
     .expect("test fixture");
@@ -104,6 +105,7 @@ async fn exact_bounded_bytes_verify_before_explicit_completion_and_failed_ack_is
         &ready_job(b"verified"),
         &mut saved,
         &common::ctl(),
+        |_| {},
     )
     .await
     .expect("test fixture");
@@ -140,6 +142,7 @@ async fn corrupt_digest_or_frame_identity_offset_size_and_eof_never_acknowledge(
             &ready_job(b"verified"),
             &mut Vec::new(),
             &common::ctl(),
+            |_| {},
         )
         .await;
         assert!(
@@ -180,7 +183,15 @@ async fn write_failure_or_cancellation_cannot_publish_a_verified_receipt_or_ack(
     let server = common::tool_server(move |tool, args, _| answer(tool, args, &served)).await;
     let client = server.client();
     assert!(matches!(
-        download_export(&client, &kb(), &job, &mut FailedWrite, &common::ctl()).await,
+        download_export(
+            &client,
+            &kb(),
+            &job,
+            &mut FailedWrite,
+            &common::ctl(),
+            |_| {}
+        )
+        .await,
         Err(ExportError::Io(_))
     ));
     let ctl = common::ctl();
@@ -190,7 +201,8 @@ async fn write_failure_or_cancellation_cannot_publish_a_verified_receipt_or_ack(
             &kb(),
             &job,
             &mut CancelWrite(ctl.cancel.clone()),
-            &ctl
+            &ctl,
+            |_| {},
         )
         .await,
         Err(ExportError::Client(ClientError::Kb(KbError::Cancelled)))
@@ -233,7 +245,7 @@ async fn start_returns_at_once_and_wait_polls_status_until_ready_then_downloads(
         json!({"kbId": KB, "transferId": ID})
     );
     let mut saved = Vec::new();
-    download_export(&client, &kb(), &ready, &mut saved, &common::ctl())
+    download_export(&client, &kb(), &ready, &mut saved, &common::ctl(), |_| {})
         .await
         .expect("test fixture");
     assert_eq!(saved, bytes);
@@ -268,7 +280,15 @@ async fn failed_or_cancelled_jobs_are_not_ready_and_never_download() {
             );
         }
         assert!(matches!(
-            download_export(&client, &kb(), &ended, &mut Vec::new(), &common::ctl()).await,
+            download_export(
+                &client,
+                &kb(),
+                &ended,
+                &mut Vec::new(),
+                &common::ctl(),
+                |_| {}
+            )
+            .await,
             Err(ExportError::NotReady(_))
         ));
         let cancelled = cancel_export(&client, &kb(), &pending.transfer_id, &common::ctl())
@@ -348,4 +368,135 @@ async fn a_stalled_status_poll_is_clamped_to_the_wait_bound() {
         "{:?}",
         started.elapsed()
     );
+}
+
+#[tokio::test]
+async fn http_429_is_waited_out_by_its_retry_after_from_the_last_verified_frame() {
+    let bytes: Vec<u8> = (0..3 * FRAME + 5).map(|i| (i % 251) as u8).collect();
+    let serving = bytes.clone();
+    // The second frame is refused twice (once with Retry-After: 1, once without).
+    let server = common::tool_server(move |tool, args, index| {
+        if tool == "knowledge_transfer_read" && args["offset"] == FRAME && index < 3 {
+            return common::http_429(if index == 1 { Some(1) } else { None });
+        }
+        answer(tool, args, &serving)
+    })
+    .await;
+    let client = server.client();
+    let mut saved = Vec::new();
+    let mut waits = Vec::new();
+    let started = std::time::Instant::now();
+    download_export(
+        &client,
+        &kb(),
+        &ready_job(&bytes),
+        &mut saved,
+        &common::ctl(),
+        |wait| waits.push(wait),
+    )
+    .await
+    .expect("test fixture");
+    assert_eq!(saved, bytes);
+    assert_eq!(waits, vec![Duration::from_secs(1); 2]);
+    assert!(started.elapsed() >= Duration::from_secs(2));
+    let offsets: Vec<_> = server
+        .calls_to("knowledge_transfer_read")
+        .iter()
+        .map(|call| call.arguments["offset"].as_u64().expect("test fixture"))
+        .collect();
+    let frame = FRAME as u64;
+    // Never restarted: the refused frame is repeated, earlier ones are not.
+    assert_eq!(offsets, vec![0, frame, frame, frame, 2 * frame, 3 * frame]);
+}
+
+#[tokio::test]
+async fn a_server_that_keeps_refusing_fails_after_bounded_waits_and_never_acknowledges() {
+    let server = common::tool_server(move |tool, args, _| {
+        if tool == "knowledge_transfer_read" {
+            return common::http_429(Some(0));
+        }
+        answer(tool, args, b"verified")
+    })
+    .await;
+    let client = server.client();
+    let mut waits = 0;
+    let result = download_export(
+        &client,
+        &kb(),
+        &ready_job(b"verified"),
+        &mut Vec::new(),
+        &CallControl::timeout(Duration::from_secs(60)),
+        |_| waits += 1,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(ExportError::Client(ClientError::HttpRateLimited {
+            retry_after_seconds: Some(0)
+        }))
+    ));
+    assert_eq!(
+        waits,
+        kb_client::host::export::DOWNLOAD_RATE_LIMIT_MAX_WAITS
+    );
+    assert_eq!(
+        server.calls_to("knowledge_transfer_read").len() as u32,
+        kb_client::host::export::DOWNLOAD_RATE_LIMIT_MAX_WAITS + 1
+    );
+    assert!(server.calls_to("knowledge_export_complete").is_empty());
+}
+
+#[tokio::test]
+async fn a_rate_limit_wait_ends_at_cancellation() {
+    let server = common::tool_server(move |tool, args, _| {
+        if tool == "knowledge_transfer_read" {
+            return common::http_429(Some(60));
+        }
+        answer(tool, args, b"verified")
+    })
+    .await;
+    let client = server.client();
+    let ctl = common::ctl();
+    let cancel = ctl.cancel.clone();
+    let started = std::time::Instant::now();
+    let result = download_export(
+        &client,
+        &kb(),
+        &ready_job(b"verified"),
+        &mut Vec::new(),
+        &ctl,
+        move |_| cancel.cancel(),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(ExportError::Client(ClientError::Kb(KbError::Cancelled)))
+    ));
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn a_rate_limited_tool_error_without_a_wait_is_waited_out_too() {
+    let server = common::tool_server(move |tool, args, index| {
+        if tool == "knowledge_transfer_read" && index == 0 {
+            return common::err(ErrorCode::RateLimited, json!({}));
+        }
+        answer(tool, args, b"verified")
+    })
+    .await;
+    let client = server.client();
+    let mut saved = Vec::new();
+    let mut waits = Vec::new();
+    download_export(
+        &client,
+        &kb(),
+        &ready_job(b"verified"),
+        &mut saved,
+        &common::ctl(),
+        |wait| waits.push(wait),
+    )
+    .await
+    .expect("test fixture");
+    assert_eq!(saved, b"verified");
+    assert_eq!(waits, vec![Duration::from_secs(1)]);
 }

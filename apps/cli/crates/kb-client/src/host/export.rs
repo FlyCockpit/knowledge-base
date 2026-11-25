@@ -15,11 +15,18 @@ use ring::digest::{Context, SHA256};
 use crate::tools::{ExportCancel, ExportComplete, ExportPrepare, ExportStatus, TransferRead};
 use crate::types::{
     ExportCompleteOutput, ExportJob, ExportPrepareInput, ExportState, KbId, TransferReadInput,
-    TransferRef, Uuid,
+    TransferReadOutput, TransferRef, Uuid,
 };
 use crate::{CallControl, ClientError, Deadline, KbError, McpClient};
 
 const FRAME_BYTES: u64 = 196608;
+/// Consecutive rate-limit refusals one frame waits out before the download
+/// fails (any accepted frame resets the count).
+pub const DOWNLOAD_RATE_LIMIT_MAX_WAITS: u32 = 8;
+/// Longest single rate-limit wait honoured; server windows are 60 s.
+const DOWNLOAD_RATE_LIMIT_MAX_WAIT: Duration = Duration::from_secs(120);
+/// Transient failures (transport, 502–504) one frame retries.
+const DOWNLOAD_FRAME_ATTEMPTS: u32 = 3;
 /// First poll interval; it grows by half each poll up to `POLL_MAX`.
 const POLL_FIRST: Duration = Duration::from_secs(1);
 const POLL_MAX: Duration = Duration::from_secs(5);
@@ -211,15 +218,60 @@ pub async fn wait_for_export(
     }
 }
 
+/// One frame: transient failures are retried, rate-limit refusals waited out.
+async fn read_frame(
+    client: &McpClient,
+    input: &TransferReadInput,
+    ctl: &CallControl,
+    on_wait: &mut impl FnMut(Duration),
+) -> Result<TransferReadOutput, ExportError> {
+    let (mut attempts, mut waits) = (1, 0);
+    loop {
+        let error = match client.call::<TransferRead>(input, ctl).await {
+            Ok(frame) => return Ok(frame),
+            Err(error) => error,
+        };
+        ctl.cancel.check().map_err(ClientError::from)?;
+        ctl.deadline.check().map_err(ClientError::from)?;
+        let pause = match error.rate_limit_wait() {
+            Some(wait) if waits < DOWNLOAD_RATE_LIMIT_MAX_WAITS => {
+                waits += 1;
+                let wait = wait.clamp(Duration::from_secs(1), DOWNLOAD_RATE_LIMIT_MAX_WAIT);
+                on_wait(wait);
+                wait
+            }
+            Some(_) => return Err(error.into()),
+            None if error.retryable() && attempts < DOWNLOAD_FRAME_ATTEMPTS => {
+                attempts += 1;
+                Duration::from_millis(100)
+            }
+            None => return Err(error.into()),
+        };
+        let wake = tokio::time::Instant::now() + pause.min(ctl.deadline.remaining());
+        tokio::select! {
+            biased;
+            () = ctl.cancel.cancelled() => return Err(ClientError::from(KbError::Cancelled).into()),
+            () = tokio::time::sleep_until(wake) => {}
+        }
+        ctl.cancel.check().map_err(ClientError::from)?;
+        ctl.deadline.check().map_err(ClientError::from)?;
+    }
+}
+
 /// Streams a ready job into a private destination. Retries repeat the exact
-/// frame offset (including a lost EOF reply); memory is one frame. A write,
-/// authority, cancellation or integrity failure never acknowledges.
+/// frame offset (including a lost EOF reply); memory is one frame. A server
+/// rate limit (HTTP 429 `Retry-After`, or a `RATE_LIMITED` tool error) is waited
+/// out from the last verified offset, up to `DOWNLOAD_RATE_LIMIT_MAX_WAITS`
+/// consecutive waits of at most two minutes each, and `on_wait` is told each
+/// wait first. A write, authority, cancellation or integrity failure never
+/// acknowledges.
 pub async fn download_export<'a>(
     client: &'a McpClient,
     kb_id: &KbId,
     job: &ExportJob,
     destination: &mut impl Write,
     ctl: &CallControl,
+    mut on_wait: impl FnMut(Duration),
 ) -> Result<VerifiedExport<'a>, ExportError> {
     if job.state != ExportState::Ready {
         return Err(ExportError::NotReady(Box::new(job.clone())));
@@ -230,18 +282,13 @@ pub async fn download_export<'a>(
     let mut hash = Context::new(&SHA256);
     let mut offset = 0;
     while offset < size {
-        let frame = client
-            .call_with_retry::<TransferRead>(
-                &TransferReadInput {
-                    kb_id: kb_id.clone(),
-                    transfer_id: job.transfer_id.clone(),
-                    offset,
-                    max_bytes: Some(FRAME_BYTES),
-                },
-                ctl,
-                3,
-            )
-            .await?;
+        let input = TransferReadInput {
+            kb_id: kb_id.clone(),
+            transfer_id: job.transfer_id.clone(),
+            offset,
+            max_bytes: Some(FRAME_BYTES),
+        };
+        let frame = read_frame(client, &input, ctl, &mut on_wait).await?;
         if frame.transfer_id != job.transfer_id
             || frame.offset != offset
             || frame.content_hash != content_hash

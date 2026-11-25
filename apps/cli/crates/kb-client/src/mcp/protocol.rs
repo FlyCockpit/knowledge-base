@@ -6,6 +6,7 @@
 //! sessions, SSE, batches or legacy eras.
 
 use std::fmt;
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -31,6 +32,10 @@ pub enum ClientError {
     Forbidden,
     /// Any 30x; redirects are never followed.
     Redirected,
+    /// HTTP 429 from a server rate limiter, with its `Retry-After` seconds.
+    HttpRateLimited {
+        retry_after_seconds: Option<u64>,
+    },
     /// Other non-success HTTP status without a JSON-RPC answer.
     HttpStatus(u16),
     RequestTooLarge,
@@ -55,9 +60,29 @@ impl ClientError {
     pub fn retryable(&self) -> bool {
         match self {
             ClientError::Kb(error) => error.retryable(),
-            ClientError::Transport => true,
-            ClientError::HttpStatus(status) => matches!(status, 429 | 502 | 503 | 504),
+            ClientError::Transport | ClientError::HttpRateLimited { .. } => true,
+            ClientError::HttpStatus(status) => matches!(status, 502..=504),
             _ => false,
+        }
+    }
+
+    /// The wait a rate-limit refusal asks for: the kb `RATE_LIMITED` tool
+    /// error's `retryAfterSeconds`, or an HTTP 429's `Retry-After` (one second
+    /// when either gave none). `None` for every other error.
+    pub fn rate_limit_wait(&self) -> Option<Duration> {
+        match self {
+            ClientError::Kb(KbError::Tool(tool)) => match tool.details() {
+                crate::error::ErrorDetails::RateLimited {
+                    retry_after_seconds,
+                } => Some(Duration::from_secs(*retry_after_seconds)),
+                // `RATE_LIMITED` without a wait in its details.
+                _ if tool.code() == crate::ErrorCode::RateLimited => Some(Duration::from_secs(1)),
+                _ => None,
+            },
+            ClientError::HttpRateLimited {
+                retry_after_seconds,
+            } => Some(Duration::from_secs(retry_after_seconds.unwrap_or(1))),
+            _ => None,
         }
     }
 }
@@ -74,6 +99,15 @@ impl fmt::Display for ClientError {
             ClientError::Unauthorized => f.write_str("kb server rejected the credential (401)"),
             ClientError::Forbidden => f.write_str("kb server refused the request (403)"),
             ClientError::Redirected => f.write_str("kb server answered with a redirect"),
+            ClientError::HttpRateLimited {
+                retry_after_seconds: Some(seconds),
+            } => write!(
+                f,
+                "kb server answered http 429 (rate limited; retry after {seconds}s)"
+            ),
+            ClientError::HttpRateLimited {
+                retry_after_seconds: None,
+            } => f.write_str("kb server answered http 429 (rate limited)"),
             ClientError::HttpStatus(status) => write!(f, "kb server answered http {status}"),
             ClientError::RequestTooLarge => f.write_str("kb request exceeds 1 MiB"),
             ClientError::ResponseTooLarge => f.write_str("kb response exceeds 8 MiB"),
