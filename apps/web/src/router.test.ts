@@ -94,6 +94,27 @@ describe("query error toast retry", () => {
   });
 });
 
+it.each([true, false])(
+  "a mutation with skipGlobalErrorToast=%s toasts its failure only without it",
+  async (skip) => {
+    vi.stubGlobal("window", {});
+    const client = getRouter().options.context.queryClient;
+    try {
+      const mutation = client.getMutationCache().build(client, {
+        mutationFn: () => Promise.reject(Object.assign(new Error("429"), { status: 429 })),
+        retry: false,
+        meta: { skipGlobalErrorToast: skip },
+      });
+      await expect(mutation.execute(undefined)).rejects.toThrow("429");
+      expect(vi.mocked(toast.error).mock.calls.length > 0).toBe(!skip);
+    } finally {
+      client.clear();
+      vi.mocked(toast.error).mockClear();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 it("restores the bounded main and delegates hash reveal without page snapshots", () => {
   const { options } = getRouter();
   expect(options.scrollRestoration).toBe(true);

@@ -203,6 +203,29 @@ export const createSchema = z.object({
   description: z.string().trim().pipe(kbDescriptionSchema),
 });
 
+/**
+ * The create mutation's options: a failure is said once, accurately. The open
+ * dialog shows it inline (createErrorText), so the generic global toast is
+ * skipped; a dialog closed while the request ran shows nothing, so then the
+ * same text is toasted.
+ */
+export function kbCreateMutationOptions<T extends object>(
+  base: T,
+  failure: {
+    isOpen: () => boolean;
+    notify: (text: string) => void;
+    t: TFunction<["kb", "common"]>;
+  },
+) {
+  return {
+    ...base,
+    meta: { skipGlobalErrorToast: true },
+    onError: (error: unknown) => {
+      if (!failure.isOpen()) failure.notify(createErrorText(error, failure.t));
+    },
+  };
+}
+
 /** The create budget's refusal names its limit and when it resets; anything else is generic. */
 export function createErrorText(error: unknown, t: TFunction<["kb", "common"]>): string {
   const data = (error as { code?: unknown; data?: Record<string, unknown> } | null)?.data;
@@ -241,16 +264,19 @@ function KbCreateSession({
   // The name the current slug was derived from; a slug that no longer matches it was typed.
   const derivedFrom = useRef("");
   const create = useMutation(
-    orpc.kbs.create.mutationOptions({
-      onSuccess: async (result) => {
-        await queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
-        if (!session.current) return;
-        attempt.settle();
-        close(false);
-        const created = createdKbSchema.safeParse(result);
-        if (created.success) onCreated(created.data.kb);
-      },
-    }),
+    kbCreateMutationOptions(
+      orpc.kbs.create.mutationOptions({
+        onSuccess: async (result) => {
+          await queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
+          if (!session.current) return;
+          attempt.settle();
+          close(false);
+          const created = createdKbSchema.safeParse(result);
+          if (created.success) onCreated(created.data.kb);
+        },
+      }),
+      { isOpen: () => session.current, notify: (text) => toast.error(text), t },
+    ),
   );
   const form = useForm({
     defaultValues: { name: "", slug: "", description: "" },

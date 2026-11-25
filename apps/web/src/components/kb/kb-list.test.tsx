@@ -14,6 +14,7 @@ import {
   type KbItem,
   KbList,
   KbManageActions,
+  kbCreateMutationOptions,
   kbHref,
   kbMutationErrorAction,
   metadataSchema,
@@ -273,5 +274,32 @@ describe("create refusal text", () => {
     expect(createErrorText({ code: "TOO_MANY_REQUESTS", data: {} }, t)).toBe(
       "Couldn't create the knowledge base.",
     );
+  });
+  it("says a failure once: inline while the dialog is open, as a toast once it was closed", async () => {
+    const local = createInstance();
+    await local.init({
+      lng: "en-US",
+      ns: ["kb", "common"],
+      defaultNS: "kb",
+      resources: { "en-US": { kb: enKb, common: enCommon } },
+      interpolation: { escapeValue: false },
+    });
+    const t = local.getFixedT("en-US", ["kb", "common"]);
+    const onSuccess = vi.fn();
+    let open = true;
+    const notify = vi.fn();
+    const options = kbCreateMutationOptions({ onSuccess }, { isOpen: () => open, notify, t });
+    // The global toast is skipped (the dialog's inline alert says it) and the base is kept.
+    expect(options.meta).toEqual({ skipGlobalErrorToast: true });
+    expect(options.onSuccess).toBe(onSuccess);
+    options.onError(refusal(3532));
+    expect(notify).not.toHaveBeenCalled();
+    open = false;
+    options.onError(refusal(3532));
+    options.onError(new Error("offline"));
+    expect(notify.mock.calls).toEqual([
+      ["You can create 5 knowledge bases per hour. Try again in 59 minutes."],
+      ["Couldn't create the knowledge base."],
+    ]);
   });
 });
