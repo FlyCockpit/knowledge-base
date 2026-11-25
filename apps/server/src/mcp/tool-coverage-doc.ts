@@ -75,6 +75,7 @@ const humanOnly = {
   "apiKeys.revokeMine": "human credential management",
   "apiKeys.listChildrenMine": "human credential management",
   "apiKeys.revokeChildMine": "human credential management",
+  "apiKeys.revokeChildrenMine": "human credential management",
   "push.subscribe": "browser notifications",
   "push.unsubscribe": "browser notifications",
   "push.send": "instance administration",

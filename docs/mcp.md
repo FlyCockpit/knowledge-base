@@ -160,9 +160,10 @@ Automation that manages knowledge bases (one per project, say) uses a REST API
 key from Settings → API keys and the [REST API](./rest-api.md) to create a KB
 and mint a child MCP token for it. A child token is an ordinary personal access
 token for one KB: use it here like any other. It never exceeds its key's
-ceilings or your live access, expires no later than its key, stops working when
-the key is revoked or expires, cannot create KBs and cannot mint anything.
-Children are listed and revoked under their key, not in Settings → MCP. An API
+ceilings or your live access. It outlives its key unless the key was minted
+with "tokens end when this key ends" (then it stops when the key is revoked or
+expires), and it never mints tokens. Children are listed and revoked under
+their key, not in Settings → MCP. An API
 key itself is refused on `/mcp`, and an MCP token is refused on the REST API.
 
 ## Searching several knowledge bases

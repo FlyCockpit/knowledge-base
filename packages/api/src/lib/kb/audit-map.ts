@@ -130,6 +130,7 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "rpc:apiKeys.revokeMine": audited("api_key_revoke", "api_key_child_revoke"),
   "rpc:apiKeys.listChildrenMine": read,
   "rpc:apiKeys.revokeChildMine": audited("api_key_child_revoke"),
+  "rpc:apiKeys.revokeChildrenMine": audited("api_key_child_revoke"),
   "rpc:pullRequests.list": read,
   "rpc:pullRequests.get": read,
   "rpc:pullRequests.conflicts": read,
@@ -240,6 +241,7 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "http:asset-download": read,
   // REST control plane (/api/v1, REST API keys only).
   "http:rest-get-key": read,
+  "http:rest-revoke-key": audited("api_key_revoke", "api_key_child_revoke"),
   "http:rest-list-kbs": read,
   "http:rest-create-kb": audited("kb_create"),
   "http:rest-get-kb": read,

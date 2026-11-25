@@ -16,6 +16,8 @@
     "manageTokens": "Manage tokens",
     "more": "{{count}}+",
     "firstPage": "Counted over the first {{count}}",
-    "loading": "Loading"
+    "loading": "Loading",
+    "tokensFromKeysHint_one": "{{count}} minted by an API key (Settings → API keys)",
+    "tokensFromKeysHint_other": "{{count}} minted by API keys (Settings → API keys)"
   }
 }

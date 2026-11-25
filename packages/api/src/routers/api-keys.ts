@@ -8,6 +8,7 @@ import {
   mintApiKey,
   revokeApiKey,
   revokeApiKeyChild,
+  revokeApiKeyChildrenForOwner,
 } from "../lib/api-keys";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { pageInput } from "../lib/mcp-token-access";
@@ -35,10 +36,23 @@ export const apiKeysRouter = {
     .handler(({ context, input }) =>
       mcpControl(() => listApiKeys(getKbRuntime(), context.session.user.id, input)),
     ),
+  /** `revokeChildren` omitted = the key's own "children end with this key" setting. */
   revokeMine: protectedProcedure
-    .input(z.strictObject({ id: apiKeyId }))
+    .input(z.strictObject({ id: apiKeyId, revokeChildren: z.boolean().optional() }))
     .handler(({ context, input }) =>
-      mcpControl(() => revokeApiKey(getKbRuntime(), context.session.user.id, input.id)),
+      mcpControl(() =>
+        revokeApiKey(getKbRuntime(), context.session.user.id, input.id, {
+          revokeChildren: input.revokeChildren,
+        }),
+      ),
+    ),
+  /** Revoke every child token of one key (live or already revoked). */
+  revokeChildrenMine: protectedProcedure
+    .input(z.strictObject({ apiKeyId }))
+    .handler(({ context, input }) =>
+      mcpControl(() =>
+        revokeApiKeyChildrenForOwner(getKbRuntime(), context.session.user.id, input.apiKeyId),
+      ),
     ),
   listChildrenMine: protectedProcedure
     .input(childPageInput.extend({ apiKeyId }).strict())

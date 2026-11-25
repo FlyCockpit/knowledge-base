@@ -21,6 +21,7 @@ import {
 } from "@/components/kb/credential-list";
 import { GrantEditSheet, type GrantEditTarget } from "@/components/kb/grant-edit-sheet";
 import { LoadMore } from "@/components/load-more";
+import { hasLiveCredentials } from "@/lib/credential-counts";
 import { pageHead } from "@/lib/page-title";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
@@ -132,9 +133,7 @@ function McpCredentialSettings() {
   const confirmName =
     pending?.kind === "token" ? pending.row.name : (pending?.row.clientId ?? pending?.row.id ?? "");
   const { data: activeCounts } = active;
-  const hasLive =
-    activeCounts !== undefined &&
-    activeCounts.tokens + activeCounts.apps + activeCounts.apiKeys > 0;
+  const hasLive = hasLiveCredentials(activeCounts);
   return (
     <>
       {reviewing && active.isError && (

@@ -16,6 +16,7 @@ vi.mock("@knowledge-base/api/lib/api-keys", async (original) => ({
   listApiKeyChildren: vi.fn(),
   mintApiKeyChild: vi.fn(),
   revokeApiKeyChild: vi.fn(),
+  revokeApiKeySelf: vi.fn(),
   touchApiKey: vi.fn(async () => {}),
 }));
 vi.mock("@knowledge-base/api/lib/kb/bases", async (original) => ({
@@ -116,6 +117,7 @@ const createBody = JSON.stringify({
 });
 const mintBody = JSON.stringify({ name: "agent", bits: ["propose"], toolGroups: ["read", "edit"] });
 const deleteBody = JSON.stringify({ metadataVersion: 3, confirm: "DELETE" });
+const revokeKeyBody = JSON.stringify({ revokeChildren: false });
 
 const domainMocks = () => [
   keys.describeApiKey,
@@ -123,6 +125,7 @@ const domainMocks = () => [
   keys.listApiKeyChildren,
   keys.mintApiKeyChild,
   keys.revokeApiKeyChild,
+  keys.revokeApiKeySelf,
   bases.createKnowledgeBaseAsGrant,
   bases.deleteKnowledgeBase,
   bases.getKnowledgeBaseAttachment,
@@ -448,8 +451,27 @@ describe("REST control plane: routing", () => {
       { principal: expect.anything(), resource },
       TOKEN,
     ]);
+
+    // The presented key revokes itself (only itself: the admitted principal).
+    vi.mocked(keys.revokeApiKeySelf).mockResolvedValue({ id: "k", revoked: true, children: 0 });
+    const selfRevoked = await f.call("DELETE", "/key", {
+      body: revokeKeyBody,
+      headers: f.json("rk-1"),
+    });
+    expect(selfRevoked.status).toBe(200);
+    expect(await selfRevoked.json()).toEqual({ id: "k", revoked: true, children: 0 });
+    const selfAdmitted = (await (f.admit.mock.results.at(-1)!.value as Promise<BearerAdmission>))
+      .principal;
+    expect(keys.revokeApiKeySelf).toHaveBeenCalledWith(f.runtime, selfAdmitted, resource, {
+      revokeChildren: false,
+    });
+    // revokeChildren is optional: `{}` leaves the key's own setting to decide.
+    expect((await f.call("DELETE", "/key", { body: "{}", headers: f.json("rk-2") })).status).toBe(
+      200,
+    );
+    expect(vi.mocked(keys.revokeApiKeySelf).mock.calls[1]?.[3]).toEqual({});
     // Use is recorded after admission on every admitted request.
-    expect(keys.touchApiKey).toHaveBeenCalledTimes(10);
+    expect(keys.touchApiKey).toHaveBeenCalledTimes(12);
   });
 
   it("refuses delete without the key's allowDelete before any delete work (403)", async () => {
@@ -486,8 +508,22 @@ describe("REST control plane: request validation", () => {
     ["POST", "/kbs", createBody],
     ["DELETE", `/kbs/${KB}`, deleteBody],
     ["POST", `/kbs/${KB}/tokens`, mintBody],
-    ["DELETE", `/tokens/${TOKEN}`, undefined],
   ] as const;
+
+  it("takes no Idempotency-Key on the naturally idempotent revocations", async () => {
+    const f = setup();
+    vi.mocked(keys.revokeApiKeyChild).mockResolvedValue({ id: TOKEN, revoked: true });
+    vi.mocked(keys.revokeApiKeySelf).mockResolvedValue({ id: "k", revoked: true, children: 0 });
+    expect((await f.call("DELETE", `/tokens/${TOKEN}`)).status).toBe(200);
+    expect(
+      (
+        await f.call("DELETE", "/key", {
+          body: revokeKeyBody,
+          headers: { "content-type": "application/json" },
+        })
+      ).status,
+    ).toBe(200);
+  });
 
   it.each(mutations)(
     "%s %s requires a well-formed Idempotency-Key (400)",
@@ -554,12 +590,65 @@ describe("REST control plane: request validation", () => {
     expect(
       (
         await f.call("POST", `/kbs/${KB}/tokens`, {
-          body: JSON.stringify({ ...JSON.parse(mintBody), allowCreate: true }),
+          body: JSON.stringify({ ...JSON.parse(mintBody), ownerId: "someone" }),
           headers: f.json(),
         })
       ).status,
     ).toBe(400);
+    // DELETE /key takes a JSON body (`{}` at least) with only revokeChildren.
+    for (const body of [
+      undefined,
+      JSON.stringify({ revokeChildren: "yes" }),
+      JSON.stringify({ revokeChildren: true, id: "k".repeat(24) }),
+    ]) {
+      const response = await f.call("DELETE", "/key", { body, headers: f.json() });
+      expect(response.status, String(body)).toBe(400);
+    }
+    expect((await f.call("DELETE", "/key", { body: "{}", headers: {} })).status).toBe(415);
     expectNoDomainCall();
+  });
+
+  it("passes every child option (allowCreate, createdKbBits, sealed, never-expiring) to the domain", async () => {
+    const f = setup();
+    vi.mocked(keys.mintApiKeyChild).mockResolvedValue({
+      token: { id: TOKEN, expiresAt: null, allowCreate: true } as never,
+      secret: "kbp_secret",
+      replayed: false,
+    });
+    const body = {
+      name: "agent",
+      bits: ["manage"],
+      toolGroups: ["read", "kb_admin", "sealed"],
+      authoringMode: "edit",
+      allowCreate: true,
+      createdKbBits: ["read", "write"],
+      expiresAt: null,
+    };
+    const response = await f.call("POST", `/kbs/${KB}/tokens`, {
+      body: JSON.stringify(body),
+      headers: f.json("m-2"),
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ token: { expiresAt: null, allowCreate: true } });
+    expect(vi.mocked(keys.mintApiKeyChild).mock.calls[0]?.[4]).toEqual(body);
+  });
+
+  it("serializes a never-expiring key with its child-lifetime settings", async () => {
+    const f = setup();
+    vi.mocked(keys.describeApiKey).mockResolvedValue({
+      id: "k",
+      childAllowCreate: true,
+      childrenEndWithKey: false,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      expiresAt: null,
+    } as never);
+    expect(await (await f.call("GET", "/key")).json()).toEqual({
+      id: "k",
+      childAllowCreate: true,
+      childrenEndWithKey: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: null,
+    });
   });
 
   it("rejects unknown or invalid query parameters and a query where none is taken (400)", async () => {
@@ -687,6 +776,57 @@ describe("REST control plane: OpenAPI", () => {
     );
     expect(new Set(REST_ROUTES.map((route) => route.operationId)).size).toBe(REST_ROUTES.length);
     expect(document.servers).toEqual([{ url: `${origin}/api/v1` }]);
+  });
+
+  it("documents nullable (never) expiry, the child-lifetime fields and DELETE /key's body", () => {
+    type Schema = {
+      properties: Record<string, { anyOf?: { type: string }[]; type?: string }>;
+      required: string[];
+    };
+    const document = buildOpenApiDocument(origin) as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            requestBody?: { required: boolean; content: Record<string, { schema: Schema }> };
+            responses: Record<string, { content?: Record<string, { schema: Schema }> }>;
+          }
+        >
+      >;
+    };
+    const ok = (path: string, method: string, status: string) =>
+      document.paths[path]![method]!.responses[status]!.content!["application/json"]!.schema;
+    const nullable = (schema: Schema, field: string) =>
+      (schema.properties[field]?.anyOf ?? []).map((branch) => branch.type);
+    const key = ok("/key", "get", "200");
+    expect(nullable(key, "expiresAt")).toEqual(["string", "null"]);
+    expect(key.properties.childAllowCreate?.type).toBe("boolean");
+    expect(key.properties.childrenEndWithKey?.type).toBe("boolean");
+    expect(key.required).toEqual(
+      expect.arrayContaining(["expiresAt", "childAllowCreate", "childrenEndWithKey"]),
+    );
+    const child = ok("/kbs/{kbId}/tokens", "post", "201").properties.token as unknown as Schema;
+    expect(nullable(child, "expiresAt")).toEqual(["string", "null"]);
+    expect(child.properties.allowCreate?.type).toBe("boolean");
+    const revoke = document.paths["/key"]!.delete!;
+    expect(revoke.requestBody?.required).toBe(true);
+    expect(Object.keys(revoke.requestBody!.content["application/json"]!.schema.properties)).toEqual(
+      ["revokeChildren"],
+    );
+    expect(Object.keys(ok("/key", "delete", "200").properties).sort()).toEqual([
+      "children",
+      "id",
+      "revoked",
+    ]);
+  });
+
+  it("declares the 200 replay of a child mint beside its 201", () => {
+    const doc = buildOpenApiDocument("https://kb.example.com") as {
+      paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+    };
+    const responses = doc.paths["/kbs/{kbId}/tokens"]?.post?.responses ?? {};
+    expect(Object.keys(responses)).toEqual(expect.arrayContaining(["200", "201"]));
   });
 
   it("matches the checked-in docs/rest-api.openapi.json", async () => {

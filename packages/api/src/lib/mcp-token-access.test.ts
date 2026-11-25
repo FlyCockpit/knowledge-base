@@ -339,7 +339,7 @@ describe("grant credential verifier: REST API keys and their children", () => {
     }
   });
 
-  it("admits a child PAT only while its parent key and key grant are live", async () => {
+  it("admits a child of a key whose children end with it only while that key and its grant are live", async () => {
     const child = {
       id: grantId,
       userId: "u1",
@@ -354,6 +354,7 @@ describe("grant credential verifier: REST API keys and their children", () => {
       tokenExpiresAt: new Date(Date.now() + 60_000),
       parentApiKeyId: keyId,
       parentLive: true,
+      parentBinds: true,
       apiKeyId: null,
       apiKeyLive: null,
     };
@@ -374,6 +375,32 @@ describe("grant credential verifier: REST API keys and their children", () => {
     expect((await mcp(child)).generationActive).toBe(true);
     expect((await mcp({ ...child, parentLive: false })).generationActive).toBe(false);
     expect((await mcp({ ...child, parentLive: null })).generationActive).toBe(false);
+    // An unreadable setting fails closed (binds).
+    expect((await mcp({ ...child, parentLive: false, parentBinds: null })).generationActive).toBe(
+      false,
+    );
+    // An independent child (childrenEndWithKey off) outlives its key's
+    // revocation or expiry and stands on its own tombstone/expiry.
+    const independent = { ...child, parentBinds: false };
+    expect((await mcp({ ...independent, parentLive: false })).generationActive).toBe(true);
+    expect((await mcp({ ...independent, parentLive: null })).generationActive).toBe(true);
+    expect(
+      (await mcp({ ...independent, parentLive: false, tokenRevokedAt: new Date() }))
+        .generationActive,
+    ).toBe(false);
+    expect(
+      (
+        await mcp({
+          ...independent,
+          parentLive: false,
+          tokenExpiresAt: new Date(Date.now() - 1000),
+        })
+      ).generationActive,
+    ).toBe(false);
+    // A never-expiring independent child stays active.
+    expect(
+      (await mcp({ ...independent, parentLive: false, tokenExpiresAt: null })).generationActive,
+    ).toBe(true);
   });
 
   it("reads the parent and key liveness on the database clock in the same statement", async () => {
@@ -382,8 +409,9 @@ describe("grant credential verifier: REST API keys and their children", () => {
       if (text.includes('FROM "mcp_grant" g')) sql = text;
       return { rows: [] as R[], rowCount: 0 };
     }).inspect(keyPrincipal);
-    expect(sql).toContain('pk."expiresAt" > clock_timestamp()');
-    expect(sql).toContain('k."expiresAt" > clock_timestamp()');
+    expect(sql).toContain('(pk."expiresAt" IS NULL OR pk."expiresAt" > clock_timestamp())');
+    expect(sql).toContain('(k."expiresAt" IS NULL OR k."expiresAt" > clock_timestamp())');
+    expect(sql).toContain('pk."childrenEndWithKey" AS "parentBinds"');
     expect(sql).toContain('pg."revokedAt" IS NULL');
   });
 });

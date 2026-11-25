@@ -141,13 +141,27 @@
                         }
                       ]
                     },
+                    "childAllowCreate": {
+                      "type": "boolean"
+                    },
+                    "childrenEndWithKey": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string",
                       "description": "ISO 8601 timestamp"
                     },
                     "expiresAt": {
-                      "type": "string",
-                      "description": "ISO 8601 timestamp"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "null = never expires"
                     },
                     "lastUsedAt": {
                       "anyOf": [
@@ -194,6 +208,8 @@
                     "allowMintChildren",
                     "childToolGroups",
                     "childAuthoringMode",
+                    "childAllowCreate",
+                    "childrenEndWithKey",
                     "createdAt",
                     "expiresAt",
                     "lastUsedAt",
@@ -217,6 +233,122 @@
           },
           "401": {
             "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; wait Retry-After seconds (a create names the limit and window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revokeApiKey",
+        "summary": "Revoke the presented key itself; revokeChildren (default: the key's childrenEndWithKey) also revokes its independent child tokens, and children that end with the key are always revoked. Naturally idempotent: no Idempotency-Key; once revoked the key answers 401",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "revokeChildren": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked (idempotent)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "revoked": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "children": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revoked",
+                    "children"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (body, query or Idempotency-Key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, revoked or expired API key (MCP tokens are refused here)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
             "content": {
               "application/json": {
                 "schema": {
@@ -1033,7 +1165,7 @@
                   },
                   "toolGroups": {
                     "minItems": 1,
-                    "maxItems": 7,
+                    "maxItems": 8,
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -1044,7 +1176,8 @@
                         "export",
                         "pull_requests",
                         "index_admin",
-                        "kb_admin"
+                        "kb_admin",
+                        "sealed"
                       ]
                     }
                   },
@@ -1063,7 +1196,31 @@
                       }
                     ]
                   },
-                  "expiresAt": {}
+                  "allowCreate": {
+                    "type": "boolean"
+                  },
+                  "createdKbBits": {
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "propose",
+                        "write",
+                        "review",
+                        "manage"
+                      ]
+                    }
+                  },
+                  "expiresAt": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
                 },
                 "required": [
                   "name",
@@ -1076,6 +1233,170 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "Replay of the same Idempotency-Key and body: the same token with secret null and replayed true",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "lookupPrefix": {
+                          "type": "string"
+                        },
+                        "grantId": {
+                          "type": "string"
+                        },
+                        "apiKeyId": {
+                          "type": "string"
+                        },
+                        "kbId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "bits": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "propose",
+                              "write",
+                              "review",
+                              "manage"
+                            ]
+                          }
+                        },
+                        "scopes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "mcp:read",
+                              "mcp:write"
+                            ]
+                          }
+                        },
+                        "toolGroups": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "authoringMode": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "dream",
+                                "edit",
+                                "both"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "allowCreate": {
+                          "type": "boolean"
+                        },
+                        "createdKbBits": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "propose",
+                              "write",
+                              "review",
+                              "manage"
+                            ]
+                          },
+                          "description": "Bits on a KB this token creates"
+                        },
+                        "kbCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "The minted KB plus every KB this token created"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "description": "ISO 8601 timestamp"
+                        },
+                        "expiresAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "description": "ISO 8601 timestamp"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "null = never expires"
+                        },
+                        "revokedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "description": "ISO 8601 timestamp"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "lookupPrefix",
+                        "grantId",
+                        "apiKeyId",
+                        "kbId",
+                        "bits",
+                        "scopes",
+                        "toolGroups",
+                        "authoringMode",
+                        "allowCreate",
+                        "createdKbBits",
+                        "kbCount",
+                        "createdAt",
+                        "expiresAt",
+                        "revokedAt"
+                      ]
+                    },
+                    "secret": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "secret",
+                    "replayed"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
             "description": "Minted. A replay of the same Idempotency-Key returns 200 with the same token and secret null",
             "content": {
@@ -1151,6 +1472,29 @@
                             }
                           ]
                         },
+                        "allowCreate": {
+                          "type": "boolean"
+                        },
+                        "createdKbBits": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "read",
+                              "propose",
+                              "write",
+                              "review",
+                              "manage"
+                            ]
+                          },
+                          "description": "Bits on a KB this token creates"
+                        },
+                        "kbCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "The minted KB plus every KB this token created"
+                        },
                         "createdAt": {
                           "type": "string",
                           "description": "ISO 8601 timestamp"
@@ -1164,7 +1508,8 @@
                             {
                               "type": "null"
                             }
-                          ]
+                          ],
+                          "description": "null = never expires"
                         },
                         "revokedAt": {
                           "anyOf": [
@@ -1189,6 +1534,9 @@
                         "scopes",
                         "toolGroups",
                         "authoringMode",
+                        "allowCreate",
+                        "createdKbBits",
+                        "kbCount",
                         "createdAt",
                         "expiresAt",
                         "revokedAt"
@@ -1421,6 +1769,29 @@
                               }
                             ]
                           },
+                          "allowCreate": {
+                            "type": "boolean"
+                          },
+                          "createdKbBits": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "propose",
+                                "write",
+                                "review",
+                                "manage"
+                              ]
+                            },
+                            "description": "Bits on a KB this token creates"
+                          },
+                          "kbCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "The minted KB plus every KB this token created"
+                          },
                           "createdAt": {
                             "type": "string",
                             "description": "ISO 8601 timestamp"
@@ -1434,7 +1805,8 @@
                               {
                                 "type": "null"
                               }
-                            ]
+                            ],
+                            "description": "null = never expires"
                           },
                           "revokedAt": {
                             "anyOf": [
@@ -1459,6 +1831,9 @@
                           "scopes",
                           "toolGroups",
                           "authoringMode",
+                          "allowCreate",
+                          "createdKbBits",
+                          "kbCount",
                           "createdAt",
                           "expiresAt",
                           "revokedAt"
@@ -1631,6 +2006,29 @@
                               }
                             ]
                           },
+                          "allowCreate": {
+                            "type": "boolean"
+                          },
+                          "createdKbBits": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "propose",
+                                "write",
+                                "review",
+                                "manage"
+                              ]
+                            },
+                            "description": "Bits on a KB this token creates"
+                          },
+                          "kbCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991,
+                            "description": "The minted KB plus every KB this token created"
+                          },
                           "createdAt": {
                             "type": "string",
                             "description": "ISO 8601 timestamp"
@@ -1644,7 +2042,8 @@
                               {
                                 "type": "null"
                               }
-                            ]
+                            ],
+                            "description": "null = never expires"
                           },
                           "revokedAt": {
                             "anyOf": [
@@ -1669,6 +2068,9 @@
                           "scopes",
                           "toolGroups",
                           "authoringMode",
+                          "allowCreate",
+                          "createdKbBits",
+                          "kbCount",
                           "createdAt",
                           "expiresAt",
                           "revokedAt"
@@ -1736,7 +2138,7 @@
     "/tokens/{tokenId}": {
       "delete": {
         "operationId": "revokeChildToken",
-        "summary": "Revoke one child token of this key (idempotent)",
+        "summary": "Revoke one child token of this key (naturally idempotent: no Idempotency-Key)",
         "security": [
           {
             "apiKey": []
@@ -1750,16 +2152,6 @@
             "schema": {
               "type": "string",
               "pattern": "^[0-9a-f]{24}$"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "description": "Retry a mutation with the same key and body to get the same result; a refusal stores nothing, so the same key may be retried",
-            "schema": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_-]{1,128}$"
             }
           }
         ],

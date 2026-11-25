@@ -23,6 +23,7 @@ import { InlineRetry } from "@/components/inline-retry";
 import { AuthoringModePicker } from "@/components/kb/authoring-mode-picker";
 import { CheckRow } from "@/components/kb/check-row";
 import {
+  EXPIRY_CHOICES,
   EXPIRY_PRESETS,
   isPatMintRejection,
   MAX_TTL_DAYS,
@@ -46,11 +47,8 @@ type ApiKeyMintInput = Parameters<AppRouterClient["apiKeys"]["create"]>[0];
 
 const API_KEY_REACHES = ["all", "selected", "created"] as const;
 type ApiKeyReach = (typeof API_KEY_REACHES)[number];
-/** Child tokens never resolve sealed values: a key cannot offer the group. */
-const CHILD_TOOL_GROUPS = MCP_TOOL_GROUPS.filter((group) => group !== "sealed");
-/** An API key always expires: the PAT presets and a custom date, never "no expiry". */
-const API_KEY_EXPIRY_CHOICES = [...EXPIRY_PRESETS, "custom"] as const;
-type ApiKeyExpiryChoice = (typeof API_KEY_EXPIRY_CHOICES)[number] & PatExpiryChoice;
+/** A key's expiry picker starts on a year; "none" (never expires) is an explicit choice. */
+export const API_KEY_DEFAULT_EXPIRY: PatExpiryChoice = "365";
 
 /** Query-key root of the user's API key list; invalidated (never written) after a mint. */
 export const API_KEY_LIST_QUERY_ROOT: readonly unknown[] = orpc.apiKeys.key();
@@ -58,7 +56,8 @@ export const API_KEY_LIST_QUERY_ROOT: readonly unknown[] = orpc.apiKeys.key();
 /**
  * Everything the create dialog chooses besides the name and expiry. Nothing
  * is preselected: no reach, no permission, no capability. Minted tokens start
- * on the Read tool group and read-only.
+ * on the Read tool group, read-only, without sealed values or KB creation, and
+ * independent of the key (they outlive it).
  */
 export type ApiKeyDraft = {
   reach: ApiKeyReach | null;
@@ -72,6 +71,10 @@ export type ApiKeyDraft = {
   /** Whether minted tokens may change content (then a write mode is required). */
   childWrites: boolean;
   childAuthoringMode: McpAuthoringMode | null;
+  /** Minted tokens may create knowledge bases (an explicit opt-in). */
+  childAllowCreate: boolean;
+  /** Minted tokens stop when the key is revoked or expires, and can't outlive it. */
+  childrenEndWithKey: boolean;
 };
 
 export function emptyApiKeyDraft(): ApiKeyDraft {
@@ -85,6 +88,8 @@ export function emptyApiKeyDraft(): ApiKeyDraft {
     childToolGroups: ["read"],
     childWrites: false,
     childAuthoringMode: null,
+    childAllowCreate: false,
+    childrenEndWithKey: false,
   };
 }
 
@@ -140,7 +145,8 @@ export function toApiKeyMintInput(
   name: string,
   draft: ApiKeyDraft,
   live: readonly LiveKbOption[],
-  expiresAt: Date,
+  /** null = never expires. */
+  expiresAt: Date | null,
 ): ApiKeyMintInput {
   if (draft.reach === null) throw new Error("API key reach is required");
   return {
@@ -153,8 +159,10 @@ export function toApiKeyMintInput(
     allowMintChildren: draft.allowMintChildren,
     ...(draft.allowMintChildren
       ? {
-          childToolGroups: CHILD_TOOL_GROUPS.filter((g) => draft.childToolGroups.includes(g)),
+          childToolGroups: MCP_TOOL_GROUPS.filter((g) => draft.childToolGroups.includes(g)),
           childAuthoringMode: draft.childWrites ? draft.childAuthoringMode : null,
+          ...(draft.childAllowCreate ? { childAllowCreate: true } : {}),
+          ...(draft.childrenEndWithKey ? { childrenEndWithKey: true } : {}),
         }
       : {}),
     expiresAt,
@@ -176,7 +184,7 @@ function childGroupsAfter(
       : action.type === "toggleToolGroup"
         ? toggle(groups, action.group)
         : groups;
-  return CHILD_TOOL_GROUPS.filter((group) => next.includes(group));
+  return MCP_TOOL_GROUPS.filter((group) => next.includes(group));
 }
 
 /**
@@ -208,12 +216,12 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
   );
   const blocked = mint.isPending || (mint.isError && !isPatMintRejection(mint.error));
   const form = useForm({
-    defaultValues: { name: "", expiry: "90" as ApiKeyExpiryChoice, customDate: "" },
+    defaultValues: { name: "", expiry: API_KEY_DEFAULT_EXPIRY, customDate: "" },
     validators: {
       onSubmit: z
         .object({
           name: z.string().trim().min(1).max(100),
-          expiry: z.enum(API_KEY_EXPIRY_CHOICES),
+          expiry: z.enum(EXPIRY_CHOICES),
           customDate: z.string(),
         })
         .refine((value) => patExpiresAtFromChoice(value.expiry, value.customDate, new Date()).ok, {
@@ -224,7 +232,7 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
     onSubmit: ({ value }) => {
       if (issues.length > 0 || blocked) return;
       const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
-      if (!expiry.ok || expiry.expiresAt === null) return;
+      if (!expiry.ok) return;
       mint.mutate(toApiKeyMintInput(value.name, draft, live, expiry.expiresAt));
     },
   });
@@ -288,7 +296,11 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
                   valueLabel={
                     field.state.value === "custom"
                       ? t("settings:credentials.expiryCustom")
-                      : t("settings:credentials.expiryDays", { count: Number(field.state.value) })
+                      : field.state.value === "none"
+                        ? t("settings:apiKeys.expiryNone")
+                        : t("settings:credentials.expiryDays", {
+                            count: Number(field.state.value),
+                          })
                   }
                 >
                   {EXPIRY_PRESETS.map((days) => (
@@ -298,6 +310,9 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
                   ))}
                   <SelectItem value="custom" className="min-h-[44px]">
                     {t("settings:credentials.expiryCustom")}
+                  </SelectItem>
+                  <SelectItem value="none" className="min-h-[44px]">
+                    {t("settings:apiKeys.expiryNone")}
                   </SelectItem>
                 </SelectField>
               )}
@@ -316,6 +331,10 @@ function ApiKeyCreateForm({ onOpenChange }: { onOpenChange: (open: boolean) => v
                       />
                     )}
                   </form.Field>
+                ) : expiry === "none" ? (
+                  <p role="status" className="text-sm text-destructive">
+                    {t("settings:apiKeys.noExpiryWarning")}
+                  </p>
                 ) : null
               }
             </form.Subscribe>
@@ -413,8 +432,9 @@ export function ApiKeyDraftPicker({
   const set = (patch: Partial<ApiKeyDraft>) => onChange({ ...draft, ...patch });
   const bitLabels = (bits: readonly KbBit[]) =>
     bits.map((bit) => t(`credentials.picker.bits.${bit}.label`)).join(", ");
-  // What a minted token could reach, for the tool preview.
-  const previewKbs =
+  // What a minted token could reach, for the tool preview. KBs the key
+  // creates join its reach, so they are a preview entry of their own.
+  const reachedKbs =
     draft.reach === "all"
       ? live.map((kb) => ({ name: kb.name, bits: ceiling.filter((b) => kb.bits.includes(b)) }))
       : draft.reach === "selected"
@@ -422,6 +442,10 @@ export function ApiKeyDraftPicker({
             .filter((kb) => draft.kbIds.includes(kb.kbId))
             .map((kb) => ({ name: kb.name, bits: ceiling }))
         : [];
+  const previewKbs =
+    draft.allowCreate || draft.reach === "created"
+      ? [...reachedKbs, { name: t("apiKeys.previewCreatedKbs"), bits: ceiling }]
+      : reachedKbs;
 
   return (
     <div className="min-w-0 space-y-6">
@@ -558,12 +582,17 @@ export function ApiKeyDraftPicker({
             }
             writeScope={draft.childWrites}
             authoringMode={draft.childWrites ? draft.childAuthoringMode : null}
-            allowCreate={false}
-            offerSealed={false}
+            allowCreate={draft.childAllowCreate}
+            offerSealed
             kbs={previewKbs}
-            createdKbBits={[]}
+            createdKbBits={draft.childAllowCreate ? ceiling : []}
             disabled={disabled}
           />
+          {draft.childToolGroups.includes("sealed") && (
+            <p role="status" className="text-sm text-destructive">
+              {t("apiKeys.childSealedWarning")}
+            </p>
+          )}
           <CheckRow
             id={`${base}-child-writes`}
             checked={draft.childWrites}
@@ -579,6 +608,26 @@ export function ApiKeyDraftPicker({
               disabled={disabled}
             />
           )}
+          <CheckRow
+            id={`${base}-child-create`}
+            checked={draft.childAllowCreate}
+            disabled={disabled}
+            onToggle={() => set({ childAllowCreate: !draft.childAllowCreate })}
+            label={t("apiKeys.childAllowCreate.label")}
+            description={t("apiKeys.childAllowCreate.description")}
+          />
+          <CheckRow
+            id={`${base}-children-end`}
+            checked={draft.childrenEndWithKey}
+            disabled={disabled}
+            onToggle={() => set({ childrenEndWithKey: !draft.childrenEndWithKey })}
+            label={t("apiKeys.childrenEndWithKey.label")}
+            description={t(
+              draft.childrenEndWithKey
+                ? "apiKeys.childrenEndWithKey.on"
+                : "apiKeys.childrenEndWithKey.off",
+            )}
+          />
         </div>
       )}
     </div>

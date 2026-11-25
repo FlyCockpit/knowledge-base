@@ -3193,16 +3193,19 @@ describe("revoke all after a password reset", () => {
       tokens: 1,
       apps: 2,
       apiKeys: 0,
+      childTokens: 0,
     });
     await expect(revokeAllCredentials(runtime, owner.id)).resolves.toEqual({
       tokens: 1,
       apps: 2,
       apiKeys: 0,
+      childTokens: 0,
     });
     await expect(countActiveCredentials(runtime, owner.id)).resolves.toEqual({
       tokens: 0,
       apps: 0,
       apiKeys: 0,
+      childTokens: 0,
     });
     expect(await prisma.mcpGrant.count({ where: { userId: owner.id, revokedAt: null } })).toBe(0);
     // Every revoked credential has its own audit event (not just the first).
@@ -3231,6 +3234,7 @@ describe("revoke all after a password reset", () => {
       tokens: 0,
       apps: 0,
       apiKeys: 0,
+      childTokens: 0,
     });
   });
 });

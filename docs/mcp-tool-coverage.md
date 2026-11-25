@@ -51,6 +51,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | apiKeys.listChildrenMine | human credential management |
 | apiKeys.listMine | human credential management |
 | apiKeys.revokeChildMine | human credential management |
+| apiKeys.revokeChildrenMine | human credential management |
 | apiKeys.revokeMine | human credential management |
 | appConfig | public browser configuration |
 | auth.passwordCapabilities | browser authentication |

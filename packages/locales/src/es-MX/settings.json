@@ -298,12 +298,12 @@
     "editAccessFor": "Editar acceso de {{name}}",
     "revokeFor": "Revocar {{name}}",
     "resetReviewTitle": "Revisa el acceso después de restablecer tu contraseña",
-    "resetReviewMessage": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador, pero estos tokens de acceso personal, apps conectadas y claves de API siguen funcionando. Revoca los que no reconozcas o revócalos todos.",
-    "resetReviewNone": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador. No hay tokens de acceso personal, apps conectadas ni claves de API activos.",
+    "resetReviewMessage": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador, pero estos tokens de acceso personal, apps conectadas, claves de API y tokens MCP emitidos por claves de API siguen funcionando. Revoca los que no reconozcas o revócalos todos.",
+    "resetReviewNone": "Al restablecer tu contraseña se cerraron todas las sesiones del navegador. No hay tokens de acceso personal, apps conectadas, claves de API ni tokens MCP emitidos por claves de API activos.",
     "resetReviewLoadError": "No se pudo comprobar qué tokens, apps y claves de API siguen funcionando después de restablecer tu contraseña.",
     "revokeAll": "Revocar todo",
     "revokeAllTitle": "¿Revocar todos los tokens, apps conectadas y claves de API?",
-    "revokeAllDescription": "Todos los tokens de acceso personal y claves de API (con los tokens MCP que emitieron) dejan de funcionar y todas las apps conectadas se desconectan de inmediato. Las herramientas, agentes y automatizaciones que los usan deberán configurarse de nuevo. Esto no se puede deshacer.",
+    "revokeAllDescription": "Todos los tokens de acceso personal, claves de API y tokens MCP emitidos por una clave de API (también los que sobrevivieron a su clave) dejan de funcionar y todas las apps conectadas se desconectan de inmediato. Las herramientas, agentes y automatizaciones que los usan deberán configurarse de nuevo. Esto no se puede deshacer.",
     "revokeAllTypePrompt": "Escribe “revocar todo” para confirmar",
     "revokeAllConfirmToken": "revocar todo",
     "revokeAllSuccess": "Se revocaron todos los tokens, apps conectadas y claves de API.",
@@ -339,7 +339,7 @@
     "listLoadError": "No se pudieron cargar tus claves de API.",
     "createTitle": "Crear clave de API",
     "createDescription": "Elige a qué puede llegar la clave y qué puede hacer. Una clave no se puede editar después: revócala y crea una nueva.",
-    "expiryHelp": "Una clave de API siempre vence, a más tardar en {{max}} días.",
+    "expiryHelp": "Una clave con fecha vence a más tardar en {{max}} días. Una clave que nunca vence sigue siendo válida hasta que la revoques.",
     "reach": {
       "legend": "Alcance",
       "all": {
@@ -369,14 +369,14 @@
     },
     "allowDelete": {
       "label": "Eliminar bases de conocimiento",
-      "description": "Solo las bases de conocimiento que sigan siendo tuyas.",
+      "description": "Solo las bases de conocimiento que sigan siendo tuyas. Si está desactivado, ningún token que emita esta clave podrá eliminar una base de conocimiento, ni siquiera una que haya creado.",
       "needsManage": "Requiere Administrar en los permisos de arriba."
     },
     "allowMint": {
       "label": "Emitir tokens MCP",
-      "description": "Tokens para una base de conocimiento cada uno, dentro de los límites de abajo. Dejan de funcionar cuando la clave se revoca o vence."
+      "description": "Tokens para una base de conocimiento cada uno, dentro de los límites de abajo."
     },
-    "childHint": "Límites para los tokens MCP que emite esta clave. Cada token es para una base de conocimiento, elegida al emitirlo, y nunca obtiene valores sellados.",
+    "childHint": "Límites para los tokens MCP que emite esta clave. Cada token es para una base de conocimiento, elegida al emitirlo, y puede tener cualquier opción de un token de acceso personal, dentro de estos límites.",
     "childWrites": {
       "label": "Los tokens pueden cambiar contenido",
       "description": "Sin esto, los tokens emitidos son de solo lectura."
@@ -431,7 +431,43 @@
     "revokeDescription_one": "\"{{name}}\" deja de funcionar de inmediato, igual que el {{count}} token MCP activo que emitió. Esto no se puede deshacer.",
     "revokeDescription_other": "\"{{name}}\" deja de funcionar de inmediato, igual que los {{count}} tokens MCP activos que emitió. Esto no se puede deshacer.",
     "revokeSuccess_one": "Clave de API revocada, con {{count}} token.",
-    "revokeSuccess_other": "Clave de API revocada, con {{count}} tokens."
+    "revokeSuccess_other": "Clave de API revocada, con {{count}} tokens.",
+    "revokeDescriptionNoTokens": "\"{{name}}\" deja de funcionar de inmediato. No tiene tokens MCP activos. Esto no se puede deshacer.",
+    "revokeSuccessNoTokens": "Clave de API revocada.",
+    "previewCreatedKbs": "Bases de conocimiento que crea esta clave",
+    "expiryNone": "Nunca vence",
+    "noExpiryWarning": "Esta clave nunca vence. Es preferible fijar un vencimiento, o revócala cuando ya no la necesites.",
+    "childSealedWarning": "Los tokens emitidos pueden llevar Valores sellados. Aun así, un token solo resuelve un valor sellado después de que apruebes ese token exacto en la configuración de valores sellados de la base de conocimiento.",
+    "childAllowCreate": {
+      "label": "Los tokens pueden crear bases de conocimiento",
+      "description": "Desactivado de forma predeterminada. Para crear una, el token también necesita acceso de escritura y el grupo de herramientas Administración de bases de conocimiento."
+    },
+    "childrenEndWithKey": {
+      "label": "Los tokens terminan cuando termina esta clave",
+      "off": "Los tokens emitidos siguen funcionando después de que esta clave venza o se revoque.",
+      "on": "Los tokens emitidos dejan de funcionar cuando esta clave se revoca o vence, y no pueden durar más que ella."
+    },
+    "childAllowCreateSummary": "Los tokens pueden crear bases de conocimiento",
+    "childrenEndWithKeySummary": {
+      "on": "Los tokens terminan cuando termina esta clave",
+      "off": "Los tokens siguen funcionando después de que termine esta clave"
+    },
+    "childCanCreate": "Puede crear bases de conocimiento",
+    "revokeChildren": "Revocar todos los tokens",
+    "revokeChildrenTitle": "¿Revocar todos los tokens?",
+    "revokeChildrenDescription_one": "El {{count}} token MCP activo emitido por \"{{name}}\" deja de funcionar de inmediato. Esto no se puede deshacer.",
+    "revokeChildrenDescription_other": "Los {{count}} tokens MCP activos emitidos por \"{{name}}\" dejan de funcionar de inmediato. Esto no se puede deshacer.",
+    "revokeChildrenSuccess_one": "{{count}} token revocado.",
+    "revokeChildrenSuccess_other": "{{count}} tokens revocados.",
+    "revokeChildrenSuccessNone": "No quedaban tokens activos por revocar.",
+    "revokeAlsoChildren_one": "Revocar también su {{count}} token",
+    "revokeAlsoChildren_other": "Revocar también sus {{count}} tokens",
+    "revokeDescriptionKeepTokens_one": "\"{{name}}\" deja de funcionar de inmediato. Su {{count}} token MCP activo sigue funcionando. Esto no se puede deshacer.",
+    "revokeDescriptionKeepTokens_other": "\"{{name}}\" deja de funcionar de inmediato. Sus {{count}} tokens MCP activos siguen funcionando. Esto no se puede deshacer.",
+    "revokeSuccessKeptTokens": "Clave de API revocada. Sus tokens siguen funcionando.",
+    "childCreatedKbs_one": "También llega a {{count}} base de conocimiento que creó.",
+    "childCreatedKbs_other": "También llega a {{count}} bases de conocimiento que creó.",
+    "revokeAlsoAnyChildren": "Revocar también cualquier token que haya emitido"
   },
   "providers": {
     "title": "Proveedores de embeddings",

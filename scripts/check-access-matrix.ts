@@ -1704,9 +1704,11 @@ const REST_ROUTE_DECL = /method:\s*"(get|post|delete)",\s*\n\s*path:\s*"([^"]+)"
  * Its routes are declared once in `REST_ROUTES`; this proves the matrix lists
  * exactly those routes, that every row's credential cell is `API key` (a
  * REST route never takes a session, a PAT or an OAuth token), and that no
- * REST route mints, edits or lists API keys themselves: keys are minted only
- * by a human browser session (`apiKeys.create`).
+ * REST route mints, edits or lists API keys: keys are minted only by a human
+ * browser session (`apiKeys.create`); a key may only read or revoke itself.
  */
+const SELF_KEY_ROUTES = new Set(["GET /api/v1/key", "DELETE /api/v1/key"]);
+
 function restRouteFailures(matrix: string, restSource: string): string[] {
   const failures: string[] = [];
   const declared = new Set<string>();
@@ -1726,12 +1728,12 @@ function restRouteFailures(matrix: string, restSource: string): string[] {
   for (const route of declared) {
     if (!listed.has(route))
       failures.push(`REST route \`${route}\` (${REST_SOURCE_REL}) has no row in ${NOTES_REL}.`);
-    if (
-      /^(POST|DELETE) \/api\/v1\/(api-)?keys?\b/.test(route) ||
-      /^GET \/api\/v1\/keys\b/.test(route)
-    )
+    // A key may read and revoke only itself: exactly `GET` and `DELETE
+    // /api/v1/key`. Any other route on a key path (another method, a key id,
+    // the collection, `api-key` spellings) would manage keys.
+    if (/^[A-Z]+ \/api\/v1\/(api-?)?keys?(\/|$|\b)/.test(route) && !SELF_KEY_ROUTES.has(route))
       failures.push(
-        `REST route \`${route}\` manages API keys; keys are minted, listed and revoked only through a browser session (apiKeys.*).`,
+        `REST route \`${route}\` manages API keys; keys are minted and listed only through a browser session (apiKeys.*), and a key may only read or revoke itself.`,
       );
   }
   for (const [route, credential] of listed) {
@@ -3170,6 +3172,28 @@ function runSelfTest(): void {
       `${restDecl},{\n    method: "post",\n    path: "/keys",\n  }`,
     ).some((failure) => failure.includes("manages API keys")),
   );
+  check(
+    "a key reading or revoking only itself passes",
+    restRouteFailures(
+      `${restRows}\n| \`DELETE /api/v1/key\` | API key | itself |`,
+      `${restDecl},{\n    method: "delete",\n    path: "/key",\n  }`,
+    ).length === 0,
+  );
+  for (const [method, path] of [
+    ["delete", "/key/{keyId}"],
+    ["delete", "/api-key"],
+    ["get", "/keys"],
+    ["post", "/key"],
+  ] as const) {
+    const route = `${method.toUpperCase()} /api/v1${path}`;
+    check(
+      `${route} (not the presented key itself) fails`,
+      restRouteFailures(
+        `${restRows}\n| \`${route}\` | API key | x |`,
+        `${restDecl},{\n    method: "${method}",\n    path: "${path}",\n  }`,
+      ).some((failure) => failure.includes("manages API keys")),
+    );
+  }
   check(
     "the live REST routes match the live matrix",
     restRouteFailures(readFileSync(NOTES, "utf8"), readFileSync(REST_SOURCE, "utf8")).length === 0,

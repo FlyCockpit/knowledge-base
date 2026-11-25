@@ -7,7 +7,7 @@ import { component as Component } from "./api-keys?tsr-split=component";
 
 const fixture = vi.hoisted(() => ({
   error: null as unknown,
-  confirm: [] as { open: boolean; confirmToken: string; typePrompt: string; title: string }[],
+  revoke: [] as { apiKey: unknown; choice: boolean | null }[],
 }));
 vi.mock("@tanstack/react-router", () => ({
   lazyRouteComponent: () => () => null,
@@ -44,25 +44,19 @@ vi.mock("@/components/kb/api-key-list", () => ({
     </div>
   ),
   ApiKeyDetailsDialog: () => <div>details-dialog-mounted</div>,
+  ApiKeyRevokeDialog: (props: { apiKey: unknown; choice: boolean | null }) => {
+    fixture.revoke.push(props);
+    return null;
+  },
+  apiKeyRevokeToast: () => "toast",
 }));
 vi.mock("@/components/kb/api-key-create-dialog", () => ({
   ApiKeyCreateDialog: () => <div>create-dialog-mounted</div>,
 }));
-vi.mock("@/components/confirm-delete-dialog", () => ({
-  ConfirmDeleteDialog: (props: {
-    open: boolean;
-    confirmToken: string;
-    typePrompt: string;
-    title: string;
-  }) => {
-    fixture.confirm.push(props);
-    return null;
-  },
-}));
 
 beforeEach(() => {
   fixture.error = null;
-  fixture.confirm = [];
+  fixture.revoke = [];
 });
 function render() {
   const client = new QueryClient();
@@ -85,14 +79,9 @@ it("explains the key, lists keys with Load more and mounts create, details and a
   expect(out).toContain("actions.loadMore");
   expect(out).toContain("create-dialog-mounted");
   expect(out).toContain("details-dialog-mounted");
-  // Revoke is type-to-confirm and closed until a row asks for it.
-  expect(fixture.confirm).toEqual([
-    expect.objectContaining({
-      open: false,
-      title: "settings:apiKeys.revokeTitle",
-      typePrompt: "settings:credentials.revokeTypePrompt",
-    }),
-  ]);
+  // Revoke is type-to-confirm, closed until a row asks for it, and its
+  // "also revoke its tokens" starts on the key's own setting (no choice yet).
+  expect(fixture.revoke).toEqual([expect.objectContaining({ apiKey: null, choice: null })]);
 });
 
 it("keeps the loaded list after a transient failure, with an inline retry", () => {

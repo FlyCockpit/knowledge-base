@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,6 +19,8 @@ import {
   mintApiKeyChild,
   revokeApiKey,
   revokeApiKeyChild,
+  revokeApiKeyChildrenForOwner,
+  revokeApiKeySelf,
 } from "@knowledge-base/api/lib/api-keys";
 import { prismaAssetQuery } from "@knowledge-base/api/lib/kb/asset-authz";
 import { runLockedOperation } from "@knowledge-base/api/lib/kb/authority-lock";
@@ -321,7 +323,6 @@ describe("api keys: mint validation", () => {
       keyInput({ bits: [] }),
       keyInput({ bits: ["read"], allowDelete: true }),
       keyInput({ bits: ["write"], allowDelete: true }),
-      keyInput({ childToolGroups: ["sealed"] as never }),
       keyInput({ expiresAt: new Date(Date.now() - 1000) }),
       keyInput({ expiresAt: days(366) }),
     ];
@@ -342,15 +343,33 @@ describe("api keys: mint validation", () => {
     await expect(
       mintApiKey(runtime, owner.id, keyInput({ bits: ["manage"], allowDelete: true })),
     ).resolves.toMatchObject({ key: { allowDelete: true } });
+    // Sealed children and child KB creation are explicit key opt-ins; both
+    // settings default off and are listed.
+    const optIn = await mintApiKey(
+      runtime,
+      owner.id,
+      keyInput({
+        childToolGroups: ["read", "sealed"],
+        childAllowCreate: true,
+        childrenEndWithKey: true,
+      }),
+    );
+    expect(optIn.key).toMatchObject({
+      childToolGroups: ["read", "sealed"],
+      childAllowCreate: true,
+      childrenEndWithKey: true,
+    });
+    const defaults = await mintApiKey(runtime, owner.id, keyInput());
+    expect(defaults.key).toMatchObject({ childAllowCreate: false, childrenEndWithKey: false });
   });
 
-  it("defaults expiry to 90 days, accepts up to 365, and caps live keys at 10", async () => {
+  it("defaults expiry to 365 days, accepts a date up to 365, and caps live keys at 10", async () => {
     const owner = await user();
     const first = await mintApiKey(runtime, owner.id, keyInput());
-    const ttl = (first.key.expiresAt.getTime() - first.key.createdAt.getTime()) / DAY;
-    expect(Math.round(ttl)).toBe(90);
+    const ttl = ((first.key.expiresAt?.getTime() ?? 0) - first.key.createdAt.getTime()) / DAY;
+    expect(Math.round(ttl)).toBe(365);
     const max = await mintApiKey(runtime, owner.id, keyInput({ expiresAt: days(364) }));
-    expect(max.key.expiresAt.getTime()).toBeGreaterThan(days(363).getTime());
+    expect(max.key.expiresAt?.getTime()).toBeGreaterThan(days(363).getTime());
     for (let i = 0; i < 8; i += 1) await mintApiKey(runtime, owner.id, keyInput());
     await expect(mintApiKey(runtime, owner.id, keyInput())).rejects.toMatchObject({
       code: "QUOTA_EXCEEDED",
@@ -367,6 +386,36 @@ describe("api keys: mint validation", () => {
     await expect(mintApiKey(runtime, owner.id, keyInput())).rejects.toMatchObject({
       code: "QUOTA_EXCEEDED",
     });
+  });
+
+  it("expiresAt: null is a key that never expires: authenticates, is admitted, lists as null and counts as live", async () => {
+    const owner = await user();
+    const forever = await mintKey(owner.id, { expiresAt: null });
+    expect(forever.key.expiresAt).toBeNull();
+    expect(
+      (await prisma.apiKey.findUniqueOrThrow({ where: { id: forever.key.id } })).expiresAt,
+    ).toBeNull();
+    // Far beyond any dated key's lifetime it still authenticates and is admitted.
+    expect(
+      await authenticateApiKey(query, forever.secret, new Date(Date.now() + 3650 * DAY), RESOURCE),
+    ).toMatchObject({ credential: { kind: "API_KEY", tokenId: forever.key.id } });
+    expect(await active(forever.principal, keyVerifier)).toBe(true);
+    expect(await describeApiKey(runtime, forever.principal, RESOURCE)).toMatchObject({
+      id: forever.key.id,
+      expiresAt: null,
+    });
+    const listed = await listApiKeys(runtime, owner.id, { limit: 10 });
+    expect(listed.items.map((key) => [key.id, key.expiresAt])).toEqual([[forever.key.id, null]]);
+    // A never-expiring key is a live credential (revoke-all counts it) and holds a slot.
+    expect(await countActiveCredentials(runtime, owner.id)).toMatchObject({ apiKeys: 1 });
+    for (let i = 0; i < 9; i += 1) await mintApiKey(runtime, owner.id, keyInput());
+    await expect(mintApiKey(runtime, owner.id, keyInput())).rejects.toMatchObject({
+      code: "QUOTA_EXCEEDED",
+    });
+    // Revocation still ends it.
+    await revokeApiKey(runtime, owner.id, forever.key.id);
+    expect(await authenticateApiKey(query, forever.secret, new Date(), RESOURCE)).toBeNull();
+    expect(await active(forever.principal, keyVerifier)).toBe(false);
   });
 });
 
@@ -714,6 +763,28 @@ describe("api keys: a child never deletes beyond its key's allowDelete", () => {
       (await mintChild(withDelete.principal, kb.id, body)).secret,
     );
     await expect(can(allowed, kb.id, "delete")).resolves.toBeDefined();
+    // An independent child keeps its key's allowDelete bound after the key is
+    // revoked without it: it lives on, still unable to delete.
+    await revokeApiKey(runtime, owner.id, noDelete.key.id, { revokeChildren: false });
+    expect(await active(child)).toBe(true);
+    await expect(can(child, kb.id, "manage")).resolves.toBeDefined();
+    await expect(can(child, kb.id, "delete")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      deleteKnowledgeBase(
+        runtime,
+        child,
+        {
+          kbId: kb.id,
+          metadataVersion: kb.metadataVersion,
+          idempotencyKey: nextKey(),
+          confirm: "DELETE",
+        },
+        verifier,
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await prisma.knowledgeBase.findUniqueOrThrow({ where: { id: kb.id } })).state).toBe(
+      "ACTIVE",
+    );
   });
 });
 
@@ -784,10 +855,20 @@ describe("api keys: child tokens", () => {
         mintChild(key.principal, kb.id, patch),
         JSON.stringify(patch),
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    // Sealed values are never reachable through a key (schema-level).
+    // Sealed values need the key's explicit opt-in (its child ceiling).
     await expect(
       mintChild(key.principal, kb.id, { toolGroups: ["read", "sealed"] }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // KB creation needs the key's childAllowCreate.
+    await expect(
+      mintChild(key.principal, kb.id, {
+        bits: ["propose"],
+        toolGroups: ["read", "edit"],
+        authoringMode: "edit",
+        allowCreate: true,
+        createdKbBits: ["read"],
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(await prisma.mcpPersonalToken.count({ where: { parentApiKeyId: key.key.id } })).toBe(0);
     // Within every ceiling: accepted.
     await expect(
@@ -827,25 +908,146 @@ describe("api keys: child tokens", () => {
     expect(ro.token).toMatchObject({ scopes: ["mcp:read"], authoringMode: null });
   });
 
-  it("expires no later than the key: default min(90 days, key expiry)", async () => {
-    const short = await minter({ expiresAt: days(10) });
+  it("children that end with the key expire no later than it: default min(90 days, key expiry)", async () => {
+    const short = await minter({ expiresAt: days(10), childrenEndWithKey: true });
     const keyExpiry = (await prisma.apiKey.findUniqueOrThrow({ where: { id: short.key.key.id } }))
       .expiresAt;
     const defaulted = await mintChild(short.key.principal, short.kb.id);
-    expect(defaulted.token.expiresAt?.getTime()).toBe(keyExpiry.getTime());
-    await expect(
-      mintChild(short.key.principal, short.kb.id, { expiresAt: days(11) }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    await expect(
-      mintChild(short.key.principal, short.kb.id, { expiresAt: new Date(Date.now() - 1000) }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(defaulted.token.expiresAt?.getTime()).toBe(keyExpiry?.getTime());
+    for (const expiresAt of [days(11), new Date(Date.now() - 1000), null])
+      await expect(
+        mintChild(short.key.principal, short.kb.id, { expiresAt }),
+        String(expiresAt),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
       mintChild(short.key.principal, short.kb.id, { expiresAt: days(5) }),
     ).resolves.toBeDefined();
-    const long = await minter({ expiresAt: days(300) });
+    const long = await minter({ expiresAt: days(300), childrenEndWithKey: true });
     const ninety = await mintChild(long.key.principal, long.kb.id);
     const ttl = ((ninety.token.expiresAt?.getTime() ?? 0) - ninety.token.createdAt.getTime()) / DAY;
     expect(Math.round(ttl)).toBe(90);
+    // A never-expiring key that children end with: a never-expiring child is
+    // fine (it still ends with the key's revocation); the default stays 90 days.
+    const forever = await minter({ expiresAt: null, childrenEndWithKey: true });
+    await expect(
+      mintChild(forever.key.principal, forever.kb.id, { expiresAt: null }),
+    ).resolves.toMatchObject({ token: { expiresAt: null } });
+    const foreverDefault = await mintChild(forever.key.principal, forever.kb.id);
+    expect(
+      Math.round(
+        ((foreverDefault.token.expiresAt?.getTime() ?? 0) -
+          foreverDefault.token.createdAt.getTime()) /
+          DAY,
+      ),
+    ).toBe(90);
+    await expect(
+      mintChild(forever.key.principal, forever.kb.id, { expiresAt: days(365) }),
+    ).resolves.toBeDefined();
+  });
+
+  it("independent children take any PAT expiry, beyond the key's own", async () => {
+    const short = await minter({ expiresAt: days(10) });
+    const defaulted = await mintChild(short.key.principal, short.kb.id);
+    const ttl =
+      ((defaulted.token.expiresAt?.getTime() ?? 0) - defaulted.token.createdAt.getTime()) / DAY;
+    expect(Math.round(ttl)).toBe(90);
+    await expect(
+      mintChild(short.key.principal, short.kb.id, { expiresAt: days(300) }),
+    ).resolves.toBeDefined();
+    const never = await mintChild(short.key.principal, short.kb.id, { expiresAt: null });
+    expect(never.token.expiresAt).toBeNull();
+    expect(
+      (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: never.token.id } }))
+        .expiresAt,
+    ).toBeNull();
+    expect(await active(await childPrincipal(never.secret))).toBe(true);
+    // The PAT bounds still apply.
+    for (const expiresAt of [days(366), new Date(Date.now() - 1000)])
+      await expect(
+        mintChild(short.key.principal, short.kb.id, { expiresAt }),
+        String(expiresAt),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
+
+  it("a sealed child only under a key that opted in to sealed", async () => {
+    const { kb, key } = await minter({ childToolGroups: ["read", "sealed"] });
+    const minted = await mintChild(key.principal, kb.id, { toolGroups: ["read", "sealed"] });
+    expect(minted.token.toolGroups).toEqual(["read", "sealed"]);
+    const grant = await prisma.mcpGrant.findUniqueOrThrow({ where: { id: minted.token.grantId } });
+    expect(grant.toolGroups).toEqual(["read", "sealed"]);
+    expect((await verifier.inspect(await childPrincipal(minted.secret))).toolGroups).toEqual([
+      "read",
+      "sealed",
+    ]);
+  });
+
+  it("a creating child: key opt-in, write mode + kb_admin, created bits within the key's; creates for itself only", async () => {
+    setKbRecoveryComplete(true);
+    const { owner, kb, key } = await minter({
+      bits: ["write"],
+      childToolGroups: ["read", "edit", "kb_admin"],
+      childAllowCreate: true,
+    });
+    const body = {
+      bits: ["read"],
+      toolGroups: ["read", "kb_admin"],
+      authoringMode: "edit",
+      allowCreate: true,
+      createdKbBits: ["write"],
+    };
+    for (const [label, patch] of [
+      ["read-only", { authoringMode: null }],
+      ["no kb_admin", { toolGroups: ["read", "edit"] }],
+      ["no created bits (no read)", { createdKbBits: [] }],
+      ["created bits without allowCreate", { allowCreate: false }],
+    ] as const)
+      await expect(
+        mintChild(key.principal, kb.id, { ...body, ...patch }),
+        label,
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      mintChild(key.principal, kb.id, { ...body, createdKbBits: ["manage"] }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await prisma.mcpPersonalToken.count({ where: { parentApiKeyId: key.key.id } })).toBe(0);
+
+    const minted = await mintChild(key.principal, kb.id, body);
+    expect(minted.token).toMatchObject({ allowCreate: true, toolGroups: ["read", "kb_admin"] });
+    const grant = await prisma.mcpGrant.findUniqueOrThrow({ where: { id: minted.token.grantId } });
+    expect(grant).toMatchObject({
+      kind: "PAT",
+      allowCreate: true,
+      createdKbBits: ["read", "propose", "write"],
+    });
+    const child = await childPrincipal(minted.secret);
+    const created = await createKnowledgeBaseAsGrant(runtime, child, verifier, {
+      name: "Made by child",
+      slug: `child-${randomUUID().slice(0, 8)}`,
+      description: "created through a child MCP token",
+      idempotencyKey: nextKey(),
+    });
+    const newKbId = (created.kb as { id: string }).id;
+    expect((await prisma.knowledgeBase.findUniqueOrThrow({ where: { id: newKbId } })).ownerId).toBe(
+      owner.id,
+    );
+    // Appended to the child's own grant ACL only, never to the key's.
+    expect(await prisma.grantKbAcl.findMany({ where: { kbId: newKbId } })).toEqual([
+      expect.objectContaining({
+        grantId: minted.token.grantId,
+        bits: ["read", "propose", "write"],
+      }),
+    ]);
+    await expect(can(child, newKbId, "write")).resolves.toBeDefined();
+    await expect(can(child, newKbId, "manage")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(keyCan(key.principal, newKbId, "read")).rejects.toMatchObject(unreachableKb);
+    // The child keeps its mint target in listings (whatever the new KB's id
+    // sorts as) and shows its creation ceiling and its whole reach count.
+    const listed = await listApiKeyChildren(runtime, key.principal, RESOURCE, { limit: 50 });
+    expect(listed.items.find((item) => item.id === minted.token.id)).toMatchObject({
+      kbId: kb.id,
+      kbCount: 2,
+      allowCreate: true,
+      createdKbBits: ["read", "propose", "write"],
+    });
   });
 
   it("allowMintChildren=false is FORBIDDEN and stores nothing", async () => {
@@ -875,6 +1077,7 @@ describe("api keys: child tokens", () => {
       tokens: 10,
       apps: 0,
       apiKeys: 1,
+      childTokens: 4,
     });
   });
 
@@ -993,6 +1196,20 @@ describe("api keys: child tokens", () => {
     await expect(
       mintChild(key.principal, kb.id, { ...body, expiresAt: days(1) }, dated),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_MISMATCH" });
+    // Never (null) is neither a date nor the default (omitted).
+    await expect(
+      mintChild(key.principal, kb.id, { ...body, expiresAt: null }, dated),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_MISMATCH" });
+    const never = nextKey();
+    const forever = await mintChild(key.principal, kb.id, { ...body, expiresAt: null }, never);
+    await expect(
+      mintChild(key.principal, kb.id, { ...body, expiresAt: null }, never),
+    ).resolves.toMatchObject({ token: { id: forever.token.id }, replayed: true });
+    for (const expiresAt of [days(30), undefined])
+      await expect(
+        mintChild(key.principal, kb.id, { ...body, expiresAt }, never),
+        String(expiresAt),
+      ).rejects.toMatchObject({ code: "IDEMPOTENCY_MISMATCH" });
     // A refused body under a fresh key stores nothing; a valid one then succeeds with that key.
     const fresh = nextKey();
     await expect(mintChild(key.principal, kb.id, { bits: ["write"] }, fresh)).rejects.toMatchObject(
@@ -1035,14 +1252,15 @@ describe("api keys: child tokens", () => {
 
 // --- 5. cascade ----------------------------------------------------------------
 
-describe("api keys: revocation cascade", () => {
-  async function keyWithChildren(n: number) {
+describe("api keys: revocation and child lifetime", () => {
+  async function keyWithChildren(n: number, patch: Partial<ApiKeyMintInput> = {}) {
     const owner = await user();
     const kb = await activeKb(owner.id);
     const key = await mintKey(owner.id, {
       reach: "selected",
       kbIds: [kb.id],
       allowMintChildren: true,
+      ...patch,
     });
     const children = [];
     for (let i = 0; i < n; i += 1) {
@@ -1052,14 +1270,12 @@ describe("api keys: revocation cascade", () => {
     for (const child of children) expect(await active(child.principal)).toBe(true);
     return { owner, kb, key, children };
   }
+  const bound = { childrenEndWithKey: true } as const;
 
-  it("revoking the key tombstones every child token and grant, each audited", async () => {
-    const { owner, kb, key, children } = await keyWithChildren(3);
-    await expect(revokeApiKey(runtime, owner.id, key.key.id)).resolves.toEqual({
-      id: key.key.id,
-      revoked: true,
-      children: 3,
-    });
+  async function expectTombstoned(
+    children: { token: { id: string }; principal: TokenPrincipal }[],
+    kbId: string,
+  ) {
     for (const child of children) {
       const row = await prisma.mcpPersonalToken.findUniqueOrThrow({
         where: { id: child.token.id },
@@ -1069,10 +1285,35 @@ describe("api keys: revocation cascade", () => {
       expect(row.grant.revokedAt).not.toBeNull();
       expect(row.grant.revokeReason).toBe("api_key_revoke");
       expect(await active(child.principal)).toBe(false);
-      await expect(can(child.principal, kb.id, "read")).rejects.toMatchObject({
+      await expect(can(child.principal, kbId, "read")).rejects.toMatchObject({
         code: "UNAUTHORIZED",
       });
     }
+  }
+  async function expectLiveUntouched(
+    children: { token: { id: string }; principal: TokenPrincipal }[],
+    kbId: string,
+  ) {
+    for (const child of children) {
+      const row = await prisma.mcpPersonalToken.findUniqueOrThrow({
+        where: { id: child.token.id },
+        include: { grant: true },
+      });
+      expect(row.revokedAt).toBeNull();
+      expect(row.grant.revokedAt).toBeNull();
+      expect(await active(child.principal)).toBe(true);
+      await expect(can(child.principal, kbId, "read")).resolves.toBeDefined();
+    }
+  }
+
+  it("revoking a key whose children end with it tombstones every child token and grant, each audited", async () => {
+    const { owner, kb, key, children } = await keyWithChildren(3, bound);
+    await expect(revokeApiKey(runtime, owner.id, key.key.id)).resolves.toEqual({
+      id: key.key.id,
+      revoked: true,
+      children: 3,
+    });
+    await expectTombstoned(children, kb.id);
     const events = await prisma.auditEvent.findMany({
       where: {
         action: "api_key_child_revoke",
@@ -1098,8 +1339,91 @@ describe("api keys: revocation cascade", () => {
     });
   });
 
+  it("revoking an independent key keeps its children by default; revokeChildren: true takes them", async () => {
+    const kept = await keyWithChildren(2);
+    await expect(revokeApiKey(runtime, kept.owner.id, kept.key.key.id)).resolves.toEqual({
+      id: kept.key.key.id,
+      revoked: true,
+      children: 0,
+    });
+    expect(await active(kept.key.principal, keyVerifier)).toBe(false);
+    await expectLiveUntouched(kept.children, kept.kb.id);
+
+    const taken = await keyWithChildren(2);
+    await expect(
+      revokeApiKey(runtime, taken.owner.id, taken.key.key.id, { revokeChildren: true }),
+    ).resolves.toMatchObject({ children: 2 });
+    await expectTombstoned(taken.children, taken.kb.id);
+  });
+
+  it("revokeChildren: false on a key whose children end with it makes them independent first", async () => {
+    const { owner, kb, key, children } = await keyWithChildren(2, bound);
+    await expect(
+      revokeApiKey(runtime, owner.id, key.key.id, { revokeChildren: false }),
+    ).resolves.toMatchObject({ children: 0 });
+    const row = await prisma.apiKey.findUniqueOrThrow({ where: { id: key.key.id } });
+    expect(row.revokedAt).not.toBeNull();
+    expect(row.childrenEndWithKey).toBe(false);
+    expect(await active(key.principal, keyVerifier)).toBe(false);
+    // The verifier would end bound children with the revoked key: they stay.
+    await expectLiveUntouched(children, kb.id);
+  });
+
+  it("children that end with the key: its revocation (before any child tombstone) or expiry ends them", async () => {
+    const revoked = await keyWithChildren(2, bound);
+    // Only the key row: no grant tombstone, no child tombstone.
+    await prisma.apiKey.update({
+      where: { id: revoked.key.key.id },
+      data: { revokedAt: new Date() },
+    });
+    for (const child of revoked.children) {
+      expect(
+        (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: child.token.id } }))
+          .revokedAt,
+      ).toBeNull();
+      expect(await active(child.principal)).toBe(false);
+    }
+
+    const expired = await keyWithChildren(2, { ...bound, expiresAt: days(30) });
+    await prisma.apiKey.update({
+      where: { id: expired.key.key.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    for (const child of expired.children) {
+      const row = await prisma.mcpPersonalToken.findUniqueOrThrow({
+        where: { id: child.token.id },
+      });
+      expect(row.revokedAt).toBeNull();
+      expect(await active(child.principal)).toBe(false);
+      await expect(can(child.principal, expired.kb.id, "read")).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+    }
+    expect(await active(expired.key.principal, keyVerifier)).toBe(false);
+  });
+
+  it("independent children outlive their key's expiry and an untombstoned key revocation", async () => {
+    const expired = await keyWithChildren(2, { expiresAt: days(30) });
+    await prisma.apiKey.update({
+      where: { id: expired.key.key.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await active(expired.key.principal, keyVerifier)).toBe(false);
+    await expectLiveUntouched(expired.children, expired.kb.id);
+    const revoked = await keyWithChildren(1);
+    await prisma.apiKey.update({
+      where: { id: revoked.key.key.id },
+      data: { revokedAt: new Date() },
+    });
+    await prisma.mcpGrant.update({
+      where: { id: revoked.key.key.grantId },
+      data: { revokedAt: new Date() },
+    });
+    await expectLiveUntouched(revoked.children, revoked.kb.id);
+  });
+
   it("revocation is one set-based statement over the key's untombstoned children, expired ones included", async () => {
-    const { owner, key, children } = await keyWithChildren(2);
+    const { owner, key, children } = await keyWithChildren(2, bound);
     // Simulate a long history: many children that expired untombstoned.
     const [first] = children;
     const historic = await prisma.mcpPersonalToken.findUniqueOrThrow({
@@ -1132,27 +1456,8 @@ describe("api keys: revocation cascade", () => {
     expect(audit.metadata).toMatchObject({ apiKeyId: key.key.id, reasonCode: "api_key_revoke" });
   });
 
-  it("the key's expiry alone (no tombstone) ends every child", async () => {
-    const { kb, key, children } = await keyWithChildren(2);
-    await prisma.apiKey.update({
-      where: { id: key.key.id },
-      data: { expiresAt: new Date(Date.now() - 1000) },
-    });
-    for (const child of children) {
-      const row = await prisma.mcpPersonalToken.findUniqueOrThrow({
-        where: { id: child.token.id },
-      });
-      expect(row.revokedAt).toBeNull();
-      expect(await active(child.principal)).toBe(false);
-      await expect(can(child.principal, kb.id, "read")).rejects.toMatchObject({
-        code: "UNAUTHORIZED",
-      });
-    }
-    expect(await active(key.principal, keyVerifier)).toBe(false);
-  });
-
-  it("a tombstoned key grant (row not yet marked) also ends its children", async () => {
-    const { key, children } = await keyWithChildren(1);
+  it("a tombstoned key grant (row not yet marked) also ends children that end with it", async () => {
+    const { key, children } = await keyWithChildren(1, bound);
     await prisma.mcpGrant.update({
       where: { id: key.key.grantId },
       data: { revokedAt: new Date() },
@@ -1160,7 +1465,95 @@ describe("api keys: revocation cascade", () => {
     expect(await active(children[0]!.principal)).toBe(false);
   });
 
-  it("a ban revokes the key and every child", async () => {
+  it("the presented key revokes itself (DELETE /api/v1/key): default its setting, audited as the key", async () => {
+    // Bound key, default: itself and every child.
+    const bound1 = await keyWithChildren(2, bound);
+    const other = await mintKey(bound1.owner.id);
+    await expect(revokeApiKeySelf(runtime, bound1.key.principal, RESOURCE)).resolves.toEqual({
+      id: bound1.key.key.id,
+      revoked: true,
+      children: 2,
+    });
+    await expectTombstoned(bound1.children, bound1.kb.id);
+    expect(await active(bound1.key.principal, keyVerifier)).toBe(false);
+    // Only the presented key: the owner's other key is untouched.
+    expect(await active(other.principal, keyVerifier)).toBe(true);
+    const keyAudit = await prisma.auditEvent.findFirstOrThrow({
+      where: { action: "api_key_revoke", grantIdSnapshot: bound1.key.key.grantId },
+    });
+    expect(keyAudit.actorKey).toBe(`grant:${bound1.key.key.grantId}`);
+    const childAudit = await prisma.auditEvent.findFirstOrThrow({
+      where: { action: "api_key_child_revoke", grantIdSnapshot: bound1.children[0]!.token.grantId },
+    });
+    expect(childAudit.actorKey).toBe(`grant:${bound1.key.key.grantId}`);
+    // A revoked key cannot revoke (it is no longer admitted).
+    await expect(revokeApiKeySelf(runtime, bound1.key.principal, RESOURCE)).rejects.toBeInstanceOf(
+      ApiKeyInadmissibleError,
+    );
+
+    // Independent key, default: its children stay.
+    const free = await keyWithChildren(1);
+    await expect(revokeApiKeySelf(runtime, free.key.principal, RESOURCE)).resolves.toMatchObject({
+      children: 0,
+    });
+    await expectLiveUntouched(free.children, free.kb.id);
+
+    // Bound key, revokeChildren: false: a key can never release children the
+    // owner bound to it. They are revoked with it and the setting stays on.
+    const bound2 = await keyWithChildren(1, bound);
+    await expect(
+      revokeApiKeySelf(runtime, bound2.key.principal, RESOURCE, { revokeChildren: false }),
+    ).resolves.toMatchObject({ children: 1 });
+    expect(
+      (await prisma.apiKey.findUniqueOrThrow({ where: { id: bound2.key.key.id } }))
+        .childrenEndWithKey,
+    ).toBe(true);
+    for (const child of bound2.children) expect(await active(child.principal)).toBe(false);
+
+    // Independent key, revokeChildren: true: they go.
+    const free2 = await keyWithChildren(1);
+    await expect(
+      revokeApiKeySelf(runtime, free2.key.principal, RESOURCE, { revokeChildren: true }),
+    ).resolves.toMatchObject({ children: 1 });
+    await expectTombstoned(free2.children, free2.kb.id);
+  });
+
+  it("the owner revokes every child of a live or an already revoked key", async () => {
+    const live = await keyWithChildren(2);
+    const stranger = await user();
+    await expect(
+      revokeApiKeyChildrenForOwner(runtime, stranger.id, live.key.key.id),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expectLiveUntouched(live.children, live.kb.id);
+    await expect(
+      revokeApiKeyChildrenForOwner(runtime, live.owner.id, live.key.key.id),
+    ).resolves.toEqual({ id: live.key.key.id, children: 2 });
+    await expectTombstoned(live.children, live.kb.id);
+    // The key itself stays live and can mint again.
+    expect(await active(live.key.principal, keyVerifier)).toBe(true);
+    await expect(mintChild(live.key.principal, live.kb.id)).resolves.toBeDefined();
+    const audit = await prisma.auditEvent.findFirstOrThrow({
+      where: { action: "api_key_child_revoke", grantIdSnapshot: live.children[0]!.token.grantId },
+    });
+    expect(audit.actorKey).toBe(`user:${live.owner.id}`);
+
+    const revoked = await keyWithChildren(2);
+    await revokeApiKey(runtime, revoked.owner.id, revoked.key.key.id, { revokeChildren: false });
+    await expectLiveUntouched(revoked.children, revoked.kb.id);
+    await expect(
+      revokeApiKeyChildrenForOwner(runtime, stranger.id, revoked.key.key.id),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      revokeApiKeyChildrenForOwner(runtime, revoked.owner.id, revoked.key.key.id),
+    ).resolves.toEqual({ id: revoked.key.key.id, children: 2 });
+    await expectTombstoned(revoked.children, revoked.kb.id);
+    // Idempotent.
+    await expect(
+      revokeApiKeyChildrenForOwner(runtime, revoked.owner.id, revoked.key.key.id),
+    ).resolves.toEqual({ id: revoked.key.key.id, children: 0 });
+  });
+
+  it("a ban revokes the key and every child, independent ones included", async () => {
     const { owner, key, children } = await keyWithChildren(2);
     await prisma.$transaction(async (tx) => {
       await lockIdentityAuthority(tx);
@@ -1180,32 +1573,60 @@ describe("api keys: revocation cascade", () => {
     expect(await authenticateApiKey(query, key.secret, new Date(), RESOURCE)).toBeNull();
   });
 
-  it("revoke-all includes API keys (and so their children)", async () => {
-    const { owner, key, children } = await keyWithChildren(2);
+  it("revoke-all includes API keys and their children, independent ones of keys revoked earlier too", async () => {
+    const { owner, kb, key, children } = await keyWithChildren(2);
+    // An earlier key revoked without its children: they live on independently.
+    const earlier = await mintKey(owner.id, {
+      reach: "selected",
+      kbIds: [kb.id],
+      allowMintChildren: true,
+    });
+    const orphan = await mintChild(earlier.principal, kb.id);
+    const orphanPrincipal = await childPrincipal(orphan.secret);
+    await revokeApiKey(runtime, owner.id, earlier.key.id, { revokeChildren: false });
+    expect(await active(orphanPrincipal)).toBe(true);
     await mintPersonalToken(runtime, owner.id, {
       name: "pat",
       scopes: ["mcp:read"],
       toolGroups: ["read"],
       acl: [],
     });
+    // Counted as revoke-all will revoke them: the live key's two and the orphan.
     expect(await countActiveCredentials(runtime, owner.id)).toEqual({
       tokens: 1,
       apps: 0,
       apiKeys: 1,
+      childTokens: 3,
     });
     expect(await revokeAllCredentials(runtime, owner.id)).toEqual({
       tokens: 1,
       apps: 0,
       apiKeys: 1,
+      childTokens: 3,
     });
     expect(await countActiveCredentials(runtime, owner.id)).toEqual({
       tokens: 0,
       apps: 0,
       apiKeys: 0,
+      childTokens: 0,
     });
     expect(await active(key.principal, keyVerifier)).toBe(false);
     for (const child of children) expect(await active(child.principal)).toBe(false);
+    expect(await active(orphanPrincipal)).toBe(false);
+    const orphanRow = await prisma.mcpPersonalToken.findUniqueOrThrow({
+      where: { id: orphan.token.id },
+      include: { grant: true },
+    });
+    expect(orphanRow.revokedAt).not.toBeNull();
+    expect(orphanRow.grant.revokeReason).toBe("api_key_revoke");
     expect(await prisma.mcpGrant.count({ where: { userId: owner.id, revokedAt: null } })).toBe(0);
+    // Nothing left: a second press revokes nothing.
+    expect(await revokeAllCredentials(runtime, owner.id)).toEqual({
+      tokens: 0,
+      apps: 0,
+      apiKeys: 0,
+      childTokens: 0,
+    });
   });
 
   it("revoke-all revokes keys first and never walks a key's child history one by one", async () => {
@@ -1220,6 +1641,7 @@ describe("api keys: revocation cascade", () => {
       tokens: 0,
       apps: 0,
       apiKeys: 1,
+      childTokens: 2,
     });
     // Only the key is revoked one by one (one grant_revoke row); its children
     // go with the set-based cascade, never one by one.
@@ -1320,4 +1742,72 @@ describe("api keys: migration constraints", () => {
       prisma.mcpGrant.update({ where: { id: key.key.grantId }, data: { allKbsBits: ["read"] } }),
     ).resolves.toBeDefined();
   });
+});
+
+describe("api keys: migration 20261125130212_api_key_child_lifetime", () => {
+  it("backfills childrenEndWithKey on keys minted before it; later keys default off; expiry becomes optional", async () => {
+    const migrationsDir = resolve(import.meta.dirname, "../../../db/prisma/migrations");
+    const target = "20261125130212_api_key_child_lifetime";
+    const folders = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(folders).toContain(target);
+    const prefix = mkdtempSync(join(tmpdir(), "kb-api-key-migrations-"));
+    for (const name of folders.filter((folder) => folder < target))
+      cpSync(join(migrationsDir, name), join(prefix, name), { recursive: true });
+    cpSync(join(migrationsDir, "migration_lock.toml"), join(prefix, "migration_lock.toml"));
+    const upgraded = await cluster.createDatabase();
+    try {
+      upgraded.applyPrismaSchema({ migrationsDir: prefix });
+      const insertKey = (suffix: string, expiresAt: string) =>
+        upgraded.query(
+          "applier",
+          `WITH g AS (
+             INSERT INTO mcp_grant (id, "actorUserIdSnapshot", "userId", kind, "clientId",
+                                    "referenceId", scopes, "toolGroups", "createdKbBits")
+             VALUES ($1::uuid, 'mig_owner', 'mig_owner', 'API_KEY', $2, $2,
+                     ARRAY['mcp:read'], ARRAY['read'], ARRAY[]::text[])
+             RETURNING id)
+           INSERT INTO api_key (id, "userIdSnapshot", "userId", name, "lookupPrefix", "secretDigest",
+                                "grantId", reach, bits, "childToolGroups", "expiresAt")
+           SELECT $3, 'mig_owner', 'mig_owner', 'pre', $3, 'digest-' || $3, g.id, 'CREATED',
+                  ARRAY['read'], ARRAY['read'], ${expiresAt} FROM g`,
+          [randomUUID(), `apikey:${suffix}`, suffix],
+        );
+      await upgraded.query(
+        "applier",
+        `INSERT INTO "user" (id, name, email, "emailVerified") VALUES ('mig_owner', 'M', 'm@example.invalid', true)`,
+      );
+      const before = "k".repeat(16);
+      const revokedBefore = "r".repeat(16);
+      await insertKey(before, "now() + interval '30 days'");
+      await insertKey(revokedBefore, "now() + interval '30 days'");
+      await upgraded.query("applier", `UPDATE api_key SET "revokedAt" = now() WHERE id = $1`, [
+        revokedBefore,
+      ]);
+      // Before the migration the expiry is required.
+      await expect(insertKey("n".repeat(16), "NULL")).rejects.toThrow();
+
+      upgraded.applyPrismaSchema();
+      const after = "a".repeat(16);
+      const never = "v".repeat(16);
+      await insertKey(after, "now() + interval '30 days'");
+      await insertKey(never, "NULL");
+      const rows = await upgraded.query(
+        "applier",
+        `SELECT id, "childrenEndWithKey", "childAllowCreate", "expiresAt" IS NULL AS never
+           FROM api_key ORDER BY id`,
+      );
+      expect(rows.rows).toEqual([
+        { id: after, childrenEndWithKey: false, childAllowCreate: false, never: false },
+        { id: before, childrenEndWithKey: true, childAllowCreate: false, never: false },
+        { id: revokedBefore, childrenEndWithKey: true, childAllowCreate: false, never: false },
+        { id: never, childrenEndWithKey: false, childAllowCreate: false, never: true },
+      ]);
+    } finally {
+      await upgraded.close();
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  }, 300_000);
 });

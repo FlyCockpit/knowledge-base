@@ -180,11 +180,18 @@ model ApiKey {
   bits               String[]
   allowDelete        Boolean            @default(false)
   allowMintChildren  Boolean            @default(false)
-  /// Child ceilings: tool groups (canonical order, never empty) and the write
-  /// mode (NULL = children are read-only).
+  /// Child ceilings: tool groups (canonical order, never empty; `sealed` only
+  /// by explicit opt-in), the write mode (NULL = children are read-only) and
+  /// whether a child may create KBs.
   childToolGroups    String[]
   childAuthoringMode McpAuthoringMode?
-  expiresAt          DateTime           @db.Timestamptz(3)
+  childAllowCreate   Boolean            @default(false)
+  /// The owner's choice at mint: children end when this key ends (revoked or
+  /// expired; a child's expiry is capped at the key's). Off: children are
+  /// independent and outlive the key. A revoke may change it at that moment.
+  childrenEndWithKey Boolean            @default(false)
+  /// NULL = never expires (an explicit choice at mint; the default is 365 days).
+  expiresAt          DateTime?          @db.Timestamptz(3)
   lastUsedAt         DateTime?          @db.Timestamptz(3)
   revokedAt          DateTime?          @db.Timestamptz(3)
   children           McpPersonalToken[]

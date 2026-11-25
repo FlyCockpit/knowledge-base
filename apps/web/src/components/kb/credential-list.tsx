@@ -53,7 +53,7 @@ export const PAT_LIST_QUERY_ROOT: readonly unknown[] = orpc.mcpTokens.key();
 const DAY_MS = 86_400_000;
 export const MAX_TTL_DAYS = 365;
 export const EXPIRY_PRESETS = ["30", "90", "365"] as const;
-const EXPIRY_CHOICES = [...EXPIRY_PRESETS, "custom", "none"] as const;
+export const EXPIRY_CHOICES = [...EXPIRY_PRESETS, "custom", "none"] as const;
 export type PatExpiryChoice = (typeof EXPIRY_CHOICES)[number];
 const DEFAULT_EXPIRY: PatExpiryChoice = "90";
 

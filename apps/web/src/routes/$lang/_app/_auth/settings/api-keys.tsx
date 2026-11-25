@@ -5,10 +5,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
 import { ApiKeyCreateDialog } from "@/components/kb/api-key-create-dialog";
-import { ApiKeyDetailsDialog, ApiKeyList, type ApiKeyRow } from "@/components/kb/api-key-list";
+import {
+  ApiKeyDetailsDialog,
+  ApiKeyList,
+  ApiKeyRevokeDialog,
+  type ApiKeyRow,
+  apiKeyRevokeToast,
+} from "@/components/kb/api-key-list";
 import { LoadMore } from "@/components/load-more";
 import { pageHead } from "@/lib/page-title";
 import { isQueryAccessError } from "@/lib/query-access-error";
@@ -34,6 +39,12 @@ function ApiKeySettings() {
   const [createOpen, setCreateOpen] = useState(false);
   const [details, setDetails] = useState<ApiKeyRow | null>(null);
   const [pending, setPending] = useState<ApiKeyRow | null>(null);
+  // "Also revoke its tokens" once changed; null = the key's own setting.
+  const [revokeChildren, setRevokeChildren] = useState<boolean | null>(null);
+  const askRevoke = (key: ApiKeyRow) => {
+    setRevokeChildren(null);
+    setPending(key);
+  };
   const keys = useInfiniteQuery(
     orpc.apiKeys.listMine.infiniteOptions({
       input: (cursor: string | null) => ({ limit: 20, cursor }),
@@ -43,9 +54,14 @@ function ApiKeySettings() {
   );
   const revoke = useMutation(
     orpc.apiKeys.revokeMine.mutationOptions({
-      onSuccess: (result) => {
+      onSuccess: (result, input) => {
+        toast.success(
+          apiKeyRevokeToast(t, result, {
+            liveChildren: pending?.liveChildren ?? 0,
+            revokeChildren: input.revokeChildren ?? false,
+          }),
+        );
         setPending(null);
-        toast.success(t("settings:apiKeys.revokeSuccess", { count: result.children }));
       },
       // Denial keeps the row as-is; the list only changes after a server refetch.
       onError: () => toast.error(t("settings:credentials.revokeError")),
@@ -103,7 +119,7 @@ function ApiKeySettings() {
         keys={rows}
         onCreate={() => setCreateOpen(true)}
         onDetails={setDetails}
-        onRevoke={setPending}
+        onRevoke={askRevoke}
         footer={
           <LoadMore
             onLoadMore={() => keys.fetchNextPage()}
@@ -120,26 +136,15 @@ function ApiKeySettings() {
           if (!open) setDetails(null);
         }}
       />
-      <ConfirmDeleteDialog
-        open={pending !== null}
+      <ApiKeyRevokeDialog
+        apiKey={pending}
+        choice={revokeChildren}
+        onChoiceChange={setRevokeChildren}
         onOpenChange={(open) => {
           if (!open && !revoke.isPending) setPending(null);
         }}
-        title={t("settings:apiKeys.revokeTitle")}
-        description={t("settings:apiKeys.revokeDescription", {
-          name: pending?.name ?? "",
-          count: pending?.liveChildren ?? 0,
-        })}
-        confirmToken={pending?.name ?? ""}
-        typePrompt={t("settings:credentials.revokeTypePrompt")}
-        copyAriaLabel={t("settings:credentials.copyConfirm")}
-        inputMode="text"
-        confirmLabel={t("settings:credentials.revoke")}
-        pendingLabel={t("settings:credentials.revoking")}
         isPending={revoke.isPending}
-        onConfirm={() => {
-          if (pending) revoke.mutate({ id: pending.id });
-        }}
+        onConfirm={(input) => revoke.mutate(input)}
       />
     </>
   );

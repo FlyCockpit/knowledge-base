@@ -10,6 +10,7 @@ import { InlineRetry } from "@/components/inline-retry";
 import { KbList } from "@/components/kb/kb-list";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
+import { activeTokenCount } from "@/lib/credential-counts";
 import { pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
@@ -97,7 +98,14 @@ function DashboardPage() {
             />
             <Kpi
               label={t("dashboard:kpi.tokens")}
-              value={tokens.isError ? "—" : tokens.data ? String(tokens.data.tokens) : null}
+              value={
+                tokens.isError ? "—" : tokens.data ? String(activeTokenCount(tokens.data)) : null
+              }
+              hint={
+                tokens.data && tokens.data.childTokens > 0
+                  ? t("dashboard:kpi.tokensFromKeysHint", { count: tokens.data.childTokens })
+                  : undefined
+              }
               href={
                 <Link
                   to="/$lang/settings/mcp"

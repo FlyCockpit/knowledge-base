@@ -298,12 +298,12 @@
     "editAccessFor": "Edit access for {{name}}",
     "revokeFor": "Revoke {{name}}",
     "resetReviewTitle": "Review access after your password reset",
-    "resetReviewMessage": "Your password reset signed out every browser session, but these personal access tokens, connected apps and API keys still work. Revoke any you don't recognize, or revoke them all.",
-    "resetReviewNone": "Your password reset signed out every browser session. No personal access tokens, connected apps or API keys are active.",
+    "resetReviewMessage": "Your password reset signed out every browser session, but these personal access tokens, connected apps, API keys and MCP tokens minted by API keys still work. Revoke any you don't recognize, or revoke them all.",
+    "resetReviewNone": "Your password reset signed out every browser session. No personal access tokens, connected apps, API keys or MCP tokens minted by API keys are active.",
     "resetReviewLoadError": "Couldn't check which tokens, apps and API keys still work after your password reset.",
     "revokeAll": "Revoke all",
     "revokeAllTitle": "Revoke every token, connected app and API key?",
-    "revokeAllDescription": "Every personal access token and API key (with the MCP tokens it minted) stops working and every connected app is disconnected immediately. Tools, agents and automation that use them must be set up again. This can't be undone.",
+    "revokeAllDescription": "Every personal access token, API key and MCP token minted by an API key (also tokens that outlived their key) stops working and every connected app is disconnected immediately. Tools, agents and automation that use them must be set up again. This can't be undone.",
     "revokeAllTypePrompt": "Type “revoke all” to confirm",
     "revokeAllConfirmToken": "revoke all",
     "revokeAllSuccess": "All tokens, connected apps and API keys were revoked.",
@@ -339,7 +339,7 @@
     "listLoadError": "Couldn't load your API keys.",
     "createTitle": "Create API key",
     "createDescription": "Choose what the key may reach and do. A key can't be edited afterwards: revoke it and create a new one instead.",
-    "expiryHelp": "An API key always expires, at most {{max}} days from now.",
+    "expiryHelp": "A dated key expires at most {{max}} days from now. A key that never expires stays valid until you revoke it.",
     "reach": {
       "legend": "Reach",
       "all": {
@@ -369,14 +369,14 @@
     },
     "allowDelete": {
       "label": "Delete knowledge bases",
-      "description": "Only knowledge bases you still own.",
+      "description": "Only knowledge bases you still own. Off: no token this key mints can ever delete a knowledge base either, even one it created.",
       "needsManage": "Needs Manage in the permissions above."
     },
     "allowMint": {
       "label": "Mint MCP tokens",
-      "description": "Tokens for one knowledge base each, within the limits below. They stop working when the key is revoked or expires."
+      "description": "Tokens for one knowledge base each, within the limits below."
     },
-    "childHint": "Limits for the MCP tokens this key mints. Each token is for one knowledge base, chosen when it is minted, and never gets sealed values.",
+    "childHint": "Limits for the MCP tokens this key mints. Each token is for one knowledge base, chosen when it is minted, and may hold any option a personal access token can, within these limits.",
     "childWrites": {
       "label": "Tokens may change content",
       "description": "Without this, minted tokens are read-only."
@@ -431,7 +431,43 @@
     "revokeDescription_one": "\"{{name}}\" stops working immediately, and so does the {{count}} active MCP token it minted. This can't be undone.",
     "revokeDescription_other": "\"{{name}}\" stops working immediately, and so do all {{count}} active MCP tokens it minted. This can't be undone.",
     "revokeSuccess_one": "API key revoked, with {{count}} token.",
-    "revokeSuccess_other": "API key revoked, with {{count}} tokens."
+    "revokeSuccess_other": "API key revoked, with {{count}} tokens.",
+    "revokeDescriptionNoTokens": "\"{{name}}\" stops working immediately. It has no active MCP tokens. This can't be undone.",
+    "revokeSuccessNoTokens": "API key revoked.",
+    "previewCreatedKbs": "Knowledge bases this key creates",
+    "expiryNone": "Never expires",
+    "noExpiryWarning": "This key never expires. Prefer an expiry, or revoke it when you no longer need it.",
+    "childSealedWarning": "Minted tokens may carry Sealed values. A token still resolves a sealed value only after you approve that exact token in the knowledge base's sealed settings.",
+    "childAllowCreate": {
+      "label": "Tokens may create knowledge bases",
+      "description": "Off by default. A token also needs write access and the Knowledge base admin tool group to create one."
+    },
+    "childrenEndWithKey": {
+      "label": "Tokens end when this key ends",
+      "off": "Minted tokens keep working after this key expires or is revoked.",
+      "on": "Minted tokens stop when this key is revoked or expires, and can't outlive it."
+    },
+    "childAllowCreateSummary": "Tokens may create knowledge bases",
+    "childrenEndWithKeySummary": {
+      "on": "Tokens end when this key ends",
+      "off": "Tokens keep working after this key ends"
+    },
+    "childCanCreate": "Can create knowledge bases",
+    "revokeChildren": "Revoke all tokens",
+    "revokeChildrenTitle": "Revoke all tokens?",
+    "revokeChildrenDescription_one": "The {{count}} active MCP token minted by \"{{name}}\" stops working immediately. This can't be undone.",
+    "revokeChildrenDescription_other": "All {{count}} active MCP tokens minted by \"{{name}}\" stop working immediately. This can't be undone.",
+    "revokeChildrenSuccess_one": "{{count}} token revoked.",
+    "revokeChildrenSuccess_other": "{{count}} tokens revoked.",
+    "revokeChildrenSuccessNone": "No active tokens were left to revoke.",
+    "revokeAlsoChildren_one": "Also revoke its {{count}} token",
+    "revokeAlsoChildren_other": "Also revoke its {{count}} tokens",
+    "revokeDescriptionKeepTokens_one": "\"{{name}}\" stops working immediately. Its {{count}} active MCP token keeps working. This can't be undone.",
+    "revokeDescriptionKeepTokens_other": "\"{{name}}\" stops working immediately. Its {{count}} active MCP tokens keep working. This can't be undone.",
+    "revokeSuccessKeptTokens": "API key revoked. Its tokens keep working.",
+    "childCreatedKbs_one": "Also reaches {{count}} knowledge base it created.",
+    "childCreatedKbs_other": "Also reaches {{count}} knowledge bases it created.",
+    "revokeAlsoAnyChildren": "Also revoke any tokens it minted"
   },
   "providers": {
     "title": "Embedding providers",

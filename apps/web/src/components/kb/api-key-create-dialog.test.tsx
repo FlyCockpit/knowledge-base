@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  API_KEY_DEFAULT_EXPIRY,
   API_KEY_LIST_QUERY_ROOT,
   type ApiKeyDraft,
   ApiKeyDraftPicker,
@@ -13,7 +14,7 @@ import {
   emptyApiKeyDraft,
   toApiKeyMintInput,
 } from "@/components/kb/api-key-create-dialog";
-import { withPatSecretHygiene } from "@/components/kb/credential-list";
+import { patExpiresAtFromChoice, withPatSecretHygiene } from "@/components/kb/credential-list";
 import { SecretReveal } from "@/components/secret-reveal";
 import type { LiveKbOption } from "@/hooks/use-mcp-consent";
 
@@ -28,6 +29,8 @@ const live: LiveKbOption[] = [
 ];
 const draft = (patch: Partial<ApiKeyDraft>): ApiKeyDraft => ({ ...emptyApiKeyDraft(), ...patch });
 const expiresAt = new Date("2099-01-01T00:00:00Z");
+/** Text as React writes it into static markup. */
+const markupText = (text: string) => text.replaceAll("'", "&#x27;").replaceAll('"', "&quot;");
 
 describe("API key create validation", () => {
   it("preselects nothing: reach and a permission must be chosen", () => {
@@ -143,6 +146,64 @@ describe("API key create validation", () => {
       ).childAuthoringMode,
     ).toBeNull();
   });
+
+  it("defaults to a year, and never expires sends an explicit null expiry", () => {
+    const now = new Date("2026-11-25T12:00:00Z");
+    expect(API_KEY_DEFAULT_EXPIRY).toBe("365");
+    expect(patExpiresAtFromChoice(API_KEY_DEFAULT_EXPIRY, "", now)).toEqual({
+      ok: true,
+      expiresAt: new Date("2027-11-25T12:00:00Z"),
+    });
+    const never = patExpiresAtFromChoice("none", "", now);
+    if (!never.ok) throw new Error("never expires is a valid choice");
+    const input = toApiKeyMintInput(
+      "Forever",
+      draft({ reach: "all", bits: ["read"] }),
+      live,
+      never.expiresAt,
+    );
+    expect(input).toHaveProperty("expiresAt", null);
+    // A custom date beyond a year is refused before any mint.
+    expect(patExpiresAtFromChoice("custom", "2028-01-01", now)).toEqual({ ok: false });
+  });
+
+  it("sends sealed, child KB creation and tokens-end-with-key only when chosen", () => {
+    const minting = draft({ reach: "all", bits: ["manage"], allowMintChildren: true });
+    const plain = toApiKeyMintInput("Plain", minting, live, expiresAt);
+    expect(plain.childToolGroups).toEqual(["read"]);
+    expect(plain).not.toHaveProperty("childAllowCreate");
+    expect(plain).not.toHaveProperty("childrenEndWithKey");
+    expect(
+      toApiKeyMintInput(
+        "All options",
+        {
+          ...minting,
+          childToolGroups: ["sealed", "kb_admin", "read"],
+          childWrites: true,
+          childAuthoringMode: "both",
+          childAllowCreate: true,
+          childrenEndWithKey: true,
+        },
+        live,
+        expiresAt,
+      ),
+    ).toMatchObject({
+      childToolGroups: ["read", "kb_admin", "sealed"],
+      childAuthoringMode: "both",
+      childAllowCreate: true,
+      childrenEndWithKey: true,
+    });
+    // Without minting none of the token options is sent.
+    const notMinting = toApiKeyMintInput(
+      "No mint",
+      { ...minting, allowMintChildren: false, childAllowCreate: true, childrenEndWithKey: true },
+      live,
+      expiresAt,
+    );
+    expect(notMinting).not.toHaveProperty("childAllowCreate");
+    expect(notMinting).not.toHaveProperty("childrenEndWithKey");
+    expect(notMinting).not.toHaveProperty("childToolGroups");
+  });
 });
 
 describe("ApiKeyDraftPicker", () => {
@@ -189,13 +250,41 @@ describe("ApiKeyDraftPicker", () => {
     expect(markup).toContain("hold Propose here.");
   });
 
-  it("shows the minted-token ceilings only when minting is on, never offering sealed values", () => {
+  it("previews the KBs the key creates as part of what a minted token can reach", () => {
+    const markup = html(
+      draft({ reach: "created", bits: ["read"], allowCreate: true, allowMintChildren: true }),
+    );
+    expect(markup).toContain(enSettings.apiKeys.previewCreatedKbs);
+    expect(markup).not.toContain(enSettings.credentials.picker.previewNoKbs);
+  });
+
+  it("shows the minted-token ceilings only when minting is on, with both new opt-ins off", () => {
     expect(html(draft({ reach: "all", bits: ["read"] }))).not.toContain(
       enSettings.apiKeys.childHint,
     );
     const markup = html(draft({ reach: "all", bits: ["read"], allowMintChildren: true }));
     expect(markup).toContain(enSettings.apiKeys.childHint);
-    expect(markup).not.toContain(enSettings.credentials.picker.groups.sealed.label);
+    expect(markup).toContain(enSettings.apiKeys.childAllowCreate.label);
+    expect(markup).toContain(enSettings.apiKeys.childrenEndWithKey.label);
+    expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.off));
+    expect(markup).not.toContain(markupText(enSettings.apiKeys.childrenEndWithKey.on));
+    expect(markup).not.toContain(markupText(enSettings.apiKeys.childSealedWarning));
+  });
+
+  it("offers sealed values to minted tokens with the per-token approval warning once chosen", () => {
+    // A custom group set opens Advanced, where every PAT group is offered.
+    const markup = html(
+      draft({
+        reach: "all",
+        bits: ["read"],
+        allowMintChildren: true,
+        childToolGroups: ["read", "sealed"],
+        childrenEndWithKey: true,
+      }),
+    );
+    expect(markup).toContain(enSettings.credentials.picker.groups.sealed.label);
+    expect(markup).toContain(markupText(enSettings.apiKeys.childSealedWarning));
+    expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.on));
   });
 });
 

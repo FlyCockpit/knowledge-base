@@ -35,6 +35,7 @@ import {
   permissionSchema,
   type Runtime,
   toDate,
+  tombstoneApiKeyChildren,
   tombstoneGrant,
   validateAclAgainstLive,
 } from "./mcp-token-access";
@@ -76,8 +77,14 @@ const REACH_FROM_DB: Record<string, ApiKeyReach> = {
   CREATED: "created",
 };
 
-/** Tool groups a child may carry: sealed values are never reachable through a key. */
-export const API_KEY_CHILD_TOOL_GROUPS = MCP_TOOL_GROUPS.filter((group) => group !== "sealed");
+/**
+ * Tool groups a child may carry: every PAT group. `sealed` (and child KB
+ * creation) are explicit opt-ins at key mint; sealed values still need the
+ * owner's exact per-token approval.
+ */
+export const API_KEY_CHILD_TOOL_GROUPS = MCP_TOOL_GROUPS;
+/** A key's default lifetime; a date may be at most 365 days out, or null = never expires. */
+const API_KEY_DEFAULT_TTL_DAYS = 365;
 
 /** The REST API's resource identifier, bound into every API-key principal. */
 export function canonicalApiResource(baseUrl: string): string {
@@ -147,8 +154,10 @@ export async function authenticateApiKey(
   );
   const row = result.rows[0];
   if (!row || !digestMatches(raw, row.secretDigest)) return null;
-  const expiresAt = toDate(row.expiresAt);
-  if (row.revokedAt || !row.userId || !expiresAt || expiresAt <= now) return null;
+  // NULL = never expires; a present but unreadable value fails closed.
+  const expiresAt = row.expiresAt === null ? null : toDate(row.expiresAt);
+  if (row.revokedAt || !row.userId) return null;
+  if (row.expiresAt !== null && (!expiresAt || expiresAt <= now)) return null;
   return {
     kind: "token",
     userId: row.userId,
@@ -203,8 +212,16 @@ export const apiKeyMintInput = z.strictObject({
     .optional(),
   /** The children's write-mode ceiling; null/omitted = read-only children. */
   childAuthoringMode: z.enum(MCP_AUTHORING_MODES).nullable().optional(),
-  /** Omitted = now + 90 days; a date must be in the future and at most 365 days out. */
-  expiresAt: z.coerce.date().optional(),
+  /** Children may create KBs (an explicit opt-in; off by default). */
+  childAllowCreate: z.boolean().optional(),
+  /**
+   * Children end when this key ends (revoked or expired), and a child's
+   * expiry is capped at the key's. Off (the default): children are
+   * independent and outlive the key.
+   */
+  childrenEndWithKey: z.boolean().optional(),
+  /** Omitted = now + 365 days; a date must be in the future and at most 365 days out; null = never expires. */
+  expiresAt: z.coerce.date().nullable().optional(),
 });
 export type ApiKeyMintInput = z.input<typeof apiKeyMintInput>;
 
@@ -220,8 +237,11 @@ export type ApiKeyView = {
   allowMintChildren: boolean;
   childToolGroups: string[];
   childAuthoringMode: McpAuthoringMode | null;
+  childAllowCreate: boolean;
+  childrenEndWithKey: boolean;
   createdAt: Date;
-  expiresAt: Date;
+  /** null = never expires. */
+  expiresAt: Date | null;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
   /** Live (unrevoked, unexpired) children right now. */
@@ -233,6 +253,7 @@ export type ApiKeyView = {
 const KEY_VIEW_SQL = `SELECT k.id, k.name, k."lookupPrefix", k."grantId"::text AS "grantId",
         k.reach::text AS reach, k.bits, g."allowCreate", k."allowDelete", k."allowMintChildren",
         k."childToolGroups", k."childAuthoringMode"::text AS "childAuthoringMode",
+        k."childAllowCreate", k."childrenEndWithKey",
         k."createdAt", k."expiresAt", k."lastUsedAt",
         CASE WHEN k."revokedAt" IS NOT NULL THEN k."revokedAt" ELSE g."revokedAt" END AS "revokedAt",
         (SELECT COUNT(*)::int FROM mcp_personal_token t JOIN mcp_grant cg ON cg.id = t."grantId"
@@ -280,9 +301,15 @@ export async function mintApiKey(
   if (new Set(kbIds).size !== kbIds.length) throw invalid();
   const childToolGroups = canonicalGroups(input.childToolGroups ?? ["read"]);
   const childAuthoringMode = input.childAuthoringMode ?? null;
-  let expiresAt: Date;
+  let expiresAt: Date | null;
   try {
-    expiresAt = resolvePatExpiry(input.expiresAt, (deps.now ?? (() => new Date()))());
+    const at = (deps.now ?? (() => new Date()))();
+    expiresAt =
+      input.expiresAt === null
+        ? null
+        : input.expiresAt === undefined
+          ? new Date(at.getTime() + API_KEY_DEFAULT_TTL_DAYS * DAY_MS)
+          : resolvePatExpiry(input.expiresAt, at);
   } catch (error) {
     if (error instanceof McpPatExpiryError) throw invalid();
     throw error;
@@ -302,7 +329,7 @@ export async function mintApiKey(
     const live = await query<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM api_key k JOIN mcp_grant g ON g.id = k."grantId"
         WHERE k."userId" = $1 AND k."revokedAt" IS NULL AND g."revokedAt" IS NULL
-          AND k."expiresAt" > now()`,
+          AND (k."expiresAt" IS NULL OR k."expiresAt" > now())`,
       [userId],
     );
     if ((live.rows[0]?.count ?? 0) >= KB_LIMITS.activeApiKeysPerUser) {
@@ -336,9 +363,9 @@ export async function mintApiKey(
       `INSERT INTO "api_key"
          (id, "userIdSnapshot", "userId", name, "lookupPrefix", "secretDigest", "grantId", reach,
           bits, "allowDelete", "allowMintChildren", "childToolGroups", "childAuthoringMode",
-          "expiresAt", "createdAt")
+          "childAllowCreate", "childrenEndWithKey", "expiresAt", "createdAt")
        VALUES ($1, $2, $2, $3, $4, $5, $6::uuid, $7::"ApiKeyReach", $8::text[], $9, $10,
-               $11::text[], $12::"McpAuthoringMode", $13, now())`,
+               $11::text[], $12::"McpAuthoringMode", $13, $14, $15, now())`,
       [
         keyId,
         userId,
@@ -352,6 +379,8 @@ export async function mintApiKey(
         input.allowMintChildren ?? false,
         childToolGroups,
         authoringModeToDb(childAuthoringMode),
+        input.childAllowCreate ?? false,
+        input.childrenEndWithKey ?? false,
         expiresAt,
       ],
     );
@@ -371,6 +400,9 @@ export async function mintApiKey(
           allowCreate ? "create" : null,
           input.allowDelete ? "delete" : null,
           input.allowMintChildren ? "mint_children" : null,
+          input.childAllowCreate ? "child_create" : null,
+          childToolGroups.includes("sealed") ? "child_sealed" : null,
+          input.childrenEndWithKey ? "children_end_with_key" : null,
         ]
           .filter(Boolean)
           .join(","),
@@ -406,27 +438,90 @@ export async function listApiKeys(
   });
 }
 
-/** Idempotent owner revoke: the key, its grant and every child (cascade). */
+/**
+ * Revoke one key on the caller's authority transaction. `revokeChildren`
+ * (default: the key's own childrenEndWithKey) decides whether its children
+ * are tombstoned with it. Declining it for a key whose children end with it
+ * first makes those children independent, so the choice made at revoke time
+ * is the one that holds (the verifier would otherwise end them with the key).
+ */
+async function revokeKeyInTransaction(
+  query: LockQuery,
+  opId: string,
+  input: {
+    userId: string;
+    apiKeyId: string;
+    grantId: string;
+    childrenEndWithKey: boolean;
+    revokeChildren: boolean | undefined;
+    actorKey?: string;
+  },
+): Promise<{ id: string; revoked: true; children: number }> {
+  const revokeChildren = input.revokeChildren ?? input.childrenEndWithKey;
+  if (!revokeChildren && input.childrenEndWithKey) {
+    await query(`UPDATE api_key SET "childrenEndWithKey" = false WHERE id = $1`, [input.apiKeyId]);
+  }
+  const { children } = await tombstoneGrant(query, {
+    userId: input.userId,
+    grantId: input.grantId,
+    opId,
+    action: API_KEY_REVOKE_ACTION,
+    actorKey: input.actorKey,
+    children: revokeChildren,
+  });
+  return { id: input.apiKeyId, revoked: true as const, children };
+}
+
+/** Idempotent owner revoke of a key, with or without its children (see above). */
 export async function revokeApiKey(
   runtime: Runtime,
   userId: string,
   apiKeyId: string,
+  options: { revokeChildren?: boolean } = {},
 ): Promise<{ id: string; revoked: true; children: number }> {
   return inAuthorityTransaction(runtime, async (query, opId) => {
     await lockLiveUser(query, userId);
-    const found = await query<{ userId: string | null; grantId: string }>(
-      `SELECT "userId", "grantId"::text AS "grantId" FROM "api_key" WHERE id = $1 FOR UPDATE`,
+    const found = await query<{
+      userId: string | null;
+      grantId: string;
+      childrenEndWithKey: boolean;
+    }>(
+      `SELECT "userId", "grantId"::text AS "grantId", "childrenEndWithKey"
+         FROM "api_key" WHERE id = $1 FOR UPDATE`,
       [apiKeyId],
     );
     const row = found.rows[0];
     if (!row || row.userId !== userId) throw keyNotFound();
-    const { children } = await tombstoneGrant(query, {
+    return revokeKeyInTransaction(query, opId, {
       userId,
+      apiKeyId,
       grantId: row.grantId,
-      opId,
-      action: API_KEY_REVOKE_ACTION,
+      childrenEndWithKey: row.childrenEndWithKey,
+      revokeChildren: options.revokeChildren,
     });
-    return { id: apiKeyId, revoked: true as const, children };
+  });
+}
+
+/** Owner bulk revoke of every child of one key (live or revoked key), set-based. */
+export async function revokeApiKeyChildrenForOwner(
+  runtime: Runtime,
+  userId: string,
+  apiKeyId: string,
+): Promise<{ id: string; children: number }> {
+  return inAuthorityTransaction(runtime, async (query, opId) => {
+    await lockLiveUser(query, userId);
+    const found = await query<{ userId: string | null }>(
+      `SELECT "userId" FROM api_key WHERE id = $1 FOR UPDATE`,
+      [apiKeyId],
+    );
+    if (found.rows[0]?.userId !== userId) throw keyNotFound();
+    const { children } = await tombstoneApiKeyChildren(query, {
+      userId,
+      opId,
+      actorKey: `user:${userId}`,
+      apiKeyId,
+    });
+    return { id: apiKeyId, children };
   });
 }
 
@@ -442,8 +537,16 @@ export const apiKeyChildMintInput = z.strictObject({
     .max(API_KEY_CHILD_TOOL_GROUPS.length),
   /** The child's write mode; null/omitted = a read-only child. */
   authoringMode: z.enum(MCP_AUTHORING_MODES).nullable().optional(),
-  /** Omitted = min(now + 90 days, the key's expiry); never later than the key's. */
-  expiresAt: z.coerce.date().optional(),
+  /** The child may create KBs (needs the key's childAllowCreate and a write mode). */
+  allowCreate: z.boolean().optional(),
+  /** Bits the child gets on a KB it creates; within the key's bits, must include read. */
+  createdKbBits: z.array(permissionSchema).max(5).optional(),
+  /**
+   * Omitted = 90 days (capped at the key's expiry when children end with the
+   * key); a date at most 365 days out; null = never expires (only when the
+   * child does not end with an expiring key).
+   */
+  expiresAt: z.coerce.date().nullable().optional(),
 });
 export type ApiKeyChildMintInput = z.input<typeof apiKeyChildMintInput>;
 
@@ -461,6 +564,11 @@ export type ChildTokenView = {
   scopes: string[];
   toolGroups: string[];
   authoringMode: McpAuthoringMode | null;
+  allowCreate: boolean;
+  /** Bits the child gets on a KB it creates (empty unless allowCreate). */
+  createdKbBits: string[];
+  /** KBs in the child's reach: the mint target plus every KB it created. */
+  kbCount: number;
   createdAt: Date;
   expiresAt: Date | null;
   revokedAt: Date | null;
@@ -468,9 +576,14 @@ export type ChildTokenView = {
 
 const CHILD_VIEW_SQL = `SELECT t.id, t.name, t."lookupPrefix", t."grantId"::text AS "grantId",
         t."parentApiKeyId" AS "apiKeyId",
-        (SELECT a."kbId" FROM grant_kb_acl a WHERE a."grantId" = t."grantId" ORDER BY a."kbId" LIMIT 1) AS "kbId",
-        COALESCE((SELECT a.bits FROM grant_kb_acl a WHERE a."grantId" = t."grantId" ORDER BY a."kbId" LIMIT 1), ARRAY[]::text[]) AS bits,
-        t.scopes, g."toolGroups", g."authoringMode"::text AS "authoringMode",
+        -- The mint target is the child's first ACL row (KBs it creates are appended later).
+        (SELECT a."kbId" FROM grant_kb_acl a WHERE a."grantId" = t."grantId"
+          ORDER BY a."createdAt", a."kbId" LIMIT 1) AS "kbId",
+        COALESCE((SELECT a.bits FROM grant_kb_acl a WHERE a."grantId" = t."grantId"
+          ORDER BY a."createdAt", a."kbId" LIMIT 1), ARRAY[]::text[]) AS bits,
+        (SELECT COUNT(*)::int FROM grant_kb_acl a WHERE a."grantId" = t."grantId") AS "kbCount",
+        g."createdKbBits",
+        t.scopes, g."toolGroups", g."authoringMode"::text AS "authoringMode", g."allowCreate",
         t."createdAt", t."expiresAt",
         -- A child tombstoned only because it expired lists as expired, not revoked.
         CASE WHEN g."revokeReason" = 'expired' THEN NULL
@@ -491,7 +604,10 @@ type KeyRow = {
   allowMintChildren: boolean;
   childToolGroups: string[];
   childAuthoringMode: string | null;
-  expiresAt: Date | string;
+  childAllowCreate: boolean;
+  childrenEndWithKey: boolean;
+  bits: string[];
+  expiresAt: Date | string | null;
 };
 
 /**
@@ -540,7 +656,8 @@ async function admitKeyOnTransaction(
   }
   const found = await query<KeyRow>(
     `SELECT id, "grantId"::text AS "grantId", "userId", "allowDelete", "allowMintChildren",
-            "childToolGroups", "childAuthoringMode"::text AS "childAuthoringMode", "expiresAt"
+            "childToolGroups", "childAuthoringMode"::text AS "childAuthoringMode",
+            "childAllowCreate", "childrenEndWithKey", bits, "expiresAt"
        FROM api_key WHERE id = $1 AND "grantId" = $2::uuid FOR UPDATE`,
     [apiKeyId, principal.grantId],
   );
@@ -566,6 +683,33 @@ export async function describeApiKey(
     const row = view.rows[0];
     if (!row) throw keyNotFound();
     return toKeyView(row);
+  });
+}
+
+/**
+ * The presented key revokes itself (`DELETE /api/v1/key`). Only that key.
+ * It may revoke its independent children too (`revokeChildren`, default the
+ * key's setting), but it can never release children the owner bound to it:
+ * for a key whose children end with it, they are always revoked with it. Only
+ * the owner, in a browser session, may change that at revoke time.
+ */
+export async function revokeApiKeySelf(
+  runtime: ApiKeyRuntime,
+  principal: TokenPrincipal,
+  resource: string,
+  options: { revokeChildren?: boolean } = {},
+): Promise<{ id: string; revoked: true; children: number }> {
+  const now = runtime.now ?? (() => new Date());
+  return inAuthorityTransaction(runtime, async (query, opId) => {
+    const { key } = await admitKeyOnTransaction(query, principal, resource, now);
+    return revokeKeyInTransaction(query, opId, {
+      userId: principal.userId,
+      apiKeyId: key.id,
+      grantId: key.grantId,
+      childrenEndWithKey: key.childrenEndWithKey,
+      revokeChildren: key.childrenEndWithKey ? true : options.revokeChildren,
+      actorKey: `grant:${principal.grantId}`,
+    });
   });
 }
 
@@ -618,7 +762,7 @@ export async function mintApiKeyChild(
   const requestHash = canonicalRequestHash({
     kbId,
     ...input,
-    expiresAt: input.expiresAt?.toISOString() ?? null,
+    expiresAt: input.expiresAt === null ? "never" : (input.expiresAt?.toISOString() ?? null),
   });
   const now = runtime.now ?? (() => new Date());
 
@@ -665,15 +809,44 @@ export async function mintApiKeyChild(
     if (!authoringWithin(authoringMode, authoringModeFromDb(key.childAuthoringMode))) {
       throw forbidden();
     }
-    const keyExpiry = toDate(key.expiresAt);
-    if (!keyExpiry) throw forbidden();
-    const at = now();
-    const expiresAt =
-      input.expiresAt ??
-      new Date(Math.min(at.getTime() + MCP_PAT_DEFAULT_TTL_DAYS * DAY_MS, keyExpiry.getTime()));
-    if (expiresAt.getTime() > keyExpiry.getTime() || expiresAt.getTime() <= at.getTime()) {
+    // Creating KBs is an opt-in of the key; the shape rules are the PAT mint's.
+    const allowCreate = input.allowCreate ?? false;
+    const createdKbBits = expandBits(input.createdKbBits ?? []);
+    if (allowCreate) {
+      if (!key.childAllowCreate) throw forbidden();
+      if (!authoringMode || !toolGroups.includes("kb_admin") || !createdKbBits.includes("read")) {
+        throw invalid();
+      }
+      const keyBits = expandBits(key.bits ?? []);
+      if (!createdKbBits.every((bit) => keyBits.includes(bit))) throw forbidden();
+    } else if (createdKbBits.length > 0) {
       throw invalid();
     }
+    // Expiry: a child that ends with its key never outlives it; an independent
+    // child takes any PAT expiry (90-day default, a date within 365 days, or never).
+    const keyExpiry = key.expiresAt === null ? null : toDate(key.expiresAt);
+    if (key.expiresAt !== null && !keyExpiry) throw forbidden();
+    const bound = key.childrenEndWithKey ? keyExpiry : null;
+    const at = now();
+    let expiresAt: Date | null;
+    if (input.expiresAt === undefined) {
+      const fallback = at.getTime() + MCP_PAT_DEFAULT_TTL_DAYS * DAY_MS;
+      expiresAt = new Date(bound ? Math.min(fallback, bound.getTime()) : fallback);
+    } else if (input.expiresAt === null) {
+      if (bound) throw invalid();
+      expiresAt = null;
+    } else {
+      // The PAT bounds (future, at most 365 days out) answer INVALID_ARGUMENT
+      // here: the shared mint's own refusal is folded into FORBIDDEN below.
+      try {
+        expiresAt = resolvePatExpiry(input.expiresAt, at);
+      } catch (error) {
+        if (error instanceof McpPatExpiryError) throw invalid();
+        throw error;
+      }
+      if (bound && expiresAt.getTime() > bound.getTime()) throw invalid();
+    }
+    if (expiresAt && expiresAt.getTime() <= at.getTime()) throw invalid();
     // Every mint (not a replay) is charged to the key's hourly budget: with
     // the live cap it bounds how fast child rows accumulate.
     await chargeRate(runtime.ratePort, { kind: "childMint", key: `apikey:${key.id}` });
@@ -712,7 +885,8 @@ export async function mintApiKeyChild(
           scopes: authoringMode ? ["mcp:read", "mcp:write"] : ["mcp:read"],
           toolGroups,
           acl: [{ kbId, bits }],
-          allowCreate: false,
+          allowCreate,
+          createdKbBits,
           authoringMode,
           expiresAt,
         },

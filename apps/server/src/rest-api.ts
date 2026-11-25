@@ -10,6 +10,7 @@ import {
   listApiKeyChildren,
   mintApiKeyChild,
   revokeApiKeyChild,
+  revokeApiKeySelf,
   touchApiKey,
 } from "@knowledge-base/api/lib/api-keys";
 import { prismaAssetQuery } from "@knowledge-base/api/lib/kb/asset-authz";
@@ -101,8 +102,11 @@ const childSchema = z.object({
   scopes: z.array(z.enum(["mcp:read", "mcp:write"])),
   toolGroups: z.array(z.string()),
   authoringMode: z.enum(["dream", "edit", "both"]).nullable(),
+  allowCreate: z.boolean(),
+  createdKbBits: z.array(permission).describe("Bits on a KB this token creates"),
+  kbCount: z.number().int().describe("The minted KB plus every KB this token created"),
   createdAt: isoDate,
-  expiresAt: isoDate.nullable(),
+  expiresAt: isoDate.nullable().describe("null = never expires"),
   revokedAt: isoDate.nullable(),
 });
 const childPageSchema = z.object({
@@ -122,8 +126,10 @@ const keySchema = z.object({
   allowMintChildren: z.boolean(),
   childToolGroups: z.array(z.string()),
   childAuthoringMode: z.enum(["dream", "edit", "both"]).nullable(),
+  childAllowCreate: z.boolean(),
+  childrenEndWithKey: z.boolean(),
   createdAt: isoDate,
-  expiresAt: isoDate,
+  expiresAt: isoDate.nullable().describe("null = never expires"),
   lastUsedAt: isoDate.nullable(),
   revokedAt: isoDate.nullable(),
   liveChildren: z.number().int(),
@@ -148,6 +154,7 @@ const createKbBody = z.strictObject({
     .max(63),
   description: z.string().min(10).max(2000),
 });
+const revokeKeyBody = z.strictObject({ revokeChildren: z.boolean().optional() });
 const deleteKbBody = z.strictObject({
   metadataVersion: z.number().int().min(1),
   confirm: z.literal("DELETE"),
@@ -177,6 +184,8 @@ export type RestRoute = {
   query?: z.ZodObject;
   body?: z.ZodType;
   success: { status: 200 | 201; description: string; schema: z.ZodType };
+  /** A second success status with the same body shape (an idempotent replay). */
+  replay?: { status: 200; description: string };
   /** Error statuses this route documents besides 400/401/429/503. */
   errors: readonly number[];
   run(ctx: RouteContext): Promise<RouteResult>;
@@ -208,6 +217,26 @@ export const REST_ROUTES: readonly RestRoute[] = [
         status: 200,
         body: keyJson(await describeApiKey(runtime, admitted.principal, resource)),
       };
+    },
+  },
+  {
+    method: "delete",
+    path: "/key",
+    operationId: "revokeApiKey",
+    summary:
+      "Revoke the presented key itself; revokeChildren (default: the key's childrenEndWithKey) also revokes its independent child tokens, and children that end with the key are always revoked. Naturally idempotent: no Idempotency-Key; once revoked the key answers 401",
+    idempotent: false,
+    body: revokeKeyBody,
+    success: {
+      status: 200,
+      description: "Revoked (idempotent)",
+      schema: z.object({ id: z.string(), revoked: z.literal(true), children: z.number().int() }),
+    },
+    errors: [],
+    async run({ admitted, runtime, resource, body }) {
+      const input = body as z.infer<typeof revokeKeyBody>;
+      const result = await revokeApiKeySelf(runtime, admitted.principal, resource, input);
+      return { status: 200, body: result };
     },
   },
   {
@@ -321,6 +350,11 @@ export const REST_ROUTES: readonly RestRoute[] = [
         replayed: z.boolean(),
       }),
     },
+    replay: {
+      status: 200,
+      description:
+        "Replay of the same Idempotency-Key and body: the same token with secret null and replayed true",
+    },
     errors: [403, 404, 409],
     async run({ admitted, runtime, resource, params, body, idempotencyKey }) {
       const minted = await mintApiKeyChild(
@@ -378,8 +412,8 @@ export const REST_ROUTES: readonly RestRoute[] = [
     method: "delete",
     path: "/tokens/{tokenId}",
     operationId: "revokeChildToken",
-    summary: "Revoke one child token of this key (idempotent)",
-    idempotent: true,
+    summary: "Revoke one child token of this key (naturally idempotent: no Idempotency-Key)",
+    idempotent: false,
     params: { tokenId: tokenIdParam },
     success: {
       status: 200,
@@ -796,6 +830,14 @@ export function buildOpenApiDocument(origin: string): Json {
         description: route.success.description,
         content: { "application/json": { schema: jsonSchema(route.success.schema) } },
       },
+      ...(route.replay
+        ? {
+            [String(route.replay.status)]: {
+              description: route.replay.description,
+              content: { "application/json": { schema: jsonSchema(route.success.schema) } },
+            },
+          }
+        : {}),
     };
     for (const status of [...new Set(statuses)].sort((a, b) => a - b)) {
       responses[String(status)] = {

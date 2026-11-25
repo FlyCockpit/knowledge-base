@@ -16,6 +16,8 @@
     "manageTokens": "Administrar tokens",
     "more": "{{count}}+",
     "firstPage": "Contadas entre las primeras {{count}}",
-    "loading": "Cargando"
+    "loading": "Cargando",
+    "tokensFromKeysHint_one": "{{count}} emitido por una clave de API (Configuración → Claves de API)",
+    "tokensFromKeysHint_other": "{{count}} emitidos por claves de API (Configuración → Claves de API)"
   }
 }

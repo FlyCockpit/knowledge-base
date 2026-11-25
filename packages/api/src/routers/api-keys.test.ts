@@ -16,6 +16,7 @@ vi.mock("../lib/api-keys", async (original) => ({
   revokeApiKey: vi.fn(),
   listApiKeyChildrenForOwner: vi.fn(),
   revokeApiKeyChild: vi.fn(),
+  revokeApiKeyChildrenForOwner: vi.fn(),
 }));
 
 import {
@@ -24,6 +25,7 @@ import {
   mintApiKey,
   revokeApiKey,
   revokeApiKeyChild,
+  revokeApiKeyChildrenForOwner,
 } from "../lib/api-keys";
 import { KbDomainError } from "../lib/kb/errors";
 import { apiKeysRouter } from "./api-keys";
@@ -37,6 +39,7 @@ const domain = [
   revokeApiKey,
   listApiKeyChildrenForOwner,
   revokeApiKeyChild,
+  revokeApiKeyChildrenForOwner,
 ];
 
 describe("apiKeys router (human control plane only)", () => {
@@ -48,6 +51,7 @@ describe("apiKeys router (human control plane only)", () => {
       "listChildrenMine",
       "listMine",
       "revokeChildMine",
+      "revokeChildrenMine",
       "revokeMine",
     ]);
   });
@@ -70,6 +74,9 @@ describe("apiKeys router (human control plane only)", () => {
       await expect(
         client.revokeChildMine({ apiKeyId: keyId, tokenId: "b".repeat(24) }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(client.revokeChildrenMine({ apiKeyId: keyId })).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
     }
     for (const fn of domain) expect(fn).not.toHaveBeenCalled();
   });
@@ -114,6 +121,37 @@ describe("apiKeys router (human control plane only)", () => {
       client.listChildrenMine({ apiKeyId: keyId, userId: "victim" } as never),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(mintApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokeMine passes revokeChildren (omitted = the key's own setting); revokeChildrenMine revokes one key's children", async () => {
+    vi.mocked(revokeApiKey).mockResolvedValue({ id: keyId, revoked: true, children: 0 });
+    vi.mocked(revokeApiKeyChildrenForOwner).mockResolvedValue({ id: keyId, children: 2 });
+    const client = createRouterClient(apiKeysRouter, { context: () => session as Context });
+    for (const revokeChildren of [true, false, undefined]) {
+      await client.revokeMine({ id: keyId, revokeChildren });
+      expect(revokeApiKey).toHaveBeenLastCalledWith({ marker: "runtime" }, "owner", keyId, {
+        revokeChildren,
+      });
+    }
+    await expect(
+      client.revokeMine({ id: keyId, revokeChildren: "yes" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(client.revokeChildrenMine({ apiKeyId: keyId })).resolves.toEqual({
+      id: keyId,
+      children: 2,
+    });
+    expect(revokeApiKeyChildrenForOwner).toHaveBeenCalledWith(
+      { marker: "runtime" },
+      "owner",
+      keyId,
+    );
+    await expect(
+      client.revokeChildrenMine({ apiKeyId: keyId, userId: "victim" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(client.revokeChildrenMine({ apiKeyId: "nope" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    expect(revokeApiKeyChildrenForOwner).toHaveBeenCalledTimes(1);
   });
 
   it("maps domain rejections without leaking detail", async () => {

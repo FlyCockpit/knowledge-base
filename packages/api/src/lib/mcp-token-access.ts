@@ -264,6 +264,7 @@ export function createGrantCredentialVerifier(
         elevations?: unknown;
         parentApiKeyId: string | null;
         parentLive: boolean | null;
+        parentBinds: boolean | null;
         parentAllowDelete: boolean | null;
         apiKeyId: string | null;
         apiKeyLive: boolean | null;
@@ -273,11 +274,14 @@ export function createGrantCredentialVerifier(
                 g."clientId", t.id AS "tokenId", t.resource,
                 t."revokedAt" AS "tokenRevokedAt", t."expiresAt" AS "tokenExpiresAt",
                 t."parentApiKeyId",
-                (pk.id IS NOT NULL AND pk."revokedAt" IS NULL AND pk."expiresAt" > clock_timestamp()
+                (pk.id IS NOT NULL AND pk."revokedAt" IS NULL
+                   AND (pk."expiresAt" IS NULL OR pk."expiresAt" > clock_timestamp())
                    AND pg."revokedAt" IS NULL AND pk."userId" = g."userId") AS "parentLive",
+                pk."childrenEndWithKey" AS "parentBinds",
                 pk."allowDelete" AS "parentAllowDelete",
                 k.id AS "apiKeyId", k."allowDelete" AS "apiKeyAllowDelete",
-                (k.id IS NOT NULL AND k."revokedAt" IS NULL AND k."expiresAt" > clock_timestamp()
+                (k.id IS NOT NULL AND k."revokedAt" IS NULL
+                   AND (k."expiresAt" IS NULL OR k."expiresAt" > clock_timestamp())
                    AND k."userId" = g."userId") AS "apiKeyLive",
                 (SELECT jsonb_agg(jsonb_build_object(
                           'id', e.id::text, 'toolGroups', e."toolGroups", 'expiresAt', e."expiresAt")
@@ -326,10 +330,13 @@ export function createGrantCredentialVerifier(
           row.tokenId !== null &&
           !row.tokenRevokedAt &&
           (row.tokenExpiresAt === null || (!!tokenExpiry && tokenExpiry > at));
-        // A child token lives only while its API key does (same statement,
-        // database clock): revocation and expiry of the key end every child
-        // even before the revoke cascade's tombstones are read.
-        if (row.parentApiKeyId !== null) generationActive &&= row.parentLive === true;
+        // A child of a key whose children end with it lives only while that key
+        // does (same statement, database clock): the key's revocation or expiry
+        // ends every such child even before any tombstone is read. A child of
+        // any other key is independent and stands on its own tombstone/expiry.
+        if (row.parentApiKeyId !== null && row.parentBinds !== false) {
+          generationActive &&= row.parentLive === true;
+        }
       }
       if (row && row.kind === "API_KEY") generationActive &&= row.apiKeyLive === true;
       if (!generationActive) return { ...inactive, consumerKind };
@@ -651,10 +658,10 @@ export async function mintPersonalTokenInTransaction(
 
 /**
  * Permanent tombstone of one grant generation and its credential row. When
- * the grant is an API key's, the key row and every child token it minted are
- * tombstoned in the same transaction (cascade), each child audited.
- * `actorKey` defaults to the owner; an API key revoking its own child passes
- * `grant:<keyGrantId>`.
+ * the grant is an API key's, the key row is tombstoned too and, unless
+ * `children` is false, every child token it minted (cascade, set-based, each
+ * child audited). `actorKey` defaults to the owner; an API key revoking its
+ * own child passes `grant:<keyGrantId>`.
  */
 /** Audit actions of an API key revocation and of every child token revocation. */
 export const API_KEY_REVOKE_ACTION = "api_key_revoke";
@@ -662,7 +669,15 @@ export const API_KEY_CHILD_REVOKE_ACTION = "api_key_child_revoke";
 
 export async function tombstoneGrant(
   query: LockQuery,
-  input: { userId: string; grantId: string; opId: string; action: string; actorKey?: string },
+  input: {
+    userId: string;
+    grantId: string;
+    opId: string;
+    action: string;
+    actorKey?: string;
+    /** For an API key's grant: also tombstone its children (default true). */
+    children?: boolean;
+  },
 ): Promise<{ children: number }> {
   const actorKey = input.actorKey ?? `user:${input.userId}`;
   await query(
@@ -690,11 +705,21 @@ export async function tombstoneGrant(
     [input.grantId],
   );
   const apiKeyId = key.rows[0]?.id;
-  if (!apiKeyId) return { children: 0 };
-  // The key's tombstone above already ends every child (the verifier requires
-  // a live parent). Tombstone every child not yet tombstoned too, set-based:
-  // each child mint tombstones the key's expired children first, so these are
-  // at most the per-key cap (an instance limit, at most 10 000) plus one.
+  if (!apiKeyId || input.children === false) return { children: 0 };
+  return tombstoneApiKeyChildren(query, { ...input, actorKey, apiKeyId });
+}
+
+/**
+ * Tombstone every not-yet-tombstoned child of one API key, set-based and
+ * audited per child (`api_key_child_revoke`). Bounded: each child mint
+ * tombstones the key's expired children first, so a key holds at most its
+ * cap (an instance limit, at most 10 000) plus one untombstoned children.
+ */
+export async function tombstoneApiKeyChildren(
+  query: LockQuery,
+  input: { userId: string; opId: string; actorKey: string; apiKeyId: string },
+): Promise<{ children: number }> {
+  const { apiKeyId, actorKey } = input;
   const children = await query<{ grantId: string }>(
     `WITH tokens AS (
        UPDATE "mcp_personal_token" SET "revokedAt" = now()
@@ -775,11 +800,17 @@ const REVOKE_ALL_BATCH = 100;
 export async function countActiveCredentials(
   runtime: Runtime,
   userId: string,
-): Promise<{ tokens: number; apps: number; apiKeys: number }> {
+): Promise<{ tokens: number; apps: number; apiKeys: number; childTokens: number }> {
   return inAuthorityTransaction(runtime, async (query) => {
     await lockLiveUser(query, userId);
-    // Child tokens are counted with nothing: revoking their API key ends them.
-    const { rows } = await query<{ tokens: number; apps: number; apiKeys: number }>(
+    // Child tokens are counted on their own (they may outlive their key), so
+    // the count matches what revoke-all revokes.
+    const { rows } = await query<{
+      tokens: number;
+      apps: number;
+      apiKeys: number;
+      childTokens: number;
+    }>(
       `SELECT
          (SELECT count(*)::int FROM mcp_personal_token t
            WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND t."parentApiKeyId" IS NULL
@@ -788,13 +819,23 @@ export async function countActiveCredentials(
            WHERE g."userId" = $1 AND g.kind::text = 'OAUTH' AND g."revokedAt" IS NULL) AS apps,
          (SELECT count(*)::int FROM api_key k JOIN mcp_grant g ON g.id = k."grantId"
            WHERE k."userId" = $1 AND k."revokedAt" IS NULL AND g."revokedAt" IS NULL
-             AND k."expiresAt" > now()) AS "apiKeys"`,
+             AND (k."expiresAt" IS NULL OR k."expiresAt" > now())) AS "apiKeys",
+         -- Live children whose key does not end them now (independent, or a live key).
+         (SELECT count(*)::int FROM mcp_personal_token t
+            JOIN mcp_grant cg ON cg.id = t."grantId"
+            JOIN api_key k ON k.id = t."parentApiKeyId"
+           WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND cg."revokedAt" IS NULL
+             AND (t."expiresAt" IS NULL OR t."expiresAt" > now())
+             AND (NOT k."childrenEndWithKey"
+                  OR (k."revokedAt" IS NULL AND (k."expiresAt" IS NULL OR k."expiresAt" > now())))
+         ) AS "childTokens"`,
       [userId],
     );
     return {
       tokens: rows[0]?.tokens ?? 0,
       apps: rows[0]?.apps ?? 0,
       apiKeys: rows[0]?.apiKeys ?? 0,
+      childTokens: rows[0]?.childTokens ?? 0,
     };
   });
 }
@@ -808,10 +849,10 @@ export async function countActiveCredentials(
 export async function revokeAllCredentials(
   runtime: Runtime,
   userId: string,
-): Promise<{ tokens: number; apps: number; apiKeys: number }> {
+): Promise<{ tokens: number; apps: number; apiKeys: number; childTokens: number }> {
   // The panic button includes REST API keys (and so their children): a live
   // key could otherwise mint new MCP tokens right after the reset.
-  const revoked = { tokens: 0, apps: 0, apiKeys: 0 };
+  const revoked = { tokens: 0, apps: 0, apiKeys: 0, childTokens: 0 };
   type Row = { id: string; kind: "PAT" | "OAUTH" | "API_KEY" };
   // Two sweeps, keys first: a key's tombstone ends all of its children at
   // once (the verifier requires a live parent) and its cascade tombstones the
@@ -850,12 +891,13 @@ export async function revokeAllCredentials(
             // One audit identity per credential: audit rows are unique on
             // (opId, action, outcome), so a shared batch opId would record only
             // the first revocation (same scheme as account-removal tombstones).
-            await tombstoneGrant(query, {
+            const { children } = await tombstoneGrant(query, {
               userId,
               grantId: row.id,
               opId: `${opId}:${row.id}`,
               action: "grant_revoke",
             });
+            revoked.childTokens += children;
             if (row.kind === "OAUTH") revoked.apps++;
             else if (row.kind === "API_KEY") revoked.apiKeys++;
             else revoked.tokens++;
@@ -864,6 +906,37 @@ export async function revokeAllCredentials(
     );
   await sweep(true);
   await sweep(false);
+  // Children that outlived an earlier key revocation (independent children):
+  // one set-based cascade per key that still has an untombstoned child, found
+  // from the user's untombstoned tokens (indexed), never from key history, so
+  // a completed cleanup makes the next revoke-all cheap.
+  await forEachPage<{ id: string }>(
+    ({ take, afterId }) =>
+      inAuthorityTransaction(runtime, async (query) => {
+        const { rows } = await query<{ id: string }>(
+          `SELECT DISTINCT t."parentApiKeyId" AS id FROM mcp_personal_token t
+            WHERE t."userId" = $1 AND t."revokedAt" IS NULL AND t."parentApiKeyId" IS NOT NULL
+              AND ($2::text IS NULL OR t."parentApiKeyId" > $2)
+            ORDER BY 1 LIMIT $3`,
+          [userId, afterId ?? null, take],
+        );
+        return rows;
+      }),
+    REVOKE_ALL_BATCH,
+    (rows) =>
+      inAuthorityTransaction(runtime, async (query, opId) => {
+        await lockLiveUser(query, userId);
+        for (const row of rows) {
+          const { children } = await tombstoneApiKeyChildren(query, {
+            userId,
+            opId: `${opId}:${row.id}`,
+            actorKey: `user:${userId}`,
+            apiKeyId: row.id,
+          });
+          revoked.childTokens += children;
+        }
+      }),
+  );
   return revoked;
 }
 
