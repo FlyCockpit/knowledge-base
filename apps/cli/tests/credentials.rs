@@ -167,7 +167,10 @@ fn logout_reclaims_private_orphans_with_and_without_a_published_credential() {
         {
             use std::io::Write;
             use std::process::Stdio;
+            // Windows PowerShell's own module path: one inherited from a
+            // PowerShell 7 parent cannot load `Set-Acl`'s module.
             let mut helper = ChildGuard::new(std::process::Command::new("powershell.exe")
+                .env_remove("PSModulePath")
                 .args(["-NoProfile", "-NonInteractive", "-Command", "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); $p=[Console]::In.ReadToEnd(); $ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object Security.AccessControl.FileSecurity; $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','Allow')); Set-Acl -LiteralPath $p -AclObject $a"])
                 .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null())
                 .spawn().unwrap());

@@ -704,7 +704,10 @@ fn nested_managed_component_link_is_refused() {
 
 #[cfg(windows)]
 fn acl_probe(path: &Path, action: &str) -> bool {
+    // Windows PowerShell's own module path: one inherited from a PowerShell 7
+    // parent cannot load the ACL cmdlets' module.
     Command::new("powershell.exe")
+        .env_remove("PSModulePath")
         .args(["-NoProfile", "-NonInteractive", "-File"])
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/acl-probe.ps1"))
         .arg(windows_plain_path(path))

@@ -79,7 +79,9 @@ fn input_is_private_bounded_exact_utf8_and_control_is_not_a_tool() {
     #[cfg(windows)]
     {
         // Same owner-only protected ACL as state.rs; test fixture only.
-        let mut child = ChildGuard::new(Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", r"$ErrorActionPreference='Stop'; $p=[Console]::In.ReadToEnd(); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object Security.AccessControl.FileSecurity; $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $r=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); $a.AddAccessRule($r); Set-Acl -LiteralPath $p -AclObject $a"])
+        // Windows PowerShell's own module path: one inherited from a
+        // PowerShell 7 parent cannot load `Set-Acl`'s module.
+        let mut child = ChildGuard::new(Command::new("powershell.exe").env_remove("PSModulePath").args(["-NoProfile", "-NonInteractive", "-Command", r"$ErrorActionPreference='Stop'; $p=[Console]::In.ReadToEnd(); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object Security.AccessControl.FileSecurity; $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $r=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); $a.AddAccessRule($r); Set-Acl -LiteralPath $p -AclObject $a"])
             .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
         child
             .stdin

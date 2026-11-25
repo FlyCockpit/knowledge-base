@@ -30,7 +30,10 @@ fn private_root(f: &Fixture) {
     // (current user as owner, one inheritable full-control entry).
     #[cfg(windows)]
     {
+        // Windows PowerShell's own module path: one inherited from a
+        // PowerShell 7 parent cannot load `Set-Acl`'s module.
         let output = std::process::Command::new("powershell.exe")
+            .env_remove("PSModulePath")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
