@@ -1,6 +1,6 @@
 //! Shared whole-tree validation — a port of
 //! `packages/api/src/lib/kb/validate-tree.ts` (and the manifest/path rules it
-//! uses) with identical decisions on the shared corpus (`tests/trees.rs`).
+//! uses) with identical decisions on the shared corpus (`tests/catalog/trees.rs`).
 //!
 //! Rules: UTF-8/NFC/case-fold/Windows-safe relative paths (kb-client's path
 //! normalizer), only `100644` blobs and `040000` trees, no symlinks,

@@ -203,7 +203,7 @@ it("one supervisor switches Qwen to Gemma and back, choosing each artifact and d
 
 // Server/CLI normalization parity: the shared fixture records each built-in model's raw
 // output for fixed inputs and the index format's one normalization of it. The CLI checks the same
-// bytes (kb-local index_format tests) and its own live model output (tests/qwen_model.rs).
+// bytes (kb-local index_format tests) and its own live model output (tests/embedding/qwen_model.rs).
 it("real-model normalization parity: live raw vectors normalize to the shared fixture's unit vectors", {
   timeout: 600_000,
 }, async () => {

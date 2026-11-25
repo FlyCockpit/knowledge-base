@@ -25,7 +25,7 @@ use std::{
 /// Bases one call searches at once.
 pub const SEARCH_ALL_LANES: usize = 2;
 /// The local store's "all I can read" limit: the server's default
-/// (`SEARCH_ALL_DEFAULT_BASES`, drift-checked in `tests/bases.rs`). Above it,
+/// (`SEARCH_ALL_DEFAULT_BASES`, drift-checked in `tests/catalog/bases/lifecycle.rs`). Above it,
 /// a call without `kbIds` is refused `TOO_MANY_BASES`, never a silent subset.
 pub const SEARCH_ALL_LOCAL_BASES: usize = 16;
 /// How long the final recheck may spend on recovery the store fence runs,

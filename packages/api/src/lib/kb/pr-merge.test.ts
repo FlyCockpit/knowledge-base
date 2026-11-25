@@ -1245,7 +1245,7 @@ describe("merge scratch I/O ownership", () => {
 
 /**
  * The shared native line-merge corpus (`fixtures/text-merge-cases.json`),
- * which kb-local's `tests/pull_requests.rs` runs too: every case is one
+ * which kb-local's `tests/authoring/pull_requests/` runs too: every case is one
  * document of ONE real-Git merge, so the server and the local store combine
  * (or refuse) the same lines with the same algorithm.
  */

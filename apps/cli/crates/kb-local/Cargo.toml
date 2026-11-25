@@ -88,6 +88,149 @@ name = "kb-parity-fixture"
 path = "tests/support/parity_fixture.rs"
 test = false
 
+# Integration tests live in one directory per area of the store (store core, KB catalog,
+# stored content, authoring, index, search, embedding); each file or `<name>/main.rs` is
+# its own test binary, named as before so `--test <name>` filters keep working.
+[[test]]
+name = "git_recovery"
+path = "tests/store/git_recovery.rs"
+
+[[test]]
+name = "locks"
+path = "tests/store/locks.rs"
+
+[[test]]
+name = "owner_only"
+path = "tests/store/owner_only.rs"
+
+[[test]]
+name = "parity"
+path = "tests/store/parity.rs"
+
+[[test]]
+name = "publication_faults"
+path = "tests/store/publication_faults.rs"
+
+[[test]]
+name = "refusal_authority"
+path = "tests/store/refusal_authority.rs"
+
+[[test]]
+name = "replay"
+path = "tests/store/replay.rs"
+
+[[test]]
+name = "store"
+path = "tests/store/store.rs"
+
+[[test]]
+name = "bases"
+path = "tests/catalog/bases/main.rs"
+
+[[test]]
+name = "source"
+path = "tests/catalog/source.rs"
+
+[[test]]
+name = "trees"
+path = "tests/catalog/trees.rs"
+
+[[test]]
+name = "assets"
+path = "tests/content/assets.rs"
+
+[[test]]
+name = "exports"
+path = "tests/content/exports.rs"
+
+[[test]]
+name = "manifest"
+path = "tests/content/manifest.rs"
+
+[[test]]
+name = "sealed"
+path = "tests/content/sealed.rs"
+
+[[test]]
+name = "uploads"
+path = "tests/content/uploads.rs"
+
+[[test]]
+name = "changes"
+path = "tests/authoring/changes/main.rs"
+
+[[test]]
+name = "dream"
+path = "tests/authoring/dream.rs"
+
+[[test]]
+name = "pull_requests"
+path = "tests/authoring/pull_requests/main.rs"
+
+[[test]]
+name = "chunks"
+path = "tests/index/chunks.rs"
+
+[[test]]
+name = "index"
+path = "tests/index/index/main.rs"
+
+[[test]]
+name = "index_fixes"
+path = "tests/index/index_fixes.rs"
+
+[[test]]
+name = "index_recovery"
+path = "tests/index/index_recovery.rs"
+
+[[test]]
+name = "index_reuse"
+path = "tests/index/index_reuse.rs"
+
+[[test]]
+name = "profile_set_noop"
+path = "tests/index/profile_set_noop.rs"
+
+[[test]]
+name = "profile_set_reasons"
+path = "tests/index/profile_set_reasons.rs"
+
+[[test]]
+name = "seed_activation"
+path = "tests/index/seed_activation.rs"
+
+[[test]]
+name = "retrieval_quality"
+path = "tests/search/retrieval_quality.rs"
+
+[[test]]
+name = "search"
+path = "tests/search/search/main.rs"
+
+[[test]]
+name = "search_all"
+path = "tests/search/search_all.rs"
+
+[[test]]
+name = "structured_search"
+path = "tests/search/structured_search.rs"
+
+[[test]]
+name = "model_download"
+path = "tests/embedding/model_download.rs"
+
+[[test]]
+name = "providers"
+path = "tests/embedding/providers.rs"
+
+[[test]]
+name = "qwen_model"
+path = "tests/embedding/qwen_model.rs"
+
+[[test]]
+name = "qwen_process"
+path = "tests/embedding/qwen_process.rs"
+
 # Never shipped as its own release artifact.
 [package.metadata.dist]
 dist = false

@@ -31,7 +31,7 @@ const expectAtLeast = (score: RetrievalScore, lane: keyof typeof retrievalCorpus
   ).toEqual({ semanticHit1: true, semanticHit3: true, keywordHit1: true });
 };
 
-// (CLI twin `tests/retrieval_quality.rs`; real-model lane in gemma-model.integration.test.ts).
+// (CLI twin `tests/search/retrieval_quality.rs`; real-model lane in gemma-model.integration.test.ts).
 describe("retrieval quality on the shared corpus", () => {
   it("hybrid: the recorded Gemma vector ranking fused with the real lexical arm keeps semantic hits first", async () => {
     const dimensions = Object.keys(retrievalCorpus.documents).length;
