@@ -40,3 +40,22 @@ So do the template's five rules from the apps' passes:
 The first-visit cookie banner (`ConsentBanner`) is fixed to the bottom of the viewport but never covers the page. While it shows, it publishes its height as `--consent-inset` on `<html>` (`apps/web/src/components/consent/consent-inset.ts`), `apps/web/src/index.css` turns that into `--consent-clearance`, and every shell pads its bottom by it, so `<main>` ends where the banner starts (0 without a banner). The app shell pads by the larger of that and the BottomNav's clearance (`pb-[max(calc(3.5rem_+_var(--safe-area-bottom)),var(--consent-clearance))]` with the software keyboard closed; `pb-(--consent-clearance)` with it open and from `md:` up). The public shell and the standalone device/OAuth pages pad by the larger of it and the safe-area inset. The shells are `h-svh` and do not shrink for the keyboard, so the clearance is the whole banner height (the template subtracts `--keyboard-inset` because its shells do shrink).
 
 Below `sm:` the banner is one short line (`consent:banner.short`) over two side-by-side buttons (`grid grid-cols-2`, each `touch`, 44px tall), about 92px above the BottomNav at 320px; the title and full message return from `sm:` up, and the section's `aria-label` carries the title at every width. The auth card (`AuthCard`) is flat on phones (no surface, ring or inner padding) and starts just under the header instead of being centred in `80vh`; on the login page "Forgot password?" sits in the Password label's row there and the sign-up link uses half the gap above it, so at 320×568 the sign-up link stays visible above a first visit's banner.
+
+## Layer scale
+
+The app keeps the template's layer scale (`patterns/design-system.md` in the template repo). The banner, the BottomNav and every portal sit on the root stacking context, so these numbers compete directly. That holds only while none of them has an ancestor that opens its own stacking context (`isolate`, a `z-*` on a positioned element, `transform`, `filter`, `backdrop-filter`, `opacity` below 1, `will-change`, `contain`), so fixed chrome mounts at the shell or root level. A portaled popup competes through its outermost part (Positioner, Backdrop/Overlay, Viewport):
+
+| Layer | Who |
+|---|---|
+| `z-10`, `z-20` (and `-z-1`) | Inside a component (Select's scroll arrows, a focused toggle); never used to beat app chrome |
+| `z-30` | Sticky page chrome (the admin section header) |
+| `z-40` | Non-modal fixed chrome over the page: the cookie banner. Below every overlay, so an open menu, select, popover, combobox, dialog, sheet, drawer or toast is never covered (a row-actions menu opened near the bottom of a list lands where the banner floats); below the BottomNav, which paints over the banner's bottom padding |
+| `z-50` | The overlay layer: the `packages/ui` portals (dropdown menu, select, popover, dialog, alert dialog, sheet, drawer), the sileo toast viewport, the mobile BottomNav and the focused skip link |
+
+Nothing goes above `z-50`. Utilities use only the steps above (`-z-1`, `z-10`, `z-20`, `z-30`, `z-40`, `z-50`): no arbitrary `z-[…]` / `z-(…)` values and no other numbers. Every overlay root carries an unconditional `z-50` (a responsive-only `md:z-50` leaves phones without a layer). A new banner, tray or floating button is `z-40` or lower and reserves its own space, as the banner does with `--consent-inset`.
+
+What checks it:
+
+- `apps/web/src/components/consent/consent-layers.test.tsx` is the safety net. It renders the banner and checks its layer against every portaled overlay in `packages/ui/src` (read from the components, so a new overlay is covered), the sileo toast viewport and the BottomNav, and that no overlay is lowered below `z-50` through the `className` it is given (in app code or a shared wrapper such as `CommandDialog`).
+- `pnpm policy:checks` is a line grep for the obvious cases: an off-scale `z-…` utility in `apps/web/src` or `packages/ui/src` (markup, class strings, `@apply`).
+- Neither catches: custom CSS classes and stylesheets (`.my-sheet { z-index: 30 }`, a `[data-slot=…]` rule, however its selector is spaced, nested `@media` blocks), CSS `z-index` declarations and inline `style` / `zIndex`, class names built at runtime (`` `z-${n}` ``) or held in a constant, layers set through pseudo-element or descendant variants (`before:`, `*:`, `[&…]:`, which the test skips), and an ancestor that opens its own stacking context. Those are review items; real hit-testing needs a browser.

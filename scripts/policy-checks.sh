@@ -537,6 +537,21 @@ FIND_MANY_AWK='
   }
 '
 
+# docs/ui.md § Layer scale. A z-index utility is either a step
+# of the scale (-z-1, z-10 … z-50) or an arbitrary `z-[…]` / `z-(…)` / other
+# number, which is how fixed chrome ends up covering an open overlay. This is
+# a line grep for the obvious cases only: it does not read CSS `z-index`
+# declarations, inline styles or custom classes. The behaviour is pinned by
+# apps/web/src/components/consent/consent-layers.test.tsx.
+Z_LAYER_TOKEN_RE='(^|[^A-Za-z0-9_-])-?z-(\[|\(|[0-9]+)'
+Z_LAYER_STEP_RE='[^A-Za-z0-9_-](-z-1|z-[1-5]0)$'
+
+# Print every off-scale z utility under the given roots, one per match.
+z_layer_scan() {
+  run_grep -rInoE --include='*.tsx' --include='*.ts' --include='*.css' "${GREP_EXCLUDES[@]}" \
+    -E "$Z_LAYER_TOKEN_RE" "$@" | run_grep -vE "$Z_LAYER_STEP_RE"
+}
+
 # -- self-test --------------------------------------------------------------
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -1143,6 +1158,47 @@ if [[ "${1:-}" == "--self-test" ]]; then
   fi
   echo "ok: agent-rules scanner catches route value exports, hardcoded JSX copy, and sitemap drift"
 
+  # Layer scale: run the real scanner over fixtures. Every off-scale utility
+  # is reported, each step of the scale is not.
+  layer_fixture="$(mktemp -d)"
+  layer_bad=(
+    'class="fixed z-[60]"'
+    'class="md:z-[60]"'
+    'class="z-(--layer)"'
+    'class="z-60"'
+    'class="z-100"'
+    'class="z-45"'
+    'class="before:-z-[2]"'
+    'class="fixed z-40 data-open:z-55"'
+    '.banner { @apply fixed z-60; }'
+  )
+  layer_good=(
+    'class="fixed z-50"'
+    'class="z-40 focus:z-10 before:-z-1 md:z-30 z-20"'
+    'class="fuzz-60 size-10"'
+    '.a { @apply z-50; }'
+  )
+  for line in "${layer_bad[@]}"; do printf '%s\n' "$line" >> "$layer_fixture/bad.tsx"; done
+  for line in "${layer_good[@]}"; do printf '%s\n' "$line" >> "$layer_fixture/good.tsx"; done
+  layer_hits="$(z_layer_scan "$layer_fixture")"
+  layer_line=0
+  for line in "${layer_bad[@]}"; do
+    layer_line=$((layer_line + 1))
+    if ! printf '%s\n' "$layer_hits" | grep -qE "^$layer_fixture/bad\.tsx:$layer_line:"; then
+      echo "self-test FAILED: off-scale layer '$line' was not caught" >&2
+      rm -rf "$layer_fixture"
+      exit 1
+    fi
+  done
+  if printf '%s\n' "$layer_hits" | grep -qE "/good\.tsx:"; then
+    echo "self-test FAILED: a step of the layer scale was flagged:" >&2
+    printf '%s\n' "$layer_hits" | grep -E "/good\.tsx:" >&2
+    rm -rf "$layer_fixture"
+    exit 1
+  fi
+  rm -rf "$layer_fixture"
+  echo "ok: off-scale z-index utilities are caught; the layer-scale steps pass"
+
   echo "policy-checks self-test passed."
   exit 0
 fi
@@ -1173,6 +1229,13 @@ hits="$(
     apps packages
 )"
 report "Found 'transition-all' / 'transition: all' — explicitly list properties instead." "$hits"
+
+# docs/ui.md § Layer scale. Tests are scanned too: a
+# fixture that needs an off-scale value can assemble it from parts.
+require_root "apps/web/src"
+require_root "packages/ui/src"
+hits="$(z_layer_scan apps/web/src packages/ui/src)"
+report "Off-scale z-index utility: use a step of the layer scale (-z-1, z-10, z-20, z-30, z-40, z-50); no z-[…] / z-(…) or other numbers, nothing above the z-50 overlay layer (docs/ui.md § Layer scale)." "$hits"
 
 # AGENTS.md: "any user-copyable value goes through CopyField (single-line) /
 # CodeSnippet (multi-line block) from packages/ui — never a hand-rolled <pre>"
