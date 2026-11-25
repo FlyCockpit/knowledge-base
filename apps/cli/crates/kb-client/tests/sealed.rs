@@ -12,8 +12,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use common::{ctl, err, ok, tool_server};
-use kb_client::attachment::{VerifiedAttachment, remote_attachment_namespace, verify_attachment};
-use kb_client::sealed::{
+use kb_client::host::attachment::{
+    VerifiedAttachment, remote_attachment_namespace, verify_attachment,
+};
+use kb_client::host::sealed::{
     RecipientKey, SEALED_MAX_TTL, SealedError, SealedReference, TravelAuthorization,
     forward_sealed_resolve, open_envelope, resolve_sealed,
 };

@@ -14,12 +14,12 @@ use std::sync::Arc;
 use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, SHA256, digest};
 use serde::Deserialize;
 
-use crate::client::{CallControl, ClientError, McpClient};
+use crate::tools::{DocumentsGet, KnowledgeSearch, StructuredSearch};
 use crate::types::{
-    CitationHit, ContentHash, Document, DocumentsGet, DocumentsGetInput, Freshness, IndexNotice,
-    KbId, KnowledgeSearch, SearchInput, Sha, StructuredCondition, StructuredSearch,
-    StructuredSearchInput, TimestampRange,
+    CitationHit, ContentHash, Document, DocumentsGetInput, Freshness, IndexNotice, KbId,
+    SearchInput, Sha, StructuredCondition, StructuredSearchInput, TimestampRange,
 };
+use crate::{CallControl, ClientError, McpClient};
 
 /// Why a retrieval was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,7 +276,7 @@ impl StructuredFilters {
             after: Some(after),
             before: Some(before),
         }) = &input.timestamp
-            && crate::schema::compare_iso(after.as_str(), before.as_str())
+            && crate::format::compare_iso(after.as_str(), before.as_str())
                 != Some(std::cmp::Ordering::Less)
         {
             return Err(SnapshotError::InvalidFilters);

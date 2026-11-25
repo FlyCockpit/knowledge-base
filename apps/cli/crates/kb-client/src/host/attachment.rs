@@ -16,9 +16,10 @@ use std::fmt;
 
 use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 
-use crate::client::{CallControl, ClientError, McpClient};
-use crate::origin::KbLocator;
-use crate::types::{BasesGet, IndexStatus, KbAttachment, KbId, KbRef, Uuid};
+use crate::KbLocator;
+use crate::tools::BasesGet;
+use crate::types::{IndexStatus, KbAttachment, KbId, KbRef, Uuid};
+use crate::{CallControl, ClientError, McpClient};
 
 /// RFC 4122 `NAMESPACE_URL` (`6ba7b811-9dad-11d1-80b4-00c04fd430c8`).
 pub const NAMESPACE_URL: [u8; 16] = [

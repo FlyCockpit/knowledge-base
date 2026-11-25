@@ -13,7 +13,12 @@ use std::sync::OnceLock;
 
 use serde_json::{Map, Number, Value};
 
+use crate::format::{
+    compare_iso, is_concept_id, is_content_hash, is_idempotency_key, is_kb_id, is_sha, is_slug,
+    is_uuid, matches_iso_shape, parse_iso_instant, safe_integer,
+};
 use crate::path::{casefold_path_key, check_kb_path};
+use crate::types::{KbId, Permission, ProviderRef};
 
 const ARTIFACT_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -74,7 +79,7 @@ struct Artifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MinimumAccess {
     /// The KB bit.
-    Permission(crate::types::Permission),
+    Permission(Permission),
     /// The KB's owner holding `manage` (delete).
     OwnerManage,
     /// The connection may create KBs.
@@ -208,7 +213,7 @@ fn load_artifact() -> Result<Artifact, SchemaViolation> {
     if root
         .pointer("/builtinProvider/name")
         .and_then(Value::as_str)
-        != Some(crate::types::ProviderRef::BUILTIN)
+        != Some(ProviderRef::BUILTIN)
     {
         return Err(artifact_error("builtinProvider"));
     }
@@ -494,62 +499,6 @@ pub(crate) const PATTERN_ISO: &str =
 pub(crate) const PATTERN_PG_TEXT: &str = "^[^\\u0000]*$";
 pub(crate) const PATTERN_HASH: &str = "^sha256:[0-9a-f]{64}$";
 
-fn lower_hex(c: u8) -> bool {
-    c.is_ascii_digit() || (b'a'..=b'f').contains(&c)
-}
-
-fn lower_alnum(c: u8) -> bool {
-    c.is_ascii_digit() || c.is_ascii_lowercase()
-}
-
-pub(crate) fn is_sha(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(lower_hex)
-}
-
-pub(crate) fn is_uuid(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 36
-        && b.iter().enumerate().all(|(i, &c)| match i {
-            8 | 13 | 18 | 23 => c == b'-',
-            _ => lower_hex(c),
-        })
-}
-
-pub(crate) fn is_kb_id(s: &str) -> bool {
-    (24..=32).contains(&s.len()) && s.bytes().all(lower_alnum)
-}
-
-pub(crate) fn is_slug(s: &str) -> bool {
-    !s.is_empty()
-        && s.split('-')
-            .all(|part| !part.is_empty() && part.bytes().all(lower_alnum))
-}
-
-pub(crate) fn is_concept_id(s: &str) -> bool {
-    let b = s.as_bytes();
-    !b.is_empty()
-        && b.len() <= 128
-        && lower_alnum(b[0])
-        && b[1..]
-            .iter()
-            .all(|&c| lower_alnum(c) || c == b'_' || c == b'-')
-}
-
-pub(crate) fn is_idempotency_key(s: &str) -> bool {
-    (16..=128).contains(&s.len())
-        && s.bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
-}
-
-pub(crate) fn is_content_hash(s: &str) -> bool {
-    s.strip_prefix("sha256:")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(lower_hex))
-}
-
-fn matches_iso_shape(s: &str) -> bool {
-    iso_fields(s).is_some()
-}
-
 fn known_pattern(pattern: &str) -> Option<Matcher> {
     Some(match pattern {
         PATTERN_SHA => is_sha,
@@ -563,103 +512,6 @@ fn known_pattern(pattern: &str) -> Option<Matcher> {
         PATTERN_PG_TEXT => |s| !s.contains('\0'),
         _ => return None,
     })
-}
-
-// ── Instants ────────────────────────────────────────────────────────────────
-
-struct IsoFields {
-    year: i64,
-    month: u32,
-    day: u32,
-    hour: u32,
-    minute: u32,
-    second: u32,
-    fraction: String,
-}
-
-fn digits(s: &[u8]) -> Option<u32> {
-    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    s.iter().try_fold(0u32, |acc, &d| {
-        acc.checked_mul(10)?.checked_add(u32::from(d - b'0'))
-    })
-}
-
-/// Shape-only parse of the ISO pattern (no calendar validation).
-fn iso_fields(s: &str) -> Option<IsoFields> {
-    let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' {
-        return None;
-    }
-    if b[16] != b':' || *b.last()? != b'Z' {
-        return None;
-    }
-    let fraction = match &b[19..b.len() - 1] {
-        [] => "",
-        [b'.', rest @ ..]
-            if (1..=9).contains(&rest.len()) && rest.iter().all(u8::is_ascii_digit) =>
-        {
-            std::str::from_utf8(rest).ok()?
-        }
-        _ => return None,
-    };
-    Some(IsoFields {
-        year: i64::from(digits(&b[0..4])?),
-        month: digits(&b[5..7])?,
-        day: digits(&b[8..10])?,
-        hour: digits(&b[11..13])?,
-        minute: digits(&b[14..16])?,
-        second: digits(&b[17..19])?,
-        fraction: fraction.trim_end_matches('0').to_owned(),
-    })
-}
-
-fn days_in_month(year: i64, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        _ if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        _ => 28,
-    }
-}
-
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let m = i64::from(month);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// Exact UTC instant: whole epoch seconds plus the fraction with trailing
-/// zeros stripped, or `None` for anything the TypeScript runtime rejects —
-/// including years 0000–0099, which `Date.UTC` maps into the 1900s.
-pub(crate) fn parse_iso_instant(s: &str) -> Option<(i64, String)> {
-    let f = iso_fields(s)?;
-    if f.year < 100 || !(1..=12).contains(&f.month) || f.hour > 23 || f.minute > 59 {
-        return None;
-    }
-    if f.second > 59 || f.day < 1 || f.day > days_in_month(f.year, f.month) {
-        return None;
-    }
-    let days = days_from_civil(f.year, f.month, f.day);
-    let seconds =
-        days * 86_400 + i64::from(f.hour) * 3600 + i64::from(f.minute) * 60 + i64::from(f.second);
-    Some((seconds, f.fraction))
-}
-
-/// Compare two instants exactly at the accepted precision.
-pub(crate) fn compare_iso(a: &str, b: &str) -> Option<std::cmp::Ordering> {
-    let (sa, fa) = parse_iso_instant(a)?;
-    let (sb, fb) = parse_iso_instant(b)?;
-    if sa != sb {
-        return Some(sa.cmp(&sb));
-    }
-    let width = fa.len().max(fb.len());
-    Some(format!("{fa:0<width$}").cmp(&format!("{fb:0<width$}")))
 }
 
 // ── Base64 ──────────────────────────────────────────────────────────────────
@@ -972,24 +824,6 @@ pub(crate) fn js_equal(a: &Value, b: &Value) -> bool {
         }
         _ => a == b,
     }
-}
-
-pub(crate) const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
-
-/// Safe JS integer by numerical value, independent of JSON lexical spelling.
-/// Check integer variants before floating conversion so unsafe integers cannot
-/// round into the safe interval. Direct interval checks cannot overflow.
-pub(crate) fn safe_integer(value: &Value) -> Option<i64> {
-    if let Some(n) = value.as_i64() {
-        return (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
-            .contains(&n)
-            .then_some(n);
-    }
-    let n = value.as_f64()?;
-    (n.is_finite()
-        && n.fract() == 0.0
-        && (-MAX_SAFE_INTEGER as f64..=MAX_SAFE_INTEGER as f64).contains(&n))
-    .then_some(n as i64)
 }
 
 /// Serde's integer visitors reject integral floating JSON numbers. Canonicalize
@@ -1391,13 +1225,28 @@ fn check(schema: &Value, value: &Value, pointer: &mut String) -> Result<(), Sche
     Ok(())
 }
 
-/// Canonicalize the registry ID at input boundaries, before profile decisions.
-pub fn canonical_provider_ref(value: &str) -> &str {
-    if artifact().is_ok_and(|a| value == a.builtin_id) {
-        crate::types::ProviderRef::BUILTIN
+/// Canonicalize the registry ID at input boundaries, before profile decisions:
+/// the built-in provider's registry ID (from the artifact) becomes `builtin`.
+pub fn canonical_provider_ref(provider: &ProviderRef) -> ProviderRef {
+    if is_builtin_provider(provider) {
+        ProviderRef::builtin()
     } else {
-        value
+        provider.clone()
     }
+}
+
+/// The registered provider ID, `None` for `builtin` (either spelling).
+pub fn registered_provider_id(provider: &ProviderRef) -> Option<KbId> {
+    if is_builtin_provider(provider) {
+        None
+    } else {
+        KbId::parse(provider.as_str()).ok()
+    }
+}
+
+fn is_builtin_provider(provider: &ProviderRef) -> bool {
+    let value = provider.as_str();
+    value == ProviderRef::BUILTIN || artifact().is_ok_and(|a| value == a.builtin_id)
 }
 
 #[cfg(test)]
@@ -1434,52 +1283,15 @@ mod tests {
         assert_eq!(normalized["nested"][1].as_i64(), Some(1));
         assert_eq!(normalized["nested"][2], value["nested"][2]);
         assert_eq!(normalized["nested"][3], value["nested"][3]);
-        assert_eq!(normalized["nested"][4].as_i64(), Some(-MAX_SAFE_INTEGER));
+        assert_eq!(
+            normalized["nested"][4].as_i64(),
+            Some(-crate::format::MAX_SAFE_INTEGER)
+        );
         assert!(js_equal(&value, &normalized));
     }
 
     #[test]
-    fn embedded_artifact_loads_and_is_fully_understood() {
-        let names = artifact_tool_names().expect("artifact passes the fail-closed audit");
-        assert_eq!(names.len(), crate::ToolName::ALL.len());
-    }
-
-    #[test]
     fn artifact_groups_are_read_and_fail_closed() {
-        let tools_in = |group: &str| -> Vec<&str> {
-            crate::ToolName::ALL
-                .iter()
-                .map(|name| name.as_str())
-                .filter(|name| tool_groups(name).expect("grouped").contains(&group))
-                .collect()
-        };
-        assert_eq!(
-            tools_in("read"),
-            [
-                "knowledge_documents_list",
-                "knowledge_documents_get",
-                "knowledge_search",
-                "knowledge_search_all",
-                "knowledge_structured_search"
-            ]
-        );
-        assert_eq!(
-            tool_groups("knowledge_upload_begin").expect("grouped"),
-            ["edit", "assets"]
-        );
-        assert!(
-            tool_groups("knowledge_bases_list")
-                .expect("grouped")
-                .is_empty()
-        );
-        assert!(
-            tool_groups("knowledge_bases_get")
-                .expect("grouped")
-                .is_empty()
-        );
-        for group in TOOL_GROUPS {
-            assert!(!tools_in(group).is_empty(), "{group} governs no tool");
-        }
         let row = |groups: Value| json!({"catalog": {"groups": groups}});
         assert!(catalog_groups(&row(json!(["read", "sealed"]))).is_ok());
         for bad in [
@@ -1546,32 +1358,6 @@ mod tests {
         let value = json!({ "a": "é\n\u{1}\"", "b": [1, true, null] });
         let js = r#"{"a":"é\n\u0001\"","b":[1,true,null]}"#;
         assert_eq!(js_json_len(&value), js.len());
-    }
-
-    #[test]
-    fn instants_follow_the_typescript_rules() {
-        assert!(parse_iso_instant("2024-02-29T23:59:59.123456789Z").is_some());
-        assert!(parse_iso_instant("2023-02-29T00:00:00Z").is_none());
-        assert!(parse_iso_instant("2026-04-31T00:00:00Z").is_none());
-        assert!(parse_iso_instant("2026-01-01T24:00:00Z").is_none());
-        assert!(parse_iso_instant("2026-01-01T00:00:60Z").is_none());
-        assert!(parse_iso_instant("2026-01-01T00:00:00.Z").is_none());
-        assert!(parse_iso_instant("0099-12-31T00:00:00Z").is_none());
-        assert!(parse_iso_instant("0100-01-01T00:00:00Z").is_some());
-        assert_eq!(parse_iso_instant("1970-01-01T00:00:01Z").unwrap().0, 1);
-        use std::cmp::Ordering::*;
-        assert_eq!(
-            compare_iso("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000Z"),
-            Some(Equal)
-        );
-        assert_eq!(
-            compare_iso("2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.02Z"),
-            Some(Greater)
-        );
-        assert_eq!(
-            compare_iso("2026-01-01T00:00:00.000001Z", "2026-01-01T00:00:00.000002Z"),
-            Some(Less)
-        );
     }
 
     #[test]

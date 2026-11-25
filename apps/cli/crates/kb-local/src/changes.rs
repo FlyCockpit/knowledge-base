@@ -48,10 +48,10 @@
 
 use std::collections::HashSet;
 
+use kb_client::tools::{ChangesApply, DocumentsCreate, DocumentsDelete, DocumentsUpdate};
 use kb_client::types::{
-    ApplyKind, ApplyResult, Change, ChangesApply, ChangesApplyInput, ChangesMode,
-    DocumentWriteInput, DocumentsCreate, DocumentsDelete, DocumentsDeleteInput, DocumentsUpdate,
-    DreamMetadata, KbId, KbPath, Permission, Sha, TextInput, Uuid,
+    ApplyKind, ApplyResult, Change, ChangesApplyInput, ChangesMode, DocumentWriteInput,
+    DocumentsDeleteInput, DreamMetadata, KbId, KbPath, Permission, Sha, TextInput, Uuid,
 };
 use ring::digest::{SHA1_FOR_LEGACY_USE_ONLY, digest};
 use serde_json::Value;

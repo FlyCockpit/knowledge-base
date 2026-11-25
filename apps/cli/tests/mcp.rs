@@ -681,7 +681,7 @@ fn owner_chosen_tools_and_kbs_shape_discovery_and_refuse_calls() {
         .upload_begin(
             &owner,
             serde_json::from_value(json!({"kbId":selected,"kind":"asset","mime":"image/png",
-                "size":png.len(),"contentHash":kb_client::snapshot::content_hash(&png),
+                "size":png.len(),"contentHash":kb_client::host::snapshot::content_hash(&png),
                 "idempotencyKey":"scope-asset-upload-1"}))
             .expect("input"),
         )
@@ -1071,7 +1071,7 @@ fn cli_principal_proposes_and_the_owner_merges_its_pull_request() {
     let store = kb_local::Store::open(&root).expect("fixture store");
     let created = store.bases_create(
         &store.owner(),
-        kb_client::decode_input::<kb_client::types::BasesCreate>(
+        kb_client::decode_input::<kb_client::tools::BasesCreate>(
             json!({"name":"Review","slug":"review","description":"Review flow fixture","idempotencyKey":"review-create-0001"}),
         ).expect("fixture input"),
     ).expect("fixture KB");

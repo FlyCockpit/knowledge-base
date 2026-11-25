@@ -27,103 +27,12 @@ use reqwest::{StatusCode, Url};
 use serde_json::{Map, Value};
 
 use crate::error::{CancellationToken, Deadline, KbError};
-use crate::origin::{Credential, McpResource, OriginError};
-use crate::protocol::{
-    self, ClientOptions, MCP_PROFILE, Method, RESPONSE_MAX_BYTES, ServerDiscovery,
+use crate::mcp::catalog::Advertised;
+use crate::mcp::origin::{Credential, McpResource};
+use crate::mcp::protocol::{
+    self, ClientError, ClientOptions, MCP_PROFILE, Method, RESPONSE_MAX_BYTES, ServerDiscovery,
 };
-use crate::types::{Tool, ToolName};
-
-/// Every way a client call can fail. Display text is fixed per variant and
-/// never includes a token, URL, request, or server-provided message.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ClientError {
-    /// kb/1 domain error, contract violation, cancellation or deadline.
-    Kb(KbError),
-    Origin(OriginError),
-    /// The credential was minted for a different resource.
-    CredentialMismatch,
-    /// The token cannot be sent as an HTTP header value.
-    InvalidCredential,
-    /// HTTP 401: missing, expired or revoked credential.
-    Unauthorized,
-    /// HTTP 403: credential admitted but refused (scope/origin).
-    Forbidden,
-    /// Any 30x; redirects are never followed.
-    Redirected,
-    /// Other non-success HTTP status without a JSON-RPC answer.
-    HttpStatus(u16),
-    RequestTooLarge,
-    ResponseTooLarge,
-    MalformedResponse,
-    /// The server does not speak MCP 2026-07-28 stateless JSON (legacy
-    /// handshake, SSE, sessions, or a different revision).
-    UnsupportedProfile,
-    /// The remote catalog is not exactly the pinned kb/1 data plane.
-    IncompatibleCatalog,
-    /// JSON-RPC error code from the server (its message is discarded).
-    Rpc {
-        code: i64,
-    },
-    /// Connection, TLS or read failure.
-    Transport,
-    RequestIdsExhausted,
-}
-
-impl ClientError {
-    /// Whether resending the same request (same idempotency key) may succeed.
-    pub fn retryable(&self) -> bool {
-        match self {
-            ClientError::Kb(error) => error.retryable(),
-            ClientError::Transport => true,
-            ClientError::HttpStatus(status) => matches!(status, 429 | 502 | 503 | 504),
-            _ => false,
-        }
-    }
-}
-
-impl fmt::Display for ClientError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ClientError::Kb(error) => error.fmt(f),
-            ClientError::Origin(error) => error.fmt(f),
-            ClientError::CredentialMismatch => {
-                f.write_str("stored credential belongs to a different kb server")
-            }
-            ClientError::InvalidCredential => f.write_str("credential is not a valid bearer token"),
-            ClientError::Unauthorized => f.write_str("kb server rejected the credential (401)"),
-            ClientError::Forbidden => f.write_str("kb server refused the request (403)"),
-            ClientError::Redirected => f.write_str("kb server answered with a redirect"),
-            ClientError::HttpStatus(status) => write!(f, "kb server answered http {status}"),
-            ClientError::RequestTooLarge => f.write_str("kb request exceeds 1 MiB"),
-            ClientError::ResponseTooLarge => f.write_str("kb response exceeds 8 MiB"),
-            ClientError::MalformedResponse => f.write_str("malformed mcp response"),
-            ClientError::UnsupportedProfile => {
-                write!(
-                    f,
-                    "kb server does not speak mcp {MCP_PROFILE} stateless json"
-                )
-            }
-            ClientError::IncompatibleCatalog => f.write_str("incompatible kb/1 tool catalog"),
-            ClientError::Rpc { code } => write!(f, "mcp error {code}"),
-            ClientError::Transport => f.write_str("kb server connection failed"),
-            ClientError::RequestIdsExhausted => f.write_str("mcp request ids exhausted"),
-        }
-    }
-}
-
-impl std::error::Error for ClientError {}
-
-impl From<KbError> for ClientError {
-    fn from(error: KbError) -> Self {
-        ClientError::Kb(error)
-    }
-}
-
-impl From<OriginError> for ClientError {
-    fn from(error: OriginError) -> Self {
-        ClientError::Origin(error)
-    }
-}
+use crate::tools::{Tool, ToolName};
 
 /// Deadline and cancellation for one call.
 #[derive(Clone, Debug)]
@@ -287,10 +196,7 @@ impl McpClient {
     /// pinned catalog, in catalog order, with pinned schemas (inputs may only
     /// narrow `kbId` with an `enum`). Returns what a forwarder advertises;
     /// forwarders must call this before advertising anything.
-    pub async fn verify_catalog(
-        &self,
-        ctl: &CallControl,
-    ) -> Result<crate::stdio::Advertised, ClientError> {
+    pub async fn verify_catalog(&self, ctl: &CallControl) -> Result<Advertised, ClientError> {
         ctl.run(self.exchange(Method::ToolsList, None, ctl, |result| {
             protocol::verify_catalog(&result)
         }))

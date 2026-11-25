@@ -14,7 +14,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use kb_client::ErrorCode;
-use kb_client::types::{ChangesApply, ChangesApplyInput, KbId, Permission, Sha};
+use kb_client::tools::ChangesApply;
+use kb_client::types::{ChangesApplyInput, KbId, Permission, Sha};
 use kb_local::{
     CommitRequest, CreateKbRequest, FileChange, KbState, Phase, PrincipalKind, Stage, Store,
     StoreError,

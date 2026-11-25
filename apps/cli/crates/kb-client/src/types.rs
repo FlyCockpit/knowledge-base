@@ -13,13 +13,12 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::de::{DeserializeOwned, Error as _};
+use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use crate::error::{KbError, ProtocolError};
+use crate::format;
 use crate::path::check_kb_path;
-use crate::schema::{self, Direction};
 
 // ── Serde helpers ───────────────────────────────────────────────────────────
 
@@ -150,33 +149,19 @@ macro_rules! validated_string {
 validated_string!(
     /// Lowercase cuid2-style KB/generation/provider ID (24..32 `[a-z0-9]`).
     KbId,
-    schema::is_kb_id
+    format::is_kb_id
 );
 validated_string!(
     /// An embedding provider: a provider [`KbId`], or `builtin` for the
     /// built-in local model.
     ProviderRef,
-    |s| s == ProviderRef::BUILTIN || schema::is_kb_id(s)
+    |s| s == ProviderRef::BUILTIN || format::is_kb_id(s)
 );
 impl ProviderRef {
     /// The wire name of the built-in local model.
     pub const BUILTIN: &'static str = "builtin";
     pub fn builtin() -> Self {
         ProviderRef(Self::BUILTIN.to_owned())
-    }
-    pub fn canonical(&self) -> Self {
-        Self(schema::canonical_provider_ref(&self.0).to_owned())
-    }
-    pub fn is_builtin(&self) -> bool {
-        schema::canonical_provider_ref(&self.0) == Self::BUILTIN
-    }
-    /// The registered provider ID, `None` for `builtin`.
-    pub fn provider_id(&self) -> Option<KbId> {
-        if self.is_builtin() {
-            None
-        } else {
-            KbId::parse(&self.0).ok()
-        }
     }
 }
 impl From<KbId> for ProviderRef {
@@ -187,32 +172,32 @@ impl From<KbId> for ProviderRef {
 validated_string!(
     /// Canonical lowercase UUID.
     Uuid,
-    schema::is_uuid
+    format::is_uuid
 );
 validated_string!(
     /// 40-hex lowercase Git SHA-1 object name.
     Sha,
-    schema::is_sha
+    format::is_sha
 );
 validated_string!(
     /// `sha256:` plus 64 lowercase hex.
     ContentHash,
-    schema::is_content_hash
+    format::is_content_hash
 );
 validated_string!(
     /// Idempotency key, 16..128 `[A-Za-z0-9_-]`.
     IdempotencyKey,
-    schema::is_idempotency_key
+    format::is_idempotency_key
 );
 validated_string!(
     /// KB slug `[a-z0-9]+(-[a-z0-9]+)*`, at most 63 characters.
     Slug,
-    |s| s.len() <= 63 && schema::is_slug(s)
+    |s| s.len() <= 63 && format::is_slug(s)
 );
 validated_string!(
     /// Dream concept ID `[a-z0-9][a-z0-9_-]{0,127}`.
     ConceptId,
-    schema::is_concept_id
+    format::is_concept_id
 );
 validated_string!(
     /// Normalized relative kb repository path.
@@ -228,7 +213,7 @@ validated_string!(
 validated_string!(
     /// UTC RFC 3339 instant with `Z`, 0..9 fractional digits, real date.
     IsoInstant,
-    |s| schema::parse_iso_instant(s).is_some()
+    |s| format::parse_iso_instant(s).is_some()
 );
 
 /// Opaque bearer credential (PAT or OAuth access token). Its value never
@@ -332,7 +317,7 @@ impl<const N: u64> Serialize for ConstU64<N> {
 
 impl<'de, const N: u64> Deserialize<'de> for ConstU64<N> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        if schema::safe_integer(&Value::deserialize(d)?)
+        if format::safe_integer(&Value::deserialize(d)?)
             .is_some_and(|n| u64::try_from(n).ok() == Some(N))
         {
             Ok(ConstU64)
@@ -1229,186 +1214,6 @@ tool_structs! {
     SealedResolveOutput {
         reference: req String, recipient_key_id: req Uuid, envelope: req SealedEnvelope,
         expires_at: req IsoInstant,
-    }
-}
-
-// ── Catalog ─────────────────────────────────────────────────────────────────
-
-/// One kb/1 catalog tool with owned, thread-safe input and output so the HTTP
-/// transport can validate them off the async executor under call control.
-pub trait Tool {
-    const NAME: ToolName;
-    type Input: Serialize + DeserializeOwned + fmt::Debug + Clone + PartialEq + Send + 'static;
-    type Output: Serialize + DeserializeOwned + fmt::Debug + Clone + PartialEq + Send + 'static;
-}
-
-fn check_typed<T: Serialize + DeserializeOwned>(
-    tool: &str,
-    direction: Direction,
-    value: Value,
-) -> Result<Value, KbError> {
-    let wrap = |violation| match direction {
-        Direction::Input => KbError::Protocol(ProtocolError::InvalidInput(violation)),
-        Direction::Output => KbError::Protocol(ProtocolError::InvalidOutput(violation)),
-    };
-    schema::validate(tool, direction, &value).map_err(wrap)?;
-    let typed: T = serde_json::from_value(schema::normalize_integers(value))
-        .map_err(|_| wrap(typed_violation()))?;
-    serde_json::to_value(&typed).map_err(|_| wrap(typed_violation()))
-}
-
-pub(crate) fn typed_violation() -> schema::SchemaViolation {
-    schema::SchemaViolation {
-        pointer: String::new(),
-        keyword: "typed-shape",
-        member: None,
-        min: None,
-        max: None,
-    }
-}
-
-macro_rules! catalog {
-    ($( $variant:ident => $marker:ident, $wire:literal, $read_only:literal, $input:ty, $output:ty; )*) => {
-        /// The pinned kb/1 tool catalog. Arbitrary operation names do not parse.
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub enum ToolName { $( $variant, )* }
-
-        impl ToolName {
-            /// Every catalog tool.
-            pub const ALL: &'static [ToolName] = &[ $( ToolName::$variant, )* ];
-
-            /// Wire name.
-            pub fn as_str(self) -> &'static str {
-                match self { $( ToolName::$variant => $wire, )* }
-            }
-
-            /// Read tools accept `mcp:read` or `mcp:write`; others need `mcp:write`.
-            pub fn read_only(self) -> bool {
-                match self { $( ToolName::$variant => $read_only, )* }
-            }
-
-            /// Validate an untyped input against the contract and the typed
-            /// shape; returns the canonical re-serialization.
-            pub fn check_input(self, value: Value) -> Result<Value, KbError> {
-                match self {
-                    $( ToolName::$variant => check_typed::<$input>($wire, Direction::Input, value), )*
-                }
-            }
-
-            /// Validate an untyped output against the contract and the typed
-            /// shape; returns the canonical re-serialization.
-            pub fn check_output(self, value: Value) -> Result<Value, KbError> {
-                match self {
-                    $( ToolName::$variant => check_typed::<$output>($wire, Direction::Output, value), )*
-                }
-            }
-
-            /// Validate a complete success or domain-error envelope without
-            /// changing its wire representation (agent forwarding).
-            pub fn check_envelope(self, value: Value) -> Result<(), KbError> {
-                match self {
-                    $( ToolName::$variant => match crate::decode_envelope::<$marker>(value) {
-                        Ok(_) | Err(KbError::Tool(_)) => Ok(()),
-                        Err(error) => Err(error),
-                    }, )*
-                }
-            }
-        }
-
-        impl FromStr for ToolName {
-            type Err = KbError;
-            fn from_str(s: &str) -> Result<Self, KbError> {
-                match s {
-                    $( $wire => Ok(ToolName::$variant), )*
-                    _ => Err(KbError::Protocol(ProtocolError::UnknownTool)),
-                }
-            }
-        }
-
-        $(
-            #[doc = concat!("Marker for `", $wire, "`.")]
-            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-            pub struct $marker;
-
-            impl Tool for $marker {
-                const NAME: ToolName = ToolName::$variant;
-                type Input = $input;
-                type Output = $output;
-            }
-        )*
-    };
-}
-
-catalog! {
-    KnowledgeBasesList => BasesList, "knowledge_bases_list", true,
-        BasesListInput, Page<KbAttachment>;
-    KnowledgeBasesGet => BasesGet, "knowledge_bases_get", true, KbRef, BasesGetOutput;
-    KnowledgeBasesCreate => BasesCreate, "knowledge_bases_create", false,
-        BasesCreateInput, KbMutationOutput;
-    KnowledgeBasesUpdate => BasesUpdate, "knowledge_bases_update", false,
-        BasesUpdateInput, KbMutationOutput;
-    KnowledgeBasesDelete => BasesDelete, "knowledge_bases_delete", false,
-        BasesDeleteInput, BasesDeleteOutput;
-    KnowledgeDocumentsList => DocumentsList, "knowledge_documents_list", true,
-        DocumentsListInput, Page<DocumentListItem>;
-    KnowledgeDocumentsGet => DocumentsGet, "knowledge_documents_get", true,
-        DocumentsGetInput, Document;
-    KnowledgeSearch => KnowledgeSearch, "knowledge_search", true, SearchInput, SearchOutput;
-    KnowledgeSearchAll => SearchAll, "knowledge_search_all", true,
-        SearchAllInput, SearchAllOutput;
-    KnowledgeStructuredSearch => StructuredSearch, "knowledge_structured_search", true,
-        StructuredSearchInput, StructuredSearchOutput;
-    KnowledgeChangesApply => ChangesApply, "knowledge_changes_apply", false,
-        ChangesApplyInput, ApplyResult;
-    KnowledgeDocumentsCreate => DocumentsCreate, "knowledge_documents_create", false,
-        DocumentWriteInput, ApplyResult;
-    KnowledgeDocumentsUpdate => DocumentsUpdate, "knowledge_documents_update", false,
-        DocumentWriteInput, ApplyResult;
-    KnowledgeDocumentsDelete => DocumentsDelete, "knowledge_documents_delete", false,
-        DocumentsDeleteInput, ApplyResult;
-    KnowledgeUploadBegin => UploadBegin, "knowledge_upload_begin", false,
-        UploadBeginInput, UploadBeginOutput;
-    KnowledgeUploadWrite => UploadWrite, "knowledge_upload_write", false,
-        UploadWriteInput, UploadWriteOutput;
-    KnowledgeUploadFinish => UploadFinish, "knowledge_upload_finish", false,
-        UploadRef, UploadFinishOutput;
-    KnowledgeAssetsPut => AssetsPut, "knowledge_assets_put", false, AssetsPutInput, ApplyResult;
-    KnowledgeAssetsImport => AssetsImport, "knowledge_assets_import", false,
-        AssetsImportInput, ApplyResult;
-    KnowledgeAssetsList => AssetsList, "knowledge_assets_list", true,
-        AssetsListInput, Page<AssetRef>;
-    KnowledgeExportPrepare => ExportPrepare, "knowledge_export_prepare", true,
-        ExportPrepareInput, ExportJob;
-    KnowledgeExportStatus => ExportStatus, "knowledge_export_status", true,
-        TransferRef, ExportJob;
-    KnowledgeExportCancel => ExportCancel, "knowledge_export_cancel", true,
-        TransferRef, ExportJob;
-    KnowledgeTransferRead => TransferRead, "knowledge_transfer_read", true,
-        TransferReadInput, TransferReadOutput;
-    KnowledgeExportComplete => ExportComplete, "knowledge_export_complete", true,
-        TransferRef, ExportCompleteOutput;
-    KnowledgeIndexStatus => IndexStatusGet, "knowledge_index_status", true, KbRef, IndexStatus;
-    KnowledgeIndexRebuild => IndexRebuild, "knowledge_index_rebuild", false,
-        IndexRebuildInput, GenerationJobOutput;
-    KnowledgeEmbeddingProfileGet => EmbeddingProfileGet, "knowledge_embedding_profile_get", true,
-        KbRef, EmbeddingProfileOutput;
-    KnowledgeEmbeddingProfileSet => EmbeddingProfileSet, "knowledge_embedding_profile_set", false,
-        EmbeddingProfileSetInput, ProfileSetOutput;
-    KnowledgePullRequestsList => PullRequestsList, "knowledge_pull_requests_list", true,
-        PullRequestsListInput, Page<PrSummary>;
-    KnowledgePullRequestsGet => PullRequestsGet, "knowledge_pull_requests_get", true,
-        PullRequestsGetInput, PullRequestsGetOutput;
-    KnowledgePullRequestsCreate => PullRequestsCreate, "knowledge_pull_requests_create", false,
-        PullRequestsCreateInput, PrMutationOutput;
-    KnowledgePullRequestsReview => PullRequestsReview, "knowledge_pull_requests_review", false,
-        PullRequestsReviewInput, PrMutationOutput;
-    KnowledgeSealedResolve => SealedResolve, "knowledge_sealed_resolve", true,
-        SealedResolveInput, SealedResolveOutput;
-}
-
-impl fmt::Display for ToolName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 

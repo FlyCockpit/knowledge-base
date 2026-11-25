@@ -1,9 +1,13 @@
 //! Spec-first tests: real Git/SQLite/files, shared media, no mocked boundary.
 use base64::{Engine, engine::general_purpose::STANDARD};
+use kb_client::tools::{
+    AssetsImport, AssetsList, AssetsPut, BasesCreate, BasesDelete, ChangesApply, DocumentsGet,
+    PullRequestsGet, PullRequestsReview, Tool, UploadBegin,
+};
 use kb_client::{
     ErrorCode, decode_input,
+    host::snapshot::content_hash,
     schema::{Direction, validate},
-    snapshot::content_hash,
     types::*,
 };
 use kb_local::{LocalPrincipal, PrincipalKind, Stage, Store, StoreError};

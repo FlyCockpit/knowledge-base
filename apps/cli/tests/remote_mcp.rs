@@ -5,7 +5,7 @@ mod child_guard;
 use child_guard::ChildGuard;
 mod support;
 use kb::state::CredentialStore;
-use kb_client::{McpResource, SecretToken, TransportPolicy, stdio::catalog};
+use kb_client::{McpResource, SecretToken, TransportPolicy, mcp::catalog::catalog};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Write},

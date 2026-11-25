@@ -3,7 +3,7 @@
 //! the tool would have reported, for missing and existing paths alike.
 use kb_client::{
     ToolName,
-    stdio::CallControl,
+    mcp::stdio::CallControl,
     types::{KbId, Permission},
 };
 use kb_local::{PrincipalKind, Store, dispatch::dispatch_observed};

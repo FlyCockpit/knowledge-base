@@ -7,15 +7,15 @@
 mod common;
 
 use common::{ctl, err, ok, tool_server};
-use kb_client::attachment::{
+use kb_client::host::attachment::{
     AttachmentError, attach, local_attachment_locator, local_attachment_namespace,
     remote_attachment_namespace, verify_attachment,
 };
-use kb_client::dream::{
+use kb_client::host::dream::{
     ConceptUpsert, DREAM_MAX_UPSERTS, DreamChangeSet, DreamError, DreamOutcome, apply_dream,
     prepare_dream, submit_dream,
 };
-use kb_client::snapshot::{
+use kb_client::host::snapshot::{
     SnapshotError, StructuredFilters, content_hash, git_blob_sha, retrieve, retrieve_structured,
     verify_snapshot,
 };
@@ -1011,7 +1011,8 @@ fn structured_numeric_filters_preserve_json_parse_bits() {
             "{cell}"
         );
         let raw = format!(r#"{{"structured":[{raw}]}}"#);
-        let filters: kb_client::snapshot::StructuredFilters = serde_json::from_str(&raw).unwrap();
+        let filters: kb_client::host::snapshot::StructuredFilters =
+            serde_json::from_str(&raw).unwrap();
         let JsonScalar::Number(number) = &filters.structured[0].equals else {
             panic!("numeric host filter")
         };
@@ -1025,7 +1026,7 @@ fn structured_numeric_filters_preserve_json_parse_bits() {
 
 #[test]
 fn prepared_dream_accepts_the_session_cap_and_rejects_the_next_entry() {
-    use kb_client::dream::PreparedDream;
+    use kb_client::host::dream::PreparedDream;
     let mut set = change_set(8);
     set.source_session_ids = (0..100)
         .map(|n| format!("00000000-0000-4000-8000-{n:012x}").parse().unwrap())
@@ -1040,7 +1041,7 @@ fn prepared_dream_accepts_the_session_cap_and_rejects_the_next_entry() {
 
 #[test]
 fn prepared_dream_freezes_explicit_proposal_consent_with_the_request() {
-    use kb_client::dream::PreparedDream;
+    use kb_client::host::dream::PreparedDream;
     let set = change_set(1);
     let base = COMMIT_OLD.parse().unwrap();
     let head = COMMIT_NEW.parse().unwrap();

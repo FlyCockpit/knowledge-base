@@ -15,6 +15,7 @@ use crate::{
     index::IndexEmbedder,
     search::{SearchControl, SearchStage},
 };
+use kb_client::tools::SearchAll;
 use kb_client::{ErrorCode, error::InvalidReason, types::*};
 use std::{
     cell::{Cell, RefCell},

@@ -8,7 +8,6 @@
 //! server enforces it; `kb` narrows a connection locally with the same rules
 //! (`kb mcp --write-mode`, a stored login's approved mode, a configured
 //! server's `write_mode`). In code the concept is the *authoring mode*.
-use crate::{ToolName, schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
@@ -138,34 +137,6 @@ impl ToolAuthoring {
     }
 }
 
-/// What one call of `name` with `input` needs from the write mode (the
-/// server's `toolAuthoringNeed`); `None` when it writes nothing a mode
-/// governs. An unreadable catalog needs an edit (fail closed).
-pub fn tool_authoring_need(name: ToolName, input: &Value) -> Option<WriteKind> {
-    let authoring = match schema::tool_authoring(name.as_str()) {
-        Ok(authoring) => authoring?,
-        Err(_) => return (!name.read_only()).then_some(WriteKind::Edit),
-    };
-    match authoring {
-        ToolAuthoring::Edit => Some(WriteKind::Edit),
-        ToolAuthoring::ByMode => Some(if input["mode"] == "dream" {
-            WriteKind::Dream
-        } else {
-            WriteKind::Edit
-        }),
-        ToolAuthoring::Merge => (input["decision"] == "merge").then_some(WriteKind::Edit),
-    }
-}
-
-/// Whether a dream-only credential can use `name` at all (the server's
-/// `toolUsableDreamOnly`): every tool but the always-edit ones.
-pub fn tool_usable_dream_only(name: ToolName) -> bool {
-    match schema::tool_authoring(name.as_str()) {
-        Ok(authoring) => authoring != Some(ToolAuthoring::Edit),
-        Err(_) => name.read_only(),
-    }
-}
-
 /// Who wrote a document, from its front matter `provenance`: a dream, an
 /// agent (a credential's direct edit, server-stamped) or a person; `Absent`
 /// when the document has no label (or a `null` one).
@@ -241,64 +212,6 @@ mod tests {
         assert!("all".parse::<AuthoringMode>().is_err());
         assert_eq!(Both.only(), None);
         assert_eq!(Dream.only(), Some(WriteKind::Dream));
-    }
-
-    #[test]
-    fn needs_follow_the_catalog() {
-        let apply = |mode: &str| json!({"mode": mode});
-        assert_eq!(
-            tool_authoring_need(ToolName::KnowledgeChangesApply, &apply("dream")),
-            Some(WriteKind::Dream)
-        );
-        assert_eq!(
-            tool_authoring_need(ToolName::KnowledgeChangesApply, &apply("edit")),
-            Some(WriteKind::Edit)
-        );
-        assert_eq!(
-            tool_authoring_need(
-                ToolName::KnowledgePullRequestsReview,
-                &json!({"decision": "merge"})
-            ),
-            Some(WriteKind::Edit)
-        );
-        assert_eq!(
-            tool_authoring_need(
-                ToolName::KnowledgePullRequestsReview,
-                &json!({"decision": "close"})
-            ),
-            None
-        );
-        for name in [
-            ToolName::KnowledgeDocumentsCreate,
-            ToolName::KnowledgeUploadBegin,
-            ToolName::KnowledgeAssetsImport,
-            ToolName::KnowledgeBasesCreate,
-            ToolName::KnowledgeBasesDelete,
-            ToolName::KnowledgePullRequestsCreate,
-        ] {
-            assert_eq!(
-                tool_authoring_need(name, &json!({})),
-                Some(WriteKind::Edit),
-                "{}",
-                name.as_str()
-            );
-            assert!(!tool_usable_dream_only(name));
-        }
-        for name in [
-            ToolName::KnowledgeBasesUpdate,
-            ToolName::KnowledgeIndexRebuild,
-            ToolName::KnowledgeEmbeddingProfileSet,
-            ToolName::KnowledgeSearch,
-        ] {
-            assert_eq!(tool_authoring_need(name, &json!({})), None);
-            assert!(tool_usable_dream_only(name));
-        }
-        // No read tool ever needs a write mode.
-        for name in ToolName::ALL {
-            if name.read_only() {
-                assert_eq!(tool_authoring_need(*name, &json!({})), None);
-            }
-        }
     }
 
     #[test]

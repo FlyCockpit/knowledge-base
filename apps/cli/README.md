@@ -145,7 +145,7 @@ For sealed values, pass `--recipient-key-file /private/path/recipient.json` to
 `kb login`. This is an existing host-owned X25519 private key, with JSON shape
 `{"id":"<recipient UUID>","private_key":[<32 byte integers>]}`. Create it with
 an OS random source in your host's key provisioning flow, store it in an
-owner-only file, and keep it for `kb_client::sealed::RecipientKey::from_bytes`
+owner-only file, and keep it for `kb_client::host::sealed::RecipientKey::from_bytes`
 and host-side decryption. The CLI uploads only the public key before displaying
 the verification link. Compare the key ID/public key in the terminal and approval
 page. Nothing is selected by default: select Read on the KB, enter each exact

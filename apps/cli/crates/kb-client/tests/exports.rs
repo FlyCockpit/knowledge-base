@@ -3,10 +3,10 @@
 mod common;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use kb_client::export::{
+use kb_client::host::export::{
     ExportError, cancel_export, download_export, export_status, start_export, wait_for_export,
 };
-use kb_client::snapshot::content_hash;
+use kb_client::host::snapshot::content_hash;
 use kb_client::types::{ExportJob, ExportPrepareInput, ExportState, KbId};
 use kb_client::{CancellationToken, ClientError, ErrorCode, KbError};
 use serde_json::{Value, json};

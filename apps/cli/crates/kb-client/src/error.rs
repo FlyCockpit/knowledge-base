@@ -10,10 +10,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::authoring::WriteKind;
-use crate::schema::{MAX_SAFE_INTEGER, SchemaViolation, safe_integer};
+use crate::format::{MAX_SAFE_INTEGER, safe_integer};
+use crate::schema::SchemaViolation;
 use crate::types::{IndexState, KbId, Sha};
 
 pub(crate) const TOO_MANY_CHANGES_MESSAGE: &str = "At most 32 changes per call. Each call commits on success: apply the first 32 now, then send the rest in another call using the returned commit as baseRevision.";
@@ -72,6 +73,15 @@ pub fn message_for(code: ErrorCode, details: &Value) -> &'static str {
         }
     }
     code.message()
+}
+
+/// A `tools/call` result carrying the kb/1 error envelope of `code` and
+/// `details` with its fixed message (structured and as text), as the server
+/// answers a refused or failed call.
+pub fn tool_error(code: ErrorCode, details: Value) -> Value {
+    let message = message_for(code, &details);
+    let envelope = json!({"schemaVersion":"kb/1","error":{"code":code.as_str(),"message":message,"retryable":code.retryable(),"details":details}});
+    json!({"isError":true,"structuredContent":envelope,"content":[{"type":"text","text":envelope.to_string()}]})
 }
 
 macro_rules! error_codes {

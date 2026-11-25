@@ -15,9 +15,10 @@
 //!   KB, prefix filter and pinned revision. Encoded responses over 8 MiB fail
 //!   before sending.
 
+use kb_client::tools::{DocumentsGet, DocumentsList};
 use kb_client::types::{
-    Document, DocumentListItem, DocumentsGet, DocumentsGetInput, DocumentsList, DocumentsListInput,
-    KbPath, KbPathPrefix, Page, Permission, Sha,
+    Document, DocumentListItem, DocumentsGetInput, DocumentsListInput, KbPath, KbPathPrefix, Page,
+    Permission, Sha,
 };
 
 use crate::bases::check_input;

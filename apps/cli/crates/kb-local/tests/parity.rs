@@ -1,5 +1,5 @@
 //! Closed schemas before effects; exact envelopes and once-only local replay.
-use kb_client::{ToolName, stdio::CallControl};
+use kb_client::{ToolName, mcp::stdio::CallControl};
 use kb_local::{Store, dispatch::dispatch};
 use serde_json::{Value, json};
 #[path = "support/fixture.rs"]
@@ -106,7 +106,7 @@ async fn every_row_validates_and_lifecycle_replays() {
 /// what the mode allows is never refused for it.
 #[tokio::test]
 async fn write_modes_refuse_each_mutation_before_any_effect() {
-    use kb_client::authoring::{AuthoringMode, tool_authoring_need};
+    use kb_client::{authoring::AuthoringMode, tools::tool_authoring_need};
     const FIXTURES: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../../packages/api/src/lib/kb/protocol/fixtures.json"

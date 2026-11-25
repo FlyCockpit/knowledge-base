@@ -13,6 +13,11 @@ use std::time::{Duration, Instant};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use fixture::{Fixture, sha, with_required};
 use kb_client::schema::{Direction, validate};
+use kb_client::tools::{
+    AssetsPut, BasesCreate, BasesUpdate, ChangesApply, DocumentsCreate, DocumentsDelete,
+    DocumentsUpdate, PullRequestsCreate, PullRequestsGet, PullRequestsList, PullRequestsReview,
+    Tool, UploadBegin, UploadFinish, UploadWrite,
+};
 use kb_client::types::*;
 use kb_client::{ErrorCode, decode_input};
 use kb_local::{LocalPrincipal, Phase, PrincipalKind, Stage, Store, StoreError};
@@ -703,7 +708,7 @@ fn complete_large_diff_and_assets_pin_both_manifests_and_cursor_identity() {
         .nth(1)
         .expect("PNG fixture");
     let bytes = STANDARD.decode(encoded).expect("PNG bytes");
-    let hash = kb_client::snapshot::content_hash(&bytes);
+    let hash = kb_client::host::snapshot::content_hash(&bytes);
     let upload = k
         .store
         .upload_begin(
@@ -2862,7 +2867,7 @@ fn overwriting_any_pr_changed_path_requires_naming_the_pr() {
         let bytes = STANDARD.decode(encoded).expect("PNG bytes");
         let stage = |who: &LocalPrincipal, key: &str| {
             let upload = k.store.upload_begin(who,input::<UploadBegin>(json!({
-                "kbId":k.kb,"kind":"asset","size":bytes.len(),"contentHash":kb_client::snapshot::content_hash(&bytes),
+                "kbId":k.kb,"kind":"asset","size":bytes.len(),"contentHash":kb_client::host::snapshot::content_hash(&bytes),
                 "mime":"image/png","idempotencyKey":key
             }))).expect("staging");
             k.store.upload_write(who,input::<UploadWrite>(json!({"kbId":k.kb,"uploadId":upload.upload_id,"offset":0,"bytesBase64":encoded}))).expect("frame");

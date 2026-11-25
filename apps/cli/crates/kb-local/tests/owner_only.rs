@@ -12,7 +12,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use kb_client::decode_input;
-use kb_client::types::{BasesCreate, KbId, Sha};
+use kb_client::tools::BasesCreate;
+use kb_client::types::{KbId, Sha};
 use kb_local::{CommitRequest, FileChange, Store};
 use serde_json::json;
 

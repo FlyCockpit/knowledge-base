@@ -5,9 +5,10 @@ mod model_admission;
 mod model_host;
 #[path = "support/search_fixture.rs"]
 mod support;
+use kb_client::tools::{IndexRebuild, KnowledgeSearch, StructuredSearch};
 use kb_client::{
     ErrorCode,
-    snapshot::{content_hash, git_blob_sha},
+    host::snapshot::{content_hash, git_blob_sha},
     types::*,
 };
 use kb_local::{
@@ -1343,7 +1344,7 @@ fn a_blocked_resolver_thread_does_not_hold_the_mcp_reply() {
     let kb = f.kb.clone();
     let (reply, elapsed) = rt.block_on(async move {
         let serving =
-            kb_client::stdio::serve(server_read, server_write, move |name, input, control| {
+            kb_client::mcp::stdio::serve(server_read, server_write, move |name, input, control| {
                 session.call(name, input, control, None)
             });
         let client = async move {

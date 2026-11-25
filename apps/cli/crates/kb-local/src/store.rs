@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use kb_client::ErrorCode;
-use kb_client::attachment::{local_attachment_locator, local_attachment_namespace};
+use kb_client::host::attachment::{local_attachment_locator, local_attachment_namespace};
 use kb_client::types::{KbId, Permission, Slug, Uuid};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -824,7 +824,7 @@ impl Store {
     pub fn reopen_controlled(
         paths: &StorePaths,
         store_uuid: &Uuid,
-        control: kb_client::stdio::CallControl,
+        control: kb_client::mcp::stdio::CallControl,
     ) -> Result<Store, StoreError> {
         let _scope = crate::git_read::OperationDeadline::transport(control);
         Self::reopen(paths, store_uuid)

@@ -32,7 +32,7 @@ pub fn embedding_fingerprint(
     ];
     parts.extend(versions.iter().map(|v| serde_json::Value::from(*v)));
     let bytes = serde_json::to_vec(&parts).map_err(|_| unavailable())?;
-    Ok(kb_client::snapshot::content_hash(&bytes)
+    Ok(kb_client::host::snapshot::content_hash(&bytes)
         .as_str()
         .to_owned())
 }

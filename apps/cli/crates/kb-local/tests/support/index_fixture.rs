@@ -1,5 +1,6 @@
 //! Real on-disk state, Git and SQLite generation fixture.
 #![allow(dead_code)]
+use kb_client::tools::Tool;
 use kb_client::types::*;
 use kb_local::{CreateKbRequest, Store, generations::BuiltGeneration};
 use rusqlite::Connection;

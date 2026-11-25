@@ -11,6 +11,7 @@ use crate::{
     state::{format_utc, new_uuid_v4},
     tree::{self, TREE_LIMITS},
 };
+use kb_client::tools::{ExportCancel, ExportPrepare, ExportStatus};
 use kb_client::{ErrorCode, types::*};
 use ring::digest::{Context, SHA256};
 use rusqlite::{Connection, OptionalExtension};

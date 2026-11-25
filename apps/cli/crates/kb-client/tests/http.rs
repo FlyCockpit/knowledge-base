@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use kb_client::types::{BasesGet, BasesList, ChangesApply, DocumentsCreate, DocumentsGet};
+use kb_client::tools::{BasesGet, BasesList, ChangesApply, DocumentsCreate, DocumentsGet};
 use kb_client::{
     CallControl, CancellationToken, ClientError, ClientOptions, Credential, Deadline, ErrorCode,
     KbError, MCP_PROFILE, McpClient, McpResource, ProtocolError, SecretToken, Tool,
@@ -39,7 +39,7 @@ fn row(tools: &Value, name: &str) -> usize {
 /// The server's list after `mode` changes the full catalog.
 #[allow(clippy::unwrap_used)] // Fixture construction.
 fn listed(mode: &str) -> Value {
-    let full = kb_client::stdio::catalog().unwrap();
+    let full = kb_client::mcp::catalog::catalog().unwrap();
     let pick = |names: &[&str]| -> Value {
         Value::Array(
             names
@@ -164,7 +164,7 @@ async fn catalog_verification_accepts_ordered_subsets_and_narrowed_kb_ids_only()
             .collect();
         assert_eq!(names, listed_names, "{mode}");
         let rows = advertised.tools();
-        let full = kb_client::stdio::catalog().unwrap();
+        let full = kb_client::mcp::catalog::catalog().unwrap();
         for (index, (advertised_row, server_row)) in rows
             .as_array()
             .unwrap()
@@ -264,7 +264,7 @@ async fn discovery_reports_server_instructions_and_rejects_non_string_ones() {
 
 #[tokio::test]
 async fn agent_forwarding_preserves_validated_warnings_errors_and_ciphertext() {
-    use kb_client::{ToolName, stdio::tool_error};
+    use kb_client::{ToolName, error::tool_error};
     let result = tool_error(
         ErrorCode::Conflict,
         json!({"headSha":"0".repeat(40),"proposalNumber":1}),

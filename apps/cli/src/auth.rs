@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use kb_client::{
     authoring::AuthoringMode,
-    origin::{McpResource, TransportPolicy},
+    mcp::origin::{McpResource, TransportPolicy},
     types::SecretToken,
 };
 use reqwest::{
@@ -21,7 +21,7 @@ const ORPC_CSRF_HEADER: (&str, &str) = ("x-csrf-token", "orpc");
 
 /// Existing host-owned private key file; never uploaded or logged. Keeping the
 /// file lets the host use kb-client's recipient decryption after device login.
-pub fn recipient_key(file: &Path) -> Result<kb_client::sealed::RecipientKey> {
+pub fn recipient_key(file: &Path) -> Result<kb_client::host::sealed::RecipientKey> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct StoredKey {
@@ -40,7 +40,7 @@ pub fn recipient_key(file: &Path) -> Result<kb_client::sealed::RecipientKey> {
         .map_err(|_| anyhow::anyhow!("invalid recipient key file"))?;
     let id = kb_client::types::Uuid::parse(&stored.id)
         .map_err(|_| anyhow::anyhow!("invalid recipient key id"))?;
-    Ok(kb_client::sealed::RecipientKey::from_bytes(
+    Ok(kb_client::host::sealed::RecipientKey::from_bytes(
         id,
         *stored.private_key,
     ))
@@ -151,9 +151,9 @@ pub fn select(
 }
 
 /// Name the flag when plain HTTP is refused.
-fn origin_hint(error: kb_client::origin::OriginError) -> anyhow::Error {
+fn origin_hint(error: kb_client::mcp::origin::OriginError) -> anyhow::Error {
     match error {
-        kb_client::origin::OriginError::InsecureTransport => anyhow::anyhow!(
+        kb_client::mcp::origin::OriginError::InsecureTransport => anyhow::anyhow!(
             "server url must use https; plain http is allowed only for a loopback development \
              server with `--allow-loopback-http` (or `kb config set-server <url> \
              --allow-loopback-http`, which remembers it for that server)"
@@ -301,7 +301,7 @@ impl Remote {
     pub async fn register_recipient(
         &self,
         code: &str,
-        key: &kb_client::sealed::RecipientKey,
+        key: &kb_client::host::sealed::RecipientKey,
     ) -> Result<()> {
         let body = Zeroizing::new(serde_json::to_vec(&serde_json::json!({"json": {
             "deviceCode": code,
@@ -567,7 +567,7 @@ mod tests {
         #[cfg(windows)]
         crate::state::set_private(&path, false).expect("private ACL");
         let key = super::recipient_key(&path).expect("valid private key");
-        let expected = kb_client::sealed::RecipientKey::from_bytes(
+        let expected = kb_client::host::sealed::RecipientKey::from_bytes(
             kb_client::types::Uuid::parse(id).expect("fixture id"),
             [7; 32],
         );

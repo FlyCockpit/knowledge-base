@@ -2,7 +2,7 @@
 use crate::{auth, output};
 use anyhow::Result;
 use kb_client::{
-    sealed::SealedReference,
+    host::sealed::SealedReference,
     types::{IsoInstant, KbId, Uuid},
 };
 use kb_local::{
@@ -142,7 +142,7 @@ pub fn run(args: &Args) -> Result<()> {
                     reference: r.clone(),
                     consumer_id: consumer_id.clone(),
                     recipient_key_id: recipient_key_id.clone(),
-                    recipient_public_key: kb_client::sealed::canonical_recipient_public_key(
+                    recipient_public_key: kb_client::host::sealed::canonical_recipient_public_key(
                         recipient_public_key,
                     )
                     .map_err(|_| {

@@ -137,7 +137,7 @@ impl ModelHost {
             self.cache.dir().display(),
             self.cache.private_dir().display()
         );
-        let hash = kb_client::snapshot::content_hash(text.as_bytes()).to_string();
+        let hash = kb_client::host::snapshot::content_hash(text.as_bytes()).to_string();
         // 12 hex digits is short enough for every socket path limit.
         hash.trim_start_matches("sha256:")[..12].to_owned()
     }

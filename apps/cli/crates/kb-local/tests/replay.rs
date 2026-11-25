@@ -1,6 +1,6 @@
 //! ROOT 4: every keyed tool replays its recorded result before it looks at
 //! any mutable state (limits, windows, disk, the built-in model, quotas).
-use kb_client::{ToolName, stdio::CallControl};
+use kb_client::{ToolName, mcp::stdio::CallControl};
 use kb_local::{Store, dispatch::dispatch, limits::LocalLimits};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -85,7 +85,7 @@ async fn every_keyed_tool_replays_after_its_inputs_state_changes() {
     let text = b"# uploaded\n";
     let _ = call!(
         ToolName::KnowledgeUploadBegin,
-        json!({"kbId":kb,"kind":"markdown","mime":"text/markdown","size":text.len(),"contentHash":kb_client::snapshot::content_hash(text),"idempotencyKey":"replay-upload-0001"})
+        json!({"kbId":kb,"kind":"markdown","mime":"text/markdown","size":text.len(),"contentHash":kb_client::host::snapshot::content_hash(text),"idempotencyKey":"replay-upload-0001"})
     );
     let _ = call!(
         ToolName::KnowledgeExportPrepare,

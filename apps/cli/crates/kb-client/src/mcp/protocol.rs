@@ -5,10 +5,106 @@
 //! "reject"`, `responseMode: "json"`) serves them. No `initialize` handshake,
 //! sessions, SSE, batches or legacy eras.
 
+use std::fmt;
+
 use serde_json::{Map, Value, json};
 
-use crate::client::ClientError;
-use crate::types::{Tool, ToolName};
+use crate::KbError;
+use crate::mcp::catalog::{self, Advertised};
+use crate::mcp::origin::OriginError;
+use crate::tools::{Tool, ToolName};
+
+/// Every way a client call can fail. Display text is fixed per variant and
+/// never includes a token, URL, request, or server-provided message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClientError {
+    /// kb/1 domain error, contract violation, cancellation or deadline.
+    Kb(KbError),
+    Origin(OriginError),
+    /// The credential was minted for a different resource.
+    CredentialMismatch,
+    /// The token cannot be sent as an HTTP header value.
+    InvalidCredential,
+    /// HTTP 401: missing, expired or revoked credential.
+    Unauthorized,
+    /// HTTP 403: credential admitted but refused (scope/origin).
+    Forbidden,
+    /// Any 30x; redirects are never followed.
+    Redirected,
+    /// Other non-success HTTP status without a JSON-RPC answer.
+    HttpStatus(u16),
+    RequestTooLarge,
+    ResponseTooLarge,
+    MalformedResponse,
+    /// The server does not speak MCP 2026-07-28 stateless JSON (legacy
+    /// handshake, SSE, sessions, or a different revision).
+    UnsupportedProfile,
+    /// The remote catalog is not exactly the pinned kb/1 data plane.
+    IncompatibleCatalog,
+    /// JSON-RPC error code from the server (its message is discarded).
+    Rpc {
+        code: i64,
+    },
+    /// Connection, TLS or read failure.
+    Transport,
+    RequestIdsExhausted,
+}
+
+impl ClientError {
+    /// Whether resending the same request (same idempotency key) may succeed.
+    pub fn retryable(&self) -> bool {
+        match self {
+            ClientError::Kb(error) => error.retryable(),
+            ClientError::Transport => true,
+            ClientError::HttpStatus(status) => matches!(status, 429 | 502 | 503 | 504),
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for ClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClientError::Kb(error) => error.fmt(f),
+            ClientError::Origin(error) => error.fmt(f),
+            ClientError::CredentialMismatch => {
+                f.write_str("stored credential belongs to a different kb server")
+            }
+            ClientError::InvalidCredential => f.write_str("credential is not a valid bearer token"),
+            ClientError::Unauthorized => f.write_str("kb server rejected the credential (401)"),
+            ClientError::Forbidden => f.write_str("kb server refused the request (403)"),
+            ClientError::Redirected => f.write_str("kb server answered with a redirect"),
+            ClientError::HttpStatus(status) => write!(f, "kb server answered http {status}"),
+            ClientError::RequestTooLarge => f.write_str("kb request exceeds 1 MiB"),
+            ClientError::ResponseTooLarge => f.write_str("kb response exceeds 8 MiB"),
+            ClientError::MalformedResponse => f.write_str("malformed mcp response"),
+            ClientError::UnsupportedProfile => {
+                write!(
+                    f,
+                    "kb server does not speak mcp {MCP_PROFILE} stateless json"
+                )
+            }
+            ClientError::IncompatibleCatalog => f.write_str("incompatible kb/1 tool catalog"),
+            ClientError::Rpc { code } => write!(f, "mcp error {code}"),
+            ClientError::Transport => f.write_str("kb server connection failed"),
+            ClientError::RequestIdsExhausted => f.write_str("mcp request ids exhausted"),
+        }
+    }
+}
+
+impl std::error::Error for ClientError {}
+
+impl From<KbError> for ClientError {
+    fn from(error: KbError) -> Self {
+        ClientError::Kb(error)
+    }
+}
+
+impl From<OriginError> for ClientError {
+    fn from(error: OriginError) -> Self {
+        ClientError::Origin(error)
+    }
+}
 
 /// The pinned MCP protocol revision.
 pub const MCP_PROFILE: &str = "2026-07-28";
@@ -27,7 +123,7 @@ const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
 /// unsupported-protocol-version.
 const RPC_METHOD_NOT_FOUND: i64 = -32601;
 const RPC_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
-const MAX_SAFE_INTEGER: u64 = crate::schema::MAX_SAFE_INTEGER as u64;
+const MAX_SAFE_INTEGER: u64 = crate::format::MAX_SAFE_INTEGER as u64;
 
 /// One stateless request of the profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,14 +220,14 @@ pub(crate) fn decode_response(id: u64, bytes: &[u8]) -> Result<Map<String, Value
         return Err(ClientError::MalformedResponse);
     }
     let echoed = object.get("id").cloned().unwrap_or(Value::Null);
-    let ours = crate::schema::safe_integer(&echoed).and_then(|n| u64::try_from(n).ok()) == Some(id);
+    let ours = crate::format::safe_integer(&echoed).and_then(|n| u64::try_from(n).ok()) == Some(id);
     match (object.remove("result"), object.remove("error")) {
         (Some(Value::Object(result)), None) if ours => Ok(result),
         // Ladder rejections may answer before reading an id (`null`).
         (None, Some(Value::Object(error))) if ours || echoed.is_null() => {
             let code = error
                 .get("code")
-                .and_then(crate::schema::safe_integer)
+                .and_then(crate::format::safe_integer)
                 .ok_or(ClientError::MalformedResponse)?;
             Err(match code {
                 RPC_METHOD_NOT_FOUND | RPC_UNSUPPORTED_PROTOCOL_VERSION => {
@@ -284,9 +380,7 @@ fn validated_result(result: &Map<String, Value>) -> Result<&Value, ClientError> 
 /// output schema identical. The full catalog is the all-groups case. Returns
 /// the rows to advertise: the server's (possibly narrowed) input schema and
 /// description with the pinned output envelope and catalog annotations.
-pub(crate) fn verify_catalog(
-    result: &Map<String, Value>,
-) -> Result<crate::stdio::Advertised, ClientError> {
+pub(crate) fn verify_catalog(result: &Map<String, Value>) -> Result<Advertised, ClientError> {
     let names = decode_tools_list(result).map_err(|_| ClientError::IncompatibleCatalog)?;
     if names.is_empty() {
         return Err(ClientError::IncompatibleCatalog);
@@ -308,7 +402,7 @@ pub(crate) fn verify_catalog(
         let (pinned, _) = crate::schema::tool_schemas(name.as_str())
             .map_err(|_| ClientError::IncompatibleCatalog)?;
         let envelope =
-            crate::stdio::output_envelope(name).map_err(|_| ClientError::IncompatibleCatalog)?;
+            catalog::output_envelope(name).map_err(|_| ClientError::IncompatibleCatalog)?;
         let input = tool
             .get("inputSchema")
             .ok_or(ClientError::IncompatibleCatalog)?;
@@ -328,15 +422,15 @@ pub(crate) fn verify_catalog(
             }
             Some(_) => return Err(ClientError::IncompatibleCatalog),
         };
-        let row = crate::stdio::tool_row(name, description, input)
+        let row = catalog::tool_row(name, description, input)
             .map_err(|_| ClientError::IncompatibleCatalog)?;
         rows.push((name, row));
     }
-    Ok(crate::stdio::Advertised::from_rows(rows))
+    Ok(Advertised::from_rows(rows))
 }
 
 /// Where a server may narrow a pinned input schema with a KB-ID `enum`.
-const NARROWABLE_KB_IDS: [&str; 2] = crate::scope::KB_ID_POINTERS;
+const NARROWABLE_KB_IDS: [&str; 2] = crate::mcp::scope::KB_ID_POINTERS;
 
 /// `advertised` equals `pinned` once each narrowable KB-ID node's added
 /// narrowing is removed. The narrowing is either an `enum` (a non-empty list
@@ -385,7 +479,10 @@ fn narrowed_input_matches(pinned: &Value, advertised: &Value) -> bool {
 mod tests {
     use super::*;
     use crate::error::{KbError, ProtocolError};
-    use crate::types::BasesList;
+    use crate::mcp::scope::tests::{A, B, kb};
+    use crate::mcp::scope::{ENUM_MAX_KBS, KB_ID_POINTERS, LiveAuthority, ToolScope};
+    use crate::tools::BasesList;
+    use crate::types::KbId;
 
     fn is_tool_error(error: &ClientError) -> bool {
         matches!(error, ClientError::Kb(KbError::Tool(_)))
@@ -510,5 +607,49 @@ mod tests {
             decode_tool_result::<BasesList>(result(bad, false)).unwrap_err(),
             ClientError::Kb(KbError::Protocol(ProtocolError::InvalidOutput(_)))
         ));
+    }
+
+    #[test]
+    fn narrowed_lists_pass_the_forwarders_acceptance_rule() {
+        let scope = ToolScope::new(&[], false, Some(&[kb(B), kb(A)]));
+        let readable = LiveAuthority::owner(Some(vec![B.into(), A.into(), A.into()]));
+        let advertised = Advertised::scoped(scope, &readable).unwrap();
+        for row in advertised.tools().as_array().unwrap() {
+            for pointer in KB_ID_POINTERS {
+                if let Some(node) = row["inputSchema"].pointer(pointer) {
+                    assert_eq!(node["enum"], json!([A, B]), "{} {pointer}", row["name"]);
+                }
+            }
+        }
+        let tools = advertised.tools();
+        let import = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "knowledge_assets_import")
+            .unwrap();
+        assert_eq!(
+            import["inputSchema"]["properties"]["source"]["properties"]["kbId"]["enum"],
+            json!([A, B])
+        );
+        // The same subset + narrowed-enum shape a server must send.
+        let list = json!({"resultType": "complete", "tools": advertised.tools()});
+        let verified = verify_catalog(list.as_object().unwrap()).unwrap();
+        assert_eq!(verified.tools(), advertised.tools());
+        // No selection, nothing readable, or above the cap: un-narrowed.
+        let many: Vec<String> = (0..=ENUM_MAX_KBS).map(|i| format!("{i:0>24}")).collect();
+        let many_ids: Vec<KbId> = many.iter().map(|id| kb(id)).collect();
+        for (scope, readable) in [
+            (ToolScope::full(), None),
+            (ToolScope::new(&[], false, Some(&[kb(A)])), Some(vec![])),
+            (ToolScope::new(&[], false, Some(&many_ids)), Some(many)),
+        ] {
+            assert_eq!(
+                Advertised::scoped(scope, &LiveAuthority::owner(readable))
+                    .unwrap()
+                    .tools(),
+                Advertised::local().unwrap().tools()
+            );
+        }
     }
 }

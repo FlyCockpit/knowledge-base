@@ -164,7 +164,7 @@ pub fn canonical_tempdir() -> tempfile::TempDir {
 
 pub fn empty_credential_store(
     dir: &std::path::Path,
-    resource: &kb_client::origin::McpResource,
+    resource: &kb_client::mcp::origin::McpResource,
 ) -> kb::state::CredentialStore {
     // Cold private-parent creation/ancestor durability has its own production
     // state tests. Prepare it outside the network/import watchdog to avoid

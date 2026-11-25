@@ -51,7 +51,7 @@ pub(crate) fn verified_bytes(
     file.take(size + 1)
         .read_to_end(&mut bytes)
         .map_err(StoreError::Io)?;
-    if bytes.len() as u64 != size || kb_client::snapshot::content_hash(&bytes) != *hash {
+    if bytes.len() as u64 != size || kb_client::host::snapshot::content_hash(&bytes) != *hash {
         return Err(storage());
     }
     Ok(bytes)

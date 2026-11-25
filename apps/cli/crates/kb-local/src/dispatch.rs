@@ -8,11 +8,15 @@ use crate::{
     qwen::ModelRuntime,
 };
 use kb_client::authoring::AuthoringMode;
-use kb_client::{
-    ErrorCode, ToolName,
-    stdio::{CallControl, tool_error},
-    types::*,
+use kb_client::tools::{
+    AssetsImport, AssetsList, AssetsPut, BasesCreate, BasesDelete, BasesGet, BasesList,
+    BasesUpdate, ChangesApply, DocumentsCreate, DocumentsDelete, DocumentsGet, DocumentsList,
+    DocumentsUpdate, EmbeddingProfileGet, EmbeddingProfileSet, ExportCancel, ExportComplete,
+    ExportPrepare, ExportStatus, IndexRebuild, IndexStatusGet, PullRequestsCreate, PullRequestsGet,
+    PullRequestsList, PullRequestsReview, SealedResolve, SearchAll, StructuredSearch, TransferRead,
+    UploadBegin, UploadFinish, UploadWrite,
 };
+use kb_client::{ErrorCode, ToolName, error::tool_error, mcp::stdio::CallControl, types::*};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::Arc};
 pub struct DispatchIo<'a> {
@@ -280,7 +284,7 @@ async fn dispatch_with_io_observed(
                 .map_err(|_| StoreError::Internal("sealed output".into()))?
             }
             KnowledgeSearch => {
-                let i = kb_client::decode_input::<kb_client::types::KnowledgeSearch>(input)
+                let i = kb_client::decode_input::<kb_client::tools::KnowledgeSearch>(input)
                     .map_err(|_| StoreError::InvalidArgument("search input".into()))?;
                 serde_json::to_value(
                     s.search(

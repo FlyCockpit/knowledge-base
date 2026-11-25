@@ -29,12 +29,13 @@ use ring::rand::{SecureRandom, SystemRandom};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-use crate::attachment::VerifiedAttachment;
-use crate::client::{CallControl, ClientError, McpClient};
+use crate::host::attachment::VerifiedAttachment;
+use crate::tools::SealedResolve;
 use crate::types::{
-    IsoInstant, KbPath, SealedAlgorithm, SealedEnvelope, SealedResolve, SealedResolveInput,
-    SealedResolveOutput, Sha, Uuid,
+    IsoInstant, KbPath, SealedAlgorithm, SealedEnvelope, SealedResolveInput, SealedResolveOutput,
+    Sha, Uuid,
 };
+use crate::{CallControl, ClientError, McpClient};
 
 /// Longest accepted envelope lifetime.
 pub const SEALED_MAX_TTL: Duration = Duration::from_secs(60);
@@ -168,22 +169,22 @@ impl fmt::Display for SealedReference {
 ///
 /// ```compile_fail
 /// fn needs_debug<T: std::fmt::Debug>() {}
-/// needs_debug::<kb_client::sealed::SecretLiteral>();
+/// needs_debug::<kb_client::host::sealed::SecretLiteral>();
 /// ```
 ///
 /// ```compile_fail
 /// fn needs_serialize<T: serde::Serialize>() {}
-/// needs_serialize::<kb_client::sealed::SecretLiteral>();
+/// needs_serialize::<kb_client::host::sealed::SecretLiteral>();
 /// ```
 ///
 /// ```compile_fail
 /// fn needs_display<T: std::fmt::Display>() {}
-/// needs_display::<kb_client::sealed::SecretLiteral>();
+/// needs_display::<kb_client::host::sealed::SecretLiteral>();
 /// ```
 ///
 /// ```compile_fail
 /// fn needs_clone<T: Clone>() {}
-/// needs_clone::<kb_client::sealed::SecretLiteral>();
+/// needs_clone::<kb_client::host::sealed::SecretLiteral>();
 /// ```
 ///
 /// It is still an ordinary owned value a host can move across threads (the
@@ -191,7 +192,7 @@ impl fmt::Display for SealedReference {
 ///
 /// ```
 /// fn needs_send<T: Send + Sync>() {}
-/// needs_send::<kb_client::sealed::SecretLiteral>();
+/// needs_send::<kb_client::host::sealed::SecretLiteral>();
 /// fn needs_serialize<T: serde::Serialize>() {}
 /// needs_serialize::<kb_client::types::Uuid>();
 /// fn needs_debug<T: std::fmt::Debug + std::fmt::Display + Clone>() {}
@@ -269,7 +270,7 @@ fn decode_exact(text: &str, len: usize) -> Result<Vec<u8>, SealedError> {
 /// Convert a validated wire expiry using the shared RFC3339 parser.
 pub fn system_time(instant: &IsoInstant) -> Result<SystemTime, SealedError> {
     let (seconds, fraction) =
-        crate::schema::parse_iso_instant(instant.as_str()).ok_or(SealedError::MalformedEnvelope)?;
+        crate::format::parse_iso_instant(instant.as_str()).ok_or(SealedError::MalformedEnvelope)?;
     let seconds = u64::try_from(seconds).map_err(|_| SealedError::Expired)?;
     let nanos: u32 = format!("{fraction:0<9}")
         .get(..9)
@@ -568,7 +569,7 @@ mod encryption_tests {
     #[test]
     fn encryption_matches_shared_server_fixture_exactly() {
         let v: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../../packages/api/src/lib/kb/fixtures/sealed.json"
+            "../../../../../../packages/api/src/lib/kb/fixtures/sealed.json"
         ))
         .unwrap();
         let reference: SealedReference =

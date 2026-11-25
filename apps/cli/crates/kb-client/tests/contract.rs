@@ -7,9 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use kb_client::error::{ErrorCode, ErrorDetails, KbError, ProtocolError};
-use kb_client::types::{
-    self, ChangesApply, Freshness, IdempotencyKey, KbId, KnowledgeSearch, SearchInput, Sha,
-};
+use kb_client::tools::{ChangesApply, KnowledgeSearch};
+use kb_client::types::{self, Freshness, IdempotencyKey, KbId, SearchInput, Sha};
 use kb_client::{
     PROTOCOL_VERSION, SecretToken, Tool, ToolName, decode_envelope, decode_output, encode_input,
     encode_success_envelope,
@@ -287,7 +286,8 @@ fn corpus_covers_every_required_rejection_class() {
 /// `rank`), and the constants are the server's.
 #[test]
 fn search_all_typed_shapes_and_constants_match_the_contract() {
-    use kb_client::types::{SearchAll, SearchAllStatus};
+    use kb_client::tools::SearchAll;
+    use kb_client::types::SearchAllStatus;
     let corpus = corpus();
     let row = &corpus["tools"]["knowledge_search_all"];
     let populated = labelled(row, "validOutputVariants")
@@ -1125,7 +1125,8 @@ fn raw_integral_wire_spellings_work_for_every_tool_family() {
 
 #[test]
 fn generic_decoders_and_integer_literal_accept_numeric_wire_values() {
-    use kb_client::types::{BasesList, ConstU64, TransferRead};
+    use kb_client::tools::{BasesList, TransferRead};
+    use kb_client::types::ConstU64;
     for wire in ["20.0", "2e1"] {
         let raw = format!("{{\"limit\":{wire}}}");
         let input =
@@ -1290,7 +1291,7 @@ fn changes_uniqueness_runs_after_bounds_for_both_selectors() {
     assert_eq!(
         protocol_file("schema.json")["tools"]["knowledge_changes_apply"]["input"]["properties"]["sourceSessionIds"]
             ["maxItems"],
-        kb_client::dream::DREAM_MAX_SOURCE_SESSIONS
+        kb_client::host::dream::DREAM_MAX_SOURCE_SESSIONS
     );
     input["sourceSessionIds"] = json!(sessions(100));
     ToolName::KnowledgeChangesApply

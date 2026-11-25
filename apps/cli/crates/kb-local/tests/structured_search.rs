@@ -1,6 +1,7 @@
 //! Task 60: exact shared filters, immutable pages and fail-closed hybrid mode.
 #[path = "support/search_fixture.rs"]
 mod support;
+use kb_client::tools::StructuredSearch;
 use kb_client::{ErrorCode, types::*};
 use kb_local::{
     StoreError,
@@ -110,7 +111,7 @@ async fn large_valid_table_all_query_shapes_decode_once_and_reenter() {
         let source = f.cited(hit);
         assert_eq!(
             hit.content_hash,
-            kb_client::snapshot::content_hash(source.markdown.as_bytes())
+            kb_client::host::snapshot::content_hash(source.markdown.as_bytes())
         );
         let parsed =
             kb_local::markdown::parse_markdown(source.markdown.as_bytes()).expect("source");

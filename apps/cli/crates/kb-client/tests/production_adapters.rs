@@ -1,13 +1,16 @@
 //! Driven by the real SQL/Git/MCP fixture in `pnpm test:kb -- sealed`.
 use std::time::Duration;
 
-use kb_client::attachment::attach;
-use kb_client::dream::{
+use kb_client::host::attachment::attach;
+use kb_client::host::dream::{
     DreamChangeSet, DreamError, DreamOutcome, PreparedDream, apply_dream, submit_dream,
 };
-use kb_client::sealed::{RecipientKey, SealedReference, forward_sealed_resolve, resolve_sealed};
+use kb_client::host::sealed::{
+    RecipientKey, SealedReference, forward_sealed_resolve, resolve_sealed,
+};
+use kb_client::tools::PullRequestsReview;
 use kb_client::types::{
-    DreamModel, DreamProvenance, DreamUpsert, IdempotencyKey, KbId, KbPath, PullRequestsReview,
+    DreamModel, DreamProvenance, DreamUpsert, IdempotencyKey, KbId, KbPath,
     PullRequestsReviewInput, ReviewConfirm, ReviewDecision, SealedResolveInput, Uuid,
 };
 use kb_client::{

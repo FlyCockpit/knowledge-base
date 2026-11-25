@@ -1,7 +1,7 @@
 //! 57b spec-first: shared TS corpora, exact source spans and safe projections.
 use kb_client::{
     ErrorCode,
-    snapshot::{content_hash, git_blob_sha},
+    host::snapshot::{content_hash, git_blob_sha},
     types::{KbPath, Sha},
 };
 use kb_local::{

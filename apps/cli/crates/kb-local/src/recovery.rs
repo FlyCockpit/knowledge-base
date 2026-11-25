@@ -804,7 +804,7 @@ mod settle_tests {
 
     /// A due KB repository: eight equal unreachable one-blob packs.
     fn due_store(tag: &str) -> (std::path::PathBuf, Store, KbId) {
-        use kb_client::{decode_input, types::BasesCreate};
+        use kb_client::{decode_input, tools::BasesCreate};
         let base = std::env::temp_dir().join(format!(
             "kb-local-rollup-{tag}-{}",
             crate::state::new_uuid_v4().expect("id")
@@ -1419,7 +1419,7 @@ mod settle_tests {
 
     #[test]
     fn tombstone_purge_retires_all_pack_maintenance_state() {
-        use kb_client::{decode_input, types::BasesDelete};
+        use kb_client::{decode_input, tools::BasesDelete};
 
         // Exercise genuine pre-install, partially retired and deferred intents,
         // plus stale rows a completed purge left behind.

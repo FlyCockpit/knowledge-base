@@ -259,8 +259,8 @@ pub fn convert_source(input: &ConversionInput<'_>) -> Result<ConvertedSource, Co
         source: SourceDocument {
             path: input.path.clone(),
             commit_sha: input.commit_sha.clone(),
-            blob_sha: kb_client::snapshot::git_blob_sha(input.bytes),
-            content_hash: kb_client::snapshot::content_hash(input.bytes),
+            blob_sha: kb_client::host::snapshot::git_blob_sha(input.bytes),
+            content_hash: kb_client::host::snapshot::content_hash(input.bytes),
             markdown: markdown.into(),
             front_matter: parsed.front_matter,
             body_start: parsed.body_start,
