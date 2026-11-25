@@ -83,13 +83,10 @@ Read `apps/cli/AGENTS.md`. Outside the pnpm/turbo graph — no `package.json`. C
 
 #### deslop-please (Rust structure lint, `apps/cli`)
 
-Known debt is listed in `apps/cli/.deslop-please.allow`; run `deslop-please --allow .deslop-please.allow` from `apps/cli`.
-
-- Run `deslop-please` to check for sloppy code structure.
-- Errors flagged by `deslop-please` must be fixed from first principles, don't do mechanical moves to hide them.
-  - `module-cycle` & `tangle`: what is the intended layer of abstraction? Which module should be at which layer?
-  - `field-leak` & `shallow-module`: Why we have these fields/functions at all? What are the patterns of use? Can they be hidden behind a narrow interface? Don't fix each leak one at a time, fix them holistically.
-- Draw a diagram to help user understand the before and proposed after structure.
+- [`deslop-please`](https://github.com/deterministic-machines/deslop-please) lints code structure (module cycles, tangles, field leaks, shallow modules, long files, wide directories); fix what it finds from first principles, never by moves that only hide a finding.
+- Run it from `apps/cli`: `deslop-please --allow .deslop-please.allow`.
+- `.deslop-please.allow` lists existing debt that is muted: fixing an entry never fails, a new finding fails.
+- `deslop-please --update-allow .deslop-please.allow` regenerates the file and drops any comments in it.
 
 ### PWA
 
