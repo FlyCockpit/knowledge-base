@@ -54,6 +54,8 @@ export function createServerLifecycle(
   options: {
     closeBearerAdmission?: () => Promise<void>;
     closeGitAdmission?: () => Promise<void>;
+    /** Joins detached mail sends for at most the given ms; resolves with those left. */
+    drainMail?: (timeoutMs: number) => Promise<number>;
   } = {},
 ) {
   const startup = new AbortController();
@@ -127,6 +129,7 @@ export function createServerLifecycle(
         // close() also waits on idle keep-alive sockets; release them now so only
         // in-flight requests hold the drain.
         server.closeIdleConnections?.();
+        const drainUntil = Date.now() + HTTP_DRAIN_MS;
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(resolve, HTTP_DRAIN_MS);
           server?.close((error) => {
@@ -135,6 +138,10 @@ export function createServerLifecycle(
             resolve();
           });
         });
+        // Mails detached from sign-ups answered before or during the HTTP drain
+        // are joined in what is left of the same window, before their database goes.
+        const mailLeft = (await options.drainMail?.(Math.max(0, drainUntil - Date.now()))) ?? 0;
+        if (mailLeft > 0) logEvent("server.shutdown-mail-pending", { count: mailLeft });
       }
       // In-flight index reads settled with the HTTP drain; terminate the reader threads.
       await indexReader?.stop();

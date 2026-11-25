@@ -15,7 +15,7 @@ import {
 } from "@knowledge-base/api/lib/push-subscription";
 import { isTwoFactorPolicySatisfied } from "@knowledge-base/api/lib/two-factor-policy";
 import { appRouter } from "@knowledge-base/api/routers/index";
-import { auth, type Session } from "@knowledge-base/auth";
+import { auth, drainVerificationMail, type Session } from "@knowledge-base/auth";
 import { isUserBanned } from "@knowledge-base/auth/ban";
 import { createDeviceApprovalService } from "@knowledge-base/auth/device-approval";
 import { canonicalMcpResource } from "@knowledge-base/auth/mcp-config";
@@ -266,6 +266,7 @@ const gitHttp = createGitHttp({
 });
 const lifecycle = createServerLifecycle({
   closeGitAdmission: () => gitHttp.close(),
+  drainMail: drainVerificationMail,
   closeBearerAdmission: () => {
     const drain = Promise.all([httpGate.close(), bearerGate.close()]);
     return drain.then(() => mcpEndpoint.close());

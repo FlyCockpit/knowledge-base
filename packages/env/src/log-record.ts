@@ -70,6 +70,15 @@ export const LOG_SITES = {
   // Libraries.
   "auth.library": ["warn", "authentication library reported a problem"],
   "auth.library.error": ["error", "authentication library reported an error"],
+  "auth.verification-email": ["error", "sign-up verification email could not be sent"],
+  "auth.verification-email-skipped": [
+    "warn",
+    "sign-up verification email not sent: too many in flight; sign-in sends it again",
+  ],
+  "server.shutdown-mail-pending": [
+    "warn",
+    "shutdown stopped waiting for sign-up verification emails still being sent",
+  ],
   "redis.connection": ["warn", "Redis connection error"],
   "child.output": ["warn", "child output discarded"],
   "child.closed": ["info", "child output streams closed"],

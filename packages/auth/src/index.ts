@@ -28,6 +28,9 @@ import { markUserCreatedInRequest, neutralSignUpResponse } from "./signup-respon
 import { TWO_FACTOR_ALLOW_PASSWORDLESS_ENROLLMENT } from "./two-factor-policy.js";
 import { ADMIN_CREATE_USER_PATH } from "./user-columns.js";
 import { withVerificationCallback } from "./verification-callback.js";
+import { sendVerificationMailAfterCommit } from "./verification-mail.js";
+
+export { drainVerificationMail } from "./verification-mail.js";
 
 const ssoEnabled = SSO_ENABLED;
 const forceSso = FORCE_SSO;
@@ -248,35 +251,40 @@ export const auth = betterAuth({
     },
   },
   emailVerification: {
-    sendVerificationEmail: async ({ user, url }) => {
-      // Better-Auth's `additionalFields` are present at runtime but the
-      // sendVerificationEmail callback's `user` is typed against the base
-      // user shape — `locale` isn't on it. Fetch the row via Prisma so the
-      // recipient's preferred locale routes through to the renderer (which
-      // falls back to en-US for any unsupported / missing value).
-      const row = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { locale: true },
-      });
-      const { subject, html } = renderVerifyEmail({
-        // `url` points at Better-Auth's /api/auth/verify-email endpoint, which
-        // validates the token and then redirects to the `callbackURL` query
-        // param — defaulting to `/` if nobody sets one. Rewrite it here (rather
-        // than at each call site) so every verification email, whatever
-        // triggered it, lands on the web /$lang/verify-email page with either a
-        // confirmation or Better-Auth's `?error=` code.
-        // CORS_ORIGIN is the web app's origin when it is served from a
-        // different host than this API. Passing it makes the callback absolute
-        // so the emailed link lands on the app, not on the API hostname.
-        url: withVerificationCallback(url, row?.locale, env.CORS_ORIGIN),
-        locale: row?.locale ?? "en-US",
-      });
-      await sendEmail({
-        to: user.email,
-        subject,
-        html,
-      });
-    },
+    sendVerificationEmail: async ({ user, url }) =>
+      // Sign-up calls this inside its user-create transaction: mail after the
+      // commit, detached from the response (verification-mail.ts).
+      sendVerificationMailAfterCommit(async () => {
+        // Better-Auth's `additionalFields` are present at runtime but the
+        // sendVerificationEmail callback's `user` is typed against the base
+        // user shape — `locale` isn't on it. Fetch the row via Prisma so the
+        // recipient's preferred locale routes through to the renderer (which
+        // falls back to en-US for any unsupported / missing value). On sign-up
+        // this runs after the commit, so the row (and its sign-up locale) is
+        // visible here.
+        const row = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { locale: true },
+        });
+        const { subject, html } = renderVerifyEmail({
+          // `url` points at Better-Auth's /api/auth/verify-email endpoint, which
+          // validates the token and then redirects to the `callbackURL` query
+          // param — defaulting to `/` if nobody sets one. Rewrite it here (rather
+          // than at each call site) so every verification email, whatever
+          // triggered it, lands on the web /$lang/verify-email page with either a
+          // confirmation or Better-Auth's `?error=` code.
+          // CORS_ORIGIN is the web app's origin when it is served from a
+          // different host than this API. Passing it makes the callback absolute
+          // so the emailed link lands on the app, not on the API hostname.
+          url: withVerificationCallback(url, row?.locale, env.CORS_ORIGIN),
+          locale: row?.locale ?? "en-US",
+        });
+        await sendEmail({
+          to: user.email,
+          subject,
+          html,
+        });
+      }),
     sendOnSignUp: true,
     // `requireEmailVerification` above rejects a correct password on an
     // unverified account. Without this, that rejection is a dead end: the

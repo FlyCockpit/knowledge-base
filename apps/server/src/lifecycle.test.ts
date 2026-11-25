@@ -319,6 +319,36 @@ describe("createServerLifecycle", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(state.disconnectDb).toHaveBeenCalledOnce();
   });
+  it("joins detached mail sends after HTTP close within its window, before DB disconnect", async () => {
+    const drainMail = vi.fn(async (timeoutMs: number) => {
+      state.events.push("mail-drain");
+      await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+      return 2;
+    });
+    const log = captureLog();
+    try {
+      await createServerLifecycle({ drainMail }).start(() => ({
+        close: (callback) => {
+          state.events.push("http-closed");
+          callback();
+        },
+      }));
+      listeners.get("SIGTERM")?.();
+      await vi.advanceTimersByTimeAsync(HTTP_QUIESCE_MS + 1);
+      // After HTTP close (so mails of requests the drain answered count), in
+      // what is left of the HTTP drain window.
+      expect(drainMail).toHaveBeenCalledExactlyOnceWith(HTTP_DRAIN_MS);
+      expect(state.events.indexOf("http-closed")).toBeLessThan(state.events.indexOf("mail-drain"));
+      expect(state.disconnectDb).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(HTTP_DRAIN_MS);
+      expect(state.disconnectDb).toHaveBeenCalledOnce();
+      expect(log.records).toContainEqual(
+        expect.objectContaining({ site: "server.shutdown-mail-pending", count: 2 }),
+      );
+    } finally {
+      log.restore();
+    }
+  });
   it("allows the mutation and child drain budgets before starting the full HTTP drain", async () => {
     const operationBudget = MUTATION_DEADLINE_MS + DRAIN_MS;
     state.shutdownCoordinator.mockImplementation(

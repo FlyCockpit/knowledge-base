@@ -498,6 +498,7 @@ export const SUITES = {
     include: [
       "packages/auth/src/bootstrap.integration.test.ts",
       "packages/auth/src/signup-response.integration.test.ts",
+      "packages/auth/src/verification-mail.integration.test.ts",
     ],
     services: ["postgres"],
   },
