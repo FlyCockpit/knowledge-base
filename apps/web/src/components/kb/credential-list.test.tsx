@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  ACTIVE_COUNTS_QUERY_KEY,
   CredentialList,
   editTargetFromGrant,
   editTargetFromToken,
@@ -337,6 +338,7 @@ describe("PAT secret hygiene", () => {
       const minted = await observer.mutate(undefined);
       expect(minted.secret).toBe(SECRET);
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [...PAT_LIST_QUERY_ROOT] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: [...ACTIVE_COUNTS_QUERY_KEY] });
       // Nothing in the query cache ever carries the secret.
       expect(
         JSON.stringify(
@@ -393,6 +395,7 @@ describe("PAT outcome uncertainty", () => {
     await expect(observer.mutate(undefined)).rejects.toThrow("reply lost");
     expect(mint).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: [...PAT_LIST_QUERY_ROOT] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: [...ACTIVE_COUNTS_QUERY_KEY] });
     expect(observer.getCurrentResult().data).toBeUndefined();
     observer.reset();
     queryClient.clear();

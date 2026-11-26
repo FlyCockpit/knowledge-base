@@ -62,6 +62,8 @@ export type GrantRow = Awaited<ReturnType<Client["mcpGrants"]["listMine"]>>["ite
 
 /** Query-key root for the user's PAT list; invalidated (never written) after a mint. */
 export const PAT_LIST_QUERY_ROOT: readonly unknown[] = orpc.mcpTokens.key();
+/** The live-credential counts (password-reset review, dashboard); every mint changes them. */
+export const ACTIVE_COUNTS_QUERY_KEY: readonly unknown[] = orpc.mcpGrants.countActiveMine.key();
 
 const DAY_MS = 86_400_000;
 export const MAX_TTL_DAYS = 365;
@@ -103,7 +105,8 @@ export function patExpiresAtFromChoice(
  * Mint mutation hygiene: the raw secret must live only in the mutation result
  * that the open dialog renders. Closing detaches its observer; `gcTime: 0`
  * collects a settled mutation immediately and an abandoned pending mutation
- * after it settles. Refetch the list instead of caching the mint response.
+ * after it settles. Refetch the list (and the live counts) instead of caching
+ * the mint response.
  */
 export function withPatSecretHygiene<TData, TError, TVariables>(
   queryClient: QueryClient,
@@ -111,17 +114,22 @@ export function withPatSecretHygiene<TData, TError, TVariables>(
   /** The list refetched after the mint (REST API keys pass their own). */
   listRoot: readonly unknown[] = PAT_LIST_QUERY_ROOT,
 ): MutationObserverOptions<TData, TError, TVariables> {
+  const refetch = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: [...listRoot] }),
+      queryClient.invalidateQueries({ queryKey: [...ACTIVE_COUNTS_QUERY_KEY] }),
+    ]);
   return {
     ...options,
     gcTime: 0,
     onSuccess: async (...args) => {
       await options.onSuccess?.(...args);
-      await queryClient.invalidateQueries({ queryKey: [...listRoot] });
+      await refetch();
     },
     // The mint may have committed even if its reply was lost. Never replay a secret.
     onError: async (...args) => {
       await options.onError?.(...args);
-      await queryClient.invalidateQueries({ queryKey: [...listRoot] });
+      await refetch();
     },
   };
 }

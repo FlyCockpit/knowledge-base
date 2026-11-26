@@ -14,7 +14,11 @@ import {
   emptyApiKeyDraft,
   toApiKeyMintInput,
 } from "@/components/kb/api-key-create-dialog";
-import { patExpiresAtFromChoice, withPatSecretHygiene } from "@/components/kb/credential-list";
+import {
+  ACTIVE_COUNTS_QUERY_KEY,
+  patExpiresAtFromChoice,
+  withPatSecretHygiene,
+} from "@/components/kb/credential-list";
 import { SecretReveal } from "@/components/secret-reveal";
 import type { LiveKbOption } from "@/hooks/use-mcp-consent";
 
@@ -335,6 +339,8 @@ describe("API key secret hygiene", () => {
       const minted = await observer.mutate(undefined);
       expect(minted.secret).toBe(SECRET);
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [...API_KEY_LIST_QUERY_ROOT] });
+      // The password-reset review and the dashboard count what is live.
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: [...ACTIVE_COUNTS_QUERY_KEY] });
       expect(
         JSON.stringify(
           queryClient
