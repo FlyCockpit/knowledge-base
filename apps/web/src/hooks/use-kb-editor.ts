@@ -91,7 +91,26 @@ export type EditorOp =
       /** Staged images committed in the same change set as this save. */
       assets?: readonly StagedAssetInput[];
     }
-  | { kind: "delete"; path: string };
+  | { kind: "delete"; path: string }
+  /** Rename/move: the stored document, bytes unchanged, from `path` to `toPath`. */
+  | { kind: "move"; path: string; toPath: string };
+
+/**
+ * Why the server refused a document path (`documents.move`, also a create
+ * whose path is taken): the closed reasons the router forwards.
+ */
+const DOCUMENT_PATH_REFUSALS = [
+  "PATH_EXISTS",
+  "INVALID_PATH",
+  "RESERVED_PATH",
+  "PATH_CASE_COLLISION",
+  "PATH_NOT_FOUND",
+  "NOT_MARKDOWN_PATH",
+  "MOVE_BREAKS_ASSET_LINKS",
+] as const;
+export type DocumentPathRefusal = (typeof DOCUMENT_PATH_REFUSALS)[number];
+const isPathRefusal = (value: unknown): value is DocumentPathRefusal =>
+  (DOCUMENT_PATH_REFUSALS as readonly unknown[]).includes(value);
 
 /**
  * A path a PROPOSAL_CONFLICT still lists for the proposal, with the
@@ -122,6 +141,12 @@ export type EditorOutcome =
       reason: "tooLarge" | "rejected" | "gone" | "uploadExpired" | "tooManyImages" | "unknown";
       /** A refusal naming the path: shown under the path field. */
       pathIssue?: DocumentPathIssue;
+      /**
+       * The refusal's own path code, when it named one: the rename/move form
+       * maps it itself (its target is `/toPath`, and a move that would break
+       * relative image links is a browser-only reason).
+       */
+      path?: DocumentPathRefusal;
       /** A refusal naming the content, by its closed reason. */
       contentIssue?: ContentIssue;
     };
@@ -150,6 +175,13 @@ function refusalDetails(error: unknown): EditorOutcome {
   return contentIssue
     ? { kind: "error", reason: "rejected", contentIssue }
     : { kind: "error", reason: "rejected" };
+}
+
+/** Carry a refusal's own path code along (`EditorOutcome.path`). */
+function withPathRefusal(outcome: EditorOutcome, refusal: unknown): EditorOutcome {
+  return outcome.kind === "error" && isPathRefusal(refusal)
+    ? { ...outcome, path: refusal }
+    : outcome;
 }
 
 /**
@@ -196,6 +228,8 @@ export type EditorDeps = {
   create: (input: DocumentInput) => Promise<unknown>;
   update: (input: DocumentInput) => Promise<unknown>;
   remove: (input: MutationInput & { confirm: "DELETE" }) => Promise<unknown>;
+  /** Rename/move; absent where a caller never moves (restoring a revision). */
+  move?: (input: MutationInput & { toPath: string }) => Promise<unknown>;
   uploadBegin: (input: {
     kbId: string;
     idempotencyKey: string;
@@ -289,19 +323,20 @@ function conflictOutcome(details: unknown): Extract<EditorOutcome, { kind: "conf
 
 export function describeEditorError(error: unknown): EditorOutcome {
   const code = errorCode(error);
+  const details = (error as { data?: { details?: unknown } } | null)?.data?.details;
+  const refusal = (details as { reason?: unknown } | null | undefined)?.reason;
   switch (code) {
-    case "CONFLICT": {
-      const details = (error as { data?: { details?: unknown } }).data?.details;
-      if ((details as { reason?: unknown } | undefined)?.reason === "PATH_EXISTS")
-        return { kind: "error", reason: "rejected", pathIssue: "exists" };
+    case "CONFLICT":
+      // A taken path is a definite refusal, never a head to continue on.
+      if (refusal === "PATH_EXISTS")
+        return { kind: "error", reason: "rejected", pathIssue: "exists", path: refusal };
       return conflictOutcome(details);
-    }
     case "NOT_FOUND":
     case "FORBIDDEN":
       return { kind: "error", reason: "gone" };
     case "BAD_REQUEST":
     case "INVALID_ARGUMENT":
-      return refusalDetails(error);
+      return withPathRefusal(refusalDetails(error), refusal);
     case "IDEMPOTENCY_MISMATCH":
     case "UPLOAD_INCOMPLETE":
       return { kind: "error", reason: "rejected" };
@@ -494,8 +529,10 @@ function requestFingerprint(request: SaveRequest): string {
     request.proposalHeadSha,
     op.kind,
     op.path,
-    op.kind === "delete" ? null : op.markdown,
-    op.kind === "delete" ? [] : (op.assets ?? []).map((asset) => [asset.path, asset.uploadId]),
+    op.kind === "move" ? op.toPath : op.kind === "delete" ? null : op.markdown,
+    op.kind === "delete" || op.kind === "move"
+      ? []
+      : (op.assets ?? []).map((asset) => [asset.path, asset.uploadId]),
   ]);
 }
 
@@ -516,13 +553,13 @@ export async function runEditorOp(
   const { kbId, baseRevision, op } = request;
   const proposal = request.proposalNumber;
   const proposalHead = request.proposalHeadSha;
-  const markdown = op.kind === "delete" ? null : op.markdown;
+  const markdown = op.kind === "delete" || op.kind === "move" ? null : op.markdown;
   const bytes = markdown === null ? null : new TextEncoder().encode(markdown);
   const base = { memory, nextBaseRevision: baseRevision, markdown };
   if (bytes && bytes.length > STAGED_MARKDOWN_MAX_BYTES) {
     return { ...base, outcome: { kind: "error", reason: "tooLarge" } };
   }
-  const assets = op.kind === "delete" ? [] : [...(op.assets ?? [])];
+  const assets = op.kind === "delete" || op.kind === "move" ? [] : [...(op.assets ?? [])];
   if (assets.length > DOCUMENT_STAGED_ASSETS_MAX) {
     return { ...base, outcome: { kind: "error", reason: "tooManyImages" } };
   }
@@ -548,6 +585,9 @@ export async function runEditorOp(
     let result: unknown;
     if (op.kind === "delete") {
       result = await deps.remove({ ...target, confirm: "DELETE" });
+    } else if (op.kind === "move") {
+      if (!deps.move) throw new Error("This editor session cannot move documents");
+      result = await deps.move({ ...target, toPath: op.toPath });
     } else {
       const content: Content =
         bytes && bytes.length > INLINE_MARKDOWN_MAX_BYTES
@@ -1081,10 +1121,15 @@ export type SaveState = {
  * What a caller asks a session for. Path and create/update are never the
  * caller's: both come from the session's document.
  */
-export type SaveIntent = { kind: "write"; markdown: string } | { kind: "delete" };
+export type SaveIntent =
+  | { kind: "write"; markdown: string }
+  | { kind: "delete" }
+  /** Rename/move the session's document; the draft text is not sent. */
+  | { kind: "move"; toPath: string };
 
 function opFor(document: SessionDocument, intent: SaveIntent): EditorOp {
   if (intent.kind === "delete") return { kind: "delete", path: document.path };
+  if (intent.kind === "move") return { kind: "move", path: document.path, toPath: intent.toPath };
   return {
     kind: document.exists ? "update" : "create",
     path: document.path,
@@ -1124,7 +1169,10 @@ const receiptRev = (outcome: EditorOutcome): string | null =>
 const sameOp = (a: EditorOp, b: EditorOp) =>
   a.kind === b.kind &&
   a.path === b.path &&
-  (a.kind === "delete" || (b.kind !== "delete" && a.markdown === b.markdown));
+  (a.kind === "delete" ||
+    (a.kind === "move"
+      ? b.kind === "move" && a.toPath === b.toPath
+      : b.kind !== "delete" && b.kind !== "move" && a.markdown === b.markdown));
 
 /**
  * One Save. Each save is an immutable record (`memory.request`: key,
@@ -1183,9 +1231,16 @@ export async function runSave(
     if (rev !== null && isReceipt(run.outcome)) {
       savedRev = rev;
       receipt = run.outcome;
-      document = { exists: request.op.kind !== "delete", head: rev, path: request.op.path };
+      // A move's receipt places the session's document at its new path.
+      document = {
+        exists: request.op.kind !== "delete",
+        head: rev,
+        path: request.op.kind === "move" ? request.op.toPath : request.op.path,
+      };
       proposal = proposalAfterSave(proposal, run.outcome);
-      savedMarkdown = request.op.kind === "delete" ? null : request.op.markdown;
+      // A move keeps the text it moved: only writes save text.
+      savedMarkdown =
+        request.op.kind === "delete" || request.op.kind === "move" ? null : request.op.markdown;
       deletedFrom =
         request.op.kind === "delete" && run.outcome.kind === "applied"
           ? request.baseRevision
@@ -1217,7 +1272,7 @@ export async function runSave(
   // A new record: a new key, and only the images still staged.
   let op = opFor(document, draft.intent);
   const key = deps.newKey();
-  if (op.kind !== "delete") {
+  if (op.kind !== "delete" && op.kind !== "move") {
     const started = beginImageSave(images, op.markdown, key);
     images = started.images;
     if (started.sent.length > 0)
@@ -1388,6 +1443,7 @@ export function useKbEditor(input: {
   const create = useMutation({ ...orpc.documents.create.mutationOptions(), ...quiet });
   const update = useMutation({ ...orpc.documents.update.mutationOptions(), ...quiet });
   const remove = useMutation({ ...orpc.documents.delete.mutationOptions(), ...quiet });
+  const move = useMutation({ ...orpc.documents.move.mutationOptions(), ...quiet });
   const begin = useMutation({ ...orpc.kbUploads.begin.mutationOptions(), ...quiet });
   const write = useMutation({ ...orpc.kbUploads.write.mutationOptions(), ...quiet });
   const finish = useMutation({ ...orpc.kbUploads.finish.mutationOptions(), ...quiet });
@@ -1441,6 +1497,7 @@ export function useKbEditor(input: {
             create: create.mutateAsync,
             update: update.mutateAsync,
             remove: remove.mutateAsync,
+            move: move.mutateAsync,
             uploadBegin: begin.mutateAsync,
             uploadWrite: write.mutateAsync,
             uploadFinish: finish.mutateAsync,
@@ -1524,6 +1581,7 @@ export function useKbEditor(input: {
       create,
       update,
       remove,
+      move,
       begin,
       write,
       finish,
@@ -1660,6 +1718,7 @@ export function useKbEditor(input: {
       create,
       update,
       remove,
+      move,
       begin,
       write,
       finish,

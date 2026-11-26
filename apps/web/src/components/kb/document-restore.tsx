@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { InlineRetry } from "@/components/inline-retry";
 import { actorLine } from "@/components/kb/document-history";
 import { type DiffLine, lineDiff } from "@/components/kb/pr-diff";
-import { useDocumentRestore } from "@/hooks/use-document-restore";
+import { restoreSourceInput, useDocumentRestore } from "@/hooks/use-document-restore";
 import {
   confirmableConflict,
   type EditorOutcome,
@@ -76,6 +76,7 @@ export function RestoreVersionDialog({
   kbHeadSha,
   proposing,
   path,
+  sourcePath,
   revision,
   open,
   onOpenChange,
@@ -88,6 +89,8 @@ export function RestoreVersionDialog({
   /** The viewer can only propose: restoring opens or extends a pull request. */
   proposing: boolean;
   path: string;
+  /** Where the document lived at `revision`, when renamed since (read there, restored to `path`). */
+  sourcePath?: string;
   revision: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -100,7 +103,9 @@ export function RestoreVersionDialog({
   // (main moved, or their own pull request already changes this document).
   const [against, setAgainst] = useState<Rebase | null>(null);
   const source = useQuery({
-    ...orpc.documents.get.queryOptions({ input: { kbId, path, rev: revision } }),
+    ...orpc.documents.get.queryOptions({
+      input: restoreSourceInput({ kbId, path, revision, sourcePath }),
+    }),
     ...quiet,
     enabled: open,
   });
@@ -144,6 +149,7 @@ export function RestoreVersionDialog({
       kbId,
       path,
       revision,
+      ...(sourcePath && sourcePath !== path ? { sourcePath } : {}),
       current: { exists: !deleted, head },
       ...(against ? { rebase: against } : {}),
     });

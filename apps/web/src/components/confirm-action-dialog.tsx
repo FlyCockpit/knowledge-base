@@ -23,6 +23,7 @@ export function ConfirmActionDialog({
   description,
   children,
   confirmLabel,
+  cancelLabel,
   pendingLabel,
   isPending = false,
   destructive = false,
@@ -35,6 +36,8 @@ export function ConfirmActionDialog({
   /** Extra detail between the description and the actions. */
   children?: React.ReactNode;
   confirmLabel: string;
+  /** Defaults to "Cancel"; name it when the action itself is a cancel. */
+  cancelLabel?: string;
   pendingLabel?: string;
   isPending?: boolean;
   destructive?: boolean;
@@ -51,7 +54,7 @@ export function ConfirmActionDialog({
         {children}
         <AlertDialogFooter className="sm:flex-wrap">
           <AlertDialogCancel className="min-h-[44px] w-full sm:w-auto">
-            {t("actions.cancel")}
+            {cancelLabel ?? t("actions.cancel")}
           </AlertDialogCancel>
           <AlertDialogAction
             variant={destructive ? "destructive" : "default"}

@@ -15,6 +15,7 @@ import {
   restoreTarget,
 } from "@/components/kb/document-restore";
 import { lineDiff } from "@/components/kb/pr-diff";
+import { restoreSourceInput } from "@/hooks/use-document-restore";
 import { renderWithTestRouter } from "@/lib/router-test-utils";
 import { orpc } from "@/utils/orpc";
 
@@ -142,6 +143,18 @@ describe("restoreTarget", () => {
         kbHeadSha: KB_HEAD,
       }).ready,
     ).toBe(false);
+  });
+});
+
+describe("restoring a version from before a rename", () => {
+  it("reads the version at the name it had then and writes to the name it has now", () => {
+    const at = { kbId: KB, path: "archive/b.md", revision: LAST };
+    expect(restoreSourceInput({ ...at, sourcePath: "notes/a.md" })).toEqual({
+      kbId: KB,
+      path: "notes/a.md",
+      rev: LAST,
+    });
+    expect(restoreSourceInput(at)).toEqual({ kbId: KB, path: "archive/b.md", rev: LAST });
   });
 });
 

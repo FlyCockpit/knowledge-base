@@ -1,5 +1,5 @@
 import { markdownIssueReason, pathIssueReason } from "./argument-reasons";
-import { resolveMarkdownAssetReferences } from "./documents-read";
+import { moveChangesAssetLinks, resolveMarkdownAssetReferences } from "./documents-read";
 import { type GitReadOptions, listTreeBlobsAsync, readBlobsAsync } from "./git-read";
 import { KB_TREE_LIMITS } from "./limits";
 import { type AssetManifestEntry, canonicalManifestBytes, parseAssetManifest } from "./manifest";
@@ -17,16 +17,27 @@ export type PlannedChange =
   | { op: "create"; path: string; content: { markdown: string } }
   | { op: "replace"; path: string; content: { markdown: string } }
   | { op: "delete"; path: string }
+  /**
+   * Browser-only rename/move of one document (`DOCUMENT_MOVE`): the same bytes
+   * at `toPath`, gone from `path`, in one commit. Never a kb/1 protocol op.
+   */
+  | { op: "move"; path: string; toPath: string }
   | { op: "assetPut"; path: string; uploadId: string }
   | { op: "assetRemove"; path: string };
+
+/**
+ * A move to another folder that would change what one of the document's
+ * relative image links resolves to. Browser-only, like the move itself.
+ */
+export const MOVE_BREAKS_ASSET_LINKS = "MOVE_BREAKS_ASSET_LINKS";
 
 /** Why planning refused a change, and which change/field it names. */
 export type PlanFailure = {
   ok: false;
   message: string;
-  reason: KbInvalidArgumentReason | "PATH_EXISTS";
+  reason: KbInvalidArgumentReason | "PATH_EXISTS" | typeof MOVE_BREAKS_ASSET_LINKS;
   changeIndex?: number;
-  key?: "path" | "content";
+  key?: "path" | "content" | "toPath";
 };
 
 export type PlannedPublication =
@@ -125,7 +136,7 @@ export async function walkGitTreeAtCommit(input: {
     const at = (
       message: string,
       reason: PlanFailure["reason"],
-      key: "path" | "content" = "path",
+      key: NonNullable<PlanFailure["key"]> = "path",
     ): PlanFailure => ({ ok: false, message, reason, changeIndex, key });
     if (change.op === "assetPut" || change.op === "assetRemove") {
       if (change.op === "assetRemove") {
@@ -160,6 +171,12 @@ export async function walkGitTreeAtCommit(input: {
       // write over that document: the same provenance-only noop rule applies.
       const failure = write(path, Buffer.from(markdown, "utf8"));
       if (failure) return at(failure, "SCHEMA", "content");
+      continue;
+    }
+    if (change.op === "move") {
+      const moved = moveDocument(files, assets, path, change.toPath);
+      if (!moved.ok) return at(moved.message, moved.reason, moved.key);
+      changedPaths.push(path, moved.toPath);
       continue;
     }
     if (change.op === "delete") {
@@ -206,6 +223,55 @@ export async function walkGitTreeAtCommit(input: {
     files: treeFiles,
     warnings: danglingAssetLinks(files, removedAssets),
   };
+}
+
+type MoveFailure = Omit<PlanFailure, "changeIndex">;
+
+/**
+ * Move one document within `files`: the stored bytes, unchanged, from `from`
+ * (already normalized and checked as a document path) to `toPath`, which gets
+ * the same path rules as a create. No provenance stamp: a move is not an
+ * edit, so an agent's document stays an agent's.
+ *
+ * Relative image links resolve against the document's folder. A move to
+ * another folder that would make a link that reaches an asset today point
+ * somewhere else is refused (`MOVE_BREAKS_ASSET_LINKS`) rather than
+ * committed: rewriting the person's Markdown silently is not ours to do, and
+ * a warning after the commit would leave broken images behind. Root-relative
+ * links (`/assets/…`, what the editor inserts) and renames within the same
+ * folder never trigger it; links that already reach nothing are not checked.
+ */
+function moveDocument(
+  files: Map<string, Buffer>,
+  assets: ReadonlyMap<string, AssetManifestEntry>,
+  from: string,
+  toPath: string,
+): { ok: true; toPath: string } | MoveFailure {
+  const fail = (
+    message: string,
+    reason: PlanFailure["reason"],
+    key: NonNullable<PlanFailure["key"]> = "toPath",
+  ): MoveFailure => ({ ok: false, message, reason, key });
+  const norm = normalizeKbPath(toPath);
+  if (!norm.ok) return fail(norm.issue.message, pathIssueReason(norm.issue.code));
+  const to = norm.path;
+  if (isKbNamespacePath(to))
+    return fail("path is reserved for the knowledge base", "RESERVED_PATH");
+  if (!isMarkdownPath(to))
+    return fail("only markdown document paths are supported", "NOT_MARKDOWN_PATH");
+  if (to === from) return fail("the document is already at this path", "INVALID_PATH");
+  const bytes = files.get(from);
+  if (!bytes) return fail(`path does not exist: ${from}`, "PATH_NOT_FOUND", "path");
+  if (files.has(to)) return fail(`path already exists: ${to}`, "PATH_EXISTS");
+  const parsed = parseMarkdownDocument(bytes);
+  if ("body" in parsed && moveChangesAssetLinks(parsed.body, from, to, (path) => assets.has(path)))
+    return fail(
+      "the document links images by a path relative to its folder",
+      MOVE_BREAKS_ASSET_LINKS,
+    );
+  files.delete(from);
+  files.set(to, bytes);
+  return { ok: true, toPath: to };
 }
 
 /** Documents of the resulting tree that still link to a removed asset. */

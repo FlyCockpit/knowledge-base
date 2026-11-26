@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   commitSubjectLine,
+  FOLLOWED_LOG_ROW_MAX_BYTES,
+  followedLogMaxBytes,
   historyActor,
+  parseFollowedLog,
   prFileAttribution,
   readBlobProvenance,
   readCommitMessagesAsync,
@@ -278,6 +281,111 @@ describe("document history and PR attribution", () => {
       via: null,
     });
     expect(historyActor("plain message", actors).kind).toBe("unattributed");
+  });
+});
+
+describe("history across a rename", () => {
+  let repo: string;
+  const c: Record<string, string> = {};
+  const at = (segments: string[], provenance: string, body: string): TreeFileInput => ({
+    segments,
+    content: Buffer.from(`---\nprovenance: ${provenance}\n---\n${body}\n`, "utf8"),
+  });
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "kb-doc-history-move-"));
+    execFileSync("git", ["init", "--bare", repo], { env: hardenedGitEnv(), stdio: "ignore" });
+    const base = initialMainTreeFiles("Move fixture");
+    let time = 1_800_100_000;
+    const commit = (name: string, parent: string, message: string, files: TreeFileInput[]) => {
+      time += 60;
+      c[name] = writeGitFixtureCommit(repo, {
+        parentSha: parent,
+        message,
+        files: [...base, ...files],
+        timestampSeconds: time,
+      });
+    };
+    commit("create", "0".repeat(40), `Create a\n\n${block("user:u1", "human")}`, [
+      at(["notes", "a.md"], "agent", "one"),
+    ]);
+    commit("edit", c.create!, `Edit a\n\n${block("user:u1", "human")}`, [
+      at(["notes", "a.md"], "agent", "one two"),
+    ]);
+    // The web move: same bytes at the new path, one commit.
+    commit("move", c.edit!, `Move notes/a.md to archive/b.md\n\n${block("user:u1")}`, [
+      at(["archive", "b.md"], "agent", "one two"),
+    ]);
+    commit("after", c.move!, `Edit b\n\n${block("user:u1", "human")}`, [
+      at(["archive", "b.md"], "human", "one two three"),
+    ]);
+  }, 120_000);
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+  const history = (cursor: string | null, limit: number) =>
+    readDocumentHistory({
+      repoPath: repo,
+      headSha: c.after!,
+      path: "archive/b.md",
+      cursor,
+      limit,
+      query: actorsQuery(),
+    });
+
+  it("follows the document past its move, each row at the path it had then", async () => {
+    const all = await history(null, 10);
+    expect(all.items.map((row) => [row.sha, row.path, row.deleted, row.provenance])).toEqual([
+      [c.after, "archive/b.md", false, "human"],
+      [c.move, "archive/b.md", false, "agent"],
+      [c.edit, "notes/a.md", false, "agent"],
+      [c.create, "notes/a.md", false, "agent"],
+    ]);
+  });
+
+  it("pages across the move with every row once and the right paths", async () => {
+    const first = await history(null, 2);
+    expect(first.items.map((row) => row.path)).toEqual(["archive/b.md", "archive/b.md"]);
+    const second = await history(first.nextCursor, 2);
+    expect(second.items.map((row) => [row.sha, row.path])).toEqual([
+      [c.edit, "notes/a.md"],
+      [c.create, "notes/a.md"],
+    ]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("parses rename, plain and status-less rows of the followed log", () => {
+    const sha = (n: number) => String(n).repeat(40);
+    const out = [
+      `\0${sha(1)} 100\0\nM\0x/b.md\0`,
+      `\0${sha(2)} 99\0\nR100\0a.md\0x/b.md\0`,
+      `\0${sha(3)} 98\0`,
+      `\0${sha(4)} 97\0\nA\0a.md\0`,
+    ].join("");
+    expect(parseFollowedLog(out, "x/b.md").map((row) => row.path)).toEqual([
+      "x/b.md",
+      "x/b.md",
+      "a.md",
+      "a.md",
+    ]);
+    expect(() => parseFollowedLog("\0nonsense 1\0", "a.md")).toThrow();
+  });
+
+  it("sizes the log buffer for the deepest page of worst-case rename rows", () => {
+    // Two 512-byte paths (the path limit), the widest time and a rename status.
+    const longPath = (c: string) => `${c.repeat(509)}.md`;
+    const row = `\0${"f".repeat(40)} ${"9".repeat(20)}\0\nR100\0${longPath("a")}\0${longPath("b")}\0`;
+    expect(Buffer.byteLength(row)).toBeLessThanOrEqual(FOLLOWED_LOG_ROW_MAX_BYTES);
+    // The deepest page reads offset 10 000 plus one page of 50 and one extra row.
+    const rows = 10_000 + 51;
+    expect(followedLogMaxBytes(rows)).toBeGreaterThanOrEqual(rows * Buffer.byteLength(row));
+    expect(followedLogMaxBytes(rows)).toBeGreaterThan(8 * 1024 * 1024);
+    expect(followedLogMaxBytes(1)).toBe(8 * 1024 * 1024);
+    // Each rename row is at its new name.
+    expect(parseFollowedLog(row.repeat(3), longPath("b")).map((r) => r.path)).toEqual([
+      longPath("b"),
+      longPath("b"),
+      longPath("b"),
+    ]);
   });
 });
 

@@ -150,7 +150,12 @@ export function DocumentHistory({
                   <Link
                     to="/$lang/kbs/$kbId/documents"
                     params={{ lang, kbId }}
-                    search={{ path, rev: row.sha }}
+                    // Older than a rename: open the revision where it lived then.
+                    search={
+                      row.path === path
+                        ? { path, rev: row.sha }
+                        : { path: row.path, rev: row.sha, restoreTo: path }
+                    }
                     className="inline-flex min-h-[44px] min-w-0 items-center break-words text-sm font-medium underline-offset-2 hover:underline"
                   >
                     {row.subject || t("history.noSubject")}
@@ -161,6 +166,14 @@ export function DocumentHistory({
                 ) : row.provenance ? (
                   <ProvenanceBadge provenance={row.provenance} />
                 ) : null}
+                {row.path !== path && (
+                  <span
+                    data-testid="history-former-path"
+                    className="min-w-0 break-all text-xs text-muted-foreground"
+                  >
+                    {t("history.formerPath", { path: row.path })}
+                  </span>
+                )}
               </div>
               <p className="min-w-0 break-words text-xs text-muted-foreground">
                 {t("history.meta", {

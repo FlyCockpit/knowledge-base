@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   history: vi.fn(),
   deleted: vi.fn(),
   findUnique: vi.fn(async () => ({ headSha: "e".repeat(40), state: "ACTIVE" })),
+  listDocuments: vi.fn(),
+  publication: vi.fn(),
+  publish: vi.fn(async () => ({ kind: "applied" })),
 }));
 
 vi.mock("../lib/procedure-budget", () => ({
@@ -23,6 +26,10 @@ vi.mock("../lib/kb/runtime", () => ({
   getKbRuntime: () => ({
     reposDir: "/repos",
     prisma: { knowledgeBase: { findUnique: mocks.findUnique } },
+    coordinator: {
+      run: (op: { run: (ctx: { lease: object }) => unknown }) => op.run({ lease: {} }),
+    },
+    createGitExecutor: () => ({}),
   }),
 }));
 vi.mock("../lib/kb/documents-read", async (importOriginal) => ({
@@ -30,6 +37,14 @@ vi.mock("../lib/kb/documents-read", async (importOriginal) => ({
   authorizeDocumentRead: mocks.authorize,
   readDocumentAtRevision: mocks.readDocument,
   resolvePinnedRevision: mocks.resolve,
+  listDocumentsAtRevision: mocks.listDocuments,
+}));
+vi.mock("../lib/kb/changes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/kb/changes")>()),
+  changesPublicationForDocument: (input: unknown) => {
+    mocks.publication(input);
+    return { barrier: {}, publish: mocks.publish };
+  },
 }));
 vi.mock("../lib/kb/deleted-documents", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/kb/deleted-documents")>()),
@@ -345,5 +360,116 @@ describe("documents.deleted", () => {
     mocks.findUnique.mockResolvedValueOnce({ headSha: head, state: "TOMBSTONED" });
     await expect(signedIn().deleted({ kbId })).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(mocks.deleted).not.toHaveBeenCalled();
+  });
+});
+
+describe("documents.list titles", () => {
+  const kbId = "a".repeat(24);
+  beforeEach(() => vi.clearAllMocks());
+
+  it("adds each document's title to the browser list only", async () => {
+    const item = (path: string) => ({
+      path,
+      documentId: null,
+      commitSha: "e".repeat(40),
+      blobSha: "b".repeat(40),
+      size: 10,
+    });
+    mocks.listDocuments.mockResolvedValue({
+      items: [item("a.md"), item("notes/b.md")],
+      nextAfter: null,
+      titles: new Map([
+        ["a.md", "Alpha"],
+        ["notes/b.md", null],
+      ]),
+    });
+    await expect(signedIn().list({ kbId })).resolves.toEqual({
+      items: [
+        { ...item("a.md"), title: "Alpha" },
+        { ...item("notes/b.md"), title: null },
+      ],
+      nextCursor: null,
+    });
+  });
+});
+
+describe("documents.move", () => {
+  const kbId = "a".repeat(24);
+  const base = {
+    kbId,
+    baseRevision: "e".repeat(40),
+    path: "notes/a.md",
+    toPath: "archive/a.md",
+    idempotencyKey: "move-key-0123456789",
+  };
+  beforeEach(() => vi.clearAllMocks());
+
+  it("requires a session", async () => {
+    const anonymous = createRouterClient(documentsRouter, { context: () => ({ session: null }) });
+    await expect(anonymous.move(base)).rejects.toBeInstanceOf(ORPCError);
+    expect(mocks.publication).not.toHaveBeenCalled();
+  });
+
+  it("publishes one browser move with the person's principal and the proposal it edits", async () => {
+    await expect(
+      signedIn().move({ ...base, proposalNumber: 4, proposalHeadSha: "c".repeat(40) }),
+    ).resolves.toEqual({ kind: "applied" });
+    expect(mocks.publication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: { kind: "browser", userId: "reader" },
+        kbId,
+        baseRevision: base.baseRevision,
+        idempotencyKey: base.idempotencyKey,
+        proposalNumber: 4,
+        proposalHeadSha: "c".repeat(40),
+        request: expect.objectContaining({
+          operation: "DOCUMENT_MOVE",
+          path: "notes/a.md",
+          toPath: "archive/a.md",
+        }),
+      }),
+    );
+  });
+
+  it("validates its input before publishing", async () => {
+    for (const input of [
+      { ...base, toPath: "" },
+      { ...base, toPath: "x".repeat(513) },
+      { ...base, idempotencyKey: "short" },
+      { ...base, baseRevision: "main" },
+    ]) {
+      await expect(signedIn().move(input)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    expect(mocks.publication).not.toHaveBeenCalled();
+  });
+
+  it("tells the form why the target path was refused, and nothing else", async () => {
+    mocks.publish.mockRejectedValueOnce(
+      new KbDomainError("CONFLICT", "path already exists: archive/a.md", undefined, {
+        reason: "PATH_EXISTS",
+        field: "/toPath",
+      }),
+    );
+    await expect(signedIn().move(base)).rejects.toMatchObject({
+      code: "CONFLICT",
+      data: { code: "CONFLICT", details: { reason: "PATH_EXISTS" } },
+    });
+    for (const reason of ["MOVE_BREAKS_ASSET_LINKS", "NOT_MARKDOWN_PATH", "RESERVED_PATH"]) {
+      mocks.publish.mockRejectedValueOnce(
+        new KbDomainError("INVALID_ARGUMENT", "refused", undefined, { reason, field: "/toPath" }),
+      );
+      await expect(signedIn().move(base)).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        data: { code: "INVALID_ARGUMENT", details: { reason } },
+      });
+    }
+    // Any other reason travels as the bare code, as before.
+    mocks.publish.mockRejectedValueOnce(
+      new KbDomainError("INVALID_ARGUMENT", "refused", undefined, { reason: "SCHEMA" }),
+    );
+    await expect(signedIn().move(base)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      data: { code: "INVALID_ARGUMENT" },
+    });
   });
 });

@@ -58,9 +58,15 @@ const humanOnly = {
   "documents.history": "browser document history view (one path's commits and their attribution)",
   "documents.deleted":
     'browser "Recently deleted" list (paths deleted from main in the last 30 days, or one path at any age, for restore)',
+  "documents.move":
+    "browser document rename/move (a Git rename; the kb/1 change set has no move op)",
   "kbs.shareInvite": "human sharing",
   "kbs.shareAccept": "human sharing",
   "kbs.shareList": "human sharing",
+  "kbs.sharePendingList": "human sharing",
+  "kbs.shareInvitePreview": "human sharing",
+  "kbs.shareInviteCancel": "human sharing",
+  "kbs.shareInviteResend": "human sharing",
   "kbs.shareRevoke": "human sharing",
   "kbs.shareUpdate": "human sharing",
   "kbs.shareSetSealedValues": "human sharing",

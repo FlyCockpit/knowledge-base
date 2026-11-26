@@ -13,7 +13,7 @@ import {
 import { recordAuditEvent, recordAuditFailure } from "./audit";
 import { type AuthorityBarrier, type AuthorityBarrierContext } from "./authority-lock";
 import { insertBranchOwner, loadBranchOwner, PR_BRANCH_PREFIX } from "./branch-owner";
-import { type PlannedChange, walkGitTreeAtCommit } from "./changes-plan";
+import { MOVE_BREAKS_ASSET_LINKS, type PlannedChange, walkGitTreeAtCommit } from "./changes-plan";
 import {
   type DreamChangesApplyRequest,
   type DreamMetadata,
@@ -112,8 +112,19 @@ export const CHANGES_APPLY_OPERATION = "CHANGES_APPLY";
 export const DOCUMENT_CREATE_OPERATION = "DOCUMENT_CREATE";
 export const DOCUMENT_UPDATE_OPERATION = "DOCUMENT_UPDATE";
 export const DOCUMENT_DELETE_OPERATION = "DOCUMENT_DELETE";
+/** Browser-only: rename/move one document (no MCP tool, no kb/1 change op). */
+export const DOCUMENT_MOVE_OPERATION = "DOCUMENT_MOVE";
 
 export type Change = z.infer<typeof changeSchema>;
+/**
+ * A browser document move: the stored bytes at `toPath`, gone from `path`,
+ * in one commit. Not part of the kb/1 change protocol: only a request built
+ * by `changesPublicationForDocument` may carry it (`trustedDocumentMoves`);
+ * any other request naming `op: "move"` fails `changesApplyRequestSchema`.
+ */
+type DocumentMoveChange = { op: "move"; path: string; toPath: string };
+/** A change an edit publication plans: a kb/1 change, or the browser's own move. */
+export type EditChange = Change | DocumentMoveChange;
 export type TextInput = z.infer<typeof textInputSchema>;
 
 export type ApplyResult = {
@@ -157,10 +168,10 @@ export type ChangesApplyPreparedDelta = {
 /** The JSON pointer naming change `index`'s path or content in the tool arguments. */
 export type ChangeFieldPointer = (
   index: number,
-  key: "path" | "content" | "markdown",
+  key: "path" | "content" | "markdown" | "toPath",
 ) => string | undefined;
 /** `markdown` names inline text (`content/markdown`), the same pointers `kb mcp` reports. */
-const changeField = (key: "path" | "content" | "markdown") =>
+const changeField = (key: "path" | "content" | "markdown" | "toPath") =>
   key === "markdown" ? "content/markdown" : key;
 const defaultChangeField: ChangeFieldPointer = (index, key) =>
   `/changes/${index}/${changeField(key)}`;
@@ -228,8 +239,11 @@ function classifyPublication(
     return { kind: "import", writes, mayRebase: true };
   }
   const own = request.mode === "dream" ? [] : request.changes;
-  for (const [index, change] of own.entries())
+  for (const [index, change] of own.entries()) {
     write(change.path, ASSET_OPS.has(change.op) ? "asset" : "document", index);
+    // A move writes both documents: the path it leaves and the one it takes.
+    if (change.op === "move") write(change.toPath, "document", index);
+  }
   for (const change of request.mode === "dream" ? resolved : [])
     write(change.path, ASSET_OPS.has(change.op) ? "asset" : "document", null);
   // A dream proposal is pinned to the main it was generated against.
@@ -297,7 +311,7 @@ export type ChangesApplyEditRequest = {
   mode: "edit";
   baseRevision: string;
   title: string;
-  changes: Change[];
+  changes: EditChange[];
   sourceSessionIds: string[];
   proposalNumber?: number;
   /** The PR head the caller read (precondition). */
@@ -332,11 +346,20 @@ export type DocumentMutationRequest =
       idempotencyKey: string;
       assets?: readonly DocumentStagedAsset[];
     }
-  | { operation: typeof DOCUMENT_DELETE_OPERATION; path: string; idempotencyKey: string };
+  | { operation: typeof DOCUMENT_DELETE_OPERATION; path: string; idempotencyKey: string }
+  | {
+      operation: typeof DOCUMENT_MOVE_OPERATION;
+      path: string;
+      toPath: string;
+      idempotencyKey: string;
+    };
 
-function documentChangesFromRequest(request: DocumentMutationRequest): Change[] {
+function documentChangesFromRequest(request: DocumentMutationRequest): EditChange[] {
   if (request.operation === DOCUMENT_DELETE_OPERATION) {
     return [{ op: "delete", path: request.path }];
+  }
+  if (request.operation === DOCUMENT_MOVE_OPERATION) {
+    return [{ op: "move", path: request.path, toPath: request.toPath }];
   }
   return [
     {
@@ -351,9 +374,10 @@ function documentChangesFromRequest(request: DocumentMutationRequest): Change[] 
 }
 
 /** "Update notes.md", or "Update notes.md, add 2 assets" when images join the save. */
-function documentSaveTitle(changes: readonly Change[]): string {
+function documentSaveTitle(changes: readonly EditChange[]): string {
   const [document, ...assets] = changes;
-  if (!document) return changeSummaryTitle(changes);
+  if (!document) return "Update documents";
+  if (document.op === "move") return documentMoveTitle(document.path, document.toPath);
   const own = changeSummaryTitle([document]);
   if (assets.length === 0) return own;
   return boundedTitle(`${own}, add ${assets.length === 1 ? "1 asset" : `${assets.length} assets`}`);
@@ -396,6 +420,16 @@ export function changeSummaryTitle(changes: readonly Pick<Change, "op" | "path">
 export function boundedTitle(title: string): string {
   const chars = Array.from(title);
   return chars.length <= TITLE_MAX ? title : `${chars.slice(0, TITLE_MAX - 1).join("")}…`;
+}
+
+/**
+ * "Rename notes/a.md to notes/b.md" when only the file name changes,
+ * "Move a/old.md to b/new.md" otherwise. Bounded like any generated title.
+ */
+export function documentMoveTitle(from: string, to: string): string {
+  const folder = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
+  const verb = folder(from) === folder(to) ? "Rename" : "Move";
+  return boundedTitle(`${verb} ${from} to ${to}`);
 }
 
 function operationForDocument(request: DocumentMutationRequest): string {
@@ -962,6 +996,12 @@ async function planPublication(input: {
             planned.changeIndex,
             planned.key === "content" && inline ? "markdown" : (planned.key ?? "path"),
           );
+    if (planned.reason === MOVE_BREAKS_ASSET_LINKS)
+      // Only a browser move plans this; its reason never reaches a kb/1 caller.
+      throw new KbDomainError("INVALID_ARGUMENT", planned.message, undefined, {
+        reason: MOVE_BREAKS_ASSET_LINKS,
+        ...(field ? { field } : {}),
+      });
     throw planned.reason === "PATH_EXISTS"
       ? pathExists(planned.message, field)
       : invalidArgument(planned.message, planned.reason, field);
@@ -1306,7 +1346,7 @@ async function prepareChangesPublication(
     throw new OperationIntentError("REPAIR_REQUIRED", "knowledge base requires repair");
   }
 
-  let resolved: Change[];
+  let resolved: EditChange[];
   let commitMessage: string | undefined;
   let dreamMetadata: DreamMetadata | null = null;
   if (validatedRequest.mode === "dream") {
@@ -1712,12 +1752,38 @@ export function buildChangesApplyRequest(body: ChangesApplyRequest): ChangesAppl
   if (body.mode === "dream") {
     return parseDreamChangesApplyRequest(body);
   }
-  const parsed = changesApplyRequestSchema.safeParse(body);
+  const move = trustedDocumentMoves.has(body) ? documentMoveOf(body) : null;
+  // A move is checked as the delete of the path it leaves (envelope, title,
+  // source path); the planner applies the create path rules to `toPath`.
+  const parsed = changesApplyRequestSchema.safeParse(
+    move ? { ...body, changes: [{ op: "delete", path: move.path }] } : body,
+  );
   if (!parsed.success) {
     const message = parsed.error.issues[0]?.message ?? "invalid changes apply request";
     throw new KbDomainError("INVALID_ARGUMENT", message);
   }
-  return parsed.data;
+  return move ? { ...parsed.data, changes: [move] } : parsed.data;
+}
+
+/**
+ * Edit requests `changesPublicationForDocument` built for a browser move.
+ * Membership is by object identity, so nothing parsed from MCP or REST
+ * input can join it: there `op: "move"` is just an unknown change op.
+ */
+const trustedDocumentMoves = new WeakSet<object>();
+
+/** The one move a trusted move request carries, else a refusal. */
+function documentMoveOf(body: ChangesApplyEditRequest): DocumentMoveChange {
+  const [change, ...rest] = body.changes;
+  if (
+    change?.op !== "move" ||
+    rest.length > 0 ||
+    typeof change.toPath !== "string" ||
+    change.toPath.length === 0 ||
+    change.toPath.length > 512
+  )
+    throw invalidArgument("invalid document move", "SCHEMA", "/toPath");
+  return { op: "move", path: change.path, toPath: change.toPath };
 }
 
 export function changesPublicationForDocument(
@@ -1740,6 +1806,7 @@ export function changesPublicationForDocument(
     ...(input.proposalNumber === undefined ? {} : { proposalNumber: input.proposalNumber }),
     ...(input.proposalHeadSha === undefined ? {} : { proposalHeadSha: input.proposalHeadSha }),
   };
+  if (input.request.operation === DOCUMENT_MOVE_OPERATION) trustedDocumentMoves.add(body);
   return createChangesPublication({
     ...input,
     request: body,

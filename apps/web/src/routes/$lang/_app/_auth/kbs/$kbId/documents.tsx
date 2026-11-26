@@ -32,6 +32,7 @@ import {
   ProvenanceBadge,
   visibleHistoryRows,
 } from "@/components/kb/document-history";
+import { DocumentMoveSheet, documentMoveAction } from "@/components/kb/document-move-sheet";
 import { DeletedDocumentNotice, RestoreVersionDialog } from "@/components/kb/document-restore";
 import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument } from "@/components/kb/markdown-view";
@@ -65,6 +66,12 @@ import { formatRelativeTime } from "@/utils/relative-time";
 type DocumentSearch = {
   path?: string;
   rev?: string;
+  /**
+   * With `rev`: the document's name now, when `path` is the name it had at
+   * that revision (a history row from before a rename). Restoring and "open
+   * the latest version" go there; the revision is read at `path`.
+   */
+  restoreTo?: string;
   mode?: "new" | "edit";
   proposal?: number;
   pr?: number;
@@ -93,6 +100,13 @@ const validateDocumentSearch = (search: Record<string, unknown>): DocumentSearch
       ? search.path
       : undefined,
   rev: typeof search.rev === "string" && SHA.test(search.rev) ? search.rev : undefined,
+  restoreTo:
+    typeof search.restoreTo === "string" &&
+    search.restoreTo.length > 0 &&
+    search.restoreTo.length <= 512 &&
+    typeof search.rev === "string"
+      ? search.restoreTo
+      : undefined,
   mode: search.mode === "new" || search.mode === "edit" ? search.mode : undefined,
   proposal: proposalParam(search.proposal),
   pr: prSearch(search),
@@ -618,6 +632,7 @@ function DocumentView({
   });
   const [restoring, setRestoring] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [moving, setMoving] = useState(false);
   const onProposed = (number: number, created: boolean) => {
     if (proposal?.number === number) return;
     toast.success(
@@ -636,6 +651,8 @@ function DocumentView({
   // Without a branch head there is no base revision to write against.
   const writable = kb.headSha !== null && controls.editMode !== "none" && pinned === null && open;
   // An older main revision can be written back as the newest one.
+  // An older revision opened from before a rename: the document's name now.
+  const currentPath = search.rev && search.restoreTo ? search.restoreTo : target.path;
   const canRestore =
     pinned !== null && kb.headSha !== null && controls.editMode !== "none" && !proposal;
   // "new" stays editing while a create's own navigation to `mode=edit` is pending.
@@ -652,6 +669,7 @@ function DocumentView({
   // Secondary and destructive actions live in one "More actions" menu.
   const moreActions: MoreAction[] = canDelete
     ? [
+        documentMoveAction(t, editor.pending, () => setMoving(true)),
         {
           key: "delete",
           label: t("editor.delete"),
@@ -736,6 +754,13 @@ function DocumentView({
           ))
         }
       />
+      {canDelete && moving && (
+        <DocumentMoveSheet
+          editor={editor}
+          proposing={controls.editMode === "proposal" || editor.proposal}
+          onOpenChange={setMoving}
+        />
+      )}
       {canDelete && (
         <KbDocumentDelete
           lang={lang}
@@ -784,7 +809,7 @@ function DocumentView({
             <Button
               variant="outline"
               className="min-h-[44px]"
-              onClick={() => goTo({ path: target.path })}
+              onClick={() => goTo({ path: currentPath })}
             >
               {t("editor.openLatest")}
             </Button>
@@ -795,7 +820,8 @@ function DocumentView({
               kbId={kbId}
               kbHeadSha={kb.headSha}
               proposing={controls.editMode === "proposal"}
-              path={target.path}
+              path={currentPath}
+              sourcePath={target.path}
               revision={pinned}
               open={restoring}
               onOpenChange={setRestoring}
@@ -803,8 +829,8 @@ function DocumentView({
                 setRestoring(false);
                 goTo(
                   outcome.kind === "proposed"
-                    ? { path: target.path, proposal: outcome.proposalNumber }
-                    : { path: target.path },
+                    ? { path: currentPath, proposal: outcome.proposalNumber }
+                    : { path: currentPath },
                 );
               }}
             />
@@ -864,7 +890,9 @@ function DocumentView({
         <KbRenderedDocument lang={lang} kbId={kbId} document={document} showRevision={false} />
       ) : null}
       {!draft && !editing && !proposal && (
-        <DocumentHistory lang={lang} kbId={kbId} path={target.path} />
+        // The document's history under its name now, also while an older
+        // revision is open at the name it had then (its rows keep `restoreTo`).
+        <DocumentHistory lang={lang} kbId={kbId} path={currentPath} />
       )}
     </div>
   );

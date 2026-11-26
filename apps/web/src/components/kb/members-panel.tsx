@@ -2,6 +2,12 @@ import type { AppRouterClient } from "@knowledge-base/api/routers/index";
 import { Button, buttonVariants } from "@knowledge-base/ui/components/button";
 import { CopyField } from "@knowledge-base/ui/components/copy-field";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@knowledge-base/ui/components/dropdown-menu";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -20,6 +26,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { MoreVertical } from "lucide-react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -28,6 +35,8 @@ import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
 import { IndexSettingsPanel } from "@/components/kb/index-settings-panel";
 import { MirrorPanel, mirrorControls } from "@/components/kb/mirror-panel";
+import { PendingInvitations } from "@/components/kb/pending-invitations";
+import { PERMISSION_BITS, PermissionChoices } from "@/components/kb/permission-descriptions";
 import {
   ControlError,
   controlErrorCode,
@@ -35,6 +44,7 @@ import {
   ProfilePanel,
 } from "@/components/kb/profile-panel";
 import { SealedPanel, sealedControls } from "@/components/kb/sealed-panel";
+import { ShareAcceptCard } from "@/components/kb/share-accept";
 import { LoadMore } from "@/components/load-more";
 import { QueryBoundary } from "@/components/query-boundary";
 import { WideContent } from "@/components/wide-content";
@@ -48,6 +58,7 @@ import {
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { useRenewableAttemptKey } from "@/hooks/use-renewable-attempt-key";
+import { VIEWER_SCOPED_CACHE, viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
 
@@ -65,8 +76,6 @@ type MemberRow = {
   includeSealedValues: boolean;
   createdAt: string;
 };
-
-const BITS: readonly Capability[] = ["read", "propose", "write", "review", "manage"];
 
 export { describeControlError };
 
@@ -110,6 +119,15 @@ export function refreshAfterAcceptance(queryClient: QueryClient, kbId: string): 
 }
 
 /**
+ * The settings page's KB read. Not while it shows a share invitation: the
+ * recipient cannot read the KB before accepting (it would only answer "not
+ * found"); the invitation preview names it instead.
+ */
+export function settingsKbQuery(kbId: string, accept: string | undefined) {
+  return orpc.kbs.get.queryOptions({ input: { kbId }, retry: false, enabled: !accept });
+}
+
+/**
  * A member's bits changed. The edited member can be the caller (a manager who
  * drops their own `manage`), so the KB's live bits are re-read along with the
  * member list: `kbs.get` re-derives this page's controls and `kbs.list` the
@@ -123,15 +141,35 @@ export function refreshAfterMemberEdit(queryClient: QueryClient, kbId: string): 
   ]);
 }
 
+/** This server's sign-up mode, from `appConfig`; undefined until known. */
+export type SignupMode = "open" | "invite-only";
+
+export function signupModeOf(
+  config: { signupEnabled: boolean } | undefined,
+): SignupMode | undefined {
+  if (!config) return undefined;
+  return config.signupEnabled ? "open" : "invite-only";
+}
+
 /**
  * The server answers every invitation with `{accepted:true, requestId}`,
- * known address or not; this view renders only that, so it cannot differ.
+ * known address or not; this view renders only that (and the server-wide
+ * sign-up mode), so it cannot differ between addresses.
  */
-export function InviteResult({ href }: { href: string }) {
+export function InviteResult({ href, signupMode }: { href: string; signupMode?: SignupMode }) {
   const { t } = useTranslation("kb");
   return (
     <div data-testid="invite-result" data-href={href} role="status" className="space-y-2 text-sm">
       <p>{t("settings.members.inviteResult")}</p>
+      {signupMode && (
+        <p data-testid="invite-signup-mode" data-mode={signupMode}>
+          {t(
+            signupMode === "open"
+              ? "settings.members.inviteSignupOpen"
+              : "settings.members.inviteSignupClosed",
+          )}
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">{t("settings.members.inviteLink")}</p>
       <CopyField value={href} copyLabel={t("settings.members.copyLink")} />
     </div>
@@ -242,17 +280,6 @@ export function MemberRowsView({
                   {t("settings.members.edit")}
                 </Button>
               )}
-              {canTransfer && (
-                <Button
-                  data-testid="member-transfer"
-                  variant="outline"
-                  className="min-h-[44px]"
-                  aria-label={t("settings.members.transferTo", { name: memberLabel(member, t) })}
-                  onClick={() => onTransfer(member)}
-                >
-                  {t("settings.members.transfer")}
-                </Button>
-              )}
               <Button
                 data-testid="member-revoke"
                 variant="outline"
@@ -262,6 +289,37 @@ export function MemberRowsView({
               >
                 {t("settings.members.revoke")}
               </Button>
+              {canTransfer && (
+                // Rare and irreversible: kept out of the everyday row actions.
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        data-testid="member-more"
+                        variant="outline"
+                        className="min-h-[44px] min-w-[44px]"
+                        aria-label={t("settings.members.moreActions", {
+                          name: memberLabel(member, t),
+                        })}
+                      />
+                    }
+                  >
+                    <MoreVertical aria-hidden className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem
+                      data-testid="member-transfer"
+                      className="min-h-[44px]"
+                      aria-label={t("settings.members.transferTo", {
+                        name: memberLabel(member, t),
+                      })}
+                      onClick={() => onTransfer(member)}
+                    >
+                      {t("settings.members.transfer")}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </span>
           )}
         </li>
@@ -280,13 +338,17 @@ function InviteForm({
   onDenied: () => void;
 }) {
   const { t, i18n } = useTranslation("kb");
+  const queryClient = useQueryClient();
   const session = useKbMutationSession();
   const attempt = useRenewableAttemptKey();
   const [bits, setBits] = useState<Capability[]>([]);
+  const { data: appConfig } = useQuery(orpc.appConfig.queryOptions());
   const invite = useMutation(
     orpc.kbs.shareInvite.mutationOptions({
-      onSuccess: () => {
+      onSuccess: async () => {
         if (session.current) attempt.renew();
+        // The new (or re-sent) invitation shows up under Pending invitations.
+        await queryClient.invalidateQueries({ queryKey: orpc.kbs.sharePendingList.key() });
       },
       onError: (error) => {
         if (!session.current) return;
@@ -317,7 +379,10 @@ function InviteForm({
   if (invite.data)
     return (
       <div className="space-y-3">
-        <InviteResult href={shareableUrl(inviteAcceptHref(lang, kbId, invite.data.requestId))} />
+        <InviteResult
+          href={shareableUrl(inviteAcceptHref(lang, kbId, invite.data.requestId))}
+          signupMode={signupModeOf(appConfig)}
+        />
         <Button
           data-testid="invite-another"
           variant="outline"
@@ -350,23 +415,7 @@ function InviteForm({
       </form.Field>
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">{t("settings.members.permissions")}</legend>
-        <div className="flex flex-wrap gap-3">
-          {BITS.map((bit) => (
-            <label key={bit} className="flex min-h-[44px] items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked={bits.includes(bit)}
-                onChange={(event) =>
-                  setBits((prev) =>
-                    event.target.checked ? [...prev, bit] : prev.filter((b) => b !== bit),
-                  )
-                }
-              />
-              {t(`settings.bits.${bit}`)}
-            </label>
-          ))}
-        </div>
+        <PermissionChoices value={bits} onChange={setBits} />
         {form.state.submissionAttempts > 0 && bits.length === 0 && (
           <p className="text-sm text-destructive">{t("settings.members.permissionsRequired")}</p>
         )}
@@ -406,7 +455,7 @@ function MemberBitsSheet({
   const queryClient = useQueryClient();
   const session = useKbMutationSession();
   const [bits, setBits] = useState<Capability[]>(() =>
-    BITS.filter((bit) => member.bits.includes(bit)),
+    PERMISSION_BITS.filter((bit) => member.bits.includes(bit)),
   );
   const update = useMutation(
     orpc.kbs.shareUpdate.mutationOptions({
@@ -457,24 +506,7 @@ function MemberBitsSheet({
         >
           <fieldset className="space-y-1">
             <legend className="text-sm font-medium">{t("settings.members.permissions")}</legend>
-            <div className="flex flex-col">
-              {BITS.map((bit) => (
-                <label key={bit} className="flex min-h-[44px] items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="size-4"
-                    checked={bits.includes(bit)}
-                    disabled={update.isPending}
-                    onChange={(event) =>
-                      setBits((prev) =>
-                        event.target.checked ? [...prev, bit] : prev.filter((b) => b !== bit),
-                      )
-                    }
-                  />
-                  {t(`settings.bits.${bit}`)}
-                </label>
-              ))}
-            </div>
+            <PermissionChoices value={bits} onChange={setBits} disabled={update.isPending} />
             {bits.length === 0 && (
               <p id={requiredId} className="text-sm text-destructive">
                 {t("settings.members.permissionsRequired")}
@@ -523,13 +555,20 @@ function MembersPanel({
   const [editing, setEditing] = useState<MemberRow | null>(null);
   const [transferHref, setTransferHref] = useState<string | null>(null);
   const transferKey = useRenewableAttemptKey();
+  const memberInput = (cursor: string | null) => ({ kbId: kb.id, limit: 20, cursor });
   const members = useInfiniteQuery(
     orpc.kbs.shareList.infiniteOptions({
-      input: (cursor: string | null) => ({ kbId: kb.id, limit: 20, cursor }),
+      input: memberInput,
       initialPageParam: null,
+      // Invited addresses depend on who asks: scoped to the viewer.
+      queryKey: viewerScopedKey(
+        orpc.kbs.shareList.infiniteKey({ input: memberInput, initialPageParam: null }),
+        selfUserId,
+      ),
       getNextPageParam: (last) => last?.nextCursor ?? null,
-      enabled: canManage,
+      enabled: canManage && selfUserId !== null,
       retry: false,
+      ...VIEWER_SCOPED_CACHE,
     }),
   );
   const denied = (error: unknown) => {
@@ -590,6 +629,12 @@ function MembersPanel({
         <p className="text-sm text-muted-foreground">{t("settings.members.description")}</p>
       </header>
       <InviteForm lang={lang} kbId={kb.id} onDenied={onDenied} />
+      <PendingInvitations
+        kbId={kb.id}
+        acceptHref={(requestId) => shareableUrl(inviteAcceptHref(lang, kb.id, requestId))}
+        onDenied={onDenied}
+      />
+      <h3 className="font-semibold">{t("settings.members.listTitle")}</h3>
       <QueryBoundary
         query={members}
         errorMessage={t("settings.members.listFailed")}
@@ -656,20 +701,18 @@ function MembersPanel({
           <CopyField value={transferHref} copyLabel={t("settings.members.copyLink")} />
         </div>
       )}
-      <ConfirmDeleteDialog
+      {/* Reversible (they can be invited again), so a plain confirmation. */}
+      <ConfirmActionDialog
         open={pending?.kind === "revoke"}
-        onOpenChange={(open) => !open && setPending(null)}
+        onOpenChange={(open) => !open && !revoke.isPending && setPending(null)}
         title={t("settings.members.revokeTitle")}
         description={t("settings.members.revokeDescription", {
           name: member ? memberLabel(member, t) : "",
         })}
-        confirmToken="REVOKE"
-        typePrompt={t("settings.members.revokePrompt")}
-        copyAriaLabel={t("settings.members.copyToken")}
-        inputMode="text"
         confirmLabel={t("settings.members.revokeAction")}
         pendingLabel={t("settings.members.pending")}
         isPending={revoke.isPending}
+        destructive
         onConfirm={() => member && revoke.mutate({ kbId: kb.id, shareUserId: member.userId })}
       />
       <ConfirmDeleteDialog
@@ -711,23 +754,24 @@ export function isAcceptRequestGone(error: unknown): boolean {
   return controlErrorCode(error) === "NOT_FOUND";
 }
 
-function AcceptCard({
-  kind,
+/** Ownership transfer acceptance (the recipient already reads the KB). */
+function TransferAcceptCard({
   requestId,
   onAccepted,
 }: {
-  kind: "share" | "transfer";
   requestId: string;
   onAccepted: () => void;
 }) {
   const { t } = useTranslation("kb");
   const session = useKbMutationSession();
-  const accepted = () => {
-    if (session.current) onAccepted();
-  };
-  const share = useMutation(orpc.kbs.shareAccept.mutationOptions({ onSuccess: accepted }));
-  const transfer = useMutation(orpc.kbs.transferAccept.mutationOptions({ onSuccess: accepted }));
-  const mutation = kind === "share" ? share : transfer;
+  const kind = "transfer";
+  const mutation = useMutation(
+    orpc.kbs.transferAccept.mutationOptions({
+      onSuccess: () => {
+        if (session.current) onAccepted();
+      },
+    }),
+  );
   return (
     <section
       data-testid={`${kind}-accept`}
@@ -753,9 +797,7 @@ function AcceptCard({
             data-testid={`${kind}-accept-submit`}
             className="min-h-[44px]"
             disabled={mutation.isPending}
-            onClick={() =>
-              kind === "share" ? share.mutate({ requestId }) : transfer.mutate({ requestId })
-            }
+            onClick={() => mutation.mutate({ requestId })}
           >
             {mutation.isPending
               ? t("settings.accept.accepting")
@@ -860,6 +902,7 @@ export function KbSettingsView({
   transfer,
   tab,
   onTabChange,
+  onShareAccepted,
 }: {
   lang: string;
   kbId: string;
@@ -868,6 +911,8 @@ export function KbSettingsView({
   /** The requested tab (the route keeps it in the URL); falls back to the first usable one. */
   tab?: KbSettingsTab;
   onTabChange?: (tab: KbSettingsTab) => void;
+  /** After a share invitation is accepted (the route opens the KB's documents). */
+  onShareAccepted?: (kbId: string) => void;
 }) {
   const { t } = useTranslation("kb");
   const idPrefix = useId();
@@ -876,9 +921,7 @@ export function KbSettingsView({
   const requested = onTabChange ? tab : (localTab ?? tab);
   const selectTab = (next: KbSettingsTab) => (onTabChange ? onTabChange(next) : setLocalTab(next));
   const queryClient = useQueryClient();
-  const { data, error, isPending, isError, refetch } = useQuery(
-    orpc.kbs.get.queryOptions({ input: { kbId }, retry: false }),
-  );
+  const { data, error, isPending, isError, refetch } = useQuery(settingsKbQuery(kbId, accept));
   const lost = useKbAccessLoss(kbId, [error]);
   useClearSealedWhenNotOwner(kbId, data?.kb.isOwner);
   const onDenied = () => {
@@ -894,17 +937,19 @@ export function KbSettingsView({
   const cards = (
     <>
       {accept && (
-        <AcceptCard
+        <ShareAcceptCard
           key={`share:${kbId}:${accept}`}
-          kind="share"
+          lang={lang}
           requestId={accept}
-          onAccepted={onAccepted}
+          onAccepted={(acceptedKbId) => {
+            void refreshAfterAcceptance(queryClient, acceptedKbId);
+            onShareAccepted?.(acceptedKbId);
+          }}
         />
       )}
       {transfer && (
-        <AcceptCard
+        <TransferAcceptCard
           key={`transfer:${kbId}:${transfer}`}
-          kind="transfer"
           requestId={transfer}
           onAccepted={onAccepted}
         />
@@ -912,8 +957,9 @@ export function KbSettingsView({
     </>
   );
   let body: React.ReactNode;
-  // An invitee has no access before accepting; the card is the whole page then.
-  if (lost && (accept || transfer)) body = null;
+  // An invitee has no access before accepting; the card is the whole page
+  // then (the KB itself is not read until they accept).
+  if (accept || (lost && transfer)) body = null;
   else if (lost)
     body = (
       <p

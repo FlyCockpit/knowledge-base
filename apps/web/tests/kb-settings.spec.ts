@@ -156,7 +156,9 @@ test("transfer needs the recipient's acceptance at the pinned metadataVersion; a
   await open(ownerPage, kbUrl(s.transferKbId), "members-panel");
   const before = await state(ownerPage, s.transferKbId);
   const row = ownerPage.locator(`[data-testid="member-row"][data-user-id="${s.memberUserId}"]`);
-  await row.getByTestId("member-transfer").click();
+  // Transfer ownership lives in the owner's per-member overflow menu.
+  await row.getByTestId("member-more").click();
+  await ownerPage.getByTestId("member-transfer").click();
   await confirmToken(ownerPage, "TRANSFER", "Request transfer");
   const requested = ownerPage.getByTestId("transfer-requested");
   await expect(requested).toBeVisible();
@@ -189,9 +191,10 @@ test("transfer needs the recipient's acceptance at the pinned metadataVersion; a
   // That denial is NOT access loss — a refreshed permission check keeps
   // the KB view and cache and only re-derives the controls.
   const stale = ownerPage.locator(`[data-testid="member-row"][data-user-id="${s.memberUserId}"]`);
-  await stale.getByTestId("member-transfer").click();
+  await stale.getByTestId("member-more").click();
+  await ownerPage.getByTestId("member-transfer").click();
   await confirmToken(ownerPage, "TRANSFER", "Request transfer");
-  await expect(ownerPage.getByTestId("member-transfer")).toHaveCount(0);
+  await expect(ownerPage.getByTestId("member-more")).toHaveCount(0);
   await expect(ownerPage.getByTestId("sealed-panel")).toHaveCount(0);
   await expect(ownerPage.getByTestId("kb-delete")).toHaveCount(0);
   await expect(ownerPage.getByTestId("kb-settings-unavailable")).toHaveCount(0);
@@ -220,7 +223,11 @@ test("transfer needs the recipient's acceptance at the pinned metadataVersion; a
     .locator(`[data-testid="member-row"][data-user-id="${s.ownerUserId}"]`)
     .getByTestId("member-revoke")
     .click();
-  await confirmToken(other, "REVOKE", "Revoke access");
+  // Revoking is reversible (they can be invited again): a plain confirmation.
+  const revoke = other.getByRole("alertdialog");
+  await expect(revoke).toBeVisible();
+  await expect(revoke.getByRole("textbox")).toHaveCount(0);
+  await revoke.getByRole("button", { name: "Revoke access" }).press("Enter");
   await expect(
     other.locator(`[data-testid="member-row"][data-user-id="${s.ownerUserId}"]`),
   ).toHaveCount(0);
@@ -251,7 +258,7 @@ test("owner-only controls: the owner sees delete, transfer and sealed; a non-own
   await expect(
     page
       .locator(`[data-testid="member-row"][data-user-id="${s.managerUserId}"]`)
-      .getByTestId("member-transfer"),
+      .getByTestId("member-more"),
   ).toBeVisible();
 
   await as(page, "manager");
@@ -261,6 +268,7 @@ test("owner-only controls: the owner sees delete, transfer and sealed; a non-own
   await expect(page.getByTestId("invite-submit")).toBeVisible();
   await expect(page.getByTestId("member-revoke").first()).toBeVisible();
   await expect(page.getByTestId("kb-delete")).toHaveCount(0);
+  await expect(page.getByTestId("member-more")).toHaveCount(0);
   await expect(page.getByTestId("member-transfer")).toHaveCount(0);
   await expect(page.getByTestId("sealed-panel")).toHaveCount(0);
   await expect(page.getByTestId("kb-settings-tab-sealed")).toHaveCount(0);

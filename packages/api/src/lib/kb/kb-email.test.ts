@@ -43,6 +43,25 @@ describe("kb email desired payload", () => {
     });
   });
 
+  it("drops the sign-up link when the invitation was queued on an invite-only server", () => {
+    const desired = {
+      template: "share_invite" as const,
+      kbId,
+      requestId,
+      origin: "https://kb.example.com",
+      locale: "en-US" as const,
+    };
+    expect(kbEmailDesiredSchema.parse({ ...desired, signupOpen: false })).toEqual({
+      ...desired,
+      signupOpen: false,
+    });
+    expect(kbEmailLinks({ ...desired, signupOpen: false })).toEqual({
+      acceptUrl: `https://kb.example.com/en-US/kbs/${kbId}/settings?accept=${requestId}`,
+      signupUrl: null,
+    });
+    expect(kbEmailLinks({ ...desired, signupOpen: true }).signupUrl).toContain("/en-US/signup?");
+  });
+
   it("transfer offers link to the transfer acceptance with no sign-up path", () => {
     expect(
       kbEmailLinks(

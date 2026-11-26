@@ -11,10 +11,12 @@ import {
   changesPublicationForDocument,
   DOCUMENT_CREATE_OPERATION,
   DOCUMENT_DELETE_OPERATION,
+  DOCUMENT_MOVE_OPERATION,
   DOCUMENT_STAGED_ASSETS_MAX,
   DOCUMENT_UPDATE_OPERATION,
   type DocumentMutationRequest,
 } from "../lib/kb/changes";
+import { MOVE_BREAKS_ASSET_LINKS } from "../lib/kb/changes-plan";
 import { cursorExpiry, KB_PAGE_DEFAULT, KB_PAGE_MAX, stableFilterHash } from "../lib/kb/cursor";
 import { DELETED_DOCUMENTS_CURSOR, readDeletedDocuments } from "../lib/kb/deleted-documents";
 import { DOCUMENT_HISTORY_CURSOR, readDocumentHistory } from "../lib/kb/document-history";
@@ -102,11 +104,20 @@ export function documentErrorToOrpc(error: unknown): never {
                 ? "TOO_MANY_REQUESTS"
                 : "INTERNAL_SERVER_ERROR";
     const details = mapped.details as { reason?: unknown; field?: unknown } | undefined;
-    // Creating a path that already exists: the editor names the path field.
+    // Creating (or moving onto) a path that already exists: the form names the path field.
     if (mapped.code === "CONFLICT" && details?.reason === "PATH_EXISTS") {
       throw new ORPCError(code, {
         message: mapped.message,
         data: { code: "CONFLICT", details: { reason: "PATH_EXISTS" } },
+      });
+    }
+    // A move that would break the document's relative image links: a
+    // browser-only reason (no kb/1 caller can plan a move), explained under
+    // the rename field. Only the reason travels.
+    if (mapped.code === "INVALID_ARGUMENT" && details?.reason === MOVE_BREAKS_ASSET_LINKS) {
+      throw new ORPCError(code, {
+        message: mapped.message,
+        data: { code: "INVALID_ARGUMENT", details: { reason: MOVE_BREAKS_ASSET_LINKS } },
       });
     }
     if (mapped.code === "CONFLICT") {
@@ -218,7 +229,12 @@ export const documentsRouter = {
           limit,
           afterPath,
         });
-        if (estimateListPageBytes(page.items) > 8 * 1024 * 1024) {
+        // Browser-only: each document's display title (the MCP list output is unchanged).
+        const items = page.items.map((item) => ({
+          ...item,
+          title: page.titles.get(item.path) ?? null,
+        }));
+        if (estimateListPageBytes(items) > 8 * 1024 * 1024) {
           throw new KbDomainError("INVALID_ARGUMENT", "Response too large");
         }
         await authorizeDocumentRead(admission);
@@ -235,7 +251,7 @@ export const documentsRouter = {
                 lastKey: page.nextAfter,
                 exp: cursorExpiry(),
               });
-        return { items: page.items, nextCursor };
+        return { items, nextCursor };
       } catch (error) {
         toOrpc(error);
       }
@@ -432,6 +448,40 @@ export const documentsRouter = {
           content: input.content,
           idempotencyKey: input.idempotencyKey,
           ...(input.assets?.length ? { assets: input.assets } : {}),
+          kbId: input.kbId,
+          baseRevision: input.baseRevision,
+          proposalNumber: input.proposalNumber,
+          proposalHeadSha: input.proposalHeadSha,
+        });
+      } catch (error) {
+        toOrpc(error);
+      }
+    }),
+  /**
+   * Rename or move one document: a single commit (or auto-PR update, for a
+   * propose-only user) that removes `path` and adds the same bytes at
+   * `toPath`. Browser-only; the kb/1 protocol has no move op. Same admission,
+   * idempotency and proposal handling as `delete`.
+   */
+  move: protectedProcedure
+    .input(
+      z.object({
+        kbId,
+        baseRevision,
+        path,
+        toPath: path,
+        idempotencyKey,
+        /** The proposal being edited: set once an edit targets a PR. */
+        ...kbContentWriteInputSchema.pick({ proposalNumber: true, proposalHeadSha: true }).shape,
+      }),
+    )
+    .handler(async ({ context, input }) => {
+      try {
+        return await runDocumentMutation(context.session!.user.id, {
+          operation: DOCUMENT_MOVE_OPERATION,
+          path: input.path,
+          toPath: input.toPath,
+          idempotencyKey: input.idempotencyKey,
           kbId: input.kbId,
           baseRevision: input.baseRevision,
           proposalNumber: input.proposalNumber,

@@ -6,15 +6,28 @@ import type { Client } from "pg";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockDeep } from "vitest-mock-extended";
 
-import { buildChangesApplyRequest, changeSummaryTitle, createChangesPublication } from "./changes";
+import {
+  buildChangesApplyRequest,
+  CHANGES_APPLY_OPERATION,
+  type Change,
+  changeSummaryTitle,
+  changesPublicationForDocument,
+  createChangesPublication,
+  DOCUMENT_CREATE_OPERATION,
+  DOCUMENT_DELETE_OPERATION,
+  DOCUMENT_MOVE_OPERATION,
+  DOCUMENT_UPDATE_OPERATION,
+  documentMoveTitle,
+} from "./changes";
 import { gitFixtureTests } from "./fixtures/git-fixture";
 import { writeGitFixtureCommit } from "./fixtures/git-objects";
 import { hardenedGitEnv, kbBareRepoPath } from "./git-read";
 import * as gitWrite from "./git-write";
 import { HeldLockLease, type LockQuery } from "./lock";
-import type { IntentRow } from "./operation-intent";
+import { type IntentRow, RECONCILED_PUBLICATION_OPERATIONS } from "./operation-intent";
 import type { LiveAuthorityStore } from "./permissions";
 import type { CredentialVerifier, TokenPrincipal } from "./principal";
+import { kbWriteToolSchemas } from "./protocol/writes";
 
 vi.mock("@knowledge-base/db", () => ({ default: mockDeep<PrismaClient>() }));
 vi.mock("@knowledge-base/queue", () => ({}));
@@ -118,6 +131,49 @@ describe("changeSummaryTitle", () => {
   it("stays within the 200-character title bound", () => {
     const title = changeSummaryTitle([{ op: "create", path: `${"é".repeat(300)}.md` }]);
     expect(Array.from(title)).toHaveLength(200);
+  });
+});
+
+describe("document moves stay browser-only", () => {
+  it("every document publication is settled by startup reconciliation", () => {
+    // A crash between the ref update and finalization must not strand a move.
+    for (const operation of [
+      CHANGES_APPLY_OPERATION,
+      DOCUMENT_CREATE_OPERATION,
+      DOCUMENT_UPDATE_OPERATION,
+      DOCUMENT_DELETE_OPERATION,
+      DOCUMENT_MOVE_OPERATION,
+    ])
+      expect(RECONCILED_PUBLICATION_OPERATIONS.has(operation)).toBe(true);
+  });
+
+  it("names a rename in the same folder and a move to another", () => {
+    expect(documentMoveTitle("notes/a.md", "notes/b.md")).toBe("Rename notes/a.md to notes/b.md");
+    expect(documentMoveTitle("a.md", "b.md")).toBe("Rename a.md to b.md");
+    expect(documentMoveTitle("a/old.md", "b/new.md")).toBe("Move a/old.md to b/new.md");
+    expect(documentMoveTitle("old.md", "b/old.md")).toBe("Move old.md to b/old.md");
+    const long = `${"é".repeat(300)}.md`;
+    expect(Array.from(documentMoveTitle(long, `x/${long}`))).toHaveLength(200);
+  });
+
+  it("is not a kb/1 change op: MCP and REST change sets naming it are refused", () => {
+    const request = {
+      mode: "edit" as const,
+      baseRevision: "a".repeat(40),
+      title: "Move",
+      sourceSessionIds: [],
+      changes: [{ op: "move", path: "a.md", toPath: "b.md" }],
+    };
+    expect(
+      kbWriteToolSchemas.knowledge_changes_apply.input.safeParse({
+        ...request,
+        kbId: "a".repeat(24),
+        idempotencyKey: "idempotency-test-key",
+      }).success,
+    ).toBe(false);
+    expect(() =>
+      buildChangesApplyRequest({ ...request, changes: request.changes as unknown as Change[] }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_ARGUMENT" }));
   });
 });
 
@@ -296,6 +352,64 @@ describe("changes publication receipts and rollback cleanup", () => {
       );
       expect(inserts).toHaveLength(1);
       expect(inserts[0]?.[1]?.[2]).toBe(actorKey);
+    } finally {
+      await lease.close();
+    }
+  });
+
+  test("plans a browser move as one commit with the same bytes at the new path", async (f) => {
+    const { state, input, lease, query } = context(f);
+    const { operation: _op, request: _request, requestHash: _hash, ...rest } = input;
+    // The fixture journals a fixed hash; a document move hashes its own request.
+    const journal = query.getMockImplementation()!;
+    query.mockImplementation(async (sql, values = []) => {
+      const result = await journal(sql, values);
+      if (sql.includes('INSERT INTO "operation_intent"') && state.intent)
+        state.intent.requestHash = String(values[7]);
+      return result;
+    });
+    try {
+      const publication = changesPublicationForDocument({
+        ...rest,
+        baseRevision: f.headSha,
+        request: {
+          operation: DOCUMENT_MOVE_OPERATION,
+          path: "a.md",
+          toPath: "archive/a.md",
+          idempotencyKey: "idempotency-test-key",
+        },
+      });
+      await publication.barrier.prepare!(lease);
+      expect(state.intent).toMatchObject({
+        phase: "PREPARED",
+        preparedDelta: { changedPaths: ["a.md", "archive/a.md"] },
+      });
+      const newRef = state.intent!.newRef!;
+      const git = (...args: string[]) =>
+        execFileSync("git", ["--git-dir", f.repo, ...args], { env: hardenedGitEnv() }).toString();
+      const paths = git("ls-tree", "-r", "--name-only", newRef).split("\n");
+      expect(paths).toContain("archive/a.md");
+      expect(paths).not.toContain("a.md");
+      expect(git("show", `${newRef}:archive/a.md`)).toBe("# Same\n");
+      expect(git("log", "-1", "--format=%s", newRef)).toContain("Move a.md to archive/a.md");
+    } finally {
+      await lease.close();
+    }
+  });
+
+  test("refuses op move from any request not built for a browser move", async (f) => {
+    const { input, lease } = context(f);
+    try {
+      const smuggled = {
+        ...input,
+        request: {
+          ...input.request,
+          changes: [{ op: "move", path: "a.md", toPath: "b.md" }] as unknown as Change[],
+        },
+      };
+      await expect(
+        createChangesPublication(smuggled).barrier.prepare!(lease),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     } finally {
       await lease.close();
     }

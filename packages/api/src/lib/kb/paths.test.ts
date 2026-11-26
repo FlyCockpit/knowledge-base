@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { casefoldPathKey, normalizeKbPath, registerPath } from "./paths";
 
 describe("normalizeKbPath", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("needs no Node Buffer: the web app's rename form runs it in the browser", () => {
+    vi.stubGlobal("Buffer", undefined);
+    expect(normalizeKbPath("notes/é.md")).toEqual({ ok: true, path: "notes/é.md" });
+    expect(normalizeKbPath(`${"é".repeat(300)}.md`).ok).toBe(false);
+    expect(normalizeKbPath("bad\uD800.md").ok).toBe(false);
+  });
+
   it("rejects absolute, dotdot, and reserved Windows segments", () => {
     expect(normalizeKbPath("/abs").ok).toBe(false);
     expect(normalizeKbPath("a/../b").ok).toBe(false);

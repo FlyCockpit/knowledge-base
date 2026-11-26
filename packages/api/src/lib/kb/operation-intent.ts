@@ -768,6 +768,25 @@ async function verifyIndexedHead(
   return true;
 }
 
+/**
+ * Operations whose pending intents startup reconciliation settles (ref moved
+ * → finalize, else abort and release). Every Git-publishing operation must be
+ * listed, or a crash mid-publication leaves its intent and quota unsettled.
+ */
+export const RECONCILED_PUBLICATION_OPERATIONS: ReadonlySet<string> = new Set([
+  JOURNAL_TEST_PUBLISH_OPERATION,
+  KB_CREATE_OPERATION,
+  "CHANGES_APPLY",
+  "DOCUMENT_CREATE",
+  "DOCUMENT_UPDATE",
+  "DOCUMENT_DELETE",
+  "DOCUMENT_MOVE",
+  "ASSET_PUT",
+  "ASSET_IMPORT",
+  "PR_MERGE",
+  "GIT_PUSH",
+]);
+
 /** Caller holds the volume fence and per-KB operation/advisory locks, with prior children drained. */
 export async function reconcileKbIntents(
   query: LockQuery,
@@ -786,19 +805,7 @@ export async function reconcileKbIntents(
   else removeAbandonedPublicationLocks(locks);
   let repair = false;
   for (const intent of intents) {
-    const publicationOps = new Set([
-      JOURNAL_TEST_PUBLISH_OPERATION,
-      KB_CREATE_OPERATION,
-      "CHANGES_APPLY",
-      "DOCUMENT_CREATE",
-      "DOCUMENT_UPDATE",
-      "DOCUMENT_DELETE",
-      "ASSET_PUT",
-      "ASSET_IMPORT",
-      "PR_MERGE",
-      "GIT_PUSH",
-    ]);
-    if (!publicationOps.has(intent.operation)) {
+    if (!RECONCILED_PUBLICATION_OPERATIONS.has(intent.operation)) {
       continue;
     }
     if (intent.operation === "GIT_PUSH") {

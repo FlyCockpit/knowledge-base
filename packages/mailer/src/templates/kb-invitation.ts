@@ -3,8 +3,10 @@
  *
  * Both messages carry the acceptance link as a button and as copyable text.
  * The share invitation is identical for every address — known account or
- * not — and also links to sign-up, which returns to the acceptance page, so
- * the email never reveals whether the address has an account.
+ * not. While sign-up is open it also links to sign-up, which returns to the
+ * acceptance page; on an invite-only server it says an administrator has to
+ * invite a newcomer to the server first. Either way the email never reveals
+ * whether the address has an account.
  */
 import enBundle from "../locales/en-US/kb-invitation.json" with { type: "json" };
 import esBundle from "../locales/es-MX/kb-invitation.json" with { type: "json" };
@@ -18,6 +20,8 @@ interface MessageBundle {
   cta: string;
   signupHint: string;
   signupCta: string;
+  // Shown instead of the sign-up section when the server is invite-only.
+  inviteOnlyHint: string;
 }
 
 interface KbInvitationBundle {
@@ -72,9 +76,12 @@ function render(
   const fallbackLabel = pick(bundle.fallbackLabel, en.fallbackLabel);
   const ignoreFooter = pick(bundle.ignoreFooter, en.ignoreFooter);
   const acceptHref = safeHref(args.acceptUrl);
+  const inviteOnlyHint = pick(message.inviteOnlyHint, enMessage.inviteOnlyHint);
   const signup =
     args.signupUrl === null
-      ? ""
+      ? inviteOnlyHint
+        ? `<p style="margin:0 0 24px;font-size:14px;color:#52525b;line-height:1.5">${inviteOnlyHint}</p>`
+        : ""
       : `<p style="margin:0 0 8px;font-size:14px;color:#52525b;line-height:1.5">${pick(
           message.signupHint,
           enMessage.signupHint,
@@ -119,8 +126,11 @@ export interface RenderKbShareInviteArgs {
   kbName: string;
   /** Absolute acceptance URL. */
   acceptUrl: string;
-  /** Absolute sign-up URL that returns to `acceptUrl`. */
-  signupUrl: string;
+  /**
+   * Absolute sign-up URL that returns to `acceptUrl`, or null when this
+   * server is invite-only (the email then says so instead).
+   */
+  signupUrl: string | null;
   locale: string;
 }
 

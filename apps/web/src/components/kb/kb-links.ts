@@ -19,3 +19,17 @@ export function kbDocumentHref(
 /** Proposal review page. */
 export const proposalHref = (lang: string, kbId: string, number: number) =>
   `/${encodeURIComponent(lang)}/kbs/${encodeURIComponent(kbId)}/prs/${number}`;
+
+const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** An acceptance request id from a link's search params (`?accept=` / `?transfer=`), else undefined. */
+export const acceptRequestId = (value: unknown): string | undefined =>
+  typeof value === "string" && REQUEST_ID.test(value) ? value : undefined;
+
+/**
+ * KB settings opened from a share invitation (`?accept=<id>`): the recipient
+ * cannot read the KB until they accept, so no `kbs.get` runs for it there
+ * (it would only answer "not found"). The invitation preview names the KB.
+ */
+export const awaitsInvitationAccept = (onSettings: boolean, accept: unknown): boolean =>
+  onSettings && acceptRequestId(accept) !== undefined;

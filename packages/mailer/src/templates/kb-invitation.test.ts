@@ -25,6 +25,21 @@ describe("renderKbShareInvite", () => {
     expect(html.split(share.acceptUrl).length).toBeGreaterThanOrEqual(3);
   });
 
+  it("offers sign-up only while sign-up is open; an invite-only server says so instead", () => {
+    const open = renderKbShareInvite({ ...share, locale: "en-US" });
+    expect(open.html).toContain("Create an account");
+    expect(open.html).not.toContain("invite-only");
+    const closed = renderKbShareInvite({ ...share, signupUrl: null, locale: "en-US" });
+    expect(closed.html).not.toContain("signup");
+    expect(closed.html).not.toContain("Create an account");
+    expect(closed.html).toContain("This server is invite-only.");
+    // The acceptance link is unchanged in both modes.
+    expect(closed.html).toContain(`href="${share.acceptUrl}"`);
+    const closedEs = renderKbShareInvite({ ...share, signupUrl: null, locale: "es-MX" });
+    expect(closedEs.html).toContain("solo por invitación");
+    expect(closedEs.html).not.toContain("Crear una cuenta");
+  });
+
   it("renders es-MX without en-US literals and falls back to en-US for unknown locales", () => {
     const es = renderKbShareInvite({ ...share, locale: "es-MX" });
     expect(es.html).toContain('<html lang="es-MX">');
@@ -61,5 +76,6 @@ describe("renderKbTransferOffer", () => {
     expect(subject).toBe("Te ofrecieron la propiedad de una base de conocimiento");
     expect(html).toContain(`href="${acceptUrl}"`);
     expect(html).not.toContain("signup");
+    expect(html).not.toContain("solo por invitación");
   });
 });

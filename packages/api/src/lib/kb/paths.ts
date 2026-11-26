@@ -563,6 +563,7 @@ function segmentHasControlChar(segment: string): boolean {
   return false;
 }
 
+/** No lone surrogates: encoding would replace them with U+FFFD. */
 function isValidUtf8String(text: string): boolean {
   // Lone surrogates encode as U+FFFD, so they never round-trip.
   return new TextDecoder().decode(utf8.encode(text)) === text;

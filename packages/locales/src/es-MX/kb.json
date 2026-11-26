@@ -60,6 +60,8 @@
     "newDocument": "Nuevo documento",
     "documentsEmpty": "Aún no hay documentos.",
     "documentsLoadFailed": "No se pudieron cargar los documentos.",
+    "folderCount_one": "{{count}} documento",
+    "folderCount_other": "{{count}} documentos",
     "pullRequests": "Solicitudes de cambios",
     "settings": "Configuración",
     "sectionsLabel": "Secciones de la base de conocimiento",
@@ -150,6 +152,28 @@
     "discardTitle": "¿Descartar tus cambios?",
     "discardDescription": "El borrador vuelve a la última versión guardada. Tus cambios se pierden.",
     "oldRevisionRestore": "Estás viendo la revisión {{sha}}. Restáurala para que sea la versión más reciente, o abre la versión más reciente para editar."
+  },
+  "move": {
+    "action": "Renombrar o mover",
+    "title": "Renombrar o mover documento",
+    "description": "Dale a {{path}} un nombre o una carpeta nuevos.",
+    "pathLabel": "Nueva ruta",
+    "hint": "Mueve el documento con su historial en Git, como un solo commit de cambio de nombre.",
+    "hintProposal": "Mueve el documento con su historial en Git, como un solo commit de cambio de nombre en tu solicitud de cambios. La rama principal no cambia hasta que un revisor la integre.",
+    "submit": "Mover documento",
+    "moved": "Movido a {{path}}",
+    "stale": "Este documento cambió después de que lo abriste (ahora es la revisión {{sha}}). Se mueve su versión más reciente. Selecciona Mover documento otra vez para continuar.",
+    "error": {
+      "empty": "Escribe una ruta.",
+      "invalid": "Usa una ruta relativa con carpetas separadas por /, por ejemplo notas/reunion.md. No se permiten carpetas vacías, . ni ..",
+      "reserved": "Esta ruta está reservada para la base de conocimiento.",
+      "notMarkdown": "La ruta debe terminar en .md.",
+      "same": "El documento ya está en esta ruta.",
+      "exists": "Ya existe un documento en esta ruta. Elige otra ruta.",
+      "caseCollision": "La ruta de otro documento solo difiere de esta en mayúsculas y minúsculas.",
+      "relativeLinks": "Este documento enlaza imágenes de forma relativa a su carpeta, así que se romperían en otra carpeta. Renómbralo en la misma carpeta o primero cambia esos enlaces para que empiecen con /.",
+      "sourceGone": "Este documento ya no está en su ruta. Recarga la página para ver la versión más reciente."
+    }
   },
   "outcome": {
     "appliedTitle": "Guardado en main",
@@ -430,7 +454,10 @@
       "permissionsRequired": "Elige al menos un permiso.",
       "invite": "Enviar invitación",
       "inviting": "Enviando…",
-      "inviteResult": "Invitación registrada. Se está enviando un correo de invitación a esta dirección; su titular la acepta con el enlace y, si hace falta, crea una cuenta primero. Esta página nunca revela si la dirección tiene una cuenta.",
+      "inviteResult": "Invitación registrada. Se está enviando un correo de invitación a esta dirección; su titular la acepta con el enlace. Esta página nunca revela si la dirección tiene una cuenta.",
+      "inviteSignupOpen": "Si todavía no tiene una cuenta, el correo le permite crear una con esta dirección.",
+      "inviteSignupClosed": "Este servidor funciona solo por invitación: alguien sin cuenta aquí necesita que un administrador lo invite primero al servidor.",
+      "permissionsImplied": "Escribir también otorga Leer y Proponer; Administrar lo otorga todo.",
       "inviteLink": "Enlace de aceptación (también puedes compartirlo tú)",
       "copyLink": "Copiar enlace",
       "inviteAnother": "Invitar a otra persona",
@@ -440,8 +467,7 @@
       "revoke": "Revocar",
       "transfer": "Transferir propiedad",
       "revokeTitle": "¿Revocar el acceso?",
-      "revokeDescription": "{{name}} pierde el acceso a esta base de conocimiento.",
-      "revokePrompt": "Escribe REVOKE para confirmar",
+      "revokeDescription": "{{name}} pierde el acceso a esta base de conocimiento de inmediato. Puedes volver a invitarlo más adelante.",
       "revokeAction": "Revocar acceso",
       "revoked": "Acceso revocado.",
       "pending": "Procesando…",
@@ -457,7 +483,7 @@
       "edit": "Editar permisos",
       "editFor": "Editar permisos de {{name}}",
       "editTitle": "Editar permisos de {{name}}",
-      "editDescription": "Los cambios se aplican en la siguiente solicitud de este miembro, incluidos sus tokens y apps conectadas. Escribir también otorga Leer y Proponer; Administrar lo otorga todo.",
+      "editDescription": "Los cambios se aplican en la siguiente solicitud de este miembro, incluidos sus tokens y apps conectadas.",
       "editSave": "Guardar permisos",
       "you": "(tú)",
       "revokeFor": "Revocar a {{name}}",
@@ -465,7 +491,30 @@
       "includeSealedValuesFor": "Incluir valores sellados para {{name}}",
       "selfDemoteTitle": "¿Quitar tu propio permiso de administrar?",
       "selfDemoteDescription": "Pierdes de inmediato la configuración de miembros y de espejo, y no puedes devolverte el permiso de administrar. Solo el propietario puede restaurarlo.",
-      "selfDemoteConfirm": "Quitar mi permiso"
+      "selfDemoteConfirm": "Quitar mi permiso",
+      "moreActions": "Más acciones para {{name}}",
+      "listTitle": "Personas con acceso",
+      "pendingInvites": {
+        "title": "Invitaciones pendientes",
+        "description": "Invitaciones que nadie ha aceptado todavía. Puedes enviarlas de nuevo o cancelarlas.",
+        "empty": "No hay invitaciones pendientes.",
+        "listFailed": "No se pudieron cargar las invitaciones pendientes.",
+        "sentBy": "Invitación enviada por {{name}}",
+        "sentOn": "Enviada el {{date}}",
+        "sentOnBy": "Enviada el {{date}} por {{name}}",
+        "sentOnByYou": "Enviada el {{date}} por ti",
+        "resend": "Reenviar",
+        "resendFor": "Reenviar invitación: {{label}}",
+        "resending": "Enviando…",
+        "resent": "Se volvió a enviar el correo de invitación.",
+        "senderGone": "Quien envió esta invitación ya no puede administrar esta base de conocimiento, así que no se puede aceptar. Cancélala y envía una nueva.",
+        "cancel": "Cancelar invitación",
+        "cancelFor": "Cancelar invitación: {{label}}",
+        "cancelTitle": "¿Cancelar esta invitación?",
+        "cancelDescription": "Su enlace deja de funcionar de inmediato. Puedes volver a invitar a la misma dirección más adelante.",
+        "cancelAction": "Cancelar invitación",
+        "keep": "Conservar invitación"
+      }
     },
     "accept": {
       "shareTitle": "Aceptar invitación",
@@ -478,7 +527,12 @@
       "transferDone": "Ahora eres el propietario.",
       "accepting": "Aceptando…",
       "shareGone": "Esta invitación ya se usó o fue reemplazada. Pide una nueva invitación si todavía necesitas acceso.",
-      "transferGone": "Esta transferencia de propiedad ya se aceptó, se canceló o fue reemplazada."
+      "transferGone": "Esta transferencia de propiedad ya se aceptó, se canceló o fue reemplazada.",
+      "shareHeading": "{{inviter}} te invitó a {{kb}}",
+      "sharePermissions": "Podrás",
+      "shareGoneHint": "Revisa también que hayas iniciado sesión con la dirección de correo a la que se envió la invitación.",
+      "previewFailed": "No se pudo cargar esta invitación.",
+      "openKbs": "Ir a tus bases de conocimiento"
     },
     "profile": {
       "title": "Perfil de embeddings",
@@ -910,6 +964,7 @@
     }
   },
   "history": {
+    "formerPath": "Entonces en {{path}}",
     "title": "Historial",
     "empty": "Aún no hay historial en main.",
     "loadFailed": "No se pudo cargar el historial.",

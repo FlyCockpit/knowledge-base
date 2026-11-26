@@ -5,7 +5,8 @@
     "body": "{{inviter}} invited you to the knowledge base \"{{kb}}\". Open the link below and sign in with this email address to accept.",
     "cta": "Accept invitation",
     "signupHint": "New here? Create an account with this email address first; you'll return to the invitation afterwards.",
-    "signupCta": "Create an account"
+    "signupCta": "Create an account",
+    "inviteOnlyHint": "This server is invite-only. If you don't have an account here yet, ask the server's administrator to invite you first, then open this link again."
   },
   "transferOffer": {
     "subject": "You've been offered ownership of a knowledge base",
@@ -13,7 +14,8 @@
     "body": "{{inviter}} offered to transfer ownership of the knowledge base \"{{kb}}\" to you. Open the link below to review and accept.",
     "cta": "Review offer",
     "signupHint": "",
-    "signupCta": ""
+    "signupCta": "",
+    "inviteOnlyHint": ""
   },
   "fallbackLabel": "If the button does not work, copy this link into your browser:",
   "ignoreFooter": "If you weren't expecting this email, you can safely ignore it."

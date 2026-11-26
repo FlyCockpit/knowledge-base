@@ -1,6 +1,8 @@
 {
   "appSettingsLoadFailed": "No se pudieron cargar las configuraciones de la aplicación.",
-  "emptyDescription": "Las bases de conocimiento que poseas o que alguien comparta contigo aparecerán aquí.",
+  "emptyDescription": "Crea una base de conocimiento para empezar a escribir y luego conecta un cliente de IA para que pueda buscar en ella. Las bases de conocimiento que alguien comparta contigo también aparecen aquí.",
+  "createKb": "Crear una base de conocimiento",
+  "connectClient": "Conectar un cliente de IA",
   "emptyTitle": "Aún no hay bases de conocimiento",
   "loadFailed": "No se pudo cargar el panel de control.",
   "welcomeBack": "Bienvenido de vuelta, {{name}}",
@@ -10,8 +12,8 @@
   "kpi": {
     "owned": "Bases propias",
     "shared": "Compartidas contigo",
-    "searchable": "Con índice de búsqueda",
-    "searchableHint": "de {{count}} que puedes abrir",
+    "searchable": "Listas para buscar",
+    "searchableHint": "de {{count}} bases de conocimiento",
     "tokens": "Tokens de acceso activos",
     "manageTokens": "Administrar tokens",
     "more": "{{count}}+",

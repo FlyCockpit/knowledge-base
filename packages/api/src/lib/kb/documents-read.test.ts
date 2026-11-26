@@ -5,6 +5,8 @@ import { mockDeep } from "vitest-mock-extended";
 
 import { stableFilterHash } from "./cursor";
 import {
+  DOCUMENT_LIST_TITLE_MAX,
+  documentListTitle,
   isCommitReachable,
   readDocumentAtRevision,
   resolveMarkdownAssetReferences,
@@ -28,6 +30,37 @@ describe("documents-read helpers", () => {
   it("has stable filter hashing for cursors", () => {
     expect(stableFilterHash({ prefix: "docs" })).toBe(stableFilterHash({ prefix: "docs" }));
     expect(stableFilterHash({ prefix: "docs" })).not.toBe(stableFilterHash({ prefix: "other" }));
+  });
+});
+
+describe("document list titles", () => {
+  it("prefers a non-empty front-matter title", () => {
+    expect(documentListTitle({ title: "  Postgres   failover " }, "# Heading\n")).toBe(
+      "Postgres failover",
+    );
+    expect(documentListTitle({ title: "   " }, "# Heading\n")).toBe("Heading");
+    expect(documentListTitle({ title: 42 }, "# Heading\n")).toBe("Heading");
+  });
+
+  it("falls back to the first level-1 ATX heading outside fenced code", () => {
+    expect(documentListTitle({}, "Intro\n\n## Sub\n\n# Main title ##\n# Later\n")).toBe(
+      "Main title",
+    );
+    expect(documentListTitle({}, "```sh\n# not a title\n```\n   # Real\r\n")).toBe("Real");
+    expect(documentListTitle({}, "~~~\n# no\n~~~~\n# C# notes\n")).toBe("C# notes");
+    expect(documentListTitle({}, "#\n# \n#nospace\n    # indented code\n")).toBeNull();
+    expect(documentListTitle({}, "# ###\n# Kept#\n")).toBe("Kept#");
+    expect(documentListTitle({}, "no headings at all")).toBeNull();
+  });
+
+  it("is bounded", () => {
+    const title = documentListTitle({}, `# ${"é".repeat(500)}\n`);
+    expect(Array.from(title!)).toHaveLength(DOCUMENT_LIST_TITLE_MAX);
+    expect(title!.endsWith("…")).toBe(true);
+    // A pathological heading line stays linear.
+    const started = Date.now();
+    expect(documentListTitle({}, `#${" ".repeat(200_000)}x${" ".repeat(200_000)}`)).toBe("x");
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 

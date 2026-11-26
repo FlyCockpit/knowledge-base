@@ -22,8 +22,13 @@ import { orpc } from "@/utils/orpc";
 export type RestoreRequest = {
   kbId: string;
   path: string;
-  /** The revision whose version of `path` is restored. */
+  /** The revision whose version is restored. */
   revision: string;
+  /**
+   * Where the document lived at `revision`, when it was renamed or moved
+   * since: its text is read there and written to `path` (its name now).
+   */
+  sourcePath?: string;
   /**
    * The document where the write goes, as last read: whether main has the
    * path now and the head that read was at. A document that moved since
@@ -36,6 +41,20 @@ export type RestoreRequest = {
    */
   rebase?: { headSha: string; proposalNumber: number | null };
 };
+
+/**
+ * The `documents.get` input that reads the version being restored: at the
+ * name the document had at `revision` (`sourcePath`, when it was renamed
+ * since), else at `path`.
+ */
+export function restoreSourceInput(request: {
+  kbId: string;
+  path: string;
+  revision: string;
+  sourcePath?: string;
+}) {
+  return { kbId: request.kbId, path: request.sourcePath ?? request.path, rev: request.revision };
+}
 
 export function useDocumentRestore() {
   const queryClient = useQueryClient();
@@ -62,7 +81,7 @@ export function useDocumentRestore() {
         try {
           const source = await queryClient.fetchQuery({
             ...orpc.documents.get.queryOptions({
-              input: { kbId: request.kbId, path: request.path, rev: request.revision },
+              input: restoreSourceInput(request),
             }),
             retry: false,
             meta: { skipGlobalErrorToast: true },
@@ -75,7 +94,12 @@ export function useDocumentRestore() {
             void recheckKbAccess(queryClient, request.kbId);
           return outcome;
         }
-        const key = JSON.stringify([request.kbId, request.path, request.revision]);
+        const key = JSON.stringify([
+          request.kbId,
+          request.path,
+          request.revision,
+          request.sourcePath ?? null,
+        ]);
         const state: SaveState = unresolved.current.get(key) ?? {
           memory: initialEditorMemory(),
           images: [],

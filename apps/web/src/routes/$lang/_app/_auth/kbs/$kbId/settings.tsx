@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
+import { acceptRequestId } from "@/components/kb/kb-links";
 import {
   KB_SETTINGS_TABS,
   type KbSettingsTab,
@@ -7,16 +8,12 @@ import {
 } from "@/components/kb/members-panel";
 import { cachedKbName, pageHead } from "@/lib/page-title";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const requestId = (value: unknown) =>
-  typeof value === "string" && UUID.test(value) ? value : undefined;
-
 type SettingsSearch = { accept?: string; transfer?: string; tab?: KbSettingsTab };
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/settings")({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
-    accept: requestId(search.accept),
-    transfer: requestId(search.transfer),
+    accept: acceptRequestId(search.accept),
+    transfer: acceptRequestId(search.transfer),
     tab: KB_SETTINGS_TABS.find((tab) => tab === search.tab),
   }),
   head: ({ match, params }) =>
@@ -44,6 +41,10 @@ function KbSettingsRoute() {
       tab={tab}
       onTabChange={(next) =>
         navigate({ search: (prev) => ({ ...prev, tab: next }), replace: true, resetScroll: false })
+      }
+      // A new member lands on the KB's documents, not on its settings.
+      onShareAccepted={(acceptedKbId) =>
+        navigate({ to: "/$lang/kbs/$kbId", params: { lang, kbId: acceptedKbId }, replace: true })
       }
     />
   );

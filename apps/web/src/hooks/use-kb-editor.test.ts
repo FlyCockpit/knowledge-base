@@ -78,6 +78,7 @@ function recorder(
     create: call("create") as EditorDeps["create"],
     update: call("update") as EditorDeps["update"],
     remove: call("delete") as EditorDeps["remove"],
+    move: call("move") as EditorDeps["move"],
     uploadBegin: call("uploadBegin") as EditorDeps["uploadBegin"],
     uploadWrite: call("uploadWrite") as EditorDeps["uploadWrite"],
     uploadFinish: call("uploadFinish") as EditorDeps["uploadFinish"],
@@ -443,6 +444,7 @@ describe("error classification", () => {
       kind: "error",
       reason: "rejected",
       pathIssue: "notMarkdown",
+      path: "NOT_MARKDOWN_PATH",
     });
     expect(describeEditorError(refused("INVALID_FRONT_MATTER", "/content/markdown"))).toEqual({
       kind: "error",
@@ -458,7 +460,29 @@ describe("error classification", () => {
       describeEditorError(
         orpcError("CONFLICT", { code: "CONFLICT", details: { reason: "PATH_EXISTS" } }),
       ),
-    ).toEqual({ kind: "error", reason: "rejected", pathIssue: "exists" });
+    ).toEqual({ kind: "error", reason: "rejected", pathIssue: "exists", path: "PATH_EXISTS" });
+  });
+
+  it("names a refused document path, and nothing it doesn't know", () => {
+    const refused = (code: string, reason: string) =>
+      describeEditorError(orpcError(code, { code, details: { reason } }));
+    expect(refused("CONFLICT", "PATH_EXISTS")).toEqual({
+      kind: "error",
+      reason: "rejected",
+      pathIssue: "exists",
+      path: "PATH_EXISTS",
+    });
+    expect(refused("INVALID_ARGUMENT", "MOVE_BREAKS_ASSET_LINKS")).toEqual({
+      kind: "error",
+      reason: "rejected",
+      path: "MOVE_BREAKS_ASSET_LINKS",
+    });
+    expect(refused("INVALID_ARGUMENT", "SOMETHING_ELSE")).toEqual({
+      kind: "error",
+      reason: "rejected",
+    });
+    // Any other CONFLICT is still a conflict with a head (or an unknown one).
+    expect(refused("CONFLICT", "OTHER")).toMatchObject({ kind: "conflict", headSha: null });
   });
 });
 
@@ -1862,6 +1886,61 @@ describe("each Save is an immutable record until its receipt resolves", () => {
     expect(run.memory).toEqual(initialEditorMemory());
     expect(run.images).toEqual([image]);
     expect(run.retired).toEqual([]);
+  });
+
+  it("a move sends no text or images and its receipt places the document at the new path", async () => {
+    const { calls, deps } = recorder(() => applied({ commitSha: H1 }));
+    const run = await runSave(deps, start(), {
+      kbId: KB,
+      intent: { kind: "move", toPath: "archive/a.md" },
+    });
+    expect(calls).toEqual([
+      {
+        op: "move",
+        input: {
+          kbId: KB,
+          baseRevision: H0,
+          path: "notes/a.md",
+          toPath: "archive/a.md",
+          idempotencyKey: "key-0000000000000001",
+        },
+      },
+    ]);
+    expect(run.document).toEqual({ exists: true, head: H1, path: "archive/a.md" });
+    // The staged image waits for the next save at the new path.
+    expect(run.images).toEqual([image]);
+  });
+
+  it("a lost move reply is retried with the same key; a taken path is a definite refusal", async () => {
+    let lost = true;
+    const { calls, deps } = recorder(() => {
+      if (lost) {
+        lost = false;
+        return new TypeError("lost reply");
+      }
+      return orpcError("CONFLICT", { code: "CONFLICT", details: { reason: "PATH_EXISTS" } });
+    });
+    const intent = { kind: "move" as const, toPath: "archive/a.md" };
+    const first = await runSave(deps, start(), { kbId: KB, intent });
+    expect(first.outcome).toEqual({ kind: "retryable" });
+    expect(first.memory.request?.op).toEqual({
+      kind: "move",
+      path: "notes/a.md",
+      toPath: "archive/a.md",
+    });
+    const second = await runSave(deps, first, { kbId: KB, intent });
+    expect(calls.map((call) => call.input.idempotencyKey)).toEqual([
+      "key-0000000000000001",
+      "key-0000000000000001",
+    ]);
+    expect(second.outcome).toEqual({
+      kind: "error",
+      reason: "rejected",
+      pathIssue: "exists",
+      path: "PATH_EXISTS",
+    });
+    expect(second.memory).toEqual(initialEditorMemory());
+    expect(second.document).toEqual(start().document);
   });
 });
 

@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { parseDeletionLog, readDeletedDocuments, selectDeleted } from "./deleted-documents";
+import {
+  deletedScanCapped,
+  parseDeletionLog,
+  readDeletedDocuments,
+  selectDeleted,
+} from "./deleted-documents";
 import { writeGitFixtureCommit } from "./fixtures/git-objects";
 import { hardenedGitEnv } from "./git-read";
 import { initialMainTreeFiles } from "./git-write";
@@ -280,22 +285,39 @@ describe("deleted documents", () => {
     const parent = "2".repeat(40);
     const log = [
       `\x1e${sha} ${parent} 1800000000`,
-      "\nok.md",
+      "\nD",
+      "ok.md",
+      "D",
       "../escape.md",
+      "D",
       "data.txt",
+      "D",
       ".assets/manifest.json",
+      // An exact rename: a "moved away" marker for its old name, not a deletion.
+      "R100",
+      "old.md",
+      "new.md",
       "",
       // A merge (two parents): its diff is against the first parent.
       `\x1e${"3".repeat(40)} ${parent} ${sha} 1800000060`,
-      "\nmerged.md",
+      "\nD",
+      "merged.md",
       "",
       // A root commit deletes nothing.
       `\x1e${"4".repeat(40)} 1800000120`,
-      "\nroot.md",
+      "\nD",
+      "root.md",
       "",
     ].join("\0");
     expect(parseDeletionLog(log)).toEqual([
       { path: "ok.md", deletedSha: sha, revision: parent, deletedAt: expect.any(String) },
+      {
+        path: "old.md",
+        deletedSha: sha,
+        revision: parent,
+        deletedAt: expect.any(String),
+        moved: true,
+      },
       {
         path: "merged.md",
         deletedSha: "3".repeat(40),
@@ -304,5 +326,131 @@ describe("deleted documents", () => {
       },
     ]);
     expect(() => parseDeletionLog("\x1enot a header\0")).toThrow("invalid deletion log header");
+  });
+});
+
+describe("a rename is not a deletion", () => {
+  let repo: string;
+  const c: Record<string, string> = {};
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "kb-deleted-moves-"));
+    execFileSync("git", ["init", "--bare", repo], { env: hardenedGitEnv(), stdio: "ignore" });
+    const base = initialMainTreeFiles("Move fixture");
+    let time = 1_800_000_000;
+    const commit = (name: string, parent: string, message: string, files: TreeFileInput[]) => {
+      time += 60;
+      c[name] = writeGitFixtureCommit(repo, {
+        parentSha: parent,
+        message,
+        files: [...base, ...files],
+        timestampSeconds: time,
+      });
+    };
+    const long = "line\n".repeat(40);
+    commit("create", "0".repeat(40), "Create", [
+      file("notes/a.md", `# A\n${long}`),
+      file("notes/c.md", `# C\n${long}`),
+      file("notes/e.md", `# E0\n${long}`),
+      file("notes/g.md", `# G0\n${long}`),
+    ]);
+    // One commit: a.md moves (same bytes, the web move), c.md is deleted while
+    // a similar but different d.md is added: c.md is still a deletion.
+    commit("move", c.create!, "Move notes/a.md to archive/b.md", [
+      file("archive/b.md", `# A\n${long}`),
+      file("notes/d.md", `# D\n${long}`),
+      file("notes/e.md", `# E0\n${long}`),
+      file("notes/g.md", `# G0\n${long}`),
+    ]);
+    // e.md is deleted, recreated, then renamed away: it lives on as f.md.
+    commit("eDrop", c.move!, "Delete notes/e.md", [
+      file("archive/b.md", `# A\n${long}`),
+      file("notes/d.md", `# D\n${long}`),
+      file("notes/g.md", `# G0\n${long}`),
+    ]);
+    commit("eBack", c.eDrop!, "Recreate notes/e.md", [
+      file("archive/b.md", `# A\n${long}`),
+      file("notes/d.md", `# D\n${long}`),
+      file("notes/e.md", `# E\n${long}`),
+      file("notes/g.md", `# G0\n${long}`),
+    ]);
+    commit("eMove", c.eBack!, "Move notes/e.md to notes/f.md", [
+      file("archive/b.md", `# A\n${long}`),
+      file("notes/d.md", `# D\n${long}`),
+      file("notes/f.md", `# E\n${long}`),
+      file("notes/g.md", `# G0\n${long}`),
+    ]);
+    // g.md: deleted (recent), recreated, then renamed in a commit whose own
+    // time is long before the window (a pushed commit's clock): still hidden.
+    const keep = [
+      file("archive/b.md", `# A\n${long}`),
+      file("notes/d.md", `# D\n${long}`),
+      file("notes/f.md", `# E\n${long}`),
+    ];
+    commit("gDrop", c.eMove!, "Delete notes/g.md", keep);
+    commit("gBack", c.gDrop!, "Recreate notes/g.md", [...keep, file("notes/g.md", `# G\n${long}`)]);
+    c.gMove = writeGitFixtureCommit(repo, {
+      parentSha: c.gBack!,
+      message: "Move notes/g.md to notes/h.md",
+      files: [...base, ...keep, file("notes/h.md", `# G\n${long}`)],
+      timestampSeconds: 1_700_000_000,
+    });
+    // k.md: deleted (recent), recreated, then deleted again by a backdated
+    // commit: its latest deletion is the backdated one, outside the window.
+    const keep2 = [...keep, file("notes/h.md", `# G\n${long}`)];
+    commit("kAdd", c.gMove!, "Add notes/k.md", [...keep2, file("notes/k.md", `# K0\n${long}`)]);
+    commit("kDrop", c.kAdd!, "Delete notes/k.md", keep2);
+    commit("kBack", c.kDrop!, "Recreate notes/k.md", [
+      ...keep2,
+      file("notes/k.md", `# K1\n${long}`),
+    ]);
+    c.kDropOld = writeGitFixtureCommit(repo, {
+      parentSha: c.kBack!,
+      message: "Delete notes/k.md (backdated)",
+      files: [...base, ...keep2],
+      timestampSeconds: 1_700_000_100,
+    });
+  }, 120_000);
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+  const NOW = (1_800_000_000 + 3600) * 1000;
+  const read = (path?: string) =>
+    readDeletedDocuments({
+      repoPath: repo,
+      headSha: c.kDropOld!,
+      cursor: null,
+      limit: 10,
+      query: actorsQuery(),
+      now: NOW,
+      ...(path === undefined ? {} : { path }),
+    });
+
+  it("reports a possibly incomplete list whenever a bound is reached, whatever the commit times", () => {
+    expect(deletedScanCapped(999, 0)).toBe(false);
+    expect(deletedScanCapped(1000, 0)).toBe(true);
+    expect(deletedScanCapped(10, 10_000)).toBe(true);
+  });
+
+  it("lists the deleted document but not the moved ones", async () => {
+    // e.md's and g.md's older deletions are not shown: each was recreated and
+    // then moved (g.md's move carries a commit time long before the window).
+    // k.md's latest deletion is backdated outside the window: its older,
+    // in-window deletion (a stale revision) is not listed either.
+    const page = await read();
+    expect(page.items.map((row) => row.path)).toEqual(["notes/c.md"]);
+    expect(page.capped).toBe(false);
+  });
+
+  it("finds no deletion for a moved path, and still finds a real one, by path", async () => {
+    expect((await read("notes/a.md")).items).toEqual([]);
+    expect((await read("notes/e.md")).items).toEqual([]);
+    expect((await read("notes/g.md")).items).toEqual([]);
+    // By path (no window): k.md's latest deletion, the backdated one.
+    expect((await read("notes/k.md")).items).toMatchObject([
+      { path: "notes/k.md", deletedSha: c.kDropOld, revision: c.kBack },
+    ]);
+    expect((await read("notes/c.md")).items).toMatchObject([
+      { path: "notes/c.md", deletedSha: c.move, revision: c.create },
+    ]);
   });
 });

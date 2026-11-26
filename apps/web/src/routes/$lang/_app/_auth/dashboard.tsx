@@ -1,13 +1,21 @@
+import { Button, buttonVariants } from "@knowledge-base/ui/components/button";
+import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { Plus } from "lucide-react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
-import { KB_GRID_CLASS, KbList } from "@/components/kb/kb-list";
+import {
+  createdKbDestination,
+  KB_GRID_CLASS,
+  KbCreateDialog,
+  KbList,
+} from "@/components/kb/kb-list";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
 import { activeTokenCount } from "@/lib/credential-counts";
@@ -27,7 +35,8 @@ function DashboardPage() {
   const { lang } = Route.useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { t } = useTranslation(["common", "dashboard"]);
+  const { t } = useTranslation(["common", "dashboard", "kb"]);
+  const [createOpen, setCreateOpen] = useState(false);
   const owned = useQuery(
     orpc.kbs.list.queryOptions({ input: { limit: PAGE, cursor: null, relation: "owned" } }),
   );
@@ -45,6 +54,7 @@ function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: orpc.mcpGrants.key() }),
     ]);
   }, [queryClient]);
+  const openKb = (kbId: string) => navigate({ to: "/$lang/kbs/$kbId", params: { lang, kbId } });
 
   const count = (items: readonly unknown[] | undefined, more: boolean) =>
     items === undefined
@@ -55,6 +65,57 @@ function DashboardPage() {
   const kbs = [...(owned.data?.items ?? []), ...(shared.data?.items ?? [])];
   const kbsLoaded = owned.data !== undefined && shared.data !== undefined;
   const moreKbs = Boolean(owned.data?.nextCursor || shared.data?.nextCursor);
+  const searchable = kbs.filter((kb) => kb.embeddingGeneration);
+  const activeTokens = tokens.data ? activeTokenCount(tokens.data) : null;
+
+  // A stat that is zero says nothing (and "0 of 0" is noise): each tile
+  // shows its skeleton while loading and stays only if it counts something.
+  const tiles = [
+    owned.data?.items.length !== 0 && (
+      <Kpi
+        key="owned"
+        label={t("dashboard:kpi.owned")}
+        value={count(owned.data?.items, Boolean(owned.data?.nextCursor))}
+      />
+    ),
+    shared.data?.items.length !== 0 && (
+      <Kpi
+        key="shared"
+        label={t("dashboard:kpi.shared")}
+        value={count(shared.data?.items, Boolean(shared.data?.nextCursor))}
+      />
+    ),
+    !(kbsLoaded && searchable.length === 0) && (
+      <Kpi
+        key="searchable"
+        label={t("dashboard:kpi.searchable")}
+        value={kbsLoaded ? count(searchable, false) : null}
+        hint={kbsLoaded ? t("dashboard:kpi.searchableHint", { count: kbs.length }) : undefined}
+        more={moreKbs}
+      />
+    ),
+    activeTokens !== 0 && (
+      <Kpi
+        key="tokens"
+        label={t("dashboard:kpi.tokens")}
+        value={tokens.isError ? "—" : activeTokens === null ? null : String(activeTokens)}
+        hint={
+          tokens.data && tokens.data.childTokens > 0
+            ? t("dashboard:kpi.tokensFromKeysHint", { count: tokens.data.childTokens })
+            : undefined
+        }
+        href={
+          <Link
+            to="/$lang/settings/mcp"
+            params={{ lang }}
+            className="inline-flex min-h-11 items-center text-xs font-medium text-primary underline-offset-4 hover:underline"
+          >
+            {t("dashboard:kpi.manageTokens")}
+          </Link>
+        }
+      />
+    ),
+  ].filter(Boolean);
 
   return (
     <PullToRefresh onRefresh={handleRefresh}>
@@ -72,51 +133,11 @@ function DashboardPage() {
             }}
           />
         ) : (
-          <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi
-              label={t("dashboard:kpi.owned")}
-              value={count(owned.data?.items, Boolean(owned.data?.nextCursor))}
-            />
-            <Kpi
-              label={t("dashboard:kpi.shared")}
-              value={count(shared.data?.items, Boolean(shared.data?.nextCursor))}
-            />
-            <Kpi
-              label={t("dashboard:kpi.searchable")}
-              value={
-                kbsLoaded
-                  ? count(
-                      kbs.filter((kb) => kb.embeddingGeneration),
-                      false,
-                    )
-                  : null
-              }
-              hint={
-                kbsLoaded ? t("dashboard:kpi.searchableHint", { count: kbs.length }) : undefined
-              }
-              more={moreKbs}
-            />
-            <Kpi
-              label={t("dashboard:kpi.tokens")}
-              value={
-                tokens.isError ? "—" : tokens.data ? String(activeTokenCount(tokens.data)) : null
-              }
-              hint={
-                tokens.data && tokens.data.childTokens > 0
-                  ? t("dashboard:kpi.tokensFromKeysHint", { count: tokens.data.childTokens })
-                  : undefined
-              }
-              href={
-                <Link
-                  to="/$lang/settings/mcp"
-                  params={{ lang }}
-                  className="inline-flex min-h-11 items-center text-xs font-medium text-primary underline-offset-4 hover:underline"
-                >
-                  {t("dashboard:kpi.manageTokens")}
-                </Link>
-              }
-            />
-          </dl>
+          tiles.length > 0 && (
+            <dl data-testid="dashboard-kpis" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {tiles}
+            </dl>
+          )
         )}
         <section aria-labelledby="dashboard-kbs" className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -140,15 +161,39 @@ function DashboardPage() {
             <EmptyState
               title={t("dashboard:emptyTitle")}
               description={t("dashboard:emptyDescription")}
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    data-testid="dashboard-create-kb"
+                    className="min-h-[44px]"
+                    onClick={() => setCreateOpen(true)}
+                  >
+                    <Plus className="size-4" />
+                    {t("dashboard:createKb")}
+                  </Button>
+                  <Link
+                    data-testid="dashboard-connect-client"
+                    to="/$lang/settings/mcp"
+                    params={{ lang }}
+                    className={cn(buttonVariants({ variant: "outline" }), "min-h-[44px]")}
+                  >
+                    {t("dashboard:connectClient")}
+                  </Link>
+                </div>
+              }
             />
           ) : (
-            <KbList
-              lang={lang}
-              items={kbs.slice(0, 4)}
-              onOpen={(kbId) => navigate({ to: "/$lang/kbs/$kbId", params: { lang, kbId } })}
-            />
+            <KbList lang={lang} items={kbs.slice(0, 4)} onOpen={openKb} />
           )}
         </section>
+        <KbCreateDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={(kb) => {
+            if (createdKbDestination(kb) === "open") openKb(kb.id);
+            else toast.success(t("kb:create.createdNoRead"));
+          }}
+        />
       </PageShell>
     </PullToRefresh>
   );

@@ -62,6 +62,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | cliCredentials.selectDeviceIntent | human device approval |
 | documents.deleted | browser "Recently deleted" list (paths deleted from main in the last 30 days, or one path at any age, for restore) |
 | documents.history | browser document history view (one path's commits and their attribution) |
+| documents.move | browser document rename/move (a Git rename; the kb/1 change set has no move op) |
 | embeddingProviders.create | human provider credentials |
 | embeddingProviders.listMine | human provider credentials |
 | embeddingProviders.listSystem | human provider credentials |
@@ -90,7 +91,11 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbModel.status | instance administration |
 | kbs.shareAccept | human sharing |
 | kbs.shareInvite | human sharing |
+| kbs.shareInviteCancel | human sharing |
+| kbs.shareInvitePreview | human sharing |
+| kbs.shareInviteResend | human sharing |
 | kbs.shareList | human sharing |
+| kbs.sharePendingList | human sharing |
 | kbs.shareRevoke | human sharing |
 | kbs.shareSetSealedValues | human sharing |
 | kbs.shareUpdate | human sharing |

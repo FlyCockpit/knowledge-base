@@ -265,7 +265,12 @@ export async function listDocumentsAtRevision(
     limit: number;
     afterPath?: string | null;
   } & GitReadOptions,
-): Promise<{ items: DocumentListItem[]; nextAfter: string | null }> {
+): Promise<{
+  items: DocumentListItem[];
+  nextAfter: string | null;
+  /** Browser-only display titles by path (`documentListTitle`); not part of kb/1 output. */
+  titles: ReadonlyMap<string, string | null>;
+}> {
   const options = gitReadOptions(input);
   const repoPath = kbBareRepoPath(input.reposDir, input.kbId);
   if (!(await isCommitReachable(repoPath, input.commitSha, options))) {
@@ -305,13 +310,19 @@ export async function listDocumentsAtRevision(
   } catch {
     assertGitReadActive(options);
   }
+  const titles = new Map<string, string | null>();
   for (const row of listed) {
     let documentId: string | null = null;
+    let title: string | null = null;
     const bytes = bodies.get(row.blobSha);
     if (bytes) {
       const parsed = parseMarkdownDocument(bytes);
-      if ("documentId" in parsed) documentId = parsed.documentId;
+      if ("documentId" in parsed) {
+        documentId = parsed.documentId;
+        title = documentListTitle(parsed.frontMatter, parsed.body);
+      }
     }
+    titles.set(row.path, title);
     items.push({
       path: row.path,
       documentId,
@@ -321,7 +332,67 @@ export async function listDocumentsAtRevision(
     });
   }
   const nextAfter = page.length > input.limit ? (items[items.length - 1]?.path ?? null) : null;
-  return { items, nextAfter };
+  return { items, nextAfter, titles };
+}
+
+/** Longest list title, in Unicode scalars. */
+export const DOCUMENT_LIST_TITLE_MAX = 200;
+
+/**
+ * A document's display title for the browser list: a non-empty front-matter
+ * `title` string, else the body's first ATX level-1 heading (`# Title`, at
+ * most three leading spaces, closing `#`s dropped), trimmed and cut to
+ * `DOCUMENT_LIST_TITLE_MAX`. Null when neither exists. Fenced code is
+ * skipped, so a `# comment` in a shell block is never a title.
+ */
+export function documentListTitle(
+  frontMatter: Record<string, unknown>,
+  body: string,
+): string | null {
+  const bound = (text: string): string | null => {
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (!trimmed) return null;
+    const chars = Array.from(trimmed);
+    return chars.length <= DOCUMENT_LIST_TITLE_MAX
+      ? trimmed
+      : `${chars.slice(0, DOCUMENT_LIST_TITLE_MAX - 1).join("")}…`;
+  };
+  if (typeof frontMatter.title === "string") {
+    const title = bound(frontMatter.title);
+    if (title) return title;
+  }
+  let fence: string | null = null;
+  for (const line of body.split("\n")) {
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (open && open[1]![0] === fence[0] && open[1]!.length >= fence.length) fence = null;
+      continue;
+    }
+    if (open) {
+      fence = open[1]!;
+      continue;
+    }
+    const text = atxHeadingText(line);
+    if (text !== null) {
+      const title = bound(text);
+      if (title) return title;
+    }
+  }
+  return null;
+}
+
+/** The text of a level-1 ATX heading line, else null. Linear: no backtracking regex. */
+function atxHeadingText(line: string): string | null {
+  const start = /^ {0,3}#(?:[ \t]|\r?$)/.exec(line);
+  if (!start) return null;
+  let text = line.slice(start[0].length).trim();
+  // An optional closing sequence: trailing `#`s alone, or after a space.
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end--;
+  if (end === 0) text = "";
+  else if (end < text.length && (text[end - 1] === " " || text[end - 1] === "\t"))
+    text = text.slice(0, end).trim();
+  return text;
 }
 
 export async function readDocumentAtRevision(
@@ -628,18 +699,13 @@ function decodeMarkdownDestination(raw: string): string {
   );
 }
 
-function addAssetDestination(
-  referenced: Set<string>,
-  documentDir: readonly string[],
-  raw: string,
-): void {
+/** The KB path one link destination names from `documentDir`, if any. */
+function assetPathOfDestination(documentDir: readonly string[], raw: string): string | null {
   const trimmed = raw.trim();
-  if (!trimmed || isExternalDestination(trimmed)) return;
+  if (!trimmed || isExternalDestination(trimmed)) return null;
   const destination = decodeMarkdownDestination(trimmed);
-  if (isExternalDestination(destination)) return;
-  for (const candidate of assetCandidatesFromDestination(documentDir, destination)) {
-    referenced.add(candidate);
-  }
+  if (isExternalDestination(destination)) return null;
+  return assetCandidatesFromDestination(documentDir, destination)[0] ?? null;
 }
 
 /**
@@ -893,9 +959,41 @@ export function resolveMarkdownAssetReferences(
   markdown: string,
   documentPath: string,
 ): Set<string> {
-  const text = stripMarkdownCode(markdown);
   const documentDir = documentPath.split("/").slice(0, -1);
   const referenced = new Set<string>();
+  forEachLinkDestination(markdown, (raw) => {
+    const path = assetPathOfDestination(documentDir, raw);
+    if (path) referenced.add(path);
+  });
+  return referenced;
+}
+
+/**
+ * Whether moving a document from `from` to `to` changes where one of its
+ * links that reaches an asset today (`exists`) points. Each link is compared
+ * on its own: another link reaching the same asset by a root-relative path
+ * does not save a relative one that breaks.
+ */
+export function moveChangesAssetLinks(
+  markdown: string,
+  from: string,
+  to: string,
+  exists: (path: string) => boolean,
+): boolean {
+  const fromDir = from.split("/").slice(0, -1);
+  const toDir = to.split("/").slice(0, -1);
+  let changes = false;
+  forEachLinkDestination(markdown, (raw) => {
+    if (changes) return;
+    const before = assetPathOfDestination(fromDir, raw);
+    if (before && exists(before) && assetPathOfDestination(toDir, raw) !== before) changes = true;
+  });
+  return changes;
+}
+
+/** Every link destination of the Markdown (inline and used reference definitions), in order. */
+function forEachLinkDestination(markdown: string, visit: (raw: string) => void): void {
+  const text = stripMarkdownCode(markdown);
   const definitions = new Map<string, string>();
   const pendingReferences = new Set<string>();
 
@@ -907,9 +1005,7 @@ export function resolveMarkdownAssetReferences(
     if (next === "(") {
       const parsed = parseParenthesizedDestination(text, after);
       claimedUntil = Math.max(claimedUntil, parsed.claimEnd);
-      if (parsed.destination !== null) {
-        addAssetDestination(referenced, documentDir, parsed.destination);
-      }
+      if (parsed.destination !== null) visit(parsed.destination);
       continue;
     }
     if (next === "[") {
@@ -939,9 +1035,8 @@ export function resolveMarkdownAssetReferences(
   // a long destination's entity/path normalization work.
   for (const key of pendingReferences) {
     const destination = definitions.get(key);
-    if (destination) addAssetDestination(referenced, documentDir, destination);
+    if (destination) visit(destination);
   }
-  return referenced;
 }
 
 /** Literal source occurrence: no case folding, Markdown decoding or delimiter stripping. */

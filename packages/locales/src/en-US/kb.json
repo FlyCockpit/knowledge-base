@@ -60,6 +60,8 @@
     "newDocument": "New document",
     "documentsEmpty": "No documents yet.",
     "documentsLoadFailed": "Couldn't load documents.",
+    "folderCount_one": "{{count}} document",
+    "folderCount_other": "{{count}} documents",
     "pullRequests": "Pull requests",
     "settings": "Settings",
     "sectionsLabel": "Knowledge base sections",
@@ -150,6 +152,28 @@
     "discardTitle": "Discard your changes?",
     "discardDescription": "The draft goes back to the last saved version. Your changes are lost.",
     "oldRevisionRestore": "Viewing revision {{sha}}. Restore it to make it the latest version, or open the latest version to edit."
+  },
+  "move": {
+    "action": "Rename or move",
+    "title": "Rename or move document",
+    "description": "Give {{path}} a new name or folder.",
+    "pathLabel": "New path",
+    "hint": "Moves the document with its history in Git, as one rename commit.",
+    "hintProposal": "Moves the document with its history in Git, as one rename commit in your pull request. Main stays unchanged until a reviewer merges it.",
+    "submit": "Move document",
+    "moved": "Moved to {{path}}",
+    "stale": "This document changed after you opened it (now revision {{sha}}). Its latest version is what moves. Select Move document again to continue.",
+    "error": {
+      "empty": "Enter a path.",
+      "invalid": "Use a relative path with folders separated by /, e.g. notes/meeting.md. Empty, . and .. folders aren't allowed.",
+      "reserved": "This path is reserved for the knowledge base.",
+      "notMarkdown": "The path must end in .md.",
+      "same": "The document is already at this path.",
+      "exists": "A document already exists at this path. Choose another path.",
+      "caseCollision": "Another document's path differs from this one only in upper and lower case.",
+      "relativeLinks": "This document links images relative to its folder, so they would break in another folder. Rename it in the same folder, or first change those links to start with /.",
+      "sourceGone": "This document is no longer at its path. Reload the page to see the latest version."
+    }
   },
   "outcome": {
     "appliedTitle": "Saved to main",
@@ -430,7 +454,10 @@
       "permissionsRequired": "Choose at least one permission.",
       "invite": "Send invitation",
       "inviting": "Sending…",
-      "inviteResult": "Invitation recorded. An invitation email is on its way to this address; its owner accepts it with the link, signing up first if needed. This page never reveals whether the address has an account.",
+      "inviteResult": "Invitation recorded. An invitation email is on its way to this address; its owner accepts it with the link. This page never reveals whether the address has an account.",
+      "inviteSignupOpen": "If they don't have an account yet, the email lets them create one with this address.",
+      "inviteSignupClosed": "This server is invite-only: someone without an account here needs an administrator to invite them to the server first.",
+      "permissionsImplied": "Write also grants Read and Propose; Manage grants everything.",
       "inviteLink": "Acceptance link (you can also share it yourself)",
       "copyLink": "Copy link",
       "inviteAnother": "Invite someone else",
@@ -440,8 +467,7 @@
       "revoke": "Revoke",
       "transfer": "Transfer ownership",
       "revokeTitle": "Revoke access?",
-      "revokeDescription": "{{name}} loses access to this knowledge base.",
-      "revokePrompt": "Type REVOKE to confirm",
+      "revokeDescription": "{{name}} loses access to this knowledge base right away. You can invite them again later.",
       "revokeAction": "Revoke access",
       "revoked": "Access revoked.",
       "pending": "Working…",
@@ -457,7 +483,7 @@
       "edit": "Edit permissions",
       "editFor": "Edit permissions for {{name}}",
       "editTitle": "Edit permissions for {{name}}",
-      "editDescription": "Changes apply to this member's next request, including their tokens and connected apps. Write also grants Read and Propose; Manage grants everything.",
+      "editDescription": "Changes apply to this member's next request, including their tokens and connected apps.",
       "editSave": "Save permissions",
       "you": "(you)",
       "revokeFor": "Revoke {{name}}",
@@ -465,7 +491,30 @@
       "includeSealedValuesFor": "Include sealed values for {{name}}",
       "selfDemoteTitle": "Remove your own Manage permission?",
       "selfDemoteDescription": "You lose the Members and Mirror settings right away and can't give Manage back to yourself. Only the owner can restore it.",
-      "selfDemoteConfirm": "Remove my Manage"
+      "selfDemoteConfirm": "Remove my Manage",
+      "moreActions": "More actions for {{name}}",
+      "listTitle": "People with access",
+      "pendingInvites": {
+        "title": "Pending invitations",
+        "description": "Invitations nobody has accepted yet. You can send one again or cancel it.",
+        "empty": "No pending invitations.",
+        "listFailed": "Couldn't load pending invitations.",
+        "sentBy": "Invitation sent by {{name}}",
+        "sentOn": "Sent {{date}}",
+        "sentOnBy": "Sent {{date}} by {{name}}",
+        "sentOnByYou": "Sent {{date}} by you",
+        "resend": "Resend",
+        "resendFor": "Resend invitation: {{label}}",
+        "resending": "Sending…",
+        "resent": "Invitation email sent again.",
+        "senderGone": "The person who sent this invitation can't manage this knowledge base anymore, so it can't be accepted. Cancel it and send a new one.",
+        "cancel": "Cancel invitation",
+        "cancelFor": "Cancel invitation: {{label}}",
+        "cancelTitle": "Cancel this invitation?",
+        "cancelDescription": "Its link stops working right away. You can invite the same address again later.",
+        "cancelAction": "Cancel invitation",
+        "keep": "Keep invitation"
+      }
     },
     "accept": {
       "shareTitle": "Accept invitation",
@@ -478,7 +527,12 @@
       "transferDone": "You are now the owner.",
       "accepting": "Accepting…",
       "shareGone": "This invitation was already used or replaced. Ask for a new invitation if you still need access.",
-      "transferGone": "This ownership transfer was already accepted, cancelled or replaced."
+      "transferGone": "This ownership transfer was already accepted, cancelled or replaced.",
+      "shareHeading": "{{inviter}} invited you to {{kb}}",
+      "sharePermissions": "You'll be able to",
+      "shareGoneHint": "Also check that you're signed in with the email address the invitation was sent to.",
+      "previewFailed": "Couldn't load this invitation.",
+      "openKbs": "Go to your knowledge bases"
     },
     "profile": {
       "title": "Embedding profile",
@@ -910,6 +964,7 @@
     }
   },
   "history": {
+    "formerPath": "Then at {{path}}",
     "title": "History",
     "empty": "No history on main yet.",
     "loadFailed": "Couldn't load the history.",

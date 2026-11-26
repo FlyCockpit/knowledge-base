@@ -48,7 +48,9 @@ person in the web app (`human`), an agent's direct edit (`agent`) or a dream
 (`dream`). Dreams may consolidate what dreams and agents wrote but never touch
 what a person wrote. The web app shows the label, each document's history (who
 or which credential wrote each version) and the writer of each file in PR
-review. See [write modes and provenance](./mcp.md#write-modes-and-provenance).
+review. Renaming or moving a document in the web app is one Git rename commit
+(or proposal update) with the bytes unchanged, so its label stays. See
+[write modes and provenance](./mcp.md#write-modes-and-provenance).
 
 Nothing written to main is lost from the web app's view. Any earlier version
 of a document can be restored, after a line diff against the current one, as a

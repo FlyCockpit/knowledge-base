@@ -1,11 +1,19 @@
 import enKb from "@knowledge-base/locales/src/en-US/kb.json";
 import esKb from "@knowledge-base/locales/src/es-MX/kb.json";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { actorLine, ProvenanceBadge, visibleHistoryRows } from "@/components/kb/document-history";
+import {
+  actorLine,
+  DocumentHistory,
+  ProvenanceBadge,
+  visibleHistoryRows,
+} from "@/components/kb/document-history";
+import { renderWithTestRouter } from "@/lib/router-test-utils";
+import { orpc } from "@/utils/orpc";
 
 describe("provenance badge and history actors", () => {
   const i18n = createInstance();
@@ -80,5 +88,59 @@ describe("history rows after a denial", () => {
     expect(visibleHistoryRows(pages, false)).toEqual([1, 2, 3]);
     expect(visibleHistoryRows(pages, true)).toEqual([]);
     expect(visibleHistoryRows(undefined, false)).toEqual([]);
+  });
+});
+
+describe("history across a rename", () => {
+  const i18n = createInstance();
+  beforeAll(async () => {
+    await i18n.init({
+      lng: "en-US",
+      fallbackLng: "en-US",
+      ns: ["kb"],
+      defaultNS: "kb",
+      resources: { "en-US": { kb: enKb } },
+      interpolation: { escapeValue: false },
+      react: { useSuspense: false },
+    });
+  });
+
+  it("opens each revision at the path the document had then, and says so", () => {
+    const kbId = "k".repeat(24);
+    const row = (sha: string, path: string) => ({
+      sha: sha.repeat(40),
+      path,
+      committedAt: "2026-11-20T10:00:00.000Z",
+      subject: `Commit ${sha}`,
+      provenance: "human" as const,
+      deleted: false,
+      actor: { kind: "unattributed" as const, name: null, via: null },
+    });
+    const client = new QueryClient();
+    client.setQueryData(
+      orpc.documents.history.infiniteKey({
+        input: (cursor: string | undefined) => ({ kbId, path: "archive/b.md", limit: 20, cursor }),
+        initialPageParam: undefined,
+      }),
+      {
+        pages: [{ items: [row("1", "archive/b.md"), row("2", "notes/a.md")], nextCursor: null }],
+        pageParams: [undefined],
+      },
+    );
+    const html = renderWithTestRouter(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <DocumentHistory lang="en-US" kbId={kbId} path="archive/b.md" />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    // The test router JSON-encodes search values (`%22…%22`).
+    expect(html).toContain(`path=archive%2Fb.md&amp;rev=%22${"1".repeat(40)}%22`);
+    expect(html).toContain(`path=notes%2Fa.md&amp;rev=%22${"2".repeat(40)}%22`);
+    // A row from before the rename restores to the document's name now.
+    expect(html).toMatch(/path=notes%2Fa\.md&amp;rev=%222{40}%22&amp;restoreTo=archive%2Fb\.md"/);
+    expect(html.match(/restoreTo=/g)).toHaveLength(1);
+    expect(html.match(/data-testid="history-former-path"/g)).toHaveLength(1);
+    expect(html).toContain("Then at notes/a.md");
   });
 });

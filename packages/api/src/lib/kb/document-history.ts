@@ -9,7 +9,7 @@ import {
   parseMarkdownDocument,
   readDocumentProvenance,
 } from "./parse-markdown";
-import { isMarkdownPath, normalizeKbPath } from "./paths";
+import { isMarkdownPath, KB_PATH_LIMITS, normalizeKbPath } from "./paths";
 
 /**
  * Browser-only display of who wrote a document and how: the path-limited
@@ -54,6 +54,11 @@ export type HistoryActor = {
 
 export type DocumentHistoryRow = {
   sha: string;
+  /**
+   * Where the document lived at this commit. History follows renames, so
+   * rows older than a move carry the earlier path (open them there).
+   */
+  path: string;
   /** ISO time, or null when the commit's own timestamp is outside the representable range. */
   committedAt: string | null;
   subject: string;
@@ -261,6 +266,69 @@ function decodeHistoryCursor(cursor: string): { head: string; offset: number } {
 }
 
 /**
+ * Most bytes one followed-log row can take: `\0<40-hex sha> <time>\0`, then
+ * `\n<status>\0` and, for a rename or copy, two paths of at most
+ * `KB_PATH_LIMITS.maxBytes` bytes, each NUL-terminated.
+ */
+export const FOLLOWED_LOG_ROW_MAX_BYTES =
+  1 + 40 + 1 + 20 + 1 + 1 + 8 + 1 + 2 * (KB_PATH_LIMITS.maxBytes + 1);
+
+/** The output buffer for a followed log of `rows` rows (at least git's default). */
+export function followedLogMaxBytes(rows: number): number {
+  return Math.max(8 * 1024 * 1024, rows * FOLLOWED_LOG_ROW_MAX_BYTES);
+}
+
+/**
+ * `git log --follow --name-status -z --format=%x00%H %ct` output: per commit
+ * `\0<sha> <time>\0` then, when the commit touched the followed file,
+ * `\n<status>\0<path>\0` (`R…`/`C…`: `<old>\0<new>\0`). Newest first, so a
+ * rename row's new name is where the document lived at that commit and its
+ * old name is the path of every older row. A row without a status (a merge
+ * that kept the file as its first parent had it) keeps the current name.
+ */
+export function parseFollowedLog(
+  stdout: string,
+  path: string,
+): { sha: string; committedAt: string | null; path: string }[] {
+  const tokens = stdout.split("\0");
+  const rows: { sha: string; committedAt: string | null; path: string }[] = [];
+  let current = path;
+  let i = 0;
+  while (i < tokens.length) {
+    const header = tokens[i++] ?? "";
+    if (header === "" || header === "\n") continue;
+    const [sha, time] = header.split(" ");
+    if (!sha || !SHA1.test(sha) || !/^\d+$/.test(time ?? "")) throw new Error("invalid log line");
+    // A pushed commit's timestamp is the pusher's: one outside JavaScript's
+    // date range is shown as unknown rather than failing the page.
+    const at = new Date(Number(time) * 1000);
+    let rowPath = current;
+    const status = (tokens[i] ?? "").replace(/^\n/, "");
+    if (/^[ACDMRTUX]\d*$/.test(status) && status !== "") {
+      i += 1;
+      if (status.startsWith("R") || status.startsWith("C")) {
+        const from = tokens[i++] ?? "";
+        const to = tokens[i++] ?? "";
+        if (!from || !to) throw new Error("invalid log line");
+        rowPath = to;
+        current = from;
+      } else {
+        const named = tokens[i++] ?? "";
+        if (!named) throw new Error("invalid log line");
+        rowPath = named;
+        current = named;
+      }
+    }
+    rows.push({
+      sha,
+      committedAt: Number.isNaN(at.getTime()) ? null : at.toISOString(),
+      path: rowPath,
+    });
+  }
+  return rows;
+}
+
+/**
  * One page of the path's history on main, newest first. The first page pins
  * main's head; its cursor (opaque, `DOCUMENT_HISTORY_CURSOR`) carries that
  * head and the rows already returned, and every later page reruns the same
@@ -304,37 +372,37 @@ export async function readDocumentHistory(
       "--literal-pathspecs",
       "log",
       "--topo-order",
-      "--format=%H %ct",
-      `--skip=${offset}`,
-      `--max-count=${take}`,
+      // Across renames (a web move keeps the bytes, so it is always found),
+      // with each commit's path: NUL-separated, never quoted.
+      "--follow",
+      "--name-status",
+      "--diff-merges=first-parent",
+      "-z",
+      "--format=%x00%H %ct",
+      // No --skip: git applies it before following renames. Reading from the
+      // pinned head every time (bounded by DOCUMENT_HISTORY_MAX_OFFSET) also
+      // keeps each row's tracked path right on later pages.
+      `--max-count=${offset + take}`,
       head,
       "--",
       path,
     ],
-    options,
+    // Every row up to this page is read: size the buffer for that many
+    // worst-case rows rather than the default (deep pages of renames).
+    { ...options, maxBuffer: followedLogMaxBytes(offset + take) },
   );
-  const commits = String(stdout)
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [sha, time] = line.split(" ");
-      if (!sha || !SHA1.test(sha) || !/^\d+$/.test(time ?? "")) throw new Error("invalid log line");
-      // A pushed commit's timestamp is the pusher's: one outside JavaScript's
-      // date range is shown as unknown rather than failing the page.
-      const at = new Date(Number(time) * 1000);
-      return { sha, committedAt: Number.isNaN(at.getTime()) ? null : at.toISOString() };
-    });
+  const commits = parseFollowedLog(String(stdout), path).slice(offset);
   const page = commits.slice(0, limit);
   const messages = await readCommitMessagesAsync(
     input.repoPath,
     page.map((commit) => commit.sha),
     options,
   );
-  const markdown = isMarkdownPath(path);
-  const blobs = markdown
+  const markdownRows = page.filter((commit) => isMarkdownPath(commit.path));
+  const blobs = markdownRows.length
     ? await batchCheckBlobs(
         input.repoPath,
-        page.map((commit) => `${commit.sha}:${path}`),
+        markdownRows.map((commit) => `${commit.sha}:${commit.path}`),
         options,
       )
     : new Map<string, { sha: string; size: number }>();
@@ -348,11 +416,12 @@ export async function readDocumentHistory(
     : new Map<string, ActorIdentity>();
   const items = page.map((commit): DocumentHistoryRow => {
     const message = messages.get(commit.sha) ?? "";
-    const blob = blobs.get(`${commit.sha}:${path}`);
+    const blob = blobs.get(`${commit.sha}:${commit.path}`);
     // Without a blob here the path was deleted by this commit (Markdown only).
-    const deleted = markdown && !blob;
+    const deleted = isMarkdownPath(commit.path) && !blob;
     return {
       sha: commit.sha,
+      path: commit.path,
       committedAt: commit.committedAt,
       subject: commitSubjectLine(message),
       provenance: blob ? (provenance.get(blob.sha) ?? null) : null,

@@ -44,6 +44,8 @@ export const kbEmailDesiredSchema = z.discriminatedUnion("template", [
     requestId: z.uuid(),
     origin,
     locale: z.enum(SUPPORTED_LOCALES),
+    // Server sign-up mode when queued (absent on older jobs: sign-up shown, as before).
+    signupOpen: z.boolean().optional(),
   }),
   z.strictObject({
     template: z.literal("transfer_offer"),
@@ -79,8 +81,10 @@ export async function enqueueKbEmailOnQuery(
 
 /**
  * Acceptance link on the KB settings page (the same links the web UI shows as
- * a copyable fallback). Share invitations also get a sign-up link that returns
- * to the acceptance page, so an address without an account can accept.
+ * a copyable fallback). While the server's sign-up is open, share invitations
+ * also get a sign-up link that returns to the acceptance page, so an address
+ * without an account can accept; an invite-only server gets none (the email
+ * says so instead). Either way the message is the same for every address.
  */
 export function kbEmailLinks(
   desired: KbEmailDesired,
@@ -92,7 +96,10 @@ export function kbEmailLinks(
     const path = `/${lang}/kbs/${encodeURIComponent(desired.kbId)}/settings?accept=${encodeURIComponent(desired.requestId)}`;
     return {
       acceptUrl: `${base}${path}`,
-      signupUrl: `${base}/${lang}/signup?redirectTo=${encodeURIComponent(path)}`,
+      signupUrl:
+        desired.signupOpen === false
+          ? null
+          : `${base}/${lang}/signup?redirectTo=${encodeURIComponent(path)}`,
     };
   }
   const lang = encodeURIComponent(
@@ -159,7 +166,7 @@ async function resolveMessage(
       inviterName: invite.inviter.name,
       kbName: kb.name,
       acceptUrl: links.acceptUrl,
-      signupUrl: links.signupUrl!,
+      signupUrl: links.signupUrl,
       locale: desired.locale,
     });
     return { message: { to, subject, html } };

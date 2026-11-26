@@ -9,7 +9,7 @@ import {
 } from "./asset-authz";
 import type { BlobStore } from "./blob-store";
 import { publishCasBytes } from "./cas";
-import { boundedTitle, type Change, createChangesPublication } from "./changes";
+import { boundedTitle, createChangesPublication, type EditChange } from "./changes";
 import { cursorExpiry, stableFilterHash } from "./cursor";
 import { authorizeDocumentRead, resolvePinnedRevision } from "./documents-read";
 import { KbDomainError } from "./errors";
@@ -50,16 +50,16 @@ export async function prepareAssetChanges(
     /** The publication's cancellation and deadline. */
     gitOptions?: GitReadOptions;
   },
-  changes: Change[],
+  changes: EditChange[],
   imported?: AssetManifestEntry & { sourceKbId: string; sourceRev: string },
 ) {
   const delta: AssetDelta = { uploads: [], lineages: [] };
   const assetEntries = new Map<string, AssetManifestEntry>();
-  const resolved: Change[] = [];
+  const resolved: EditChange[] = [];
   let markdownBytes = 0;
   let casBytes = 0n;
   for (const change of changes) {
-    if (change.op === "assetRemove" || change.op === "delete") {
+    if (change.op === "assetRemove" || change.op === "delete" || change.op === "move") {
       resolved.push(change);
       continue;
     }

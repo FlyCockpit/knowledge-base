@@ -1098,6 +1098,28 @@ export async function createKbBrowserFixture(options: {
     };
     // Install the same nonce/Origin gate before the provider handler.
     const deviceApp = new Hono();
+    // The app's own Better Auth client asks who is signed in. A real Better
+    // Auth cookie goes to the provider as before; a fixture cookie answers
+    // with its fixture user, exactly as `/rpc` resolves it, so components that
+    // read the signed-in viewer see the same person the procedures do.
+    deviceApp.get("/api/auth/get-session", async (c, next) => {
+      if (await mcpAuth.api.getSession({ headers: c.req.raw.headers })) return next();
+      const auth = await session(c.req.raw.headers);
+      const user = auth ? await prisma.user.findUnique({ where: { id: auth.user.id } }) : null;
+      if (!user) return next();
+      const now = new Date();
+      return c.json({
+        user,
+        session: {
+          id: `fixture-${user.id}`,
+          userId: user.id,
+          token: "fixture",
+          expiresAt: new Date(now.getTime() + 60 * 60_000),
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    });
     deviceApp.all(
       "*",
       async (c) =>

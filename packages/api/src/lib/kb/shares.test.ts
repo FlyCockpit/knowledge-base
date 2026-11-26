@@ -4,10 +4,13 @@ vi.mock("@knowledge-base/env/server", () => ({
   env: { KB_MASTER_KEY: Buffer.from("a".repeat(32)).toString("base64") },
 }));
 
+const loadIdentity = vi.hoisted(() => vi.fn());
+
 vi.mock("./permissions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./permissions")>();
   return {
     ...actual,
+    prismaAuthorityStore: () => ({ loadIdentity, loadKb: vi.fn(), loadShare: vi.fn() }),
     authorize: vi.fn(async () => ({
       kbId: "kb1",
       ownerId: "owner",
@@ -23,7 +26,14 @@ import { expandBits } from "./permissions";
 import { KbAdmissionError } from "./principal";
 import { assertKbShareCapacityForNewActiveShare } from "./quota";
 import type { KbRuntimeConfig } from "./runtime";
-import { shareInvite, shareList } from "./shares";
+import {
+  shareInvite,
+  shareInviteCancel,
+  shareInvitePreview,
+  shareInviteResend,
+  shareList,
+  sharePendingList,
+} from "./shares";
 
 const MASTER_KEY = Buffer.from("a".repeat(32)).toString("base64");
 
@@ -461,5 +471,441 @@ describe("assertKbShareCapacityForNewActiveShare", () => {
     await expect(
       assertKbShareCapacityForNewActiveShare(query as never, "kb1", "member"),
     ).resolves.toBeUndefined();
+  });
+});
+
+function runWith(query: ReturnType<typeof makeFakeQuery>) {
+  coordinator.run.mockImplementationOnce(async (opts) => {
+    await opts.barrier?.reauthorize?.({ query });
+    await opts.barrier?.reservePublication?.({ query });
+    return opts.run();
+  });
+}
+
+const sqlOf = (query: ReturnType<typeof makeFakeQuery>) =>
+  query.mock.calls.map(([sql]) => String(sql));
+
+function paramsOf(query: ReturnType<typeof makeFakeQuery>, needle: string): unknown[] | undefined {
+  const call = query.mock.calls.find(([sql]) => String(sql).includes(needle)) as
+    | [string, unknown[]]
+    | undefined;
+  return call?.[1];
+}
+
+describe("shareInvite sign-up mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authorizeMock.mockReset();
+    authorizeMock.mockResolvedValue({
+      kbId: "kb1",
+      ownerId: "owner",
+      state: "ACTIVE",
+      bits: ["manage"],
+      principal: { kind: "browser", userId: "owner" },
+    });
+  });
+
+  it("records the server's sign-up mode in the queued email, identically for every address", async () => {
+    const payloads: unknown[] = [];
+    for (const email of ["known@example.com", "unknown@example.com"]) {
+      let receiptRow: Record<string, unknown> | null = null;
+      const query = makeFakeQuery([
+        [
+          'INSERT INTO "operation_intent"',
+          () => {
+            receiptRow = {
+              requestHash: inviteHash({ kbId: "kb1", email, permissions: ["read"] }),
+              phase: "FINALIZED",
+              responseBody: { accepted: true, requestId: "x" },
+            };
+            return { rows: [] };
+          },
+        ],
+        ['FROM "operation_intent"', () => ({ rows: receiptRow ? [receiptRow] : [] })],
+      ]);
+      runWith(query);
+      await shareInvite(
+        runtime,
+        "owner",
+        {
+          kbId: "kb1",
+          email,
+          permissions: ["read"],
+          idempotencyKey: "same-key",
+          signupOpen: false,
+        },
+        MASTER_KEY,
+      );
+      const desired = JSON.parse(String(paramsOf(query, 'INSERT INTO "durable_job"')?.[3]));
+      payloads.push({ ...desired, requestId: "<id>" });
+    }
+    expect(payloads[0]).toMatchObject({ template: "share_invite", signupOpen: false });
+    expect(payloads[1]).toEqual(payloads[0]);
+  });
+});
+
+describe("sharePendingList", () => {
+  const ownerAuth = (ownerId: string, userId: string) => ({
+    kbId: "kb1",
+    ownerId,
+    state: "ACTIVE" as const,
+    bits: ["manage" as const],
+    principal: { kind: "browser" as const, userId },
+  });
+  const row = (id: string, inviterUserId: string, createdAt: string) => ({
+    id,
+    createdAt: new Date(createdAt),
+    canonicalEmail: `${id}@example.com`,
+    inviterUserId,
+    requestId: `req-${id}`,
+    bits: ["write"],
+    inviter: { name: `Name of ${inviterUserId}` },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authorizeMock.mockReset();
+    prisma.shareInvitation.findMany.mockResolvedValue([
+      row("inv2", "manager", "2026-02-02T00:00:00Z"),
+      row("inv1", "other-manager", "2026-02-01T00:00:00Z"),
+    ]);
+  });
+
+  it("lists only pending rows, newest first, bounded by the page size", async () => {
+    authorizeMock.mockResolvedValue(ownerAuth("owner", "owner"));
+    await sharePendingList(runtime, "owner", { kbId: "kb1", limit: 500 });
+    const args = prisma.shareInvitation.findMany.mock.calls.at(-1)?.[0];
+    expect(args).toMatchObject({
+      where: { kbId: "kb1", acceptedAt: null, revokedAt: null },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 51,
+    });
+    // The projection never carries the address ciphertext.
+    expect(args.select.emailCiphertext).toBeUndefined();
+  });
+
+  it("shows the address and link to the live owner and to the sender only", async () => {
+    authorizeMock.mockResolvedValue(ownerAuth("owner", "owner"));
+    const asOwner = await sharePendingList(runtime, "owner", { kbId: "kb1" });
+    expect(asOwner.items.map((item) => [item.email, item.requestId, item.invitedByYou])).toEqual([
+      ["inv2@example.com", "req-inv2", false],
+      ["inv1@example.com", "req-inv1", false],
+    ]);
+    expect(asOwner.items[0]).toMatchObject({
+      invitationId: "inv2",
+      inviterName: "Name of manager",
+      bits: expandBits(["write"]),
+      sentAt: "2026-02-02T00:00:00.000Z",
+    });
+
+    authorizeMock.mockResolvedValue(ownerAuth("owner", "manager"));
+    const asManager = await sharePendingList(runtime, "manager", { kbId: "kb1" });
+    expect(asManager.items.map((item) => [item.email, item.requestId, item.invitedByYou])).toEqual([
+      ["inv2@example.com", "req-inv2", true],
+      [null, null, false],
+    ]);
+    // Other managers still see who sent it.
+    expect(asManager.items[1]?.inviterName).toBe("Name of other-manager");
+  });
+
+  it("decides owner visibility from the final live authorization", async () => {
+    authorizeMock
+      .mockResolvedValueOnce(ownerAuth("former-owner", "former-owner"))
+      .mockResolvedValueOnce(ownerAuth("new-owner", "former-owner"));
+    const result = await sharePendingList(runtime, "former-owner", { kbId: "kb1" });
+    expect(authorizeMock).toHaveBeenCalledTimes(2);
+    expect(result.items.every((item) => item.email === null && item.requestId === null)).toBe(true);
+  });
+
+  it("refuses when manage is lost while the page is in flight", async () => {
+    authorizeMock
+      .mockResolvedValueOnce(ownerAuth("owner", "owner"))
+      .mockRejectedValueOnce(new KbAdmissionError("FORBIDDEN", "revoked mid-read"));
+    await expect(sharePendingList(runtime, "owner", { kbId: "kb1" })).rejects.toMatchObject({
+      name: "KbAdmissionError",
+    });
+  });
+
+  it("refuses a caller without manage before reading", async () => {
+    authorizeMock.mockRejectedValueOnce(new KbAdmissionError("FORBIDDEN", "no manage"));
+    await expect(sharePendingList(runtime, "reader", { kbId: "kb1" })).rejects.toMatchObject({
+      name: "KbAdmissionError",
+    });
+    expect(prisma.shareInvitation.findMany).not.toHaveBeenCalled();
+  });
+
+  it("pages with a keyset cursor", async () => {
+    authorizeMock.mockResolvedValue(ownerAuth("owner", "owner"));
+    const first = await sharePendingList(runtime, "owner", { kbId: "kb1", limit: 1 });
+    expect(first.items).toHaveLength(1);
+    expect(first.nextCursor).toBe("2026-02-02T00:00:00.000Z\0inv2");
+    await sharePendingList(runtime, "owner", { kbId: "kb1", limit: 1, cursor: first.nextCursor });
+    expect(prisma.shareInvitation.findMany.mock.calls.at(-1)?.[0].where.OR).toEqual([
+      { createdAt: { lt: new Date("2026-02-02T00:00:00Z") } },
+      { createdAt: new Date("2026-02-02T00:00:00Z"), id: { lt: "inv2" } },
+    ]);
+  });
+});
+
+describe("shareInviteCancel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authorizeMock.mockReset();
+    authorizeMock.mockResolvedValue(undefined as never);
+  });
+
+  it("cancels this KB's pending invitation and audits it", async () => {
+    const query = makeFakeQuery([
+      [
+        'FROM "share_invitation"',
+        () => ({ rows: [{ id: "inv1", requestId: "req-1", inviterUserId: "owner" }] }),
+      ],
+    ]);
+    runWith(query);
+    await expect(
+      shareInviteCancel(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).resolves.toEqual({ cancelled: true });
+    const lock = sqlOf(query).find((sql) => sql.includes('FROM "share_invitation"'));
+    expect(lock).toContain('"acceptedAt" IS NULL AND "revokedAt" IS NULL');
+    // The listed send pins the generation: a re-invite (new createdAt) is not this row.
+    expect(lock).toContain('"createdAt" = $3::timestamptz');
+    expect(paramsOf(query, 'FROM "share_invitation"')).toEqual([
+      "inv1",
+      "kb1",
+      "2026-11-20T10:00:00.000Z",
+    ]);
+    expect(sqlOf(query).some((sql) => sql.includes('SET "revokedAt" = now()'))).toBe(true);
+    expect(paramsOf(query, 'INSERT INTO "audit_event"')).toContain("share_invite_cancel");
+    expect(ratePort.consume).toHaveBeenCalled();
+    // Manage is checked under the authority barrier.
+    expect(authorizeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kbId: "kb1", operation: "manage" }),
+    );
+  });
+
+  it("answers NOT_FOUND for an accepted, cancelled or foreign invitation, writing nothing", async () => {
+    const query = makeFakeQuery([['FROM "share_invitation"', () => ({ rows: [] })]]);
+    runWith(query);
+    await expect(
+      shareInviteCancel(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "inv-other",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(sqlOf(query).some((sql) => sql.includes('UPDATE "share_invitation"'))).toBe(false);
+    expect(sqlOf(query).some((sql) => sql.includes("audit_event"))).toBe(false);
+  });
+
+  it("answers NOT_FOUND for an unreadable sentAt without querying the row", async () => {
+    const query = makeFakeQuery([]);
+    runWith(query);
+    await expect(
+      shareInviteCancel(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "not a date",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(sqlOf(query).some((sql) => sql.includes('FROM "share_invitation"'))).toBe(false);
+  });
+
+  it("refuses a caller without manage", async () => {
+    authorizeMock.mockRejectedValueOnce(new KbAdmissionError("FORBIDDEN", "no manage"));
+    const query = makeFakeQuery([]);
+    runWith(query);
+    await expect(
+      shareInviteCancel(runtime, "reader", {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ name: "KbAdmissionError" });
+    expect(sqlOf(query).some((sql) => sql.includes("share_invitation"))).toBe(false);
+  });
+});
+
+describe("shareInviteResend", () => {
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  const pendingRow = () => ({ rows: [{ id: "inv1", requestId, inviterUserId: "owner" }] });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authorizeMock.mockReset();
+    authorizeMock.mockResolvedValue(undefined as never);
+  });
+
+  it("queues the email again for the same request id, without touching the invitation", async () => {
+    const query = makeFakeQuery([['FROM "share_invitation"', pendingRow]]);
+    runWith(query);
+    await expect(
+      shareInviteResend(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "r1",
+        locale: "es-MX",
+        signupOpen: true,
+      }),
+    ).resolves.toEqual({ resent: true });
+    const params = paramsOf(query, 'INSERT INTO "durable_job"');
+    expect(JSON.parse(String(params?.[3]))).toEqual({
+      template: "share_invite",
+      kbId: "kb1",
+      requestId,
+      origin: "https://kb.example.com",
+      locale: "es-MX",
+      signupOpen: true,
+    });
+    expect(String(params?.[1])).toContain(requestId);
+    expect(sqlOf(query).some((sql) => sql.includes('UPDATE "share_invitation"'))).toBe(false);
+    expect(paramsOf(query, 'INSERT INTO "audit_event"')).toContain("share_invite_resend");
+    expect(ratePort.consume).toHaveBeenCalled();
+  });
+
+  it("answers NOT_FOUND for a non-pending invitation and queues nothing", async () => {
+    const query = makeFakeQuery([['FROM "share_invitation"', () => ({ rows: [] })]]);
+    runWith(query);
+    await expect(
+      shareInviteResend(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "gone",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "r2",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(sqlOf(query).some((sql) => sql.includes("durable_job"))).toBe(false);
+  });
+
+  it("refuses with CONFLICT while the original sender can no longer manage", async () => {
+    authorizeMock
+      .mockResolvedValueOnce(undefined as never) // the caller, under the barrier
+      .mockRejectedValueOnce(new KbAdmissionError("FORBIDDEN", "sender lost manage"));
+    const query = makeFakeQuery([['FROM "share_invitation"', pendingRow]]);
+    runWith(query);
+    await expect(
+      shareInviteResend(runtime, "manager", {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "r3",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(sqlOf(query).some((sql) => sql.includes("durable_job"))).toBe(false);
+  });
+});
+
+describe("shareInvitePreview", () => {
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  const invite = {
+    id: "inv1",
+    kbId: "kb1",
+    canonicalEmail: "ana@example.com",
+    inviterUserId: "owner",
+    bits: ["write"],
+    inviter: { name: "Ana" },
+    knowledgeBase: { name: "Team notes" },
+  };
+  const live = { banned: false, twoFactorSatisfied: true, instanceEnabled: true };
+  const arrangeValid = () => {
+    authorizeMock.mockReset();
+    authorizeMock.mockResolvedValue(undefined as never);
+    loadIdentity.mockResolvedValue(live);
+    prisma.user.findUnique.mockResolvedValue({ email: "Ana@Example.com" });
+    prisma.shareInvitation.findFirst.mockResolvedValue(invite);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    arrangeValid();
+  });
+
+  it("names the KB, the sender and the permissions for the invited account", async () => {
+    await expect(shareInvitePreview(runtime, "ana", { requestId })).resolves.toEqual({
+      kbId: "kb1",
+      kbName: "Team notes",
+      inviterName: "Ana",
+      bits: expandBits(["write"]),
+    });
+    expect(prisma.shareInvitation.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { requestId, acceptedAt: null, revokedAt: null } }),
+    );
+    // The sender's live manage is what keeps the invitation acceptable.
+    expect(authorizeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: { kind: "browser", userId: "owner" },
+        kbId: "kb1",
+        operation: "manage",
+      }),
+    );
+  });
+
+  it("answers the same NOT_FOUND for every other case, so the id is no oracle", async () => {
+    const cases: Array<() => void> = [
+      // Unknown, accepted, cancelled or replaced request id.
+      () => prisma.shareInvitation.findFirst.mockResolvedValue(null),
+      // Someone else's address.
+      () => prisma.user.findUnique.mockResolvedValue({ email: "mallory@example.com" }),
+      () => prisma.user.findUnique.mockResolvedValue(null),
+      // A banned or not-admissible identity.
+      () => loadIdentity.mockResolvedValue({ ...live, banned: true }),
+      () => loadIdentity.mockResolvedValue(null),
+      // The sender lost manage, or the KB is gone.
+      () => authorizeMock.mockRejectedValue(new KbAdmissionError("NOT_FOUND", "gone")),
+      () => authorizeMock.mockRejectedValue(new KbAdmissionError("FORBIDDEN", "no manage")),
+    ];
+    const answers: unknown[] = [];
+    for (const arrange of cases) {
+      arrangeValid();
+      arrange();
+      const error = await shareInvitePreview(runtime, "caller", { requestId }).catch(
+        (caught: unknown) => caught,
+      );
+      const { name, code, message } = error as { name: string; code: string; message: string };
+      answers.push({ name, code, message });
+    }
+    expect(answers[0]).toEqual({ name: "KbDomainError", code: "NOT_FOUND", message: "Not found" });
+    for (const answer of answers) expect(answer).toEqual(answers[0]);
+  });
+
+  it("re-checks the recipient and the invitation after the reads (mid-read changes disclose nothing)", async () => {
+    const midRead: Array<() => void> = [
+      // Banned while the invitation was being read.
+      () =>
+        loadIdentity.mockResolvedValueOnce(live).mockResolvedValueOnce({ ...live, banned: true }),
+      // Changed their email address meanwhile.
+      () =>
+        prisma.user.findUnique
+          .mockResolvedValueOnce({ email: "Ana@Example.com" })
+          .mockResolvedValueOnce({ email: "other@example.com" }),
+      // Cancelled (or accepted) meanwhile.
+      () =>
+        prisma.shareInvitation.findFirst.mockResolvedValueOnce(invite).mockResolvedValueOnce(null),
+      // Replaced by a fresh invitation row under the same request id lookup.
+      () =>
+        prisma.shareInvitation.findFirst
+          .mockResolvedValueOnce(invite)
+          .mockResolvedValueOnce({ ...invite, id: "inv2" }),
+    ];
+    for (const arrange of midRead) {
+      arrangeValid();
+      arrange();
+      await expect(shareInvitePreview(runtime, "ana", { requestId })).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        message: "Not found",
+      });
+    }
+    // Unchanged: both reads agree and the preview is answered.
+    vi.clearAllMocks();
+    arrangeValid();
+    await expect(shareInvitePreview(runtime, "ana", { requestId })).resolves.toMatchObject({
+      kbName: "Team notes",
+    });
+    expect(loadIdentity).toHaveBeenCalledTimes(2);
+    expect(prisma.shareInvitation.findFirst).toHaveBeenCalledTimes(2);
   });
 });

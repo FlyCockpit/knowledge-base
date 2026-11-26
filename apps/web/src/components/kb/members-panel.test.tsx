@@ -17,7 +17,9 @@ import {
   memberLabel,
   refreshAfterAcceptance,
   refreshAfterMemberEdit,
+  settingsKbQuery,
   shareableUrl,
+  signupModeOf,
   transferAcceptHref,
 } from "@/components/kb/members-panel";
 
@@ -61,6 +63,26 @@ describe("neutral share invitation feedback", () => {
     expect(html).toContain(enKb.settings.members.inviteLink);
     expect(html).toContain(`/en-US/kbs/${KB}/settings?accept=11111111-1111-4111-8111-111111111111`);
     expect(enKb.settings.members.transferRequested).toMatch(/email/i);
+  });
+
+  it("never tells outsiders to sign up; what it says follows the server's sign-up mode only", () => {
+    const href = inviteAcceptHref("en-US", KB, "11111111-1111-4111-8111-111111111111");
+    expect(enKb.settings.members.inviteResult).not.toMatch(/sign(ing)? up/i);
+    const html = (s: string) => s.replaceAll("'", "&#x27;");
+    const open = wrap(<InviteResult href={href} signupMode="open" />);
+    expect(open).toContain(html(enKb.settings.members.inviteSignupOpen));
+    expect(open).not.toContain(enKb.settings.members.inviteSignupClosed);
+    const closed = wrap(<InviteResult href={href} signupMode="invite-only" />);
+    expect(closed).toContain(enKb.settings.members.inviteSignupClosed);
+    expect(closed).not.toContain(html(enKb.settings.members.inviteSignupOpen));
+    expect(enKb.settings.members.inviteSignupClosed).toMatch(/invite-only/);
+    // Unknown mode (config still loading): no claim either way.
+    const unknown = wrap(<InviteResult href={href} />);
+    expect(unknown).not.toContain('data-testid="invite-signup-mode"');
+    // Server-wide, so it cannot tell one address from another.
+    expect(signupModeOf({ signupEnabled: true })).toBe("open");
+    expect(signupModeOf({ signupEnabled: false })).toBe("invite-only");
+    expect(signupModeOf(undefined)).toBeUndefined();
   });
 
   it("builds acceptance links on the KB settings page", () => {
@@ -118,7 +140,7 @@ describe("member controls", () => {
       />,
     );
     expect(manager).toContain('data-testid="member-revoke"');
-    expect(manager).not.toContain('data-testid="member-transfer"');
+    expect(manager).not.toContain('data-testid="member-more"');
   });
 
   it("lists accepted members by display name, with edit and revoke for managers and transfer for the owner", () => {
@@ -147,7 +169,9 @@ describe("member controls", () => {
     expect(managed).toContain('aria-label="Edit permissions for Ada Lovelace"');
     // Repeated row actions name their member.
     expect(managed).toContain('aria-label="Revoke Ada Lovelace"');
-    expect(managed).toContain('aria-label="Transfer ownership to Ada Lovelace"');
+    // Transfer ownership sits in the owner's overflow menu, not among the row buttons.
+    expect(managed).toContain('aria-label="More actions for Ada Lovelace"');
+    expect(managed).not.toContain('aria-label="Transfer ownership to Ada Lovelace"');
     expect(managed).not.toContain("(you)");
     // The caller's own row is marked.
     expect(
@@ -165,7 +189,7 @@ describe("member controls", () => {
     // People, not raw ids.
     expect(managed).not.toContain("User user-one");
     expect(managed).toContain('data-testid="member-revoke"');
-    expect(managed).toContain('data-testid="member-transfer"');
+    expect(managed).toContain('data-testid="member-more"');
     const readOnly = wrap(
       <MemberRowsView
         members={members}
@@ -176,7 +200,7 @@ describe("member controls", () => {
     );
     expect(readOnly).not.toContain('data-testid="member-revoke"');
     expect(readOnly).not.toContain('data-testid="member-edit"');
-    expect(readOnly).not.toContain('data-testid="member-transfer"');
+    expect(readOnly).not.toContain('data-testid="member-more"');
   });
 });
 
@@ -337,6 +361,14 @@ describe("KB settings tabs", () => {
     ]);
     // A reader sees the index status only.
     expect(kbSettingsTabs({ capabilities: ["read", "write"], isOwner: false })).toEqual(["search"]);
+  });
+});
+
+describe("settings opened from a share invitation", () => {
+  it("does not read the KB before the invitation is accepted", () => {
+    expect(settingsKbQuery(KB, "11111111-1111-4111-8111-111111111111").enabled).toBe(false);
+    // Members (and a transfer recipient) read it as before.
+    expect(settingsKbQuery(KB, undefined).enabled).toBe(true);
   });
 });
 

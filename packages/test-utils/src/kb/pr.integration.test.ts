@@ -15,6 +15,7 @@ import {
   type ChangesApplyRequest,
   changesPublicationForDocument,
   createChangesPublication,
+  DOCUMENT_MOVE_OPERATION,
   DOCUMENT_UPDATE_OPERATION,
 } from "@knowledge-base/api/lib/kb/changes";
 import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
@@ -1531,6 +1532,100 @@ async function webUpdate(
     run: (ctx) => publication.publish(ctx.lease, executor),
   })) as ApplyResult;
 }
+
+/** What `documents.move` runs: the browser's own rename/move. */
+async function webMove(
+  userId: string,
+  kbId: string,
+  baseRevision: string,
+  path: string,
+  toPath: string,
+) {
+  const request = {
+    operation: DOCUMENT_MOVE_OPERATION,
+    path,
+    toPath,
+    idempotencyKey: randomUUID(),
+  } as const;
+  const publication = changesPublicationForDocument({
+    store,
+    principal: { kind: "browser", userId },
+    reposDir,
+    kbId,
+    idempotencyKey: request.idempotencyKey,
+    baseRevision,
+    request,
+    ratePort: createMemoryRatePort(),
+  });
+  return (await coordinator.run({
+    opId: randomUUID(),
+    kind: "git-write",
+    kbIds: [kbId],
+    barrier: publication.barrier,
+    run: (ctx) => publication.publish(ctx.lease, executor),
+  })) as ApplyResult;
+}
+
+describe("a browser move is one rename commit that keeps the document's bytes", () => {
+  prFixtureTest(
+    "a writer's move lands on main; a propose-only person's move opens their PR",
+    async (f) => {
+      const agent = await tokenOf(f.owner, f.id, ["read", "write"]);
+      const written = await applyAs(agent, f.id, {
+        ...edit(f.base, "notes/run.md", "# Run\n"),
+        changes: [
+          { op: "create", path: "notes/run.md", content: { markdown: "# Run\n" } },
+          { op: "create", path: "notes/other.md", content: { markdown: "# Other\n" } },
+        ],
+      });
+      return { written };
+    },
+    async (f, { written }) => {
+      const show = (rev: string, path: string) => runGit(f.repo, ["show", `${rev}:${path}`]);
+      const paths = (rev: string) => runGit(f.repo, ["ls-tree", "-r", "--name-only", rev]);
+      const stored = show(written.commitSha, "notes/run.md");
+      expect(stored).toContain("provenance: agent");
+      // Propose-only: the move becomes the person's auto-PR, main is unchanged.
+      const proposed = await webMove(
+        f.author,
+        f.id,
+        written.commitSha,
+        "notes/run.md",
+        "archive/run.md",
+      );
+      expect(proposed).toMatchObject({
+        kind: "proposed",
+        changedPaths: ["notes/run.md", "archive/run.md"],
+      });
+      expect(proposed.proposal).toMatchObject({
+        number: 1,
+        title: "Move notes/run.md to archive/run.md",
+      });
+      expect(show(proposed.commitSha, "archive/run.md")).toBe(stored);
+      expect(paths(proposed.commitSha)).not.toContain("notes/run.md");
+      // A writer's rename is applied directly, the agent's label intact.
+      const renamed = await webMove(
+        f.owner,
+        f.id,
+        written.commitSha,
+        "notes/run.md",
+        "notes/runbook.md",
+      );
+      expect(renamed.kind).toBe("applied");
+      expect(show(renamed.commitSha, "notes/runbook.md")).toBe(stored);
+      expect(runGit(f.repo, ["log", "-1", "--format=%s", renamed.commitSha])).toContain(
+        "Rename notes/run.md to notes/runbook.md",
+      );
+      // A taken target is PATH_EXISTS; a gone source is PATH_NOT_FOUND.
+      await expect(
+        webMove(f.owner, f.id, renamed.commitSha, "notes/runbook.md", "notes/other.md"),
+      ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "PATH_EXISTS" } });
+      await expect(
+        webMove(f.owner, f.id, renamed.commitSha, "notes/run.md", "notes/x.md"),
+      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT", details: { reason: "PATH_NOT_FOUND" } });
+    },
+  );
+});
 
 describe("every actor path selects the person's proposal", () => {
   prFixtureTest(

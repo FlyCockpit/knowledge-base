@@ -14,12 +14,25 @@ vi.mock("@knowledge-base/db", async () => {
 // The router is the boundary that reads KB_MASTER_KEY and hands it to the library.
 vi.mock("@knowledge-base/env/server", () => ({
   env: { KB_MASTER_KEY: new Secret("router-master-key-fixture") },
+  SIGNUP_ENABLED: false,
 }));
+
+const previewBudget = vi.hoisted(() => vi.fn(async (_key: string) => {}));
+vi.mock("../lib/procedure-budget", () => ({ createProcedureBudget: () => previewBudget }));
 
 vi.mock("../lib/kb/shares", () => ({
   shareInvite: vi.fn(async () => ({ accepted: true, requestId: "req" })),
   shareAccept: vi.fn(),
   shareList: vi.fn(async () => ({ items: [], nextCursor: null })),
+  sharePendingList: vi.fn(async () => ({ items: [], nextCursor: null })),
+  shareInviteCancel: vi.fn(async () => ({ cancelled: true })),
+  shareInviteResend: vi.fn(async () => ({ resent: true })),
+  shareInvitePreview: vi.fn(async () => ({
+    kbId: "kb1",
+    kbName: "Team notes",
+    inviterName: "Ana",
+    bits: ["read"],
+  })),
   shareRevoke: vi.fn(),
   shareUpdate: vi.fn(async (_runtime, _actor, input) => ({
     shareUserId: input.shareUserId,
@@ -40,8 +53,17 @@ vi.mock("../lib/kb/transfer", () => ({
 import type { Session } from "@knowledge-base/auth";
 
 import type { Context } from "../context";
+import { KbDomainError } from "../lib/kb/errors";
 import { configureKbRuntime, resetKbRuntimeForTests } from "../lib/kb/runtime";
-import { shareInvite, shareSetSealedValues, shareUpdate } from "../lib/kb/shares";
+import {
+  shareInvite,
+  shareInviteCancel,
+  shareInvitePreview,
+  shareInviteResend,
+  sharePendingList,
+  shareSetSealedValues,
+  shareUpdate,
+} from "../lib/kb/shares";
 import { kbMembersProcedures } from "./kb-members";
 
 function sessionContext(): Context {
@@ -126,6 +148,8 @@ describe("kb-members router", () => {
       }),
     ).resolves.toEqual({ accepted: true, requestId: "req" });
     expect(vi.mocked(shareInvite).mock.calls.at(-1)?.[3]).toBe("router-master-key-fixture");
+    // The server's sign-up mode decides the email's sign-up section.
+    expect(vi.mocked(shareInvite).mock.calls.at(-1)?.[2]).toMatchObject({ signupOpen: false });
   });
 
   it("passes the inviter's UI locale for the email and rejects unsupported ones", async () => {
@@ -178,5 +202,138 @@ describe("kb-members router", () => {
       client.shareSetSealedValues({ kbId: "kb1", shareUserId: "u2", includeSealedValues: true }),
     ).resolves.toEqual({ shareUserId: "u2", includeSealedValues: true });
     expect(vi.mocked(shareSetSealedValues).mock.calls.at(-1)?.[1]).toBe("user-1");
+  });
+
+  it("pending invitations, cancel and resend require a session and hand the actor to the manage-gated services", async () => {
+    const anonymous = createRouterClient(kbMembersProcedures, {
+      context: () => ({ session: null }),
+    });
+    await expect(anonymous.sharePendingList({ kbId: "kb1" })).rejects.toBeInstanceOf(ORPCError);
+    await expect(
+      anonymous.shareInviteCancel({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).rejects.toBeInstanceOf(ORPCError);
+    await expect(
+      anonymous.shareInviteResend({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "k",
+      }),
+    ).rejects.toBeInstanceOf(ORPCError);
+    expect(sharePendingList).not.toHaveBeenCalled();
+
+    const client = createRouterClient(kbMembersProcedures, { context: sessionContext });
+    await expect(client.sharePendingList({ kbId: "kb1", limit: 51 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await client.sharePendingList({ kbId: "kb1", limit: 20, cursor: null });
+    expect(vi.mocked(sharePendingList).mock.calls.at(-1)?.[1]).toBe("user-1");
+    await expect(
+      client.shareInviteCancel({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).resolves.toEqual({
+      cancelled: true,
+    });
+    expect(vi.mocked(shareInviteCancel).mock.calls.at(-1)?.slice(1)).toEqual([
+      "user-1",
+      { kbId: "kb1", invitationId: "inv1", sentAt: "2026-11-20T10:00:00.000Z" },
+    ]);
+    await expect(
+      client.shareInviteResend({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "k1",
+        locale: "es-MX",
+      }),
+    ).resolves.toEqual({ resent: true });
+    expect(vi.mocked(shareInviteResend).mock.calls.at(-1)?.slice(1)).toEqual([
+      "user-1",
+      {
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "k1",
+        locale: "es-MX",
+        signupOpen: false,
+      },
+    ]);
+    await expect(
+      client.shareInviteResend({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+        idempotencyKey: "bad key",
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("requires the listed sentAt on cancel and resend", async () => {
+    const client = createRouterClient(kbMembersProcedures, { context: sessionContext });
+    await expect(
+      client.shareInviteCancel({ kbId: "kb1", invitationId: "inv1" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      client.shareInviteResend({
+        kbId: "kb1",
+        invitationId: "inv1",
+        idempotencyKey: "k2",
+      } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("maps a cancel of a non-pending invitation to NOT_FOUND", async () => {
+    vi.mocked(shareInviteCancel).mockRejectedValueOnce(new KbDomainError("NOT_FOUND", "Not found"));
+    const client = createRouterClient(kbMembersProcedures, { context: sessionContext });
+    await expect(
+      client.shareInviteCancel({
+        kbId: "kb1",
+        invitationId: "inv1",
+        sentAt: "2026-11-20T10:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("previews an invitation for the signed-in user under its own read budget", async () => {
+    const anonymous = createRouterClient(kbMembersProcedures, {
+      context: () => ({ session: null }),
+    });
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    await expect(anonymous.shareInvitePreview({ requestId })).rejects.toBeInstanceOf(ORPCError);
+    const client = createRouterClient(kbMembersProcedures, { context: sessionContext });
+    await expect(client.shareInvitePreview({ requestId: "not-a-uuid" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await expect(client.shareInvitePreview({ requestId })).resolves.toEqual({
+      kbId: "kb1",
+      kbName: "Team notes",
+      inviterName: "Ana",
+      bits: ["read"],
+    });
+    expect(previewBudget).toHaveBeenLastCalledWith("user-1");
+    expect(vi.mocked(shareInvitePreview).mock.calls.at(-1)?.slice(1)).toEqual([
+      "user-1",
+      { requestId },
+    ]);
+    vi.mocked(shareInvitePreview).mockRejectedValueOnce(
+      new KbDomainError("NOT_FOUND", "Not found"),
+    );
+    await expect(client.shareInvitePreview({ requestId })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    // Over budget: refused before the lookup runs.
+    const calls = vi.mocked(shareInvitePreview).mock.calls.length;
+    previewBudget.mockRejectedValueOnce(new ORPCError("TOO_MANY_REQUESTS"));
+    await expect(client.shareInvitePreview({ requestId })).rejects.toMatchObject({
+      code: "TOO_MANY_REQUESTS",
+    });
+    expect(vi.mocked(shareInvitePreview).mock.calls.length).toBe(calls);
   });
 });

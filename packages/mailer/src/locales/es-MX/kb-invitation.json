@@ -5,7 +5,8 @@
     "body": "{{inviter}} te invitó a la base de conocimiento \"{{kb}}\". Abre el enlace de abajo e inicia sesión con esta dirección de correo para aceptar.",
     "cta": "Aceptar invitación",
     "signupHint": "¿Eres nuevo? Primero crea una cuenta con esta dirección de correo; después volverás a la invitación.",
-    "signupCta": "Crear una cuenta"
+    "signupCta": "Crear una cuenta",
+    "inviteOnlyHint": "Este servidor funciona solo por invitación. Si todavía no tienes una cuenta aquí, pide primero al administrador del servidor que te invite y luego vuelve a abrir este enlace."
   },
   "transferOffer": {
     "subject": "Te ofrecieron la propiedad de una base de conocimiento",
@@ -13,7 +14,8 @@
     "body": "{{inviter}} ofreció transferirte la propiedad de la base de conocimiento \"{{kb}}\". Abre el enlace de abajo para revisarla y aceptarla.",
     "cta": "Revisar oferta",
     "signupHint": "",
-    "signupCta": ""
+    "signupCta": "",
+    "inviteOnlyHint": ""
   },
   "fallbackLabel": "Si el botón no funciona, copia este enlace en tu navegador:",
   "ignoreFooter": "Si no esperabas este correo, puedes ignorarlo de forma segura."

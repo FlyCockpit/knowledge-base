@@ -20,9 +20,10 @@ import { isKbNamespacePath, isMarkdownPath, normalizeKbPath } from "./paths";
  * own page asks with `path`, which has no time window).
  *
  * The list comes from main's Git history: the commits on main's
- * first-parent line in the window (by commit time) that deleted a file,
- * newest first, at most `DELETED_SCAN_MAX_COMMITS` of them; `capped` says
- * that bound, or the row bound, cut the window short. A merge (a pull request landing, or one
+ * first-parent line that deleted or (exactly) renamed a file, newest first,
+ * at most `DELETED_SCAN_MAX_COMMITS` of them; deletions in the window (by
+ * commit time) are listed unless renamed away later; `capped` says that
+ * bound or the row bound was reached, so the window may be incomplete. A merge (a pull request landing, or one
  * moved onto newer main) counts by what it changed against its first parent.
  * A path appears once, at its latest deletion; one main has again is not
  * deleted. Paths are checked against the head in chunks and the rows (not
@@ -49,7 +50,7 @@ const DELETED_ROWS_MAX = 2000;
 const DELETED_CHECK_MAX = 50_000;
 const DELETED_CHECK_CHUNK = 2000;
 const DELETED_PAGE_MAX = 50;
-/** Name-only output of the scanned commits (paths are at most 512 bytes each). */
+/** Name-status output of the scanned commits (paths are at most 512 bytes each). */
 const DELETED_SCAN_MAX_BYTES = 32 * 1024 * 1024;
 
 export type DeletedDocumentRow = {
@@ -63,7 +64,48 @@ export type DeletedDocumentRow = {
   actor: HistoryActor;
 };
 
-type Deletion = Omit<DeletedDocumentRow, "actor">;
+type Deletion = Omit<DeletedDocumentRow, "actor"> & {
+  /** The path was renamed away here (an exact move), not deleted. */
+  moved?: true;
+};
+
+/**
+ * Whether the commit that removed `row.path` moved it: the same bytes added
+ * under another name in that commit (an exact rename, what a web move makes).
+ */
+async function movedAway(
+  repoPath: string,
+  row: Pick<Deletion, "path" | "deletedSha" | "revision">,
+  options: GitReadOptions,
+): Promise<boolean> {
+  const { stdout } = await runGitAsync(
+    repoPath,
+    [
+      "diff-tree",
+      "-r",
+      "-z",
+      "--find-renames=100%",
+      "--diff-filter=R",
+      "--name-status",
+      row.revision,
+      row.deletedSha,
+    ],
+    options,
+  );
+  // `R100\0<old>\0<new>\0` per rename.
+  const parts = String(stdout).split("\0");
+  for (let i = 0; i + 2 < parts.length; i += 3) if (parts[i + 1] === row.path) return true;
+  return false;
+}
+
+/**
+ * Whether the list may be incomplete: the scan reached its commit bound or
+ * the row bound. Conservative on purpose: commit times on main need not be in
+ * order, so no timestamp seen proves the window was exhausted.
+ */
+export function deletedScanCapped(scannedCommits: number, rows: number): boolean {
+  return scannedCommits >= DELETED_SCAN_MAX_COMMITS || rows >= DELETED_ROWS_MAX;
+}
 
 /**
  * One deleting commit per `\x1e<sha> <parents> <time>\0` header, its
@@ -74,7 +116,15 @@ type Deletion = Omit<DeletedDocumentRow, "actor">;
 export function parseDeletionLog(stdout: string): Deletion[] {
   const out: Deletion[] = [];
   let current: { sha: string; parent: string; deletedAt: string | null } | null = null;
-  for (const raw of stdout.split("\0")) {
+  const tokens = stdout.split("\0");
+  const keep = (name: string) => {
+    const normalized = normalizeKbPath(name);
+    return (
+      normalized.ok && normalized.path === name && isMarkdownPath(name) && !isKbNamespacePath(name)
+    );
+  };
+  for (let i = 0; i < tokens.length; i += 1) {
+    const raw = tokens[i]!;
     if (raw.startsWith("\x1e")) {
       const match = /^([0-9a-f]{40})((?: [0-9a-f]{40})*) (\d+)$/.exec(raw.slice(1));
       if (!match) throw new Error("invalid deletion log header");
@@ -91,11 +141,27 @@ export function parseDeletionLog(stdout: string): Deletion[] {
           : null;
       continue;
     }
-    const name = raw.startsWith("\n") ? raw.slice(1) : raw;
-    if (!current || name.length === 0) continue;
-    const normalized = normalizeKbPath(name);
-    if (!normalized.ok || normalized.path !== name) continue;
-    if (!isMarkdownPath(name) || isKbNamespacePath(name)) continue;
+    // `--name-status -z`: `D\0<path>\0`, or `R<score>\0<old>\0<new>\0` for an
+    // exact rename (the list scan detects those).
+    const status = raw.startsWith("\n") ? raw.slice(1) : raw;
+    if (status.length === 0) continue;
+    if (status.startsWith("R")) {
+      const from = tokens[i + 1] ?? "";
+      i += 2;
+      if (current && from && keep(from))
+        out.push({
+          path: from,
+          deletedSha: current.sha,
+          revision: current.parent,
+          deletedAt: current.deletedAt,
+          moved: true,
+        });
+      continue;
+    }
+    if (status !== "D") continue;
+    const name = tokens[i + 1] ?? "";
+    i += 1;
+    if (!current || name.length === 0 || !keep(name)) continue;
     out.push({
       path: name,
       deletedSha: current.sha,
@@ -125,6 +191,8 @@ export async function selectDeleted(
   for (const deletion of deletions) {
     if (seen.has(deletion.path)) continue;
     seen.add(deletion.path);
+    // Renamed away after any earlier deletion: the document lives on.
+    if (deletion.moved) continue;
     latest.push(deletion);
     if (latest.length >= limits.checkMax) break;
   }
@@ -219,15 +287,19 @@ export async function readDeletedDocuments(
       "log",
       "--first-parent",
       "--diff-merges=first-parent",
-      "--no-renames",
-      "--diff-filter=D",
-      "--name-only",
+      // A web rename/move keeps the bytes: exact (100%) renames are not
+      // deletions. One path's scan is limited to that path, so git can't pair
+      // it with its new name there; `movedAway` checks that row instead.
+      ...(only === null
+        ? ["--find-renames=100%", "--diff-filter=DR"]
+        : ["--no-renames", "--diff-filter=D"]),
+      "--name-status",
       "-z",
       "--format=%x1e%H %P %ct",
       `--max-count=${DELETED_SCAN_MAX_COMMITS}`,
-      // A filter, not a walk limit: `--since` stops at the first older
-      // commit, and commit times on main need not be in order.
-      ...(since > 0 ? [`--since-as-filter=@${since}`] : []),
+      // No time filter in git: the window applies to deletions below, while a
+      // later rename-away counts whatever its commit time (times on main need
+      // not be in order), so it always hides the older deletion.
       head,
       "--",
       // Exactly this path: never a glob.
@@ -237,9 +309,16 @@ export async function readDeletedDocuments(
   );
   const log = String(stdout);
   const scanned = log.split("\x1e").length - 1;
-  // Exactly the window (and a header without a time is outside it).
-  const inWindow = parseDeletionLog(log).filter(
-    (row) => since === 0 || (row.deletedAt !== null && Date.parse(row.deletedAt) >= since * 1000),
+  // Each path's newest event first, at any commit time (times on main need
+  // not be in order); then the window, on that event only: a path whose
+  // newest event is a rename-away, or a deletion outside the window (a header
+  // without a time is outside it), is not listed.
+  const newest = new Map<string, Deletion>();
+  for (const row of parseDeletionLog(log)) if (!newest.has(row.path)) newest.set(row.path, row);
+  const inWindow = [...newest.values()].filter(
+    (row) =>
+      !row.moved &&
+      (since === 0 || (row.deletedAt !== null && Date.parse(row.deletedAt) >= since * 1000)),
   );
   // Newest deletion of each path; only paths the pinned head lacks.
   const rows = await selectDeleted(inWindow, async (paths) => {
@@ -250,6 +329,9 @@ export async function readDeletedDocuments(
     );
     return new Set(paths.filter((path) => found.has(`${head}:${path}`)));
   });
+  // One path whose newest "deletion" was a move to another name is not deleted.
+  if (only !== null && rows[0] && (await movedAway(input.repoPath, rows[0], options)))
+    rows.length = 0;
   const limit = Math.min(Math.max(input.limit, 1), DELETED_PAGE_MAX);
   // pageTake: one extra row says whether there is another page.
   const window = rows.slice(offset, offset + pageTake(limit));
@@ -275,6 +357,6 @@ export async function readDeletedDocuments(
     nextCursor:
       window.length > limit && next < DELETED_ROWS_MAX ? `v2.${head}.${since}.${next}` : null,
     windowDays: only === null ? RECENTLY_DELETED_DAYS : null,
-    capped: scanned >= DELETED_SCAN_MAX_COMMITS || rows.length >= DELETED_ROWS_MAX,
+    capped: deletedScanCapped(scanned, rows.length),
   };
 }

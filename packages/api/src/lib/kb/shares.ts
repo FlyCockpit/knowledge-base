@@ -158,6 +158,12 @@ type ShareInviteInput = {
   idempotencyKey: string;
   /** Inviter's UI locale for the invitation email. Not part of the request hash. */
   locale?: string;
+  /**
+   * Whether this server's public sign-up is open (the router reads
+   * SIGNUP_ENABLED). The email links to sign-up only when it is; otherwise it
+   * says the server is invite-only. Same for every address; not hashed.
+   */
+  signupOpen?: boolean;
 };
 
 /**
@@ -263,6 +269,7 @@ function shareInviteBarrier(options: {
         requestId,
         origin: options.origin,
         locale: options.locale,
+        ...(input.signupOpen === undefined ? {} : { signupOpen: input.signupOpen }),
       },
       input.idempotencyKey,
     );
@@ -792,6 +799,310 @@ export async function shareRevoke(
     run: async () => ({ revoked: true as const }),
   });
   return { revoked: true };
+}
+
+export type PendingInvitationItem = {
+  /** The invitation row id (never the acceptance request id). */
+  invitationId: string;
+  /** The invited address: only for the live owner and the invitation's sender. */
+  email: string | null;
+  /** The sender's display name. */
+  inviterName: string;
+  invitedByYou: boolean;
+  bits: Permission[];
+  sentAt: string;
+  /** Acceptance request id (the copyable link): same visibility as `email`. */
+  requestId: string | null;
+};
+
+/**
+ * Pending (neither accepted nor cancelled) invitations of one KB, newest
+ * first. Manage-gated like `shareList`, including the live re-authorization
+ * after the read. The address and the acceptance link follow the
+ * `visibleInvitedEmails` rule: the KB's live owner sees them on every row, a
+ * manager only on the rows they sent; other managers see who sent it.
+ */
+export async function sharePendingList(
+  runtime: KbRuntimeConfig,
+  userId: string,
+  input: { kbId: string; limit?: number; cursor?: string | null },
+): Promise<{ items: PendingInvitationItem[]; nextCursor: string | null }> {
+  const limit = Math.min(Math.max(input.limit ?? 20, 1), SHARE_LIST_PAGE);
+  const store = prismaAuthorityStore(runtime.prisma);
+  const principal = browserPrincipal(userId);
+  await authorize({ store, principal, kbId: input.kbId, operation: "manage" });
+  const before = parseShareListCursor(input.cursor ?? null);
+  const rows = await runtime.prisma.shareInvitation.findMany({
+    where: {
+      kbId: input.kbId,
+      acceptedAt: null,
+      revokedAt: null,
+      ...(before
+        ? {
+            OR: [
+              { createdAt: { lt: before.createdAt } },
+              { createdAt: before.createdAt, id: { lt: before.id } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    select: {
+      id: true,
+      createdAt: true,
+      canonicalEmail: true,
+      inviterUserId: true,
+      requestId: true,
+      bits: true,
+      inviter: { select: { name: true } },
+    },
+  });
+  const page = rows.slice(0, limit);
+  // Same as shareList: the final live answer decides both the disclosure
+  // itself (a revocation mid-read refuses) and who counts as the owner.
+  const live = await authorize({ store, principal, kbId: input.kbId, operation: "manage" });
+  const visible = visibleInvitedEmails(page, userId, live.ownerId === userId);
+  const next =
+    rows.length > limit ? shareListCursorKey(page.at(-1)!.createdAt, page.at(-1)!.id) : null;
+  return {
+    items: page.map((row) => {
+      const shown = visible.has(row.canonicalEmail);
+      return {
+        invitationId: row.id,
+        email: shown ? row.canonicalEmail : null,
+        inviterName: row.inviter.name,
+        invitedByYou: row.inviterUserId === userId,
+        bits: expandBits(row.bits),
+        sentAt: row.createdAt.toISOString(),
+        requestId: shown ? row.requestId : null,
+      };
+    }),
+    nextCursor: next,
+  };
+}
+
+/** Which pending invitation a manager acts on: the listed row and the send it showed. */
+type InvitationTarget = { kbId: string; invitationId: string; sentAt: string };
+
+/**
+ * Locks this KB's pending invitation row, as listed: NOT_FOUND for a row of
+ * another KB, an accepted or an already cancelled one, so the id alone
+ * reveals nothing. Inviting the address again reuses the row with a fresh
+ * `createdAt`, so `sentAt` (what the manager saw) pins the exact invitation:
+ * an old tab or a late retry never cancels or re-sends its replacement.
+ */
+async function lockPendingInvitationRow(
+  query: LockQuery,
+  target: InvitationTarget,
+): Promise<{ id: string; requestId: string; inviterUserId: string }> {
+  const sentAt = new Date(target.sentAt);
+  if (Number.isNaN(sentAt.getTime())) throw new KbDomainError("NOT_FOUND", "Not found");
+  const result = await query<{ id: string; requestId: string; inviterUserId: string }>(
+    `SELECT id, "requestId", "inviterUserId"
+       FROM "share_invitation"
+      WHERE id = $1 AND "kbId" = $2 AND "createdAt" = $3::timestamptz
+        AND "acceptedAt" IS NULL AND "revokedAt" IS NULL
+      FOR UPDATE`,
+    [target.invitationId, target.kbId, sentAt.toISOString()],
+  );
+  const row = result.rows[0];
+  if (!row) throw new KbDomainError("NOT_FOUND", "Not found");
+  return row;
+}
+
+function manageBarrier(actorUserId: string, kbId: string) {
+  return async (ctx: { query: LockQuery }) => {
+    await authorize({
+      store: sqlAuthorityStore(ctx.query),
+      principal: browserPrincipal(actorUserId),
+      kbId,
+      operation: "manage",
+      query: ctx.query,
+    });
+  };
+}
+
+/**
+ * Cancel a pending invitation (`manage`, like revoke). Its link then answers
+ * the "already used or replaced" state and a queued email is skipped as
+ * stale; inviting the address again starts a fresh invitation.
+ */
+export async function shareInviteCancel(
+  runtime: KbRuntimeConfig,
+  actorUserId: string,
+  input: InvitationTarget,
+): Promise<{ cancelled: true }> {
+  await runtime.coordinator.run({
+    opId: randomUUID(),
+    kind: "git-write",
+    kbIds: [input.kbId],
+    barrier: {
+      reauthorize: manageBarrier(actorUserId, input.kbId),
+      async reservePublication(ctx) {
+        await chargeKbMutation(runtime.ratePort, actorKeyForUser(actorUserId), input.kbId);
+        const row = await lockPendingInvitationRow(ctx.query, input);
+        await ctx.query(`UPDATE "share_invitation" SET "revokedAt" = now() WHERE id = $1`, [
+          row.id,
+        ]);
+        await recordAuditEvent(ctx.query, {
+          opId: randomUUID(),
+          action: "share_invite_cancel",
+          outcome: "SUCCESS",
+          actorKey: `user:${actorUserId}`,
+          actorUserIdSnapshot: actorUserId,
+          actorUserId,
+          kbId: input.kbId,
+          metadata: { requestId: row.requestId },
+        });
+      },
+    },
+    run: async () => ({ cancelled: true as const }),
+  });
+  return { cancelled: true };
+}
+
+/**
+ * Queue the invitation email again for the same request id (the link does
+ * not change). `manage` and the KB mutation budget, like an invite. The email
+ * still names, and is checked against, the original sender: if they can no
+ * longer manage this KB the invitation cannot be accepted, so this answers
+ * CONFLICT (cancel it and invite again) instead of queueing a dead email.
+ * The response is the same whatever the address.
+ */
+export async function shareInviteResend(
+  runtime: KbRuntimeConfig,
+  actorUserId: string,
+  input: InvitationTarget & {
+    idempotencyKey: string;
+    locale?: string;
+    signupOpen?: boolean;
+  },
+): Promise<{ resent: true }> {
+  const locale = isSupportedLocale(input.locale) ? input.locale : DEFAULT_LOCALE;
+  await runtime.coordinator.run({
+    opId: randomUUID(),
+    kind: "git-write",
+    kbIds: [input.kbId],
+    barrier: {
+      reauthorize: manageBarrier(actorUserId, input.kbId),
+      async reservePublication(ctx) {
+        await chargeKbMutation(runtime.ratePort, actorKeyForUser(actorUserId), input.kbId);
+        const row = await lockPendingInvitationRow(ctx.query, input);
+        if (!(await inviterStillManages(ctx.query, input.kbId, row.inviterUserId))) {
+          throw new KbDomainError("CONFLICT", "Invitation sender can no longer manage");
+        }
+        await enqueueKbEmailOnQuery(
+          ctx.query,
+          {
+            template: "share_invite",
+            kbId: input.kbId,
+            requestId: row.requestId,
+            origin: runtime.canonicalOrigin,
+            locale,
+            ...(input.signupOpen === undefined ? {} : { signupOpen: input.signupOpen }),
+          },
+          // A fresh key per resend; a retry of the same key dedups to one job.
+          `resend-${input.idempotencyKey}`,
+        );
+        await recordAuditEvent(ctx.query, {
+          opId: randomUUID(),
+          action: "share_invite_resend",
+          outcome: "SUCCESS",
+          actorKey: `user:${actorUserId}`,
+          actorUserIdSnapshot: actorUserId,
+          actorUserId,
+          kbId: input.kbId,
+          metadata: { requestId: row.requestId },
+        });
+      },
+    },
+    run: async () => ({ resent: true as const }),
+  });
+  return { resent: true };
+}
+
+export type ShareInvitePreview = {
+  kbId: string;
+  kbName: string;
+  inviterName: string;
+  bits: Permission[];
+};
+
+/**
+ * What the signed-in recipient is about to accept: the KB, who invited them
+ * and the permissions. Answered only for a pending invitation addressed to the
+ * caller's own (canonical) email, from a live identity, whose sender still
+ * manages the live KB. Every other case — unknown, accepted, cancelled or
+ * replaced request, someone else's address, a dead sender or KB — is the same
+ * NOT_FOUND, so the request id is no oracle for anything.
+ */
+export async function shareInvitePreview(
+  runtime: KbRuntimeConfig,
+  userId: string,
+  input: { requestId: string },
+): Promise<ShareInvitePreview> {
+  const gone = () => new KbDomainError("NOT_FOUND", "Not found");
+  const store = prismaAuthorityStore(runtime.prisma);
+  /** The caller's live identity and canonical email, or null when not live. */
+  const recipient = async (): Promise<string | null> => {
+    try {
+      assertLiveIdentity(await store.loadIdentity(userId));
+    } catch (error) {
+      if (error instanceof KbAdmissionError) return null;
+      throw error;
+    }
+    const user = await runtime.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    return (user?.email ? canonicalizeEmail(user.email) : null) ?? null;
+  };
+  const pending = () =>
+    runtime.prisma.shareInvitation.findFirst({
+      where: { requestId: input.requestId, acceptedAt: null, revokedAt: null },
+      select: {
+        id: true,
+        kbId: true,
+        canonicalEmail: true,
+        inviterUserId: true,
+        bits: true,
+        inviter: { select: { name: true } },
+        knowledgeBase: { select: { name: true } },
+      },
+    });
+  const canonical = await recipient();
+  if (!canonical) throw gone();
+  const invite = await pending();
+  if (!invite || canonical !== invite.canonicalEmail) throw gone();
+  try {
+    await authorize({
+      store,
+      principal: browserPrincipal(invite.inviterUserId),
+      kbId: invite.kbId,
+      operation: "manage",
+    });
+  } catch (error) {
+    if (error instanceof KbAdmissionError) throw gone();
+    throw error;
+  }
+  // Live re-check after the reads, like shareList: a ban, an email change, or
+  // a cancel/accept/re-invite that commits while the rows are in flight
+  // discloses nothing (the same NOT_FOUND).
+  const [canonicalAfter, inviteAfter] = await Promise.all([recipient(), pending()]);
+  if (
+    !canonicalAfter ||
+    !inviteAfter ||
+    inviteAfter.id !== invite.id ||
+    inviteAfter.canonicalEmail !== canonicalAfter
+  )
+    throw gone();
+  return {
+    kbId: invite.kbId,
+    kbName: invite.knowledgeBase.name,
+    inviterName: invite.inviter.name,
+    bits: expandBits(invite.bits),
+  };
 }
 
 /**

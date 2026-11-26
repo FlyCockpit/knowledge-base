@@ -15,14 +15,14 @@ import { useTranslation } from "react-i18next";
 import { Breadcrumbs, type Crumb } from "@/components/breadcrumbs";
 import { InlineRetry } from "@/components/inline-retry";
 import { DeletedDocuments } from "@/components/kb/deleted-documents";
-import { kbDocumentHref } from "@/components/kb/kb-links";
+import { KbDocumentList } from "@/components/kb/document-list";
+import { awaitsInvitationAccept } from "@/components/kb/kb-links";
 import {
   KbDeleteDialog,
   type KbItem,
   KbManageActions,
   KbMetadataSheet,
   kbAccessLabelKey,
-  routerClick,
 } from "@/components/kb/kb-list";
 import { FRESHNESS_TONE, SearchPanel } from "@/components/kb/search-results";
 import { LoadMore } from "@/components/load-more";
@@ -39,7 +39,9 @@ export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId")({
   // loaders, so priming `kbs.get` here names it on a cold load too. A KB the
   // viewer can't read resolves to nothing: the layout (or Settings, for an
   // invitation recipient) renders that state from its own query.
-  loader: async ({ context, params }) => {
+  loader: async ({ context, params, location }) => {
+    const search: { accept?: unknown } = location.search;
+    if (awaitsInvitationAccept(/\/settings\/?$/.test(location.pathname), search.accept)) return;
     await context.queryClient
       .ensureQueryData(orpc.kbs.get.queryOptions({ input: { kbId: params.kbId }, retry: false }))
       .catch(() => undefined);
@@ -71,10 +73,11 @@ function KbLayout() {
   const { lang, kbId } = Route.useParams();
   const { t } = useTranslation("kb");
   const matchRoute = useMatchRoute();
-  const search: { path?: string; mode?: string } = useSearch({ strict: false });
+  const search: { path?: string; mode?: string; accept?: string } = useSearch({ strict: false });
   // Settings owns its own KB loading: a recipient accepting an invitation
   // cannot read the KB yet, so the layout must not replace it with "unavailable".
   const onSettings = Boolean(matchRoute({ to: "/$lang/kbs/$kbId/settings" }));
+  const awaitingAccept = awaitsInvitationAccept(onSettings, search.accept);
   const onDocument = Boolean(matchRoute({ to: "/$lang/kbs/$kbId/documents" }));
   const onPrs = Boolean(matchRoute({ to: "/$lang/kbs/$kbId/prs", fuzzy: true }));
   const prMatch = matchRoute({ to: "/$lang/kbs/$kbId/prs/$number" });
@@ -83,7 +86,12 @@ function KbLayout() {
   const onHome = Boolean(matchRoute({ to: "/$lang/kbs/$kbId" }));
   const prNumber = prMatch ? prMatch.number : null;
   const { data, isPending, isError, error, refetch } = useQuery(
-    orpc.kbs.get.queryOptions({ input: { kbId }, retry: false, staleTime: 0 }),
+    orpc.kbs.get.queryOptions({
+      input: { kbId },
+      retry: false,
+      staleTime: 0,
+      enabled: !awaitingAccept,
+    }),
   );
   const lost = useKbAccessLoss(kbId, [error]);
   const kb = data?.kb;
@@ -336,30 +344,12 @@ function KbHome({ kb, lang }: { kb: KbItem; lang: string }) {
           empty={<p className="text-sm text-muted-foreground">{t("detail.documentsEmpty")}</p>}
         >
           {() => (
-            <ul className="divide-y overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
-              {items.map((doc) => {
-                const slash = doc.path.lastIndexOf("/");
-                return (
-                  <li key={doc.path}>
-                    <a
-                      href={kbDocumentHref(lang, kb.id, { path: doc.path })}
-                      onClick={routerClick(() => openDocument({ path: doc.path }))}
-                      className="flex min-h-[44px] items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    >
-                      <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="min-w-0 truncate font-mono text-sm">
-                        {slash >= 0 && (
-                          <span className="text-muted-foreground">
-                            {doc.path.slice(0, slash + 1)}
-                          </span>
-                        )}
-                        {doc.path.slice(slash + 1)}
-                      </span>
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
+            <KbDocumentList
+              lang={lang}
+              kbId={kb.id}
+              items={items}
+              onOpen={(path) => openDocument({ path })}
+            />
           )}
         </QueryBoundary>
         <LoadMore
