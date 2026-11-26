@@ -6,6 +6,7 @@ import { AppBrand } from "@/components/app-brand";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ModeToggle } from "@/components/mode-toggle";
 import NotFoundState from "@/components/not-found-state";
+import { OfflineBand } from "@/components/offline-band";
 import { PublicFooter } from "@/components/public-footer";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
@@ -30,7 +31,12 @@ export function PublicShell({ children }: { children: ReactNode }) {
         paddingRight: "var(--safe-area-right)",
       }}
     >
-      <PublicHeader />
+      {/* The top row: header, then the offline band, which takes its own
+          space above the scroller instead of covering the page. */}
+      <div>
+        <PublicHeader />
+        <OfflineBand />
+      </div>
       {/* No `scrollbar-gutter: stable`: a reserved gutter stops the footer's
           and every other full-bleed rule inside the scroller short of the
           viewport edge with classic scrollbars. */}

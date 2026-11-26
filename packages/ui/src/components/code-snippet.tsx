@@ -1,8 +1,9 @@
 import { Button } from "@knowledge-base/ui/components/button";
 import { useCopyToClipboard } from "@knowledge-base/ui/hooks/use-copy-to-clipboard";
+import { edgeAttributes, useScrollEdges } from "@knowledge-base/ui/hooks/use-scroll-edges";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { Check, Copy } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 
 type CodeSnippetProps = Omit<React.ComponentProps<"div">, "children"> & {
   /** The snippet — rendered in the `<pre>` and placed on the clipboard. */
@@ -19,14 +20,23 @@ type CodeSnippetProps = Omit<React.ComponentProps<"div">, "children"> & {
   onCopyError?: () => void;
   /** Extra classes for the inner `<pre>` (e.g. `max-h-72 overflow-y-auto`). */
   preClassName?: string;
+  /**
+   * Wrap long lines instead of scrolling them (logs, tool output). Leave off
+   * for commands and config, where a line break would change the meaning.
+   */
+  wrap?: boolean;
 };
 
 /**
- * Multi-line copyable block (JSON, config, env block) with a copy button
- * pinned top-right. The layout contract is baked in: `min-w-0 max-w-full`
- * wrapper + a `<pre>` that scrolls itself horizontally, so it is safe inside
- * `DialogContent` by default and never turns the page into a horizontal
- * scroller.
+ * Multi-line copyable block (JSON, config, env block) with a copy button in
+ * its own top-right gutter. The layout contract is baked in: a
+ * `min-w-0 max-w-full` box (border and fill; restyle it with `className`)
+ * holding a `<pre>` that scrolls itself horizontally and ends where the
+ * button's column begins, so scrolled text never sits under the button. A
+ * long line fades out at the edge that has more to scroll (`scroll-fade-x`).
+ * Safe inside `DialogContent` by default; never turns the page into a
+ * horizontal scroller. Code text is `font-mono text-xs leading-5`, the same as
+ * `CopyField` (docs/ui.md § Shared controls).
  */
 function CodeSnippet({
   code,
@@ -35,20 +45,26 @@ function CodeSnippet({
   onCopyError,
   className,
   preClassName,
+  wrap = false,
   ...props
 }: CodeSnippetProps) {
   const { copied, copy } = useCopyToClipboard();
+  const preRef = React.useRef<HTMLPreElement>(null);
+  const edges = useScrollEdges(preRef, code);
 
   return (
     <div
       data-slot="code-snippet"
-      className={cn("relative min-w-0 max-w-full", className)}
+      className={cn("flex min-w-0 max-w-full items-start rounded-md border bg-muted", className)}
       {...props}
     >
       <pre
+        ref={preRef}
         data-slot="code-snippet-pre"
+        {...edgeAttributes(edges)}
         className={cn(
-          "overflow-x-auto overscroll-x-contain rounded-md border bg-muted p-3 pr-12 font-mono text-xs",
+          "min-w-0 flex-1 overflow-x-auto overscroll-x-contain scroll-fade-x py-3 pl-3 font-mono text-xs leading-5",
+          wrap && "whitespace-pre-wrap [overflow-wrap:anywhere]",
           preClassName,
         )}
       >
@@ -58,7 +74,7 @@ function CodeSnippet({
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="absolute top-1 right-1 min-h-[44px] min-w-[44px] bg-muted/80 backdrop-blur-sm"
+        className="min-h-[44px] min-w-[44px] shrink-0"
         aria-label={copyLabel}
         disabled={!code}
         onClick={async () => {

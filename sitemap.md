@@ -10,9 +10,9 @@ Only indexable content pages belong in `apps/server/src/seo.ts` `PUBLIC_PATHS` f
 
 | Path | Description |
 |------|-------------|
-| `/{lang}/` | Landing page. All of its copy lives in the i18n bundles (`packages/locales/src/<lang>/common.json`, `home.*`) — edit it there, not in the component. The only entry in `PUBLIC_PATHS`. |
-| `/{lang}/login` | Sign in page with SSO, email/password, and 2FA support. Shows a "Sign Up" link to `/{lang}/signup` when `SIGNUP_ENABLED=true` |
-| `/{lang}/signup` | Create-account page (email/password). Gated on `SIGNUP_ENABLED`; redirects to `/{lang}/login` when signup is disabled or the visitor is already signed in |
+| `/{lang}/` | Landing page. All of its copy lives in the i18n bundles (`packages/locales/src/<lang>/common.json`, `home.*`) — edit it there, not in the component. The only entry in `PUBLIC_PATHS`. Its buttons follow the sign-up mode (Create account + Sign in; Sign in with the invite-only line and a "Setting up this server?" link; Sign in with the invite-only line), with a neutral Sign in until `appConfig` loads — docs/ui.md § Sign-up modes. |
+| `/{lang}/login` | Sign in page with SSO, email/password, and 2FA support. Under the form: a "Sign Up" link while sign-up is open, a "create the administrator account" link while the administrator account does not exist yet (bootstrap), or the invite-only note when sign-up is closed (docs/ui.md § Sign-up modes) |
+| `/{lang}/signup` | Create-account page (email/password); in bootstrap mode "Set up this server"; when sign-up is closed an invite-only card with a Sign In button. Redirects to `/{lang}/login` only under `FORCE_SSO` or when the visitor is already signed in |
 | `/{lang}/forgot-password` | Request a password-reset link (email/password). Always shows the same "check your email" success state (no account enumeration); deflects to `/{lang}/login` when `FORCE_SSO` or SMTP is unconfigured |
 | `/{lang}/reset-password` | Complete a password reset from the emailed link — reads `?token=`/`?error=` from Better-Auth's `/api/auth/reset-password/:token` redirect. Renders an invalid/expired state with a link back to `/{lang}/forgot-password`; on success toasts and redirects to `/{lang}/login` |
 | `/{lang}/mcp-login` | MCP OAuth provider login page. No UI of its own: a signed-in visitor continues to `/{lang}/mcp-consent`, anyone else goes to `/{lang}/login?redirectTo=<consent URL>`; the signed OAuth query is carried raw. Not in SEO discovery. |

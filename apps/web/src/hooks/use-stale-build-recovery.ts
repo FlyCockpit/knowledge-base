@@ -1,7 +1,12 @@
 import { useRouter } from "@tanstack/react-router";
 
 import { useMountEffect } from "@/hooks/use-mount-effect";
-import { recoverFromStaleChunk, USER_INPUT_WINDOW_MS } from "@/lib/stale-build-recovery";
+import { isBrowserOffline } from "@/lib/network-failure";
+import {
+  recoverFromStaleChunk,
+  suppressRouterReload,
+  USER_INPUT_WINDOW_MS,
+} from "@/lib/stale-build-recovery";
 
 function openSessionStorage(): Storage | undefined {
   try {
@@ -44,6 +49,10 @@ export function useStaleBuildRecovery() {
       if (event.persisted) recovering = false;
     };
     const onPreloadError = (event: Event) => {
+      const offline = isBrowserOffline();
+      // Offline, TanStack's own reload-on-missing-module would also land on
+      // the browser's offline page: keep it from reloading too.
+      if (offline && "payload" in event) suppressRouterReload(event.payload, openSessionStorage());
       // One failed navigation can fail several chunks; the page is already leaving.
       if (recovering) {
         event.preventDefault();
@@ -54,6 +63,7 @@ export function useStaleBuildRecovery() {
         storage: openSessionStorage(),
         now: Date.now(),
         activatedNavigationHref,
+        offline,
         assign: (href) => window.location.assign(href),
       });
       if (!started) return;

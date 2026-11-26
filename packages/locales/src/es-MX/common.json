@@ -1,6 +1,10 @@
 {
   "home": {
-    "description": "Bases de conocimiento autoalojadas para personas y agentes."
+    "description": "Bases de conocimiento autoalojadas para personas y agentes.",
+    "createAccount": "Crear cuenta",
+    "inviteOnly": "Este servidor funciona solo por invitación. Pide una invitación a un administrador.",
+    "setupHint": "¿Estás configurando este servidor? Crea la cuenta de administrador",
+    "signIn": "Iniciar sesión"
   },
   "actions": {
     "back": "Atrás",
@@ -42,5 +46,11 @@
   },
   "breadcrumbs": {
     "ariaLabel": "Ruta de navegación"
+  },
+  "offline": {
+    "backOnline": "Conexión restablecida.",
+    "band": "No tienes conexión. Los cambios que hagas no se guardarán hasta que te vuelvas a conectar.",
+    "queued": "No tienes conexión. Este cambio se enviará cuando te vuelvas a conectar. Mantén esta pestaña abierta.",
+    "queuedSent": "Conexión restablecida. Se envió tu cambio pendiente."
   }
 }

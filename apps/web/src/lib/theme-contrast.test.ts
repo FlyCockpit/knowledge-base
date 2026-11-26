@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import { compile } from "tailwindcss";
@@ -236,6 +236,40 @@ describe("theme token contrast (WCAG AA)", () => {
     );
   });
 
+  it.each([":root", ".dark"])(
+    "%s field outlines (--input) reach 3:1 on every surface a field sits on",
+    (scope) => {
+      // WCAG 1.4.11 non-text contrast: the border is what shows where to type.
+      // --border is decorative (dividers, cards) and is not held to this.
+      for (const surface of ["background", "card", "popover", "muted"]) {
+        expect(
+          contrast(token(scope, "input"), token(scope, surface)),
+          `${scope} input on ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      // The dark field fill (bg-input/30) must keep placeholder text readable.
+      if (scope === ".dark") {
+        for (const surface of ["background", "card", "popover"]) {
+          const fill = over(token(scope, "input"), 0.3, token(scope, surface));
+          expect(
+            contrast(token(scope, "muted-foreground"), fill),
+            `${scope} placeholder on input fill over ${surface}`,
+          ).toBeGreaterThanOrEqual(AA);
+        }
+      }
+    },
+  );
+
+  it("draws dropdown menus on an opaque popover surface", () => {
+    // A translucent menu (bg-popover/70 + blur) let a banner tint it (CTX-14).
+    const menu = readFileSync(
+      resolve(import.meta.dirname, "../../../../packages/ui/src/components/dropdown-menu.tsx"),
+      "utf8",
+    );
+    expect(menu).toContain(" bg-popover ");
+    expect(menu).not.toMatch(/bg-popover\/\d+|backdrop-blur/);
+  });
+
   it("measures known-failing tokens as failing, so the check discriminates", () => {
     const oldLight = oklchToSrgb(0.577, 0.245, 27.325);
     expect(contrast(oldLight, token(":root", "muted"))).toBeLessThan(AA);
@@ -243,6 +277,10 @@ describe("theme token contrast (WCAG AA)", () => {
     const oldMuted = oklchToSrgb(0.56, 0.021, 213.5);
     expect(contrast(oldMuted, token(":root", "muted"))).toBeLessThan(AA);
     expect(contrast(oldDark, token(".dark", "background"))).toBeLessThan(AA);
+    // The original light --input (1.25:1 on white).
+    expect(contrast(oklchToSrgb(0.925, 0.005, 214.3), token(":root", "background"))).toBeLessThan(
+      3,
+    );
     // An 80% link hover fill under the dark primary.
     const darkPrimary = token(".dark", "primary");
     const darkHover = over(darkPrimary, 0.8, token(".dark", "background"));
@@ -253,6 +291,18 @@ describe("theme token contrast (WCAG AA)", () => {
 describe("toast titles", () => {
   it("override sileo's capitalize so titles keep their locale's sentence case", () => {
     expect(css).toMatch(/:root \[data-sileo-title\] \{\s*text-transform: none;/);
+  });
+
+  it("cap a long title to sileo's 350px pill so the icon stays inside it", () => {
+    // sileo sizes the pill from the header but draws it in a fixed 350px SVG:
+    // the header row is capped and the title ellipsised (the facade repeats a
+    // long message in the description).
+    expect(css).toMatch(
+      /:root \[data-sileo-viewport\] \[data-sileo-header-inner\] \{\s*max-width: calc\(var\(--sileo-width\) - 1rem - 10px\);/,
+    );
+    expect(css).toMatch(
+      /\[data-sileo-header-inner\] \[data-sileo-title\] \{[^}]*text-overflow: ellipsis;/,
+    );
   });
 });
 
@@ -395,4 +445,77 @@ describe("invalid + focused controls keep an opaque 2px ring", () => {
       }
     },
   );
+});
+
+describe("switch track", () => {
+  it("an Off switch fills its track with the opaque --input, which the 3:1 checks cover", () => {
+    // A translucent track (dark:bg-input/80) composites below 3:1 on a card.
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../../../packages/ui/src/components/switch.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("data-unchecked:bg-input ");
+    expect(source).not.toMatch(/data-unchecked:bg-input\/\d+/);
+  });
+});
+
+// docs/ui.md: fills made from the 3:1 --input must still carry muted text.
+describe("field fills keep muted text readable", () => {
+  const ui = resolve(import.meta.dirname, "../../../../packages/ui/src");
+
+  it("on every hovered --input fill", () => {
+    const roots = [ui, resolve(import.meta.dirname, "..")];
+    const fills: string[] = [];
+    for (const root of roots) {
+      for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+        if (!/\.tsx?$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
+        const source = readFileSync(resolve(root, file), "utf8");
+        for (const match of source.matchAll(/(?<![\w-])((?:[\w-]+:)*hover:)bg-input\/(\d+)/g)) {
+          fills.push(`${file}: ${match[0]}`);
+          const scopes = (match[1] ?? "").split(":").includes("dark")
+            ? [".dark"]
+            : [":root", ".dark"];
+          for (const scope of scopes) {
+            for (const surface of ["background", "card", "popover"]) {
+              const fill = over(
+                token(scope, "input"),
+                Number(match[2]) / 100,
+                token(scope, surface),
+              );
+              expect(
+                contrast(token(scope, "muted-foreground"), fill),
+                `${scope} placeholder on ${match[0]} over ${surface} (${file})`,
+              ).toBeGreaterThanOrEqual(AA);
+            }
+          }
+        }
+      }
+    }
+    // The select, outline-button and language-switcher hovers.
+    expect(fills.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(["command.tsx", "async-combobox.tsx", "multi-async-combobox.tsx"])(
+    "%s: a muted placeholder on an opaque muted search fill",
+    (file) => {
+      // Tailwind's default placeholder is the text colour at 50%. Unprefixed
+      // and dark: InputGroup's own `dark:bg-input/30` would otherwise win.
+      const source = readFileSync(resolve(ui, "components", file), "utf8");
+      expect(source).toContain("placeholder:text-muted-foreground");
+      expect(source).toMatch(/InputGroup className="[^"]*(?<![\w:-])bg-muted[^"]*dark:bg-muted/);
+      expect(source).not.toMatch(/InputGroup className="[^"]*bg-input\/\d+/);
+    },
+  );
+});
+
+describe("switch size", () => {
+  it("sizes the track in rem, like its thumb, so it scales with the root font", () => {
+    // A px track holds a rem thumb: at the 4K root (24px) the thumb outgrew it.
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../../../packages/ui/src/components/switch.tsx"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/data-\[size=[a-z]+\]:[hw]-\[[\d.]+px\]/);
+    expect(source).not.toMatch(/translate-x-\[calc\(100%-\d+px\)\]/);
+  });
 });

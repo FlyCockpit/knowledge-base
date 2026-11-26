@@ -92,6 +92,7 @@ function KbSection({
     error,
     isPending,
     isError,
+    fetchStatus,
     refetch,
     hasNextPage,
     isFetchingNextPage,
@@ -111,7 +112,7 @@ function KbSection({
         {title}
       </h2>
       <QueryBoundary
-        query={{ data, error, isPending, isError, refetch }}
+        query={{ data, error, isPending, isError, fetchStatus, refetch }}
         errorMessage={t("list.loadFailed")}
         skeleton={
           <div className={`grid gap-3 ${KB_GRID_CLASS}`} aria-busy="true">

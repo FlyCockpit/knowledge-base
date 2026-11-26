@@ -7,6 +7,7 @@ import { AdminSetupBanner } from "@/components/admin-setup-banner";
 import { AppSidebar } from "@/components/app-sidebar";
 import BottomNav from "@/components/bottom-nav";
 import Header from "@/components/header";
+import { OfflineBand } from "@/components/offline-band";
 import { useDocumentLang } from "@/hooks/use-document-lang";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
 import { useUserLocaleSync } from "@/hooks/use-user-locale-sync";
@@ -54,6 +55,9 @@ function AppShellLayout() {
         <div>
           <Header />
           <AdminSetupBanner />
+          {/* In the top row, above the scroller: it never covers the page,
+              the BottomNav or the cookie banner. */}
+          <OfflineBand />
         </div>
         <div className="flex min-h-0 min-w-0">
           <AppSidebar />

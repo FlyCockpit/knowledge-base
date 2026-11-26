@@ -16,5 +16,16 @@
     "title": "Page not found",
     "description": "This address doesn't match any page. Check the link, or start again from the home page.",
     "home": "Go to the home page"
+  },
+  "offline": "You're offline. Check your connection and try again.",
+  "offlineContent": "You're offline. This will load when you reconnect.",
+  "offlinePage": {
+    "description": "This page will load when you reconnect.",
+    "title": "You're offline"
+  },
+  "unreachable": "Couldn't reach the server. Check your connection and try again.",
+  "unreachablePage": {
+    "description": "Check your connection and try again.",
+    "title": "Couldn't reach the server"
   }
 }

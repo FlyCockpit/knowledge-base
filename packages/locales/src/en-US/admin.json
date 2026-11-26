@@ -104,12 +104,9 @@
     "securityTitle": "Security Policy",
     "securityDescription": "Configure organization-wide security settings",
     "force2faInternalTitle": "Require 2FA for administrators",
-    "force2faInternalDescription": "Required by default. Admin users must set up two-factor authentication before they can use internal tools; a newly created admin account has 24 hours to enroll before it loses access.",
+    "force2faInternalDescription": "On by default. Admin users must set up two-factor authentication before they can use internal tools; a newly created admin account has 24 hours to enroll before it loses access.",
     "force2faPublicTitle": "Require 2FA for public users",
-    "force2faPublicDescription": "When enabled, signed-in non-admin users must set up two-factor authentication before they can use the application.",
-    "force2faAdminWarning": "You must enable 2FA for your own account before you can require it for others. Go to Security settings to set it up.",
-    "enable": "Enable",
-    "disable": "Disable",
+    "force2faPublicDescription": "When on, signed-in non-admin users must set up two-factor authentication before they can use the application.",
     "updating": "Updating…",
     "force2faInternalEnabled": "Two-factor authentication is now required for administrators",
     "force2faInternalDisabled": "Two-factor authentication is no longer required for administrators",
@@ -260,8 +257,6 @@
       "saved": "Search limit saved.",
       "failed": "Couldn't save the search limit. Try again."
     },
-    "enableNamed": "Enable: {{name}}",
-    "disableNamed": "Disable: {{name}}",
     "force2faConfirm": {
       "require": "Require 2FA",
       "stopRequiring": "Stop requiring",
@@ -273,7 +268,12 @@
       "publicEnableDescription": "Signed-in users who haven't set up two-factor authentication must do so before they can keep using the app.",
       "publicDisableTitle": "Stop requiring 2FA for public users?",
       "publicDisableDescription": "Users can then sign in with a password alone. Users who already set up two-factor authentication keep it."
-    }
+    },
+    "force2faAdminPrerequisite": "To require two-factor authentication for others, first set it up on your own account.",
+    "force2faNeedsOwn2fa": "Available after you set up 2FA on your account.",
+    "goToSecurity": "Set up 2FA",
+    "stateOff": "Off",
+    "stateOn": "On"
   },
   "twoFactorNudge": {
     "title": "Two-factor authentication is not set up",

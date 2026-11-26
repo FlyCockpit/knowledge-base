@@ -1,6 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isTwoFactorCodeReady, verifyTwoFactorChallenge } from "./two-factor-challenge";
+import {
+  isTwoFactorCodeReady,
+  rejectedCodeMessageKey,
+  sendCodeFailureToast,
+  twoFactorChallengeFailure,
+  verifyTwoFactorChallenge,
+} from "./two-factor-challenge";
+
+vi.mock("../i18n", () => ({ default: { t: (key: string) => key } }));
 
 function client() {
   return {
@@ -34,5 +42,76 @@ describe("two-factor challenge", () => {
     expect(isTwoFactorCodeReady("totp", "uHCkz-bpJg6")).toBe(false);
     expect(isTwoFactorCodeReady("totp", "123456")).toBe(true);
     expect(isTwoFactorCodeReady("otp", "12345")).toBe(false);
+  });
+});
+
+describe("two-factor challenge: a refused code", () => {
+  it("puts a wrong or expired code under the field, in the mode's words", () => {
+    expect(rejectedCodeMessageKey("totp", { status: 401, code: "INVALID_CODE" })).toBe(
+      "auth:errors.invalidTotp",
+    );
+    expect(rejectedCodeMessageKey("otp", { status: 401, code: "OTP_HAS_EXPIRED" })).toBe(
+      "auth:errors.invalidEmailCode",
+    );
+    expect(rejectedCodeMessageKey("backup", { status: 401, code: "INVALID_BACKUP_CODE" })).toBe(
+      "auth:errors.invalidBackupCode",
+    );
+  });
+
+  it("sends a rate limit, a lockout, a server or network failure to a toast", () => {
+    for (const error of [
+      { status: 429, code: "TOO_MANY_REQUESTS" },
+      { status: 403, code: "ACCOUNT_TEMPORARILY_LOCKED" },
+      { status: 401, code: "INVALID_TWO_FACTOR_COOKIE" },
+      { status: 503 },
+      new TypeError("Failed to fetch"),
+    ])
+      expect(rejectedCodeMessageKey("totp", error)).toBeNull();
+  });
+});
+
+describe("two-factor challenge: what the page shows", () => {
+  it("a code rejection goes under the field", () => {
+    expect(
+      twoFactorChallengeFailure("backup", { status: 401, code: "INVALID_BACKUP_CODE" }),
+    ).toEqual({ codeErrorKey: "auth:errors.invalidBackupCode" });
+  });
+
+  it("a server failure toasts the server copy, never the invalid-code copy", () => {
+    expect(twoFactorChallengeFailure("totp", { status: 503 })).toEqual({
+      toast: "errors:serverError",
+    });
+  });
+
+  it("a thrown error toasts the generic copy", () => {
+    expect(twoFactorChallengeFailure("otp", new Error("boom"))).toEqual({
+      toast: "errors:generic",
+    });
+  });
+});
+
+describe("two-factor challenge: email me a code", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("an error answer says the code could not be sent; a rate limit says to wait", () => {
+    expect(sendCodeFailureToast({ status: 500 }, "answer")).toBe("auth:twoFactor.couldNotSendCode");
+    expect(sendCodeFailureToast({ status: 429, code: "TOO_MANY_REQUESTS" }, "answer")).toBe(
+      "errors:rateLimited",
+    );
+  });
+
+  it("a rejected request names the network problem, never leaving it unhandled", () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    expect(sendCodeFailureToast(new TypeError("Failed to fetch"), "thrown")).toBe("errors:offline");
+    vi.stubGlobal("navigator", { onLine: true });
+    expect(sendCodeFailureToast(new TypeError("Failed to fetch"), "thrown")).toBe(
+      "errors:unreachable",
+    );
+  });
+
+  it("any other thrown error falls back to the could-not-send copy", () => {
+    expect(sendCodeFailureToast(new Error("boom"), "thrown")).toBe(
+      "auth:twoFactor.couldNotSendCode",
+    );
   });
 });

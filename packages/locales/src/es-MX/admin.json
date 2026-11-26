@@ -92,12 +92,9 @@
     "securityTitle": "Política de seguridad",
     "securityDescription": "Configura ajustes de seguridad de toda la organización",
     "force2faInternalTitle": "Requerir 2FA para administradores",
-    "force2faInternalDescription": "Obligatorio de forma predeterminada. Los administradores deben configurar la autenticación de dos factores antes de usar las herramientas internas; una cuenta de administrador recién creada tiene 24 horas para configurarla antes de perder el acceso.",
+    "force2faInternalDescription": "Activado de forma predeterminada. Los administradores deben configurar la autenticación de dos factores antes de usar las herramientas internas; una cuenta de administrador recién creada tiene 24 horas para configurarla antes de perder el acceso.",
     "force2faPublicTitle": "Requerir 2FA para usuarios públicos",
-    "force2faPublicDescription": "Cuando está habilitado, los usuarios no administradores que hayan iniciado sesión deben configurar autenticación de dos factores antes de usar la aplicación.",
-    "force2faAdminWarning": "Debes habilitar 2FA para tu propia cuenta antes de poder requerirlo para otros. Ve a Configuración de seguridad para configurarlo.",
-    "enable": "Habilitar",
-    "disable": "Deshabilitar",
+    "force2faPublicDescription": "Cuando está activado, los usuarios no administradores que hayan iniciado sesión deben configurar la autenticación de dos factores antes de usar la aplicación.",
     "updating": "Actualizando…",
     "force2faInternalEnabled": "La autenticación de dos factores ahora es requerida para administradores",
     "force2faInternalDisabled": "La autenticación de dos factores ya no es requerida para administradores",
@@ -248,8 +245,6 @@
       "saved": "Límite de búsqueda guardado.",
       "failed": "No se pudo guardar el límite de búsqueda. Inténtalo de nuevo."
     },
-    "enableNamed": "Habilitar: {{name}}",
-    "disableNamed": "Deshabilitar: {{name}}",
     "force2faConfirm": {
       "require": "Exigir 2FA",
       "stopRequiring": "Dejar de exigir",
@@ -261,7 +256,12 @@
       "publicEnableDescription": "Los usuarios que no hayan configurado la autenticación de dos factores deben hacerlo para seguir usando la aplicación.",
       "publicDisableTitle": "¿Dejar de exigir 2FA a los usuarios públicos?",
       "publicDisableDescription": "Los usuarios podrán iniciar sesión solo con contraseña. Quienes ya configuraron la autenticación de dos factores la conservan."
-    }
+    },
+    "force2faAdminPrerequisite": "Para requerir la autenticación de dos factores a otros, primero configúrala en tu propia cuenta.",
+    "force2faNeedsOwn2fa": "Disponible cuando configures 2FA en tu cuenta.",
+    "goToSecurity": "Configurar 2FA",
+    "stateOff": "Desactivado",
+    "stateOn": "Activado"
   },
   "setupBanner": {
     "title": "Sin administradores configurados",

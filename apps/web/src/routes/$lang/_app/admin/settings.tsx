@@ -2,7 +2,6 @@ import {
   type ForceTwoFactorSettingKey,
   isForcedTwoFactorEnabled,
 } from "@knowledge-base/auth/two-factor-policy";
-import { Button } from "@knowledge-base/ui/components/button";
 import {
   Card,
   CardContent,
@@ -16,10 +15,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { Shield } from "lucide-react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { SecurityPolicyCard } from "@/components/admin/security-policy-card";
 import { InlineRetry } from "@/components/inline-retry";
 import { IndexCeilingAdminPanel } from "@/components/kb/index-ceiling-admin-panel";
 import { ModelAdminPanel } from "@/components/kb/model-admin-panel";
@@ -118,96 +116,6 @@ function AdminSettings() {
   );
 }
 
-function SecurityPolicyCard({
-  policies,
-  adminHas2FA,
-  isUpdating,
-  onToggle,
-}: {
-  policies: Array<{
-    key: ForceTwoFactorSettingKey;
-    enabled: boolean;
-    title: string;
-    description: string;
-  }>;
-  adminHas2FA: boolean;
-  isUpdating: boolean;
-  onToggle: (key: ForceTwoFactorSettingKey, newValue: "true" | "false") => void;
-}) {
-  const { t } = useTranslation("admin");
-  // Changing who must use 2FA applies to every covered account: confirm first.
-  const [pending, setPending] = useState<{
-    key: ForceTwoFactorSettingKey;
-    newValue: "true" | "false";
-  } | null>(null);
-  const confirmKey = pending
-    ? `settings.force2faConfirm.${pending.key === "force2faInternalUsers" ? "internal" : "public"}${pending.newValue === "true" ? "Enable" : "Disable"}`
-    : null;
-  return (
-    <Card>
-      <ConfirmActionDialog
-        open={pending !== null}
-        onOpenChange={(open) => {
-          if (!open) setPending(null);
-        }}
-        title={confirmKey ? t(`${confirmKey}Title`) : ""}
-        description={confirmKey ? t(`${confirmKey}Description`) : ""}
-        confirmLabel={
-          pending?.newValue === "true"
-            ? t("settings.force2faConfirm.require")
-            : t("settings.force2faConfirm.stopRequiring")
-        }
-        destructive={pending?.newValue === "false"}
-        onConfirm={() => {
-          if (pending) onToggle(pending.key, pending.newValue);
-          setPending(null);
-        }}
-      />
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Shield className="size-5" />
-          {t("settings.securityTitle")}
-        </CardTitle>
-        <CardDescription>{t("settings.securityDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {!adminHas2FA && (
-          <p className="text-sm text-destructive">{t("settings.force2faAdminWarning")}</p>
-        )}
-        {policies.map((policy) => (
-          <div
-            key={policy.key}
-            className="flex items-start justify-between gap-4 rounded-lg border p-4"
-          >
-            <div className="space-y-1">
-              <p className="font-medium">{policy.title}</p>
-              <p className="max-w-prose text-sm text-muted-foreground">{policy.description}</p>
-            </div>
-            <Button
-              variant={policy.enabled ? "destructive" : "default"}
-              size="sm"
-              className="min-h-[44px]"
-              disabled={(!adminHas2FA && !policy.enabled) || isUpdating}
-              aria-label={t(policy.enabled ? "settings.disableNamed" : "settings.enableNamed", {
-                name: policy.title,
-              })}
-              onClick={() =>
-                setPending({ key: policy.key, newValue: policy.enabled ? "false" : "true" })
-              }
-            >
-              {isUpdating
-                ? t("settings.updating")
-                : policy.enabled
-                  ? t("settings.disable")
-                  : t("settings.enable")}
-            </Button>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
 function successMessageForForceTwoFactor(
   t: TFunction<["admin", "common"]>,
   key: ForceTwoFactorSettingKey,
@@ -248,7 +156,7 @@ function SettingsSkeleton() {
               <Skeleton className="h-4 w-full max-w-md" />
               <Skeleton className="h-4 w-3/4" />
             </div>
-            <Skeleton className="h-9 w-20" />
+            <Skeleton className="h-[18px] w-20" />
           </div>
         ))}
       </CardContent>

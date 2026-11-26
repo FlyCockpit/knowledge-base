@@ -1,6 +1,10 @@
 {
   "home": {
-    "description": "Self-hosted knowledge bases for people and agents."
+    "description": "Self-hosted knowledge bases for people and agents.",
+    "createAccount": "Create account",
+    "inviteOnly": "This server is invite-only. Ask an administrator for an invitation.",
+    "setupHint": "Setting up this server? Create the administrator account",
+    "signIn": "Sign in"
   },
   "actions": {
     "back": "Back",
@@ -42,5 +46,11 @@
   },
   "breadcrumbs": {
     "ariaLabel": "Breadcrumb"
+  },
+  "offline": {
+    "backOnline": "Back online.",
+    "band": "You're offline. Changes you make won't be saved until you reconnect.",
+    "queued": "You're offline. This change will be sent when you reconnect. Keep this tab open.",
+    "queuedSent": "Back online. Your offline change was sent."
   }
 }

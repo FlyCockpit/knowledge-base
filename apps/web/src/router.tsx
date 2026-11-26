@@ -11,6 +11,8 @@ import Loader from "./components/loader";
 import NotFoundState from "./components/not-found-state";
 import i18n, { createRequestI18n } from "./i18n";
 import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
+import { networkFailureKind } from "./lib/network-failure";
+import { installOfflineMutationPolicy } from "./lib/offline-mutations";
 import { canonicalOriginFromDocument, parseCanonicalOrigin } from "./lib/public-home-head";
 import { routeTree } from "./routeTree.gen";
 import { friendly, isNotFound } from "./utils/friendly-error";
@@ -88,6 +90,9 @@ export function getRouter() {
         // revoked share), and every page renders it in place. A toast
         // offering "Try again" on top would be false: retrying can't help.
         if (isNotFound(error)) return;
+        // Offline, the band in the shell and the page's own offline state
+        // already explain it; one toast per failed query would pile up.
+        if (networkFailureKind(error) === "offline") return;
         toast.error(friendly(error), {
           action: {
             label: i18n.t("common:actions.tryAgain"),
@@ -116,6 +121,13 @@ export function getRouter() {
         toast.error(friendly(error, fallback));
       },
     }),
+  });
+  // Offline mutations fail fast with "You're offline…" (via friendly());
+  // `meta: { offline: "queue" }` opts a replay-safe write into waiting for the
+  // network, with a notice. See docs/ui.md § Offline.
+  installOfflineMutationPolicy(queryClient, {
+    queued: () => toast.info(i18n.t("common:offline.queued")),
+    sent: () => toast.success(i18n.t("common:offline.queuedSent")),
   });
 
   const router = createRouter({
@@ -170,6 +182,18 @@ declare module "@tanstack/react-query" {
        * called `toast.error(friendly(err, t("ns:key")))`.
        */
       errorFallbackKey?: string;
+      /**
+       * `"queue"`: while offline, wait and send on reconnect (with a notice)
+       * instead of failing fast. Only for writes that are safe to replay. See
+       * docs/ui.md § Offline.
+       */
+      offline?: "queue";
+      /**
+       * `"inline"`: the call site renders its own "waiting for the network"
+       * state from `isPaused` (the document editor), so the policy shows no
+       * queued/sent toast for it. Only meaningful with `offline: "queue"`.
+       */
+      offlineNotice?: "inline";
     };
   }
 }

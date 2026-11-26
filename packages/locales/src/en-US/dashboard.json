@@ -5,7 +5,7 @@
   "connectClient": "Connect an AI client",
   "emptyTitle": "No knowledge bases yet",
   "loadFailed": "Failed to load dashboard.",
-  "welcomeBack": "Welcome back, {{name}}",
+  "welcome": "Welcome, {{name}}",
   "openKbs": "View knowledge bases",
   "description": "Your knowledge bases and access at a glance.",
   "recent": "Knowledge bases",

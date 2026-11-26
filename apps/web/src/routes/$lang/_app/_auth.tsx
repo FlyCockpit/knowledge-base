@@ -6,14 +6,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@knowledge-base/ui/components/card";
-import { Input } from "@knowledge-base/ui/components/input";
-import { Label } from "@knowledge-base/ui/components/label";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
+import { OneTimeCodeField } from "@/components/auth/plain-field";
+import { TwoFactorPasswordConfirm } from "@/components/auth/two-factor-password-confirm";
 import { InlineRetry } from "@/components/inline-retry";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { useTwoFactorEnrollment } from "@/hooks/use-two-factor-enrollment";
@@ -93,16 +93,26 @@ function AuthLayout() {
 }
 
 function TwoFactorSetupRequired() {
-  const { t } = useTranslation("auth");
+  const { t } = useTranslation(["auth", "common"]);
+  // The passwordless hint is only true when SSO is on.
+  const { data: config } = useQuery(orpc.appConfig.queryOptions());
   const enrollment = useTwoFactorEnrollment({
     logScope: "_auth",
     messages: {
       startFailed: t("twoFactor.couldNotStartSetup"),
       enabled: t("twoFactor.enabledSuccess"),
       invalidCode: t("errors.invalidTotp"),
+      invalidPassword: t("errors.invalidPassword"),
     },
   });
   const { step, password, setPassword, verifyCode, setVerifyCode, isLoading } = enrollment;
+  // A way back from every step after the intro (the header's account menu
+  // still offers Sign out around this screen).
+  const cancel = (
+    <Button variant="ghost" className="min-h-[44px] w-full" onClick={enrollment.cancel}>
+      {t("common:actions.cancel")}
+    </Button>
+  );
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center px-4">
@@ -123,21 +133,16 @@ function TwoFactorSetupRequired() {
 
           {step === "password" && (
             <>
-              <p className="text-sm text-muted-foreground">{t("twoFactor.passwordPrompt")}</p>
-              <p className="text-sm text-muted-foreground">{t("twoFactor.passwordlessPrompt")}</p>
-              <div className="space-y-2">
-                <Label htmlFor="2fa-password">{t("fields.password")}</Label>
-                <Input
-                  id="2fa-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") enrollment.enroll();
-                  }}
-                />
-              </div>
+              <TwoFactorPasswordConfirm
+                id="2fa-password"
+                prompt={t("twoFactor.passwordPrompt")}
+                ssoEnabled={config?.ssoEnabled === true}
+                password={password}
+                error={enrollment.passwordError}
+                inputRef={enrollment.passwordRef}
+                onPasswordChange={setPassword}
+                onSubmit={enrollment.enroll}
+              />
               <Button
                 className="min-h-[44px] w-full"
                 onClick={enrollment.enroll}
@@ -145,6 +150,7 @@ function TwoFactorSetupRequired() {
               >
                 {isLoading ? t("twoFactor.settingUp") : t("twoFactor.continue")}
               </Button>
+              {cancel}
             </>
           )}
 
@@ -158,22 +164,15 @@ function TwoFactorSetupRequired() {
                 totpURI={enrollment.totpURI}
               />
 
-              <div className="space-y-2">
-                <Label htmlFor="verify-code">{t("fields.verificationCode")}</Label>
-                <Input
-                  id="verify-code"
-                  placeholder="000000"
-                  value={verifyCode}
-                  onChange={(e) => setVerifyCode(e.target.value)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  className="text-center text-lg tracking-widest"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && verifyCode.length === 6) enrollment.verify();
-                  }}
-                />
-              </div>
+              <OneTimeCodeField
+                id="verify-code"
+                label={t("fields.verificationCode")}
+                value={verifyCode}
+                error={enrollment.codeError}
+                inputRef={enrollment.codeRef}
+                onValueChange={setVerifyCode}
+                onComplete={enrollment.verify}
+              />
               <Button
                 className="min-h-[44px] w-full"
                 onClick={enrollment.verify}
@@ -181,6 +180,7 @@ function TwoFactorSetupRequired() {
               >
                 {isLoading ? t("twoFactor.verifying") : t("twoFactor.verifyAndEnable")}
               </Button>
+              {cancel}
             </>
           )}
         </CardContent>

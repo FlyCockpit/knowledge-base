@@ -121,7 +121,11 @@ function DashboardPage() {
     <PullToRefresh onRefresh={handleRefresh}>
       <PageShell>
         <PageHeader
-          title={t("dashboard:welcomeBack", { name: session.user.name })}
+          // "Welcome, {name}", never "Welcome back": nothing in the session
+          // tells a first sign-in from a return visit (the account is created
+          // before the email is verified, so createdAt is not it), and "back"
+          // greets a brand-new user wrongly.
+          title={t("dashboard:welcome", { name: session.user.name })}
           description={t("dashboard:description")}
         />
         {owned.isError || shared.isError ? (

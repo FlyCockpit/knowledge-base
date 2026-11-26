@@ -21,6 +21,7 @@ import {
 } from "./bootstrap.js";
 import { resolveDevicePlugins } from "./device-approval";
 import { resolveMcpPlugins } from "./mcp-plugins.js";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
 import { knowledgeBaseAdminPermissions } from "./roles";
 import { createSessionCacheVersion } from "./session-authority";
 import { resolveSignupLocale } from "./signup-locale.js";
@@ -202,12 +203,14 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: !forceSso,
     requireEmailVerification: true,
-    // Better-Auth's default floor is 8. There is no breached-password check in
-    // this template, so length is the only guessing cost. The signup and
-    // reset-password forms mirror this; the login form deliberately does not,
-    // since an account created under an older policy must still be able to
+    // ./password-policy.ts: the same numbers the web's new-password forms
+    // validate against and show under the field. Better-Auth's default floor
+    // is 8; there is no breached-password check, so length is the only
+    // guessing cost. The login form deliberately does not mirror it, since an
+    // account created under an older policy must still be able to
     // authenticate.
-    minPasswordLength: 12,
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    maxPasswordLength: PASSWORD_MAX_LENGTH,
     // A reset is the "my account may be compromised" path: sign out every
     // browser session in the same transaction as the password write.
     // A cached cookie of a deleted session is refused on its next request

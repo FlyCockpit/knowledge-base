@@ -1436,13 +1436,24 @@ export function useKbEditor(input: {
   );
   const [outcome, setOutcome] = useState<EditorOutcome | null>(null);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
-  // Every save reports its outcome itself (the editor's notice, Delete's
-  // toast), so no refusal raises the global error toast on top. Image uploads
-  // also wait out the upload budget.
-  const quiet = { meta: { skipGlobalErrorToast: true } };
+  // Offline, a save waits and is sent on reconnect (TanStack's paused
+  // replay; the app default fails fast, lib/offline-mutations.ts). Every
+  // write carries its idempotency key and base revision, so a replay is safe.
+  // The editor shows its own "will be sent when you reconnect" line from
+  // `paused`, so the policy adds no toast. Every save also reports its outcome
+  // itself (the editor's notice, Delete's toast), so no refusal raises the
+  // global error toast on top. Image uploads also wait out the upload budget.
+  const queue = { offline: "queue", offlineNotice: "inline" } as const;
+  const quiet = { meta: { ...queue, skipGlobalErrorToast: true } };
   const create = useMutation({ ...orpc.documents.create.mutationOptions(), ...quiet });
   const update = useMutation({ ...orpc.documents.update.mutationOptions(), ...quiet });
-  const remove = useMutation({ ...orpc.documents.delete.mutationOptions(), ...quiet });
+  // Delete also runs from the read view, which has no inline notice: it gets
+  // the app's own queued/sent toasts instead (and stays out of `paused`).
+  const remove = useMutation({
+    ...orpc.documents.delete.mutationOptions(),
+    meta: { offline: "queue", skipGlobalErrorToast: true },
+  });
+  // Rename/move runs from its own sheet, which shows the inline `paused` notice.
   const move = useMutation({ ...orpc.documents.move.mutationOptions(), ...quiet });
   const begin = useMutation({ ...orpc.kbUploads.begin.mutationOptions(), ...quiet });
   const write = useMutation({ ...orpc.kbUploads.write.mutationOptions(), ...quiet });
@@ -1714,18 +1725,9 @@ export function useKbEditor(input: {
     exists: owned.document.exists,
     outcome,
     pending,
-    paused: [
-      create,
-      update,
-      remove,
-      move,
-      begin,
-      write,
-      finish,
-      imageBegin,
-      imageWrite,
-      imageFinish,
-    ].some((mutation) => mutation.isPaused),
+    paused: [create, update, move, begin, write, finish, imageBegin, imageWrite, imageFinish].some(
+      (mutation) => mutation.isPaused,
+    ),
     proposal: owned.proposal !== null,
     /** The proposal head the next save names (PR mode, proposal targets), else null. */
     proposalHead: owned.proposal?.headSha ?? null,

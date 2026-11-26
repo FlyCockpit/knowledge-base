@@ -1,5 +1,6 @@
+import { edgeAttributes, useScrollEdges } from "@knowledge-base/ui/hooks/use-scroll-edges";
 import { cn } from "@knowledge-base/ui/lib/utils";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 
 import { WideContent } from "@/components/wide-content";
 
@@ -93,13 +94,20 @@ export function SectionTabs({
   ariaLabel: string;
   className?: string;
 }) {
+  // On phones the strip scrolls sideways; fade the edge that has more tabs
+  // past it (the same cue as SelectorRow, docs/ui.md § Shared controls).
+  const stripRef = useRef<HTMLDivElement>(null);
+  const edges = useScrollEdges(stripRef);
   return (
-    <WideContent className={cn("border-b", className)}>
-      <nav aria-label={ariaLabel} className="flex w-max gap-1">
-        {tabs.map((tab) => (
-          <span key={tab.key}>{tab.render(TAB_CLASS, TAB_ACTIVE_CLASS, tab.label)}</span>
-        ))}
-      </nav>
-    </WideContent>
+    // The divider sits on a wrapper so the fade (a mask) never fades it.
+    <div className={cn("border-b", className)}>
+      <WideContent ref={stripRef} {...edgeAttributes(edges)} className="scroll-fade-x scroll-px-6">
+        <nav aria-label={ariaLabel} className="flex w-max gap-1">
+          {tabs.map((tab) => (
+            <span key={tab.key}>{tab.render(TAB_CLASS, TAB_ACTIVE_CLASS, tab.label)}</span>
+          ))}
+        </nav>
+      </WideContent>
+    </div>
   );
 }

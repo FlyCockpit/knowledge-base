@@ -5,7 +5,7 @@
   "connectClient": "Conectar un cliente de IA",
   "emptyTitle": "Aún no hay bases de conocimiento",
   "loadFailed": "No se pudo cargar el panel de control.",
-  "welcomeBack": "Bienvenido de vuelta, {{name}}",
+  "welcome": "Te damos la bienvenida, {{name}}",
   "openKbs": "Ver bases de conocimiento",
   "description": "Tus bases de conocimiento y accesos de un vistazo.",
   "recent": "Bases de conocimiento",

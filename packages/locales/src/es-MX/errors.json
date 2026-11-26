@@ -16,5 +16,16 @@
     "title": "Página no encontrada",
     "description": "Esta dirección no corresponde a ninguna página. Revisa el enlace o vuelve a empezar desde la página de inicio.",
     "home": "Ir a la página de inicio"
+  },
+  "offline": "No tienes conexión. Revisa tu conexión e inténtalo de nuevo.",
+  "offlineContent": "No tienes conexión. Esto se cargará cuando te vuelvas a conectar.",
+  "offlinePage": {
+    "description": "Esta página se cargará cuando te vuelvas a conectar.",
+    "title": "No tienes conexión"
+  },
+  "unreachable": "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.",
+  "unreachablePage": {
+    "description": "Revisa tu conexión e inténtalo de nuevo.",
+    "title": "No se pudo conectar con el servidor"
   }
 }

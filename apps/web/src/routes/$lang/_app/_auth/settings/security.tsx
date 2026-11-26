@@ -15,14 +15,18 @@ import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 
+import { OneTimeCodeField } from "@/components/auth/plain-field";
+import { TwoFactorPasswordConfirm } from "@/components/auth/two-factor-password-confirm";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { useTwoFactorEnrollment } from "@/hooks/use-two-factor-enrollment";
 import { authClient } from "@/lib/auth-client";
+import { setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
+import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
@@ -120,7 +124,8 @@ function PasswordCardSkeleton() {
 }
 
 function ChangePasswordCard() {
-  const { t } = useTranslation(["settings", "validation"]);
+  const { t } = useTranslation(["settings", "validation", "auth"]);
+  const currentPasswordInput = useRef<HTMLInputElement>(null);
 
   const form = useForm({
     defaultValues: {
@@ -132,7 +137,8 @@ function ChangePasswordCard() {
       onSubmit: z
         .object({
           currentPassword: z.string().min(1),
-          newPassword: z.string().min(12).max(128),
+          // The same length rule Better-Auth enforces (lib/password-policy.ts).
+          newPassword: newPasswordSchema(),
           confirmPassword: z.string().min(1),
         })
         .refine((values) => values.newPassword === values.confirmPassword, {
@@ -149,13 +155,22 @@ function ChangePasswordCard() {
         });
 
         if (result.error) {
-          const message =
-            result.error.code === "INVALID_PASSWORD"
-              ? t("settings:security.currentPasswordMismatch")
-              : isRateLimit(result.error)
-                ? friendly(result.error, t("settings:security.passwordChangeError"))
-                : t("settings:security.passwordChangeError");
-          toast.error(message);
+          if (result.error.code === "INVALID_PASSWORD") {
+            // About the current password: say it under that field.
+            setServerFieldError(
+              form,
+              "currentPassword",
+              t("settings:security.currentPasswordMismatch"),
+            );
+            currentPasswordInput.current?.focus();
+            currentPasswordInput.current?.select();
+            return;
+          }
+          toast.error(
+            isRateLimit(result.error)
+              ? friendly(result.error, t("settings:security.passwordChangeError"))
+              : t("settings:security.passwordChangeError"),
+          );
           return;
         }
 
@@ -193,6 +208,7 @@ function ChangePasswordCard() {
             {(field) => (
               <TextField
                 field={field}
+                ref={currentPasswordInput}
                 label={t("settings:security.currentPasswordLabel")}
                 type="password"
                 autoComplete="current-password"
@@ -206,6 +222,7 @@ function ChangePasswordCard() {
               <TextField
                 field={field}
                 label={t("settings:security.newPasswordLabel")}
+                description={t("auth:fields.passwordRule", { min: PASSWORD_MIN_LENGTH })}
                 type="password"
                 autoComplete="new-password"
                 inputClassName="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
@@ -251,15 +268,24 @@ function ChangePasswordCard() {
 
 function Enable2FASection() {
   const { t } = useTranslation(["settings", "auth", "common"]);
+  // The passwordless hint is only true when SSO is on.
+  const { data: config } = useQuery(orpc.appConfig.queryOptions());
   const enrollment = useTwoFactorEnrollment({
     logScope: "settings.security",
     messages: {
       startFailed: t("settings:security.couldNotStartSetup"),
       enabled: t("settings:security.enabledSuccess"),
       invalidCode: t("auth:errors.invalidTotp"),
+      invalidPassword: t("auth:errors.invalidPassword"),
     },
   });
   const { step, password, setPassword, verifyCode, setVerifyCode, isLoading } = enrollment;
+  // A way back from every step, not only the first.
+  const cancel = (
+    <Button className="min-h-[44px]" variant="ghost" onClick={enrollment.cancel}>
+      {t("common:actions.cancel")}
+    </Button>
+  );
 
   if (step === "start") {
     return (
@@ -272,30 +298,21 @@ function Enable2FASection() {
   if (step === "password") {
     return (
       <div className="space-y-4 max-w-sm">
-        <p className="text-sm text-muted-foreground">
-          {t("settings:security.confirmPasswordPrompt")}
-        </p>
-        <p className="text-sm text-muted-foreground">{t("auth:twoFactor.passwordlessPrompt")}</p>
-        <div className="space-y-2">
-          <Label htmlFor="confirm-password">{t("auth:fields.password")}</Label>
-          <Input
-            id="confirm-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") enrollment.enroll();
-            }}
-          />
-        </div>
+        <TwoFactorPasswordConfirm
+          id="confirm-password"
+          prompt={t("settings:security.confirmPasswordPrompt")}
+          ssoEnabled={config?.ssoEnabled === true}
+          password={password}
+          error={enrollment.passwordError}
+          inputRef={enrollment.passwordRef}
+          onPasswordChange={setPassword}
+          onSubmit={enrollment.enroll}
+        />
         <div className="flex gap-2">
           <Button className="min-h-[44px]" onClick={enrollment.enroll} disabled={isLoading}>
             {isLoading ? t("auth:twoFactor.settingUp") : t("auth:twoFactor.continue")}
           </Button>
-          <Button className="min-h-[44px]" variant="ghost" onClick={enrollment.cancel}>
-            {t("common:actions.cancel")}
-          </Button>
+          {cancel}
         </div>
       </div>
     );
@@ -312,9 +329,12 @@ function Enable2FASection() {
           totpURI={enrollment.totpURI}
         />
 
-        <Button className="min-h-[44px]" onClick={enrollment.confirmSaved}>
-          {t("settings:security.savedBackupCodes")}
-        </Button>
+        <div className="flex gap-2">
+          <Button className="min-h-[44px]" onClick={enrollment.confirmSaved}>
+            {t("settings:security.savedBackupCodes")}
+          </Button>
+          {cancel}
+        </div>
       </div>
     );
   }
@@ -322,29 +342,25 @@ function Enable2FASection() {
   return (
     <div className="space-y-4 max-w-sm">
       <p className="text-sm text-muted-foreground">{t("settings:security.verifyPrompt")}</p>
-      <div className="space-y-2">
-        <Label htmlFor="setup-verify-code">{t("auth:fields.verificationCode")}</Label>
-        <Input
-          id="setup-verify-code"
-          placeholder="000000"
-          value={verifyCode}
-          onChange={(e) => setVerifyCode(e.target.value)}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          maxLength={6}
-          className="text-center text-lg tracking-widest"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && verifyCode.length === 6) enrollment.verify();
-          }}
-        />
+      <OneTimeCodeField
+        id="setup-verify-code"
+        label={t("auth:fields.verificationCode")}
+        value={verifyCode}
+        error={enrollment.codeError}
+        inputRef={enrollment.codeRef}
+        onValueChange={setVerifyCode}
+        onComplete={enrollment.verify}
+      />
+      <div className="flex gap-2">
+        <Button
+          className="min-h-[44px]"
+          onClick={enrollment.verify}
+          disabled={verifyCode.length !== 6 || isLoading}
+        >
+          {isLoading ? t("auth:twoFactor.verifying") : t("settings:security.verifyAndEnable")}
+        </Button>
+        {cancel}
       </div>
-      <Button
-        className="min-h-[44px]"
-        onClick={enrollment.verify}
-        disabled={verifyCode.length !== 6 || isLoading}
-      >
-        {isLoading ? t("auth:twoFactor.verifying") : t("settings:security.verifyAndEnable")}
-      </Button>
     </div>
   );
 }

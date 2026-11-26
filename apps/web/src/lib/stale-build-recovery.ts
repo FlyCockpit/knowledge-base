@@ -29,6 +29,8 @@ export type StaleBuildRecoveryEnv = {
   now: number;
   /** Captured at navigation start, never from unrelated input during a load. */
   activatedNavigationHref?: string;
+  /** `navigator.onLine === false`: the chunk is missing because the network is. */
+  offline?: boolean;
   assign: (href: string) => void;
 };
 
@@ -63,9 +65,43 @@ export function claimReloadSlot(storage: StaleBuildRecoveryEnv["storage"], now: 
 
 /** Recover only the pending navigation that began with the user's activation. */
 export function recoverFromStaleChunk(env: StaleBuildRecoveryEnv): boolean {
+  // Offline, a deploy did not replace the chunk; a reload would only land on
+  // the browser's offline page. ErrorState shows the offline state instead
+  // and retries on reconnect.
+  if (env.offline) return false;
   const target = pendingNavigationHref(env.router);
   if (!target || target !== env.activatedNavigationHref) return false;
   if (!claimReloadSlot(env.storage, env.now)) return false;
   env.assign(target);
   return true;
+}
+
+/** The messages TanStack's `isModuleNotFoundError` treats as a missing module. */
+const MODULE_LOAD_FAILURE_PREFIXES = [
+  "Failed to fetch dynamically imported module",
+  "error loading dynamically imported module",
+  "Importing a module script failed",
+];
+
+/**
+ * TanStack's lazyRouteComponent reloads the page itself on the first failure
+ * of each module, whatever the connectivity. Offline that reload lands on the
+ * browser's offline page instead of the app's offline error state. Marking
+ * its per-error slot (`tanstack_router_reload:<message>`, which mirrors the
+ * installed lazyRouteComponent) before the rejection reaches it lets the error
+ * through to ErrorState, which retries on reconnect.
+ */
+export function suppressRouterReload(
+  error: unknown,
+  storage: Pick<Storage, "setItem"> | undefined,
+): void {
+  if (!error || typeof error !== "object" || !("message" in error)) return;
+  const message = error.message;
+  if (typeof message !== "string") return;
+  if (!MODULE_LOAD_FAILURE_PREFIXES.some((prefix) => message.startsWith(prefix))) return;
+  try {
+    storage?.setItem(`tanstack_router_reload:${message}`, "1");
+  } catch {
+    /* Unavailable storage: TanStack keeps its own behaviour. */
+  }
 }

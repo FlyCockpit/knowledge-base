@@ -8,6 +8,7 @@ import {
   STALE_BUILD_RELOAD_COOLDOWN_MS,
   STALE_BUILD_RELOAD_KEY,
   type StaleBuildRecoveryEnv,
+  suppressRouterReload,
 } from "./stale-build-recovery";
 
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -49,6 +50,13 @@ describe("recoverFromStaleChunk", () => {
     expect(e.assign).toHaveBeenCalledWith("/en-US/nodes?tab=all");
     expect(e.reload).not.toHaveBeenCalled();
     expect(e.storageData.get(STALE_BUILD_RELOAD_KEY)).toBe("1000000");
+  });
+
+  it("does not reload offline, where the chunk is missing because the network is", () => {
+    const e = env({ offline: true });
+    expect(recoverFromStaleChunk(e)).toBe(false);
+    expect(e.assign).not.toHaveBeenCalled();
+    expect(e.storageData.has(STALE_BUILD_RELOAD_KEY)).toBe(false);
   });
 
   it("preserves an unsaved draft when unrelated input accompanies a background import failure", () => {
@@ -114,6 +122,33 @@ describe("claimReloadSlot", () => {
   });
 });
 
+describe("suppressRouterReload", () => {
+  const missing = new TypeError(
+    "Failed to fetch dynamically imported module: https://kb.test/assets/kbs-abc.js",
+  );
+
+  it("marks TanStack's per-error reload slot for a missing module", () => {
+    const storage = memoryStorage();
+    suppressRouterReload(missing, storage);
+    expect(storage.data.get(`tanstack_router_reload:${missing.message}`)).toBe("1");
+  });
+
+  it("leaves other errors and broken storage alone", () => {
+    const storage = memoryStorage();
+    suppressRouterReload(new Error("boom"), storage);
+    suppressRouterReload("Failed to fetch dynamically imported module", storage);
+    suppressRouterReload(undefined, storage);
+    expect(storage.data.size).toBe(0);
+    const throwing = {
+      setItem: () => {
+        throw new Error("denied");
+      },
+    };
+    expect(() => suppressRouterReload(missing, throwing)).not.toThrow();
+    expect(() => suppressRouterReload(missing, undefined)).not.toThrow();
+  });
+});
+
 // Exercise activation timing through the hook, including editor input that
 // arrives after a background navigation/preload has already begun.
 const hook = vi.hoisted(() => ({
@@ -160,8 +195,8 @@ function recoveryHook() {
   renderToStaticMarkup(createElement(RecoveryHarness));
   const navigation = () =>
     hook.callbacks.get("onBeforeNavigate")?.({ toLocation: navigating.latestLocation });
-  const failure = () => {
-    const event = new Event("vite:preloadError", { cancelable: true });
+  const failure = (payload?: unknown) => {
+    const event = Object.assign(new Event("vite:preloadError", { cancelable: true }), { payload });
     win.dispatchEvent(event);
     return event;
   };
@@ -189,5 +224,22 @@ describe("stale recovery activation ownership", () => {
     expect(h.failure().defaultPrevented).toBe(true);
     expect(h.failure().defaultPrevented).toBe(true);
     expect(h.assign).toHaveBeenCalledExactlyOnceWith(navigating.latestLocation.publicHref);
+  });
+  it("offline, keeps TanStack's lazy route from reloading onto the browser's offline page", () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    const h = recoveryHook();
+    h.win.dispatchEvent(new Event("pointerdown"));
+    h.navigation();
+    const error = new TypeError("Failed to fetch dynamically imported module: /assets/a.js");
+    expect(h.failure(error).defaultPrevented).toBe(false);
+    expect(h.assign).not.toHaveBeenCalled();
+    expect(h.win.sessionStorage.data.get(`tanstack_router_reload:${error.message}`)).toBe("1");
+  });
+  it("online, leaves TanStack's reload slot to the existing recovery", () => {
+    vi.stubGlobal("navigator", { onLine: true });
+    const h = recoveryHook();
+    const error = new TypeError("Failed to fetch dynamically imported module: /assets/a.js");
+    h.failure(error);
+    expect(h.win.sessionStorage.data.has(`tanstack_router_reload:${error.message}`)).toBe(false);
   });
 });

@@ -10,6 +10,9 @@
     "./ban": {
       "default": "./src/ban.ts"
     },
+    "./password-policy": {
+      "default": "./src/password-policy.ts"
+    },
     "./roles": {
       "default": "./src/roles.ts"
     },

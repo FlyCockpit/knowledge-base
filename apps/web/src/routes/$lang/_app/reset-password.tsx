@@ -13,6 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { authClient } from "@/lib/auth-client";
 import { pageHead } from "@/lib/page-title";
+import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
@@ -274,8 +275,10 @@ function ResetPasswordForm({
       // lives in the `validation` namespace.
       onSubmit: z
         .object({
-          newPassword: z.string().min(12),
-          confirmPassword: z.string().min(12),
+          // The same length rule Better-Auth enforces (lib/password-policy.ts).
+          newPassword: newPasswordSchema(),
+          // Only has to match; the rule is reported once, on the new password.
+          confirmPassword: z.string().min(1),
         })
         .refine((v) => v.newPassword === v.confirmPassword, {
           message: t("validation:passwordsMustMatch"),
@@ -298,6 +301,7 @@ function ResetPasswordForm({
           <TextField
             field={field}
             label={t("auth:resetPassword.newPasswordLabel")}
+            description={t("auth:fields.passwordRule", { min: PASSWORD_MIN_LENGTH })}
             type="password"
             autoComplete="new-password"
           />

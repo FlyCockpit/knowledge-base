@@ -5,7 +5,7 @@ import { cn } from "@knowledge-base/ui/lib/utils";
 import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 
@@ -14,8 +14,11 @@ import { AuthCard } from "@/components/auth/auth-screen";
 import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
+import { setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
+import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
+import { signupMode } from "@/lib/signup-mode";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
@@ -32,7 +35,10 @@ export const Route = createFileRoute("/$lang/_app/signup")({
       throw redirect({ href: safeRedirectTo(search.redirectTo, params.lang) });
     }
     const cfg = await context.queryClient.ensureQueryData(orpc.appConfig.queryOptions());
-    if (cfg.forceSso || (!cfg.signupEnabled && !cfg.adminBootstrapSignupEnabled)) {
+    // SSO-only servers have no password sign-up at all: their sign-in page
+    // explains it. A closed (invite-only) server renders its own state below
+    // instead of a silent bounce, so the visitor learns why there is no form.
+    if (cfg.forceSso) {
       throw redirect({ to: "/$lang/login", params: { lang: params.lang }, search });
     }
   },
@@ -57,7 +63,8 @@ function SignupPage() {
   // is kept only to name it back to the user and to target a resend.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
-  const forceSso = configData?.forceSso === true;
+  const mode = signupMode(configData ?? {});
+  const forceSso = mode === "sso";
   // Same gate as /$lang/verify-email: resending needs a working mail transport
   // and a password flow to come back to. Without it the card below must not
   // claim a link was sent, or offer a button that can only ever error.
@@ -112,13 +119,41 @@ function SignupPage() {
         )}
       </AuthCard>
     );
-  } else {
+  } else if (mode === "closed") {
+    // Invite-only: say so, and point at the one thing this visitor can do here.
     body = (
       <AuthCard
-        title={t("auth:login.createAccount")}
-        description={t("auth:login.createDescription")}
+        title={t("auth:signupMode.closedTitle")}
+        description={t("auth:signupMode.closedDescription")}
       >
-        <SignUpForm onSignedUp={setPendingEmail} />
+        <Link
+          to="/$lang/login"
+          params={{ lang }}
+          search={{ redirectTo }}
+          className={cn(buttonVariants(), "min-h-[44px] w-full")}
+        >
+          {t("auth:login.signIn")}
+        </Link>
+      </AuthCard>
+    );
+  } else {
+    // `open`, or `bootstrap`: only the administrator's first account can sign up, so
+    // the card is about setting up the server, and tells everyone else it is
+    // invite-only (the flag cannot say whether the admin already exists).
+    const bootstrap = mode === "bootstrap";
+    body = (
+      <AuthCard
+        title={bootstrap ? t("auth:signupMode.setupTitle") : t("auth:login.createAccount")}
+        description={
+          bootstrap ? t("auth:signupMode.setupDescription") : t("auth:login.createDescription")
+        }
+      >
+        <SignUpForm bootstrap={bootstrap} onSignedUp={setPendingEmail} />
+        {bootstrap && (
+          <p className="text-center text-sm text-muted-foreground">
+            {t("auth:signupMode.setupOthers")}
+          </p>
+        )}
         <div className="text-center">
           <Link
             to="/$lang/login"
@@ -144,30 +179,57 @@ function SignupPage() {
   );
 }
 
-function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
+function SignUpForm({
+  bootstrap,
+  onSignedUp,
+}: {
+  /** Only the administrator's first account can sign up (sign-up mode `bootstrap`). */
+  bootstrap: boolean;
+  onSignedUp: (email: string) => void;
+}) {
   const { t } = useTranslation(["auth"]);
+  const emailInput = useRef<HTMLInputElement>(null);
 
   const form = useForm({
     defaultValues: { name: "", email: "", password: "" },
     onSubmit: async ({ value }) => {
-      const result = await authClient.signUp.email({
-        email: value.email,
-        password: value.password,
-        name: value.name,
-      });
+      let result: Awaited<ReturnType<typeof authClient.signUp.email>>;
+      try {
+        result = await authClient.signUp.email({
+          email: value.email,
+          password: value.password,
+          name: value.name,
+        });
+      } catch (err) {
+        // The request itself failed (server unreachable, offline).
+        console.error("[signup.signUp]", err);
+        toast.error(friendly(err, t("auth:errors.couldNotCreateAccount")));
+        return;
+      }
       if (result.error) {
         console.error("[signup.signUp]", result.error);
-        toast.error(
-          result.error?.status === 409
-            ? t("auth:errors.accountAlreadyRegistered")
-            : friendly(result.error, t("auth:errors.couldNotCreateAccount")),
-        );
         // A signup-disabled attempt gets this generic 422 — the same response
         // for every address, registered, admin or not, so reading it reveals
-        // nothing (packages/auth/src/signup-response.ts). Dev-only, and
-        // guarded here (not in a shared util) so the hint string tree-shakes
-        // out of prod bundles.
-        if (import.meta.env.DEV && result.error?.code === "FAILED_TO_CREATE_USER") {
+        // nothing (packages/auth/src/signup-response.ts). In bootstrap mode
+        // that is the expected answer for anyone but the administrator, so
+        // the copy under the email field is written to be true for every
+        // address.
+        const blocked = result.error.code === "FAILED_TO_CREATE_USER";
+        if (result.error.status === 409 || (bootstrap && blocked)) {
+          setServerFieldError(
+            form,
+            "email",
+            result.error.status === 409
+              ? t("auth:errors.accountAlreadyRegistered")
+              : t("auth:signupMode.setupRejected"),
+          );
+          emailInput.current?.focus();
+        } else {
+          toast.error(friendly(result.error, t("auth:errors.couldNotCreateAccount")));
+        }
+        // Dev-only, and guarded here (not in a shared util) so the hint string
+        // tree-shakes out of prod bundles.
+        if (import.meta.env.DEV && blocked) {
           toast.error(t("auth:errors.signupDisabledDevHint"));
         }
         return;
@@ -186,7 +248,7 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
       onSubmit: z.object({
         name: z.string().min(2),
         email: z.email(),
-        password: z.string().min(12),
+        password: newPasswordSchema(),
       }),
     },
   });
@@ -215,6 +277,7 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
         {(field) => (
           <TextField
             field={field}
+            ref={emailInput}
             label={t("auth:fields.email")}
             type="email"
             autoComplete="email"
@@ -227,6 +290,7 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
           <TextField
             field={field}
             label={t("auth:fields.password")}
+            description={t("auth:fields.passwordRule", { min: PASSWORD_MIN_LENGTH })}
             type="password"
             autoComplete="new-password"
           />
