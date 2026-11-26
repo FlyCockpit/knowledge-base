@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { searchOfTab, tabDraftKey, tabOfSearch } from "@/components/kb/kb-workspace";
+import {
+  fileOpQuestion,
+  leaveAsks,
+  searchOfTab,
+  tabDraftKey,
+  tabOfSearch,
+} from "@/components/kb/kb-workspace";
 import { draftKey } from "@/hooks/use-document-draft";
 import { tabKey } from "@/lib/kb-workspace/tabs";
 
@@ -79,5 +85,69 @@ describe("tabDraftKey (where a tab's unsaved draft is kept)", () => {
   it("keeps none for a pinned version or without a viewer", () => {
     expect(tabDraftKey(owner, "kb1", { path: "a.md", rev: SHA })).toBeNull();
     expect(tabDraftKey(null, "kb1", { path: "a.md" })).toBeNull();
+  });
+});
+
+describe("fileOpQuestion", () => {
+  const clean = { key: "a", dirty: false, uploading: false };
+  const dirty = { key: "a", dirty: true, uploading: false };
+  it("asks about the open editor's unsaved edits or upload first", () => {
+    expect(fileOpQuestion({ live: dirty, target: null, kind: "delete", settled: [] })).toBe("a");
+    expect(
+      fileOpQuestion({
+        live: { ...clean, uploading: true },
+        target: { key: "b", hasDraft: true },
+        kind: "move",
+        settled: [],
+      }),
+    ).toBe("a");
+  });
+  it("then about the target file's kept draft, never for a New document", () => {
+    const target = { key: "b", hasDraft: true };
+    expect(fileOpQuestion({ live: clean, target, kind: "delete", settled: [] })).toBe("b");
+    expect(fileOpQuestion({ live: clean, target, kind: "new", settled: [] })).toBeNull();
+    expect(
+      fileOpQuestion({
+        live: clean,
+        target: { key: "b", hasDraft: false },
+        kind: "move",
+        settled: [],
+      }),
+    ).toBeNull();
+    // The open file is the target: its live state is what counts.
+    expect(
+      fileOpQuestion({
+        live: clean,
+        target: { key: "a", hasDraft: true },
+        kind: "move",
+        settled: [],
+      }),
+    ).toBeNull();
+  });
+  it("never asks about an answered file again (a Discard that can't turn the session clean)", () => {
+    const target = { key: "b", hasDraft: true };
+    expect(fileOpQuestion({ live: dirty, target, kind: "delete", settled: ["a"] })).toBe("b");
+    expect(fileOpQuestion({ live: dirty, target, kind: "delete", settled: ["a", "b"] })).toBeNull();
+    expect(fileOpQuestion({ live: dirty, target: null, kind: "new", settled: ["a"] })).toBeNull();
+  });
+});
+
+describe("leaveAsks", () => {
+  const editor = (over: { dirty?: boolean; uploading?: boolean; kept?: boolean }) => ({
+    key: "a",
+    dirty: over.dirty ?? false,
+    uploading: over.uploading ?? false,
+    keepDraft: () => over.kept ?? false,
+  });
+  it("asks for unsaved edits it can't keep, and always waits for an upload", () => {
+    expect(leaveAsks(null)).toBe(false);
+    expect(leaveAsks(editor({}))).toBe(false);
+    expect(leaveAsks(editor({ dirty: true }))).toBe(true);
+    expect(leaveAsks(editor({ dirty: true, kept: true }))).toBe(false);
+    expect(leaveAsks(editor({ uploading: true, kept: true }), ["a"])).toBe(true);
+  });
+  it("doesn't ask again about a file answered in the same operation (Discard A, then Save B)", () => {
+    expect(leaveAsks(editor({ dirty: true }), ["a"])).toBe(false);
+    expect(leaveAsks(editor({ dirty: true }), ["b"])).toBe(true);
   });
 });

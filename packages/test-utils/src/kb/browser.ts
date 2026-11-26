@@ -1546,7 +1546,9 @@ export async function createKbBrowserFixture(options: {
               ? ["read", "propose", "write"]
               : c.req.query("proposer") === "1"
                 ? ["read", "propose"]
-                : ["read", "manage"],
+                : c.req.query("reader") === "1"
+                  ? ["read"]
+                  : ["read", "manage"],
         },
       });
       // Public fixture key only: no deploy secret and no queued network work.

@@ -58,9 +58,41 @@ type EditorRegistry = {
     id: number;
   } | null;
   announceRetarget: (owner: string | null, kbId: string, from: string, to: WorkspaceTab) => void;
+  /**
+   * A file operation the tree asked for, carried out by the document page with
+   * its own editing session (kb-sharing's move sheet, kb-recovery's delete
+   * with undo, a New document draft): the tree never writes by itself.
+   */
+  fileRequest: {
+    /** The viewer who asked (`user:<id>`); only their own page takes it. */
+    owner: string;
+    kbId: string;
+    request: WorkspaceFileRequest;
+    at: number;
+    id: number;
+  } | null;
+  requestFile: (owner: string, kbId: string, request: WorkspaceFileRequest) => void;
+  /** Claims request `id`: true for exactly one caller (a newer request stays). */
+  takeFileRequest: (id: number) => boolean;
+  /** Drops any pending request (the workspace that asked is gone). */
+  clearFileRequest: () => void;
 };
 
-export const useKbWorkspaceStore = create<EditorRegistry>()((set) => ({
+/** What the tree asks the document page to do. */
+export type WorkspaceFileRequest =
+  /** Open the move sheet for `path`, `toPath` typed in (rename or drag-to-move). */
+  | { kind: "move"; path: string; toPath: string }
+  /** Open the delete confirmation for `path`. */
+  | { kind: "delete"; path: string }
+  /** A New document draft at `path` with `markdown`, `images` staged into it. */
+  | { kind: "new"; path: string; markdown: string; images: readonly File[] };
+
+/** A request not taken within this long is stale (its page never showed): ignored. */
+export const FILE_REQUEST_TTL_MS = 15_000;
+
+let fileRequestSeq = 0;
+
+export const useKbWorkspaceStore = create<EditorRegistry>()((set, get) => ({
   editor: null,
   register: (editor) => set({ editor }),
   unregister: (key) => set((state) => (state.editor?.key === key ? { editor: null } : state)),
@@ -69,6 +101,15 @@ export const useKbWorkspaceStore = create<EditorRegistry>()((set) => ({
   retarget: null,
   announceRetarget: (owner, kbId, from, to) =>
     set((state) => ({ retarget: { owner, kbId, from, to, id: (state.retarget?.id ?? 0) + 1 } })),
+  fileRequest: null,
+  requestFile: (owner, kbId, request) =>
+    set({ fileRequest: { owner, kbId, request, at: Date.now(), id: ++fileRequestSeq } }),
+  takeFileRequest: (id) => {
+    if (get().fileRequest?.id !== id) return false;
+    set({ fileRequest: null });
+    return true;
+  },
+  clearFileRequest: () => set({ fileRequest: null }),
 }));
 
 export const TREE_WIDTH_DEFAULT = 288;

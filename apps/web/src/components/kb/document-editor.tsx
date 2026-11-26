@@ -55,6 +55,7 @@ import {
   useKbEditor,
 } from "@/hooks/use-kb-editor";
 import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
+import { useWorkspaceFileRequest } from "@/hooks/use-workspace-file-request";
 import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
 import { documentPathIssue } from "@/lib/document-path";
 import { joinProvenanceStamp, splitProvenanceStamp } from "@/lib/document-text";
@@ -1145,7 +1146,12 @@ export function KbSessionEditor({
   moreActions,
   saveRef,
   editor,
-}: EditorProps & { editor: KbEditorSession }) {
+  fileRequestOwner = null,
+}: EditorProps & {
+  editor: KbEditorSession;
+  /** The viewer whose workspace tree requests this draft may take (`user:<id>`). */
+  fileRequestOwner?: string | null;
+}) {
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
   // Without a branch head there is no base revision to write against.
   const controls = kb.headSha
@@ -1158,14 +1164,19 @@ export function KbSessionEditor({
     () => previewAfterSaves({ rev: preview.rev, assets: preview.assets }, editor.committed),
     [preview.rev, preview.assets, editor.committed],
   );
-  const onFiles = async (files: File[], at: { start: number; end: number }) => {
+  const onFiles = async (
+    files: File[],
+    at: { start: number; end: number },
+    /** The draft the files arrived in, when it was just set (not yet rendered). */
+    draft: string = editor.markdown,
+  ) => {
     setImageBusy(true);
     try {
       await insertImagesIntoDraft({
         files,
         at,
-        selected: editor.markdown.slice(at.start, at.end),
-        draft: editor.markdown,
+        selected: draft.slice(at.start, at.end),
+        draft,
         onPending: editor.setPendingUpload,
         newId: () => crypto.randomUUID(),
         placeholderAlt: (name) => t("editor.image.placeholder", { name }),
@@ -1178,6 +1189,22 @@ export function KbSessionEditor({
     }
   };
   const drafting = isNew && !editor.exists;
+  // A New document the workspace tree started (New file, a dropped file): its
+  // path, text and images go into this fresh draft, never over typed work.
+  useWorkspaceFileRequest({
+    owner: fileRequestOwner,
+    kbId: kb.id,
+    kind: "new",
+    ready: drafting && !editor.dirty && !editor.pending && controls.editMode !== "none",
+    accepts: () => true,
+    apply: (request) => {
+      editor.setPath(request.path);
+      if (request.markdown !== "") editor.setMarkdown(request.markdown);
+      const end = request.markdown.length;
+      if (request.images.length > 0)
+        void onFiles([...request.images], { start: end, end }, request.markdown);
+    },
+  });
   return (
     <DocumentEditorView
       lang={lang}

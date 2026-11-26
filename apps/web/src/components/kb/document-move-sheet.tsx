@@ -125,10 +125,13 @@ export function DocumentMoveSheet({
   editor,
   proposing,
   onOpenChange,
+  initialToPath,
 }: {
   editor: KbEditorSession;
   proposing: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The target typed in already (the workspace tree's rename or drag-to-move). */
+  initialToPath?: string;
 }) {
   const { t } = useTranslation(["kb", "common"]);
   const queryClient = useQueryClient();
@@ -170,7 +173,7 @@ export function DocumentMoveSheet({
     }
   };
   const form = useForm({
-    defaultValues: { toPath: from },
+    defaultValues: { toPath: initialToPath ?? from },
     onSubmit: async ({ value }) => {
       setNotice(null);
       const rebase = stale ?? undefined;

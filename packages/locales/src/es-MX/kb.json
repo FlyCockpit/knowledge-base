@@ -1147,6 +1147,69 @@
       "agentTitle": "Referencia para agentes",
       "agentDescription": "Un cliente de IA conectado por MCP lee {{path}} en “{{name}}” con esta llamada de herramienta.",
       "copyAgentLabel": "Copiar la referencia para agentes"
+    },
+    "fileOps": {
+      "root": "el nivel superior",
+      "actions": {
+        "label": "Acciones de {{name}}",
+        "rename": "Cambiar nombre",
+        "delete": "Eliminar",
+        "newFile": "Nuevo archivo aquí",
+        "newFolder": "Nueva carpeta aquí"
+      },
+      "rename": {
+        "label": "Nuevo nombre para {{name}}"
+      },
+      "newEntry": {
+        "fileTitle": "Nuevo archivo",
+        "folderTitle": "Nueva carpeta",
+        "fileDescription": "Crea un documento en {{folder}}.",
+        "folderDescription": "Crea una carpeta en {{folder}}. Git no guarda carpetas vacías, así que la carpeta aparece cuando se guarda su primer documento.",
+        "folderName": "Nombre de la carpeta",
+        "fileName": "Nombre del archivo",
+        "firstFileName": "Nombre del primer archivo",
+        "fileNameHint": "Se agrega “.md” si no lo escribes.",
+        "resultingPath": "Se creará como {{path}}",
+        "create": "Crear",
+        "cancel": "Cancelar"
+      },
+      "pathIssue": {
+        "empty": "Escribe un nombre.",
+        "absolute": "La ruta no puede empezar con “/” ni con una letra de unidad.",
+        "segment": "Un nombre de carpeta no puede estar vacío ni ser “.” o “..”.",
+        "characters": "El nombre tiene caracteres no permitidos (barra invertida o caracteres de control).",
+        "portable": "Usa un nombre sin < > : \" | ? * y sin espacio ni punto al inicio o al final.",
+        "reserved": "Este nombre está reservado (por ejemplo .git, CON o .assets).",
+        "tooLong": "La ruta es demasiado larga (512 bytes como máximo).",
+        "tooDeep": "Demasiadas carpetas anidadas (32 como máximo).",
+        "notMarkdown": "Los nombres de documento terminan en “.md”.",
+        "exists": "Ya existe un documento con este nombre.",
+        "invalid": "No se puede usar este nombre."
+      },
+      "drop": {
+        "target": "Suelta archivos para agregarlos a {{folder}}",
+        "summaryTitle": "Archivos soltados en {{folder}}",
+        "accepted": "se abre como documento nuevo en {{path}}",
+        "image": "una imagen: se agrega al documento nuevo",
+        "refused": {
+          "type": "solo se pueden agregar archivos Markdown e imágenes PNG, JPEG, GIF o WebP",
+          "tooLarge": "demasiado grande para agregarlo",
+          "exists": "ya existe un documento con este nombre",
+          "path": "nombre no válido: {{issue}}",
+          "oneAtATime": "un archivo Markdown por vez: agrégalo después de guardar este",
+          "tooManyImages": "más de {{max}} imágenes: un documento guarda como máximo {{max}}"
+        },
+        "open": "Abrir como documento nuevo",
+        "cancel": "Cancelar",
+        "nothing": "Ninguno de estos archivos se puede agregar.",
+        "hint": "Se abre como un documento nuevo en el editor; no se guarda nada hasta que lo guardes.",
+        "unreadable": "No se pudo leer el archivo."
+      },
+      "moveHint": "Arrastra un archivo a una carpeta para moverlo.",
+      "newBusy": "Primero guarda o descarta el documento nuevo que está abierto.",
+      "toolbar": {
+        "label": "Acciones de archivos"
+      }
     }
   }
 }

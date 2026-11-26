@@ -170,6 +170,7 @@ function KbLayout() {
         kbName={kb.name}
         viewerId={viewerId}
         canRead
+        canWrite={kbControls(kb.capabilities).editMode !== "none" && kb.headSha !== null}
         current={onDocument ? search : null}
       >
         <div className="space-y-6">

@@ -33,6 +33,7 @@ import { ResizeHandle } from "@/components/kb/workspace/resize-handle";
 import { ShortcutsSheet } from "@/components/kb/workspace/shortcuts-sheet";
 import { SidebarSearch } from "@/components/kb/workspace/sidebar-search";
 import { TabStrip, TabSwitcher } from "@/components/kb/workspace/tab-strip";
+import { useTreeFileOps } from "@/components/kb/workspace/tree-file-ops";
 import { WorkspaceSidebar } from "@/components/kb/workspace/workspace-sidebar";
 import { clearDraft, draftKey, readDraft } from "@/hooks/use-document-draft";
 import { useKbHeadSha } from "@/hooks/use-kb-head-sha";
@@ -41,13 +42,18 @@ import { useKbTree } from "@/hooks/use-kb-tree";
 import { useKbWorkspaceTabs } from "@/hooks/use-kb-workspace-tabs";
 import { useMainScrollerHeight } from "@/hooks/use-main-scroller-height";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import { useResolvePendingClose } from "@/hooks/use-resolve-pending-close";
 import { useSaveWhenReady } from "@/hooks/use-save-when-ready";
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts";
 import { agentBadges } from "@/lib/kb-workspace/agent-activity";
 import { isMacPlatform } from "@/lib/kb-workspace/shortcuts";
 import { retargetApplies, tabKey, type WorkspaceTab } from "@/lib/kb-workspace/tabs";
-import { useKbWorkspaceLayout, useKbWorkspaceStore } from "@/stores/kb-workspace";
+import {
+  useKbWorkspaceLayout,
+  useKbWorkspaceStore,
+  type WorkspaceFileRequest,
+} from "@/stores/kb-workspace";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -62,6 +68,30 @@ export type WorkspaceSearch = {
   pr?: number;
   mode?: "new" | "edit";
 };
+
+/**
+ * Pure: which file's unsaved edits a tree file operation asks about first
+ * (its tab key), or null to go ahead. Even where a draft could be kept, a move
+ * or delete leaves none behind: the open editor's edits, then the target
+ * file's kept draft. A file already answered (`settled`) is not asked again: a
+ * Discard is final even where the session can't turn clean (an unresolved
+ * first save keeps its path).
+ */
+export function fileOpQuestion({
+  live,
+  target,
+  kind,
+  settled,
+}: {
+  live: { key: string; dirty: boolean; uploading: boolean } | null;
+  target: { key: string; hasDraft: boolean } | null;
+  kind: "move" | "delete" | "new";
+  settled: readonly string[];
+}): string | null {
+  if (live && (live.dirty || live.uploading) && !settled.includes(live.key)) return live.key;
+  if (kind === "new" || !target || target.key === live?.key) return null;
+  return target.hasDraft && !settled.includes(target.key) ? target.key : null;
+}
 
 /** The tab a document URL shows (null: no file, e.g. the KB home). */
 export function tabOfSearch(search: WorkspaceSearch | null): WorkspaceTab | null {
@@ -120,7 +150,24 @@ type Pending = {
   intent: LeaveIntent;
   /** Save was chosen for a file whose editor wasn't open: it is opened and saved when ready. */
   saveWhenReady?: boolean;
+  /** Files already answered in this operation (a tree file op): not asked about again. */
+  settled?: readonly string[];
 };
+
+/**
+ * Pure: whether leaving the open editor asks first. An upload in flight always
+ * waits; unsaved edits ask unless their draft is kept here, or the person
+ * already answered for that file in this same operation (`settled`: a Discard
+ * stays final even where the session can't turn clean).
+ */
+export function leaveAsks(
+  editor: { key: string; dirty: boolean; uploading: boolean; keepDraft: () => boolean } | null,
+  settled: readonly string[] = [],
+): boolean {
+  if (!editor) return false;
+  if (editor.uploading) return true;
+  return editor.dirty && !settled.includes(editor.key) && !editor.keepDraft();
+}
 
 /** What leaving a file was for, carried out once its unsaved edits are settled. */
 type LeaveIntent =
@@ -141,6 +188,7 @@ export function KbWorkspace({
   kbName,
   viewerId,
   canRead,
+  canWrite,
   current,
   children,
 }: {
@@ -150,6 +198,8 @@ export function KbWorkspace({
   kbId: string;
   kbName: string;
   canRead: boolean;
+  /** The viewer may write or propose: the tree offers its file operations. */
+  canWrite: boolean;
   /** The document URL's search, or null on the KB home. */
   current: WorkspaceSearch | null;
   children: ReactNode;
@@ -258,9 +308,9 @@ export function KbWorkspace({
    * in this browser tab (it reopens dirty); when it really wasn't kept (storage
    * blocked or full, too large), ask Save / Discard / Cancel first.
    */
-  const leave = (intent: LeaveIntent) => {
+  const leave = (intent: LeaveIntent, settled: readonly string[] = []) => {
     // An image still uploading lives in this editor's session only: wait for it.
-    if (editor?.uploading || (editor?.dirty && !editor.keepDraft()))
+    if (editor && leaveAsks(editor, settled))
       setPending({ key: editor.key, intent, id: nextQuestion() });
     else perform(intent);
   };
@@ -296,6 +346,55 @@ export function KbWorkspace({
     if (editor && editor.key === tabKey({ path })) run();
     else leave({ kind: "run", run });
   };
+  /**
+   * A tree file operation: open its file (asking about unsaved work first, as
+   * any switch does) and hand the page the request it carries out with its
+   * own session. Nothing is written here.
+   */
+  const requestFile = useKbWorkspaceStore((state) => state.requestFile);
+  // A request this workspace left behind never outlives it (another account,
+  // another KB, leaving the workspace).
+  const clearFileRequest = useKbWorkspaceStore((state) => state.clearFileRequest);
+  useMountEffect(() => clearFileRequest);
+  const startFileOp = (
+    tab: WorkspaceTab,
+    request: WorkspaceFileRequest,
+    settled: readonly string[] = [],
+  ) => {
+    if (draftOwner === null) return;
+    const owner = draftOwner;
+    setDrawer(false);
+    const open = tabs.state.tabs.find((other) => tabKey(other) === tabKey(tab));
+    // Unsaved edits are settled first (Save / Discard / Cancel); each answer
+    // starts the operation over against the state as it is then, never asking
+    // about an answered file again.
+    const ask = fileOpQuestion({
+      live: useKbWorkspaceStore.getState().editor,
+      target: open ? { key: tabKey(open), hasDraft: hasDraft(open) } : null,
+      kind: request.kind,
+      settled,
+    });
+    if (ask !== null) {
+      const again = () => startFileOp(tab, request, [...settled, ask]);
+      setPending({ key: ask, intent: { kind: "run", run: again }, id: nextQuestion(), settled });
+      return;
+    }
+    const run = () => {
+      requestFile(owner, kbId, request);
+      void navigate({
+        to: "/$lang/kbs/$kbId/documents",
+        params: { lang, kbId },
+        search: searchOfTab(open ?? tab),
+      });
+    };
+    run();
+  };
+  const fileOps = useTreeFileOps({
+    canWrite,
+    paths: tree.paths,
+    start: startFileOp,
+    newBusy: () => isDirtyTab({ path: "" }),
+  });
   /**
    * A search hit opens at the version it was cited at, as the KB page's search
    * does: on main when that is the head, else that pinned version (its heading
@@ -340,13 +439,16 @@ export function KbWorkspace({
   };
   /** Save chosen for a file whose editor isn't open: open it, save when it's ready. */
   const openToSave = (question: Pending) =>
-    leave({
-      kind: "run",
-      run: () => {
-        go(tabOf(question.key));
-        setPending({ ...question, saveWhenReady: true });
+    leave(
+      {
+        kind: "run",
+        run: () => {
+          go(tabOf(question.key));
+          setPending({ ...question, saveWhenReady: true });
+        },
       },
-    });
+      question.settled,
+    );
   const requestClose = (key: string) => request(key, { kind: "close", key });
   const pendingTab = pending ? tabOf(pending.key) : null;
   const pendingEditor = pending && editor?.key === pending.key ? editor : null;
@@ -511,6 +613,8 @@ export function KbWorkspace({
       dirtyPaths={dirtyPaths}
       onHide={wide ? () => layout.setTreeOpen(false) : undefined}
       onNavigated={() => setDrawer(false)}
+      treeOps={fileOps.treeProps}
+      treeToolbar={fileOps.toolbar}
     />
   );
 
@@ -672,6 +776,7 @@ export function KbWorkspace({
         }}
       />
       <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} mac={mac} />
+      {fileOps.dialogs}
       <DirtyCloseDialog
         // One dialog per question: its own Saving… state never carries over.
         key={pending?.id ?? 0}
@@ -743,6 +848,8 @@ function WorkspaceSidebarPane({
   dirtyPaths,
   onHide,
   onNavigated,
+  treeOps,
+  treeToolbar,
 }: {
   lang: string;
   kbId: string;
@@ -760,11 +867,14 @@ function WorkspaceSidebarPane({
   onHide?: () => void;
   /** A jump inside the open document (outline): the phone drawer closes. */
   onNavigated?: () => void;
+  /** The tree's file operations (writers only; `useTreeFileOps`). */
+  treeOps?: ReturnType<typeof useTreeFileOps>["treeProps"];
+  treeToolbar?: ReactNode;
 }) {
   const { t } = useTranslation("kb");
   const view = useKbWorkspaceLayout((layout) => layout.sidebarView);
   const setView = useKbWorkspaceLayout((layout) => layout.setSidebarView);
-  const files = tree.isPending ? (
+  const list = tree.isPending ? (
     <div className="space-y-2 p-3">
       <Skeleton className="h-6 w-3/4" />
       <Skeleton className="h-6 w-2/3" />
@@ -774,16 +884,21 @@ function WorkspaceSidebarPane({
     <div className="p-3">
       <InlineRetry message={t("workspace.shell.treeLoadFailed")} onRetry={tree.refetch} />
     </div>
-  ) : tree.paths.length === 0 ? (
+  ) : tree.paths.length === 0 && !treeOps?.onDropFiles ? (
     <p className="p-3 text-sm text-muted-foreground">{t("detail.documentsEmpty")}</p>
   ) : (
     <div className="flex min-h-0 flex-1 flex-col">
+      {tree.paths.length === 0 && (
+        // A writer's empty tree stays a drop area for the first files.
+        <p className="p-3 text-sm text-muted-foreground">{t("detail.documentsEmpty")}</p>
+      )}
       <FileTree
         paths={tree.paths}
         activePath={activePath}
         dirtyPaths={dirtyPaths}
         badges={badges}
         onOpen={(path, options) => onOpen(path, undefined, options?.newTab, options?.keyboard)}
+        {...treeOps}
         ariaLabel={t("workspace.tree.label")}
         className="min-h-0 flex-1"
       />
@@ -800,6 +915,14 @@ function WorkspaceSidebarPane({
         )
       )}
     </div>
+  );
+  const files = treeToolbar ? (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {treeToolbar}
+      {list}
+    </div>
+  ) : (
+    list
   );
   return (
     <>

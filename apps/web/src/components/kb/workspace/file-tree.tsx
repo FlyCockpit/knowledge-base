@@ -1,6 +1,7 @@
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
 import {
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -12,7 +13,10 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useTreeFileDrop } from "@/components/kb/workspace/tree-drop";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { dataTransferHasFiles } from "@/lib/file-drop-registry";
+import { canDrop, folderOf } from "@/lib/kb-workspace/file-ops";
 import {
   ancestorsOf,
   buildTree,
@@ -54,7 +58,37 @@ export type FileTreeProps = {
   onRowKey?: (node: TreeNode, event: KeyboardEvent<HTMLDivElement>) => boolean;
   ariaLabel: string;
   className?: string;
+  /**
+   * Inline rename of a file row (F2, or the shell's menu via `renaming`).
+   * Enter commits with the typed name, Escape or leaving the field cancels.
+   */
+  onRename?: (path: string, newName: string) => void;
+  /** The row being renamed (controlled); omitted: the tree keeps it itself. */
+  renaming?: string | null;
+  onRenamingChange?: (path: string | null) => void;
+  /** Drag a file row onto a folder row (or empty space: the top level) to move it. */
+  onMove?: (path: string, targetFolder: string) => void;
+  /** OS files dropped on a folder row, a file row (its folder) or empty space (the top level). */
+  onDropFiles?: (files: File[], folder: string) => void;
 };
+
+/** In-page drags of a tree row carry its path under this type (never "Files"). */
+export const TREE_DRAG_TYPE = "application/x-kb-tree-path";
+
+/**
+ * Pure: a drag event the tree's own (empty-space) handler sees that a row
+ * already handled — events bubble from the row, and the row's folder stands.
+ */
+export function rowOwnsDragEvent(target: EventTarget | null, node: object | null): boolean {
+  if (node !== null || target === null || !("closest" in target)) return false;
+  return (target as Element).closest('[role="treeitem"]') !== null;
+}
+
+/** Pure: the folder a drag over `node` (null: empty space) targets. */
+export function dropFolderFor(node: Pick<TreeNode, "kind" | "path"> | null): string {
+  if (!node) return "";
+  return node.kind === "folder" ? node.path : folderOf(node.path);
+}
 
 /** Pure: the expanded set after the active file changed, so it is visible. */
 export function revealPath(
@@ -115,6 +149,11 @@ export function FileTree({
   onRowKey,
   ariaLabel,
   className,
+  onRename,
+  renaming: renamingProp,
+  onRenamingChange,
+  onMove,
+  onDropFiles,
 }: FileTreeProps) {
   const { t } = useTranslation("kb");
   const baseId = useId();
@@ -148,16 +187,67 @@ export function FileTree({
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
   // React 19 ref callbacks clean up after themselves: the observer lives with the node.
-  const measure = useCallback((node: HTMLDivElement | null) => {
-    scroller.current = node;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setHeight(entry.contentRect.height);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+  // OS file drops go through the app's drop dispatcher; in-page moves are plain DnD.
+  const fileDrop = useTreeFileDrop(onDropFiles);
+  const setDropElement = fileDrop.setElement;
+  const measure = useCallback(
+    (node: HTMLDivElement | null) => {
+      scroller.current = node;
+      setDropElement(node);
+      if (!node || typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(([entry]) => {
+        if (entry) setHeight(entry.contentRect.height);
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    },
+    [setDropElement],
+  );
   const typed = useRef({ text: "", at: 0 });
+  const [ownRenaming, setOwnRenaming] = useState<string | null>(null);
+  const renaming = renamingProp === undefined ? ownRenaming : renamingProp;
+  const setRenaming = (path: string | null) => {
+    if (renamingProp === undefined) setOwnRenaming(path);
+    onRenamingChange?.(path);
+    if (path === null) scroller.current?.focus({ preventScroll: true });
+    else setFocusPath(path);
+  };
+  const dragging = useRef<string | null>(null);
+  const [moveTarget, setMoveTarget] = useState<string | null>(null);
+  const dropHighlight = moveTarget ?? fileDrop.dropFolder;
+  const fineDrag = !coarse && onMove !== undefined;
+  const handledByRow = (event: DragEvent<HTMLElement>, node: TreeNode | null) =>
+    rowOwnsDragEvent(event.target, node);
+  const onDragOverTarget = (event: DragEvent<HTMLElement>, node: TreeNode | null) => {
+    if (handledByRow(event, node)) return;
+    const folder = dropFolderFor(node);
+    if (dataTransferHasFiles(event.dataTransfer)) {
+      if (onDropFiles) fileDrop.hover(folder);
+      return;
+    }
+    const source = dragging.current;
+    if (!source || !event.dataTransfer.types.includes(TREE_DRAG_TYPE)) return;
+    if (!canDrop({ kind: "file", path: source }, folder)) {
+      setMoveTarget(null);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setMoveTarget(folder);
+  };
+  const onDropTarget = (event: DragEvent<HTMLElement>, node: TreeNode | null) => {
+    // OS files belong to the drop dispatcher (FileDropGuard), never to this handler.
+    if (dataTransferHasFiles(event.dataTransfer) || handledByRow(event, node)) return;
+    const source = dragging.current;
+    const folder = dropFolderFor(node);
+    dragging.current = null;
+    setMoveTarget(null);
+    if (!source || !onMove || !canDrop({ kind: "file", path: source }, folder)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onMove(source, folder);
+  };
 
   const moveFocus = (path: string) => {
     setFocusPath(path);
@@ -194,6 +284,19 @@ export function FileTree({
       else onOpen(focused.node.path, { newTab: event.ctrlKey || event.metaKey, keyboard: true });
       return;
     }
+    if (
+      event.key === "F2" &&
+      onRename &&
+      focused.node.kind === "file" &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      setRenaming(focused.node.path);
+      return;
+    }
     if (onRowKey?.(focused.node, event)) {
       event.preventDefault();
       return;
@@ -226,6 +329,9 @@ export function FileTree({
 
   const rowId = (index: number) => `${baseId}-row-${index}`;
   const indices = windowRange(rows.length, scrollTop, height, rowHeight, focusIndex);
+  // The row being renamed stays rendered while it scrolls out of the window.
+  const renamingIndex = renaming ? indexOf(renaming) : -1;
+  if (renamingIndex >= 0 && !indices.includes(renamingIndex)) indices.push(renamingIndex);
 
   return (
     <div
@@ -246,9 +352,19 @@ export function FileTree({
           moveFocus(focused.node.path);
       }}
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      onDragOver={(event) => onDragOverTarget(event, null)}
+      onDrop={(event) => onDropTarget(event, null)}
+      onDragLeave={(event) => {
+        // Left the tree itself (not just moved between rows).
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setMoveTarget(null);
+        fileDrop.hover(null);
+      }}
+      data-drop-target={dropHighlight === "" ? "" : undefined}
       data-testid="kb-file-tree"
       className={cn(
         "group/tree relative min-h-0 overflow-y-auto overflow-x-clip outline-none",
+        dropHighlight === "" && "bg-primary/5 ring-2 ring-inset ring-primary/40",
         className,
       )}
     >
@@ -263,6 +379,9 @@ export function FileTree({
             const active = node.path === activePath;
             const dirty = !isFolder && dirtyPaths?.has(node.path);
             const badge = badges?.get(node.path);
+            const isRenaming = !isFolder && renaming === node.path && onRename !== undefined;
+            const isDropTarget = isFolder && dropHighlight === node.path;
+            const draggableRow = fineDrag && !isFolder && !isRenaming;
             return (
               <div
                 key={node.path}
@@ -277,12 +396,31 @@ export function FileTree({
                 data-path={node.path}
                 data-focused={index === focusIndex || undefined}
                 title={node.path}
-                onClick={(event) => onRowClick(row, event)}
+                data-drop-target={isDropTarget || undefined}
+                draggable={draggableRow ? true : undefined}
+                onDragStart={
+                  fineDrag && !isFolder
+                    ? (event) => {
+                        dragging.current = node.path;
+                        event.dataTransfer.setData(TREE_DRAG_TYPE, node.path);
+                        event.dataTransfer.effectAllowed = "move";
+                      }
+                    : undefined
+                }
+                onDragEnd={() => {
+                  dragging.current = null;
+                  setMoveTarget(null);
+                }}
+                onDragOver={(event) => onDragOverTarget(event, node)}
+                onDrop={(event) => onDropTarget(event, node)}
+                onClick={(event) => !isRenaming && onRowClick(row, event)}
                 onAuxClick={(event) => onRowAuxClick(row, event)}
                 // Keep focus on the tree itself (one tab stop); the row only becomes the active descendant.
                 onMouseDown={(event) => {
-                  if (!(event.target as Element).closest("button")) {
-                    event.preventDefault();
+                  if (!(event.target as Element).closest("button,input")) {
+                    // A draggable row keeps the browser's mousedown: preventing
+                    // it would stop a drag-to-move from ever starting.
+                    if (!draggableRow) event.preventDefault();
                     scroller.current?.focus({ preventScroll: true });
                   }
                 }}
@@ -290,6 +428,7 @@ export function FileTree({
                   "group/row absolute inset-x-0 flex cursor-pointer items-center gap-1.5 pr-1 text-sm select-none",
                   "hover:bg-muted/60",
                   active && "bg-muted font-medium",
+                  isDropTarget && "bg-primary/10 ring-2 ring-inset ring-primary/50",
                   index === focusIndex &&
                     "group-focus-visible/tree:outline-2 group-focus-visible/tree:-outline-offset-2 group-focus-visible/tree:outline-ring",
                 )}
@@ -319,14 +458,26 @@ export function FileTree({
                 ) : (
                   <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                 )}
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    !isFolder && "font-mono text-[0.8125rem]",
-                  )}
-                >
-                  {node.name}
-                </span>
+                {isRenaming ? (
+                  <RenameInput
+                    name={node.name}
+                    label={t("workspace.fileOps.rename.label", { name: node.name })}
+                    onCommit={(next) => {
+                      setRenaming(null);
+                      if (next !== "" && next !== node.name) onRename(node.path, next);
+                    }}
+                    onCancel={() => setRenaming(null)}
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate",
+                      !isFolder && "font-mono text-[0.8125rem]",
+                    )}
+                  >
+                    {node.name}
+                  </span>
+                )}
                 {dirty && (
                   <span
                     aria-hidden
@@ -346,5 +497,63 @@ export function FileTree({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The inline rename field. Enter commits (the trimmed name), Escape and
+ * leaving the field cancel. Its keys never reach the tree's own handler.
+ */
+function RenameInput({
+  name,
+  label,
+  onCommit,
+  onCancel,
+}: {
+  name: string;
+  label: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(name);
+  const done = useRef(false);
+  // Select the name without ".md" on first focus, like a desktop file manager.
+  const select = useCallback(
+    (node: HTMLInputElement | null) => {
+      if (!node) return;
+      node.focus({ preventScroll: true });
+      const stem = name.toLowerCase().endsWith(".md") ? name.length - 3 : name.length;
+      node.setSelectionRange(0, stem);
+    },
+    [name],
+  );
+  return (
+    <input
+      ref={select}
+      value={value}
+      aria-label={label}
+      autoComplete="off"
+      inputMode="text"
+      spellCheck={false}
+      data-testid="tree-rename-input"
+      className="min-w-0 flex-1 rounded border bg-background px-1 font-mono text-base outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 sm:text-[0.8125rem]"
+      onChange={(event) => setValue(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          done.current = true;
+          onCommit(value.trim());
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          done.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={() => {
+        if (!done.current) onCancel();
+      }}
+    />
   );
 }

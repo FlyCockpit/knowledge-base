@@ -54,6 +54,7 @@ import {
   useKbEditor,
 } from "@/hooks/use-kb-editor";
 import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
+import { useWorkspaceFileRequest } from "@/hooks/use-workspace-file-request";
 import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
 import { documentTitle } from "@/lib/document-text";
 import { cachedKbName, pageHead } from "@/lib/page-title";
@@ -642,6 +643,9 @@ function DocumentView({
   // (the keeper drops the stored one as its key goes), even if the session
   // can't turn clean (an unresolved first save holding a typed path).
   const [discarded, setDiscarded] = useState(false);
+  // A session that stays open after a Discard (a tree Rename/Delete of this
+  // file, then Cancel) keeps new edits again once it is back to clean.
+  if (discarded && !editor.dirty && !editor.pending) setDiscarded(false);
   const kept = useDocumentDraft({
     key: discarded ? null : keyOf(target),
     dirty: editor.dirty,
@@ -654,7 +658,8 @@ function DocumentView({
   });
   const [restoring, setRestoring] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [moving, setMoving] = useState(false);
+  // The move sheet, with the target the workspace tree typed in (rename, drag).
+  const [moving, setMoving] = useState<false | { toPath?: string }>(false);
   const onProposed = (number: number, created: boolean) => {
     if (proposal?.number === number) return;
     toast.success(
@@ -732,10 +737,38 @@ function DocumentView({
       if (draftKeyNow) clearDraft(draftKeyNow);
     },
   });
+  // The workspace tree's Rename, drag-to-move and Delete of this document run
+  // here, through this session's own sheet and confirmation.
+  // Never over unsaved edits (the workspace settles them first; a draft
+  // restored here meanwhile keeps the request from running).
+  const fileOpsReady =
+    canDelete && !editor.pending && !editor.dirty && !gone && target.target.kind === "main";
+  useWorkspaceFileRequest({
+    owner: userId,
+    kbId,
+    kind: "move",
+    ready: fileOpsReady,
+    accepts: (request) => request.path === target.path,
+    apply: (request) => {
+      setDeleting(false);
+      setMoving({ toPath: request.toPath });
+    },
+  });
+  useWorkspaceFileRequest({
+    owner: userId,
+    kbId,
+    kind: "delete",
+    ready: fileOpsReady,
+    accepts: (request) => request.path === target.path,
+    apply: () => {
+      setMoving(false);
+      setDeleting(true);
+    },
+  });
   // Secondary and destructive actions live in one "More actions" menu.
   const moreActions: MoreAction[] = canDelete
     ? [
-        documentMoveAction(t, editor.pending, () => setMoving(true)),
+        documentMoveAction(t, editor.pending, () => setMoving({})),
         {
           key: "delete",
           label: t("editor.delete"),
@@ -824,7 +857,8 @@ function DocumentView({
         <DocumentMoveSheet
           editor={editor}
           proposing={controls.editMode === "proposal" || editor.proposal}
-          onOpenChange={setMoving}
+          initialToPath={moving.toPath}
+          onOpenChange={(open) => setMoving(open ? moving : false)}
         />
       )}
       {canDelete && (
@@ -937,6 +971,7 @@ function DocumentView({
           kb={kb}
           isNew={draft}
           editor={editor}
+          fileRequestOwner={userId}
           closed={!open}
           viewingRevision={pinned}
           // Media resolve at the revision the document was read at, with that

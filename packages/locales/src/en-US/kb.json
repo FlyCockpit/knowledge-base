@@ -1147,6 +1147,69 @@
       "agentTitle": "Reference for agents",
       "agentDescription": "An AI client connected over MCP reads {{path}} in “{{name}}” with this tool call.",
       "copyAgentLabel": "Copy the reference for agents"
+    },
+    "fileOps": {
+      "root": "the top level",
+      "actions": {
+        "label": "Actions for {{name}}",
+        "rename": "Rename",
+        "delete": "Delete",
+        "newFile": "New file here",
+        "newFolder": "New folder here"
+      },
+      "rename": {
+        "label": "New name for {{name}}"
+      },
+      "newEntry": {
+        "fileTitle": "New file",
+        "folderTitle": "New folder",
+        "fileDescription": "Creates a document in {{folder}}.",
+        "folderDescription": "Creates a folder in {{folder}}. Git keeps no empty folders, so the folder appears once its first document is saved.",
+        "folderName": "Folder name",
+        "fileName": "File name",
+        "firstFileName": "First file name",
+        "fileNameHint": "“.md” is added when you leave it out.",
+        "resultingPath": "Will be created as {{path}}",
+        "create": "Create",
+        "cancel": "Cancel"
+      },
+      "pathIssue": {
+        "empty": "Enter a name.",
+        "absolute": "The path must not start with “/” or a drive letter.",
+        "segment": "A folder name can't be empty, “.” or “..”.",
+        "characters": "The name contains characters that aren't allowed (backslash or control characters).",
+        "portable": "Use a name without < > : \" | ? * and without a leading or trailing space or dot.",
+        "reserved": "This name is reserved (for example .git, CON or .assets).",
+        "tooLong": "The path is too long (512 bytes at most).",
+        "tooDeep": "Too many folders deep (32 at most).",
+        "notMarkdown": "Document names end in “.md”.",
+        "exists": "A document with this name already exists.",
+        "invalid": "This name can't be used."
+      },
+      "drop": {
+        "target": "Drop files to add them to {{folder}}",
+        "summaryTitle": "Files dropped on {{folder}}",
+        "accepted": "opens as a new document at {{path}}",
+        "image": "an image: staged into the new document",
+        "refused": {
+          "type": "only Markdown files and PNG, JPEG, GIF or WebP images can be added",
+          "tooLarge": "too large to add",
+          "exists": "a document with this name already exists",
+          "path": "not a valid name: {{issue}}",
+          "oneAtATime": "one Markdown file per drop: add it after saving this one",
+          "tooManyImages": "more than {{max}} images: one document saves at most {{max}}"
+        },
+        "open": "Open as a new document",
+        "cancel": "Cancel",
+        "nothing": "None of these files can be added.",
+        "hint": "It opens as a new document in the editor; nothing is saved until you save it.",
+        "unreadable": "The file could not be read."
+      },
+      "moveHint": "Drag a file onto a folder to move it.",
+      "newBusy": "Save or discard the new document that is open first.",
+      "toolbar": {
+        "label": "File actions"
+      }
     }
   }
 }

@@ -14,6 +14,7 @@ import { createInstance } from "i18next";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
 import z from "zod";
+import { FileDropGuard } from "@/components/file-drop-guard";
 import { clearKbPrivateQueries, parseApplyResult, recheckKbAccess } from "@/hooks/use-kb-editor";
 import { authClient } from "@/lib/auth-client";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
@@ -136,6 +137,8 @@ createRoot(window.document.getElementById("root")!).render(
     <I18nextProvider i18n={i18n}>
       <RouterProvider router={router} />
       <Toaster />
+      {/* As in the app's root: OS file drops reach their registered targets. */}
+      <FileDropGuard />
     </I18nextProvider>
   </QueryClientProvider>,
 );

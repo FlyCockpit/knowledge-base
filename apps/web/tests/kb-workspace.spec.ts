@@ -1,5 +1,6 @@
 /** The KB workspace journey: tree → tabs → edit → save → dirty close → reload restores. */
 import { randomUUID } from "node:crypto";
+import enCommon from "@knowledge-base/locales/src/en-US/common.json" with { type: "json" };
 import enKb from "@knowledge-base/locales/src/en-US/kb.json" with { type: "json" };
 import { expect, type Page, type Request, test } from "@playwright/test";
 import { minimalPng } from "../../../packages/api/src/lib/kb/fixtures/media-bytes";
@@ -15,13 +16,13 @@ const ALPHA = "guides/alpha.md";
 const BETA = "guides/beta.md";
 const README = "readme.md";
 
-async function as(page: Page) {
+async function as(page: Page, who: "owner" | "manager" = "owner") {
   await page.context().clearCookies();
   await page.context().addCookies([
-    { name: fx.cookie.name, value: actors.cookies.owner, url: fx.origin, httpOnly: true },
+    { name: fx.cookie.name, value: actors.cookies[who], url: fx.origin, httpOnly: true },
     {
       name: "better-auth.session_token",
-      value: actors.cookies.owner,
+      value: actors.cookies[who],
       url: fx.origin,
       httpOnly: true,
     },
@@ -524,4 +525,204 @@ test("desktop: the KB home restores no active tab; Copy link is the app's own UR
   await expect(tabs(page).getByRole("tab", { name: README })).toBeVisible({ timeout: 25_000 });
   await expect(tabs(page).getByRole("tab", { selected: true })).toHaveCount(0);
   await expect(page.getByRole("tabpanel")).toHaveCount(0);
+});
+
+test("desktop: the tree's New file, F2 rename, drag-to-move and Delete use the document's own flows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(ALPHA)}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("First guide.");
+  const ops = enKb.workspace.fileOps;
+  const moveSheet = () => page.getByRole("dialog", { name: enKb.move.title });
+
+  // F2 on the open file renames it in place; Enter opens the document's own
+  // move sheet with the new path typed in, and nothing is written before Move.
+  await tree(page).focus();
+  await page.keyboard.press("F2");
+  const rename = page.getByRole("textbox", {
+    name: ops.rename.label.replace("{{name}}", "alpha.md"),
+  });
+  await rename.fill("first");
+  await rename.press("Enter");
+  await expect(moveSheet().getByLabel(enKb.move.pathLabel)).toHaveValue("guides/first.md");
+  expect(await serverText(page, kb.id, ALPHA)).toContain("First guide.");
+  await moveSheet().getByRole("button", { name: enKb.move.submit }).click();
+  await expect(page).toHaveURL(/path=guides%2Ffirst\.md/);
+  expect(await serverText(page, kb.id, "guides/first.md")).toContain("First guide.");
+  await expect(tree(page).getByRole("treeitem", { name: "first.md" })).toBeVisible();
+  await expect(tree(page).getByRole("treeitem", { name: "alpha.md" })).toHaveCount(0);
+
+  // Dragging a file onto a folder is a move too, through the same sheet.
+  await tree(page)
+    .getByRole("treeitem", { name: README })
+    .dragTo(tree(page).getByRole("treeitem", { name: "guides" }));
+  await expect(moveSheet().getByLabel(enKb.move.pathLabel)).toHaveValue("guides/readme.md");
+  await moveSheet().getByRole("button", { name: enKb.move.submit }).click();
+  await expect(page).toHaveURL(/path=guides%2Freadme\.md/);
+  expect(await serverText(page, kb.id, "guides/readme.md")).toContain("Start here.");
+
+  // Delete from a row's menu: the document's confirmation, then it is gone.
+  await tree(page).getByRole("treeitem", { name: "beta.md" }).hover();
+  await tree(page)
+    .getByRole("button", { name: ops.actions.label.replace("{{name}}", "beta.md") })
+    .click();
+  await page.getByRole("menuitem", { name: ops.actions.delete }).click();
+  const confirm = page.getByRole("alertdialog");
+  await confirm.getByPlaceholder("DELETE").fill("DELETE");
+  await confirm.getByRole("button", { name: enCommon.actions.delete, exact: true }).click();
+  await expect(tree(page).getByRole("treeitem", { name: "beta.md" })).toHaveCount(0);
+
+  // A folder row's menu acts without toggling the row behind it.
+  await tree(page).getByRole("treeitem", { name: "guides" }).hover();
+  await tree(page)
+    .getByRole("button", { name: ops.actions.label.replace("{{name}}", "guides") })
+    .click();
+  await page.getByRole("menuitem", { name: ops.actions.newFile }).click();
+  await expect(page.getByRole("dialog", { name: ops.newEntry.fileTitle })).toBeVisible();
+  // (The tree is inert behind the modal dialog: checked once it is closed.)
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: ops.newEntry.fileTitle })).toHaveCount(0);
+  await expect(tree(page).getByRole("treeitem", { name: "guides" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  // New file at the top level opens a New document draft at that path; ⌘S creates it.
+  await page.getByRole("button", { name: ops.newEntry.fileTitle, exact: true }).click();
+  const create = page.getByRole("dialog", { name: ops.newEntry.fileTitle });
+  await create.getByLabel(ops.newEntry.fileName).fill("notes");
+  await create.getByRole("button", { name: ops.newEntry.create }).click();
+  await expect(page).toHaveURL(/mode=new/);
+  await expect(page.getByLabel(enKb.editor.pathLabel)).toHaveValue("notes.md");
+  await markdown(page).fill("# Notes\n\nMade from the tree.\n");
+  await markdown(page).press(`${mod}+s`);
+  await expect(page).toHaveURL(/path=notes\.md/);
+  expect(await serverText(page, kb.id, "notes.md")).toContain("Made from the tree.");
+});
+
+test("desktop: a reader's tree has no file operations", async ({ page }) => {
+  // The second account's share only reads (manage would include write).
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  expect(
+    (await page.request.post(`${fx.origin}/fixture/editor/share?kbId=${kb.id}&reader=1`)).ok(),
+  ).toBe(true);
+  await as(page, "manager");
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Start here.");
+  await expect(
+    page.getByRole("button", { name: enKb.workspace.fileOps.newEntry.fileTitle, exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    tree(page).getByRole("button", {
+      name: enKb.workspace.fileOps.actions.label.replace("{{name}}", README),
+    }),
+  ).toHaveCount(0);
+  await expect(tree(page).getByRole("treeitem", { name: README })).not.toHaveAttribute(
+    "draggable",
+    "true",
+  );
+});
+
+test("desktop: a tree operation on a file with unsaved edits asks first", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}&mode=edit`);
+  await markdown(page).fill("# Read me\n\nUnsaved words.\n");
+  // Leave it with its draft kept, then delete it from the tree.
+  await tree(page).getByRole("treeitem", { name: "guides" }).click();
+  await tree(page).getByRole("treeitem", { name: "beta.md" }).click();
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Second guide.");
+  await tree(page).getByRole("treeitem", { name: README }).hover();
+  await tree(page)
+    .getByRole("button", {
+      name: enKb.workspace.fileOps.actions.label.replace("{{name}}", README),
+    })
+    .click();
+  await page.getByRole("menuitem", { name: enKb.workspace.fileOps.actions.delete }).click();
+  // Its unsaved edits are settled first; Cancel leaves everything as it was.
+  const question = page.getByRole("alertdialog");
+  await expect(question).toContainText(README);
+  await question.getByRole("button", { name: enKb.workspace.dirtyClose.cancel }).click();
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Second guide.");
+  expect(await serverText(page, kb.id, README)).toContain("Start here.");
+});
+
+test("desktop: after Discard for a tree rename of the open file, new edits are kept again", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}&mode=edit`);
+  await markdown(page).fill("# Read me\n\nThrown away.\n");
+  await markdown(page).blur();
+  // F2 on the open, edited file: its edits are settled first.
+  await tree(page).focus();
+  await page.keyboard.press("F2");
+  const rename = page.getByRole("textbox", {
+    name: enKb.workspace.fileOps.rename.label.replace("{{name}}", README),
+  });
+  await rename.fill("start");
+  await rename.press("Enter");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: enKb.workspace.dirtyClose.discard })
+    .click();
+  // The move sheet opens; Cancel it and keep working in the same session.
+  const sheet = page.getByRole("dialog", { name: enKb.move.title });
+  await expect(sheet.getByLabel(enKb.move.pathLabel)).toHaveValue("start.md");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.locator("body").press("e");
+  if (!(await markdown(page).isVisible())) await page.locator("body").press("e");
+  await markdown(page).fill("# Read me\n\nKept this time.\n");
+  // Its draft is kept again: switching away asks nothing, and coming back shows it.
+  await tree(page).getByRole("treeitem", { name: "guides" }).click();
+  await tree(page).getByRole("treeitem", { name: "beta.md" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await tabs(page)
+    .getByRole("tab", { name: /readme\.md/ })
+    .click();
+  await expect(markdown(page)).toHaveValue(/Kept this time\./);
+  expect(await serverText(page, kb.id, README)).toContain("Start here.");
+});
+
+test("desktop: files dropped on a tree folder open as one New document draft", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Start here.");
+  const ops = enKb.workspace.fileOps;
+  // OS files dropped on the guides/ folder row (through the app's drop dispatcher).
+  const row = await tree(page).getByRole("treeitem", { name: "guides" }).elementHandle();
+  await page.evaluate((el) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["# Bread\n\nDropped in.\n"], "bread.md", { type: "text/markdown" }));
+    dt.items.add(new File(["# Second\n"], "second.md", { type: "text/markdown" }));
+    dt.items.add(new File(["x"], "clip.mp4", { type: "video/mp4" }));
+    for (const type of ["dragenter", "dragover", "drop"])
+      el?.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }, row);
+  const summary = page.getByRole("dialog", {
+    name: ops.drop.summaryTitle.replace("{{folder}}", "guides/"),
+  });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText(ops.drop.accepted.replace("{{path}}", "guides/bread.md"));
+  await expect(summary).toContainText(ops.drop.refused.oneAtATime);
+  await expect(summary).toContainText(ops.drop.refused.type);
+  // Nothing is written until the draft is saved.
+  await summary.getByRole("button", { name: ops.drop.open }).click();
+  await expect(page).toHaveURL(/mode=new/);
+  await expect(page.getByLabel(enKb.editor.pathLabel)).toHaveValue("guides/bread.md");
+  await expect(markdown(page)).toHaveValue(/Dropped in\./);
+  await markdown(page).press(`${mod}+s`);
+  await expect(page).toHaveURL(/path=guides%2Fbread\.md/);
+  expect(await serverText(page, kb.id, "guides/bread.md")).toContain("Dropped in.");
 });
