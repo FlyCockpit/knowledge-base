@@ -118,11 +118,43 @@ operation: retry the identical key or inspect the PR/ref.
 
 ## One-way external mirror
 
-A manager configures `ssh://git@host[:port]/owner/repo.git` in the human control
-plane. Verify full pinned host keys out of band, install the displayed public
-Ed25519 deploy key remotely, then activate the pending key. Private keys are
-encrypted under `KB_MASTER_KEY`; no private key is returned. Push main is an
-explicit human action, never pull-back, automatic dreaming or search side effect.
+A manager sets the mirror up in KB settings → Mirror, a guided four-step flow:
+
+1. **Remote.** Any common spelling is accepted (`https://host/owner/repo`,
+   `git@host:owner/repo.git`, `ssh://…`, a browser URL of the repository) and
+   normalised to the canonical `ssh://git@host[:port]/owner/repo.git`, which is
+   shown. The strict URL rules and the public-network egress policy are
+   unchanged; refusals name their reason (not a Git URL, SSH user other than
+   `git`, an HTTPS port, a private host, a name that does not resolve).
+2. **Host identity.** The server reads the host's SSH keys itself: a bounded
+   key exchange (curve25519, one connection per key type, 6 s, 64 KiB) to the
+   one address that passed the egress policy, verifying that the host signed the
+   exchange with each key. For `github.com`, `gitlab.com` and `bitbucket.org` on
+   port 22 the keys are approved automatically only when they match the
+   providers' published fingerprints, pinned in `mirror-remote.ts` with their
+   sources; any other key for those hosts is a mismatch and is refused. For
+   every other host the user compares the shown fingerprints with the host's
+   own and confirms them, or pastes full keys under "Advanced". Nothing is
+   trusted on first use: configure re-checks the pins and requires the
+   confirmation.
+3. **Deploy key.** A fresh Ed25519 key is generated; its public half is shown
+   with provider steps and, for GitHub and GitLab, a direct link to the
+   repository's deploy-key page ("allow write access", this repository only).
+   Bitbucket repository access keys are read-only, so its steps ask for a
+   dedicated account's SSH key instead. Private keys are encrypted under
+   `KB_MASTER_KEY`; no private key is returned.
+4. **Test connection.** The worker runs `ls-remote` and a dry-run push of main
+   with the pending key and reports, in plain words, a host-key mismatch, a key
+   that was not added, a missing repository (or one the key cannot see), a
+   read-only key, a remote main with commits the KB lacks, or an unreachable
+   host. Nothing changes on the remote. A passing test enables the mirror. A
+   manager may enable a first key whose test failed only through a typed
+   confirmation, never past a host-key mismatch and never to replace a working
+   key; every push still enforces the approved host keys.
+
+Push main is an explicit human action ("Push now"), never pull-back, force,
+automatic dreaming or search side effect. The status card shows the last push
+and its result in plain words.
 The worker uses private tmpfs key scratch. It mounts the data volume
 read-write, so a compromised worker could modify canonical repositories; Git
 hash verification, process fences and backups remain (see [deployment](./deploy.md)).

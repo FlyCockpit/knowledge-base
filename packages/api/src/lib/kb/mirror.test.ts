@@ -34,9 +34,14 @@ describe("mirror wire schemas", () => {
       kbId: "a".repeat(24),
       url: "ssh://git@git.example.com/o/r.git",
       hostKeys: ["ssh-ed25519 AAAA"],
+      hostKeyCheck: "CONFIRMED",
       idempotencyKey: "k".repeat(16),
     };
     expect(mirrorConfigureInput.safeParse(base).success).toBe(true);
+    // Host keys are never accepted without saying how they were approved.
+    const { hostKeyCheck: _omit, ...unapproved } = base;
+    expect(mirrorConfigureInput.safeParse(unapproved).success).toBe(false);
+    expect(mirrorConfigureInput.safeParse({ ...base, hostKeyCheck: "TOFU" }).success).toBe(false);
     expect(mirrorConfigureInput.safeParse({ ...base, privateKey: "x" }).success).toBe(false);
     expect(mirrorConfigureInput.safeParse({ ...base, hostKeys: [] }).success).toBe(false);
     expect(

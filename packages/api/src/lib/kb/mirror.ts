@@ -16,6 +16,13 @@ import { enqueueDurableJobOnQuery } from "./jobs";
 import { chargeKbMutation } from "./limits";
 import type { LockQuery } from "./lock";
 import {
+  assertHostKeysTrusted,
+  checkHostKey,
+  hostKeyVerdict,
+  mirrorProvider,
+  normalizeMirrorRemote,
+} from "./mirror-remote";
+import {
   actorKeyForUser,
   canonicalRequestHash,
   findOperationIntent,
@@ -25,7 +32,8 @@ import { authorize, sqlAuthorityStore } from "./permissions";
 import type { Principal } from "./principal";
 import { keySchema } from "./protocol/common";
 import type { KbRuntimeConfig } from "./runtime";
-import { assertMirrorHostEgress, parseMirrorSshUrl } from "./ssh-url";
+import { type SshConnect, scanSshHostKeys } from "./ssh-host-scan";
+import { assertMirrorHostEgress, parseMirrorSshUrl, resolveMirrorHostAddress } from "./ssh-url";
 
 /*
  * Human-only, manage-bit mirror control plane. No MCP
@@ -45,11 +53,51 @@ export const mirrorConfigureInput = z.strictObject({
   kbId: kbIdSchema,
   url: z.string().min(1).max(1024),
   hostKeys: z.array(z.string().min(1).max(8300)).min(1).max(MAX_APPROVED_HOST_KEYS),
+  /** PUBLISHED: matched a provider's published fingerprints (re-checked here).
+   * CONFIRMED: the user compared the fingerprints or pasted the keys themselves. */
+  hostKeyCheck: z.enum(["PUBLISHED", "CONFIRMED"]),
   idempotencyKey: keySchema,
 });
 export const mirrorMutationInput = z.strictObject({ kbId: kbIdSchema, idempotencyKey: keySchema });
+/** The override names the exact pending key the user saw fail. */
+export const mirrorEnableUntestedInput = z.strictObject({
+  kbId: kbIdSchema,
+  keyId: z.string().min(1).max(64),
+  idempotencyKey: keySchema,
+});
+export const mirrorInspectInput = z.strictObject({
+  kbId: kbIdSchema,
+  url: z.string().min(1).max(1024),
+});
 
-const hostKeyView = z.object({ algorithm: z.string(), key: z.string(), fingerprint: z.string() });
+const providerIdSchema = z.enum(["github", "gitlab", "bitbucket"]);
+const hostKeyView = z.object({
+  algorithm: z.string(),
+  key: z.string(),
+  fingerprint: z.string(),
+  check: z.enum(["PUBLISHED", "MISMATCH", "UNPINNED"]),
+});
+/** What the setup guide needs about a remote: canonical URL, provider and checked host keys. */
+export const mirrorInspectSchema = z.object({
+  url: z.string(),
+  host: z.string(),
+  port: z.number().int(),
+  provider: providerIdSchema.nullable(),
+  deployKeyUrl: z.string().nullable(),
+  fingerprintsSource: z.string().nullable(),
+  reachable: z.boolean(),
+  hostKeys: z.array(hostKeyView),
+  verdict: z.enum(["PUBLISHED", "CONFIRM", "MISMATCH", "UNREACHABLE"]),
+});
+export type MirrorInspection = z.infer<typeof mirrorInspectSchema>;
+const attemptView = z.object({
+  attemptId: z.string(),
+  action: z.enum(["PUSH", "ACTIVATE"]),
+  state: z.string(),
+  resultCode: z.string().nullable(),
+  createdAt: z.string(),
+  finishedAt: z.string().nullable(),
+});
 export const mirrorKeyViewSchema = z.object({
   keyId: z.string(),
   keyVersion: z.number().int(),
@@ -60,6 +108,8 @@ export const mirrorKeyViewSchema = z.object({
   publicKey: z.string(),
   fingerprint: z.string(),
   createdAt: z.string(),
+  provider: providerIdSchema.nullable(),
+  deployKeyUrl: z.string().nullable(),
 });
 /** Public projection only. Non-strict objects: parsing strips any other field. */
 export const mirrorStatusSchema = z.object({
@@ -69,10 +119,12 @@ export const mirrorStatusSchema = z.object({
   active: mirrorKeyViewSchema.nullable(),
   pending: mirrorKeyViewSchema.nullable(),
   pushEnabled: z.boolean(),
-  lastAttempt: z
-    .object({ attemptId: z.string(), state: z.string(), resultCode: z.string().nullable() })
-    .nullable()
-    .default(null),
+  /** Newest attempt of any kind (drives polling while one is in flight). */
+  lastAttempt: attemptView.nullable().default(null),
+  /** Newest connection test of the pending key. */
+  lastTest: attemptView.nullable().default(null),
+  /** Newest push to the active remote URL. */
+  lastPush: attemptView.nullable().default(null),
 });
 export const mirrorResultSchema = z.object({
   operationId: z.string(),
@@ -157,17 +209,59 @@ async function lockRemote(query: LockQuery, kbId: string): Promise<RemoteRow> {
 
 function keyView(row: KeyRow | undefined) {
   if (!row) return null;
+  const remote = parseMirrorSshUrl(row.url);
+  const provider = mirrorProvider(remote);
   return {
     keyId: row.id,
     keyVersion: row.keyVersion,
     remoteVersion: row.remoteVersion,
     state: row.state as "PENDING" | "ACTIVE",
     url: row.url,
-    hostKeys: parseApprovedHostKeys(row.hostKeys),
+    hostKeys: parseApprovedHostKeys(row.hostKeys).map((key) => ({
+      ...key,
+      check: checkHostKey(remote, key),
+    })),
     publicKey: row.publicKey,
     fingerprint: row.fingerprint,
     createdAt: row.createdAt.toISOString(),
+    provider: provider?.id ?? null,
+    deployKeyUrl: provider?.deployKeyUrl(remote.path) ?? null,
   };
+}
+
+type AttemptRow = {
+  attemptId: string;
+  action: string;
+  state: string;
+  resultCode: string | null;
+  createdAt: Date;
+  finishedAt: Date | null;
+};
+/** Newest attempt matching `filter` (bound as $2..). Bounded to one row. */
+async function newestAttempt(
+  query: LockQuery,
+  kbId: string,
+  filter: string,
+  params: unknown[],
+): Promise<z.infer<typeof attemptView> | null> {
+  const row = (
+    await query<AttemptRow>(
+      `SELECT a.id AS "attemptId",COALESCE(j.desired->>'action','PUSH') AS action,
+              a.state::text AS state,a."resultCode",a."createdAt",a."finishedAt"
+         FROM kb_mirror_attempt a
+         JOIN kb_deploy_key_version k ON k."kbId"=a."kbId" AND k.id=a."keyId"
+         LEFT JOIN durable_job j ON j.id=a.id::text
+        WHERE a."kbId"=$1 ${filter}
+        ORDER BY a."createdAt" DESC,a.id DESC LIMIT 1`,
+      [kbId, ...params],
+    )
+  ).rows[0];
+  if (!row) return null;
+  return attemptView.parse({
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    finishedAt: row.finishedAt?.toISOString() ?? null,
+  });
 }
 
 export async function loadMirrorStatus(query: LockQuery, kbId: string): Promise<MirrorStatus> {
@@ -187,6 +281,8 @@ export async function loadMirrorStatus(query: LockQuery, kbId: string): Promise<
       pending: null,
       pushEnabled: false,
       lastAttempt: null,
+      lastTest: null,
+      lastPush: null,
     };
   // Public columns only: ciphertext is never selected for a projection.
   const keys = await query<KeyRow>(
@@ -195,18 +291,28 @@ export async function loadMirrorStatus(query: LockQuery, kbId: string): Promise<
     [kbId, [remote.activeKeyId, remote.pendingKeyId].filter(Boolean)],
   );
   const byId = new Map(keys.rows.map((row) => [row.id, row]));
-  const latest = await query<{ attemptId: string; state: string; resultCode: string | null }>(
-    `SELECT id AS "attemptId",state::text AS state,"resultCode" FROM kb_mirror_attempt WHERE "kbId"=$1 ORDER BY "createdAt" DESC,id DESC LIMIT 1`,
-    [kbId],
-  );
+  const active = remote.activeKeyId ? byId.get(remote.activeKeyId) : undefined;
   return mirrorStatusSchema.parse({
     kbId,
     state: remote.state,
     remoteVersion: remote.remoteVersion,
-    active: keyView(remote.activeKeyId ? byId.get(remote.activeKeyId) : undefined),
+    active: keyView(active),
     pending: keyView(remote.pendingKeyId ? byId.get(remote.pendingKeyId) : undefined),
     pushEnabled: remote.state === "ACTIVE" && !!remote.activeKeyId,
-    lastAttempt: latest.rows[0] ?? null,
+    lastAttempt: await newestAttempt(query, kbId, "", []),
+    lastTest: remote.pendingKeyId
+      ? await newestAttempt(query, kbId, `AND a."keyId"=$2 AND j.desired->>'action'='ACTIVATE'`, [
+          remote.pendingKeyId,
+        ])
+      : null,
+    lastPush: active
+      ? await newestAttempt(
+          query,
+          kbId,
+          `AND k.url=$2 AND COALESCE(j.desired->>'action','PUSH')='PUSH'`,
+          [active.url],
+        )
+      : null,
   });
 }
 
@@ -352,13 +458,16 @@ export async function configureMirror(
   options: { lookup?: DnsLookupFn } = {},
 ): Promise<MirrorResult> {
   const input = mirrorConfigureInput.parse(raw);
-  const parsed = parseMirrorSshUrl(input.url);
-  const hostKeys = parseApprovedHostKeys(input.hostKeys).map((k) => k.key);
+  const parsed = normalizeMirrorRemote(input.url);
+  const approved = parseApprovedHostKeys(input.hostKeys);
+  assertHostKeysTrusted(parsed, approved, input.hostKeyCheck);
+  const hostKeys = approved.map((k) => k.key);
   await assertMirrorHostEgress(parsed, options.lookup);
   const requestHash = canonicalRequestHash({
     kbId: input.kbId,
     url: parsed.url,
     hostKeys,
+    hostKeyCheck: input.hostKeyCheck,
     idempotencyKey: input.idempotencyKey,
   });
   const master = requireKbMasterKey(masterKeyValue);
@@ -384,6 +493,107 @@ export async function configureMirror(
   } finally {
     master.fill(0);
   }
+}
+
+/** Process-wide cap on concurrent host-key scans (each opens up to three sockets). */
+const MAX_CONCURRENT_SCANS = 4;
+let activeScans = 0;
+
+/**
+ * Setup step 1-2: normalise the remote, then fetch and check its SSH host keys.
+ * Authorization and the mutation budget are charged before any lookup or
+ * connection; the scan connects only to an address that passed the egress
+ * policy. Nothing is stored: the result is a proposal the user acts on.
+ */
+export async function inspectMirrorRemote(
+  runtime: Runtime,
+  principal: Principal,
+  raw: z.input<typeof mirrorInspectInput>,
+  options: {
+    lookup?: DnsLookupFn;
+    resolveAddress?: (host: string) => Promise<string>;
+    connect?: SshConnect;
+    timeoutMs?: number;
+  } = {},
+): Promise<MirrorInspection> {
+  const input = mirrorInspectInput.parse(raw);
+  const parsed = normalizeMirrorRemote(input.url);
+  await asManager(runtime, principal, input.kbId, async () => {
+    await chargeKbMutation(runtime.ratePort, actorKeyForUser(principal.userId), input.kbId);
+  });
+  const address = options.resolveAddress
+    ? await options.resolveAddress(parsed.host)
+    : await resolveMirrorHostAddress(parsed, options.lookup);
+  if (activeScans >= MAX_CONCURRENT_SCANS)
+    throw new KbDomainError("RATE_LIMITED", "Too many host-key scans");
+  activeScans++;
+  let scan: Awaited<ReturnType<typeof scanSshHostKeys>>;
+  try {
+    scan = await scanSshHostKeys(
+      { address, port: parsed.port },
+      { connect: options.connect, timeoutMs: options.timeoutMs },
+    );
+  } finally {
+    activeScans--;
+  }
+  const provider = mirrorProvider(parsed);
+  return mirrorInspectSchema.parse({
+    url: parsed.url,
+    host: parsed.host,
+    port: parsed.port,
+    provider: provider?.id ?? null,
+    deployKeyUrl: provider?.deployKeyUrl(parsed.path) ?? null,
+    fingerprintsSource: provider?.fingerprintsSource ?? null,
+    reachable: scan.reachable,
+    hostKeys: scan.keys.map((key) => ({ ...key, check: checkHostKey(parsed, key) })),
+    verdict: hostKeyVerdict(parsed, scan.keys),
+  });
+}
+
+/** Result codes a connection test can fail with that an override may not skip. */
+const NOT_OVERRIDABLE = new Set(["HOST_KEY_MISMATCH"]);
+
+/**
+ * Explicit, confirmed override: enable a first mirror whose connection test
+ * failed. Only for a first key (never replaces a working active key), only
+ * after a finished failed test of this exact pending key, and never past a
+ * host-key mismatch. Every later push still enforces the pinned host keys.
+ */
+export async function enableUntestedMirror(
+  runtime: Runtime,
+  principal: Principal,
+  raw: z.input<typeof mirrorEnableUntestedInput>,
+): Promise<MirrorResult> {
+  const input = mirrorEnableUntestedInput.parse(raw);
+  const requestHash = canonicalRequestHash(input);
+  return asManager(runtime, principal, input.kbId, async (query) => {
+    const prior = await replay(
+      query,
+      principal.userId,
+      input,
+      "MIRROR_ENABLE_UNTESTED",
+      requestHash,
+    );
+    if (prior) return prior;
+    const remote = await lockRemote(query, input.kbId);
+    // A key created since the user's confirmation (another tab) is never enabled by it.
+    if (remote.activeKeyId || !remote.pendingKeyId || remote.pendingKeyId !== input.keyId)
+      throw new KbDomainError("CONFLICT", "No first pending key to enable");
+    const test = await newestAttempt(
+      query,
+      input.kbId,
+      `AND a."keyId"=$2 AND j.desired->>'action'='ACTIVATE'`,
+      [remote.pendingKeyId],
+    );
+    if (test?.state !== "FAILED" || NOT_OVERRIDABLE.has(test.resultCode ?? ""))
+      throw new KbDomainError("CONFLICT", "A failed connection test is required first");
+    await chargeKbMutation(runtime.ratePort, actorKeyForUser(principal.userId), input.kbId);
+    await activateVerifiedDeployKey(query, { kbId: input.kbId, keyId: remote.pendingKeyId });
+    return finish(query, principal.userId, input, "MIRROR_ENABLE_UNTESTED", requestHash, {
+      state: "ACTIVE",
+      requestId: remote.pendingKeyId,
+    });
+  });
 }
 
 export async function rotateMirrorKey(
@@ -538,7 +748,8 @@ export async function teardownMirror(ctx: { query: LockQuery; kbId: string }): P
 }
 
 /**
- * Worker-side CAS after successful verification of the exact pending key.
+ * Worker-side CAS after successful verification of the exact pending key
+ * (and the manager's confirmed override in `enableUntestedMirror`).
  * Switches active key and remoteVersion atomically; cancels queued
  * attempts pinned to the old version; old key is destroyed once drained.
  */

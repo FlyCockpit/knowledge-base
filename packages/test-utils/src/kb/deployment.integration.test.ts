@@ -778,10 +778,22 @@ describe("built deployment runtime graph", { concurrent: false }, () => {
     expect(search.results.length).toBeGreaterThan(0);
     expect(search.results[0]).toMatchObject({ mode: "hybrid", commitSha: asset.commitSha });
     expect(await docker(["exec", ssh.name, "cat", "/fixture/embeddings"])).toContain("request");
+    // The built server normalises the remote and reads the fixture's host key itself.
+    const inspected = await rpc<{
+      url: string;
+      verdict: string;
+      hostKeys: { key: string; check: string }[];
+    }>("kbMirror/inspect", { kbId, url: `ssh://git@${fixtureIp}:2222/o/r` });
+    expect(inspected).toMatchObject({
+      url: `ssh://git@${fixtureIp}:2222/o/r.git`,
+      verdict: "CONFIRM",
+      hostKeys: [{ key: ssh.hostKey, check: "UNPINNED" }],
+    });
     const mirror = await rpc<{ mirror: { pending: { publicKey: string } } }>("kbMirror/configure", {
       kbId,
-      url: `ssh://git@${fixtureIp}:2222/o/r.git`,
-      hostKeys: [ssh.hostKey],
+      url: inspected.url,
+      hostKeys: inspected.hostKeys.map((hostKey) => hostKey.key),
+      hostKeyCheck: "CONFIRMED",
       idempotencyKey: key(),
     });
     await ssh.authorize([mirror.mirror.pending.publicKey]);

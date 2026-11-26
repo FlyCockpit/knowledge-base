@@ -105,7 +105,9 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | List built-in system providers (READY built-in) | implemented | deny | allow | deny | `embeddingProviders.listSystem` |
 | Revoke own provider | implemented | deny | allow | deny | `embeddingProviders.revoke` |
 | Read mirror status (manage) | implemented | deny | allow | deny | `kbMirror.status` |
+| Check a mirror remote (normalise URL, read and check host keys; stores nothing) | implemented | deny | allow | deny | `kbMirror.inspect` |
 | Configure mirror (pending key) | implemented | deny | allow | deny | `kbMirror.configure` |
+| Enable a first mirror key whose connection test failed (typed confirmation) | implemented | deny | allow | deny | `kbMirror.enableUntested` |
 | Rotate mirror deploy key (pending) | implemented | deny | allow | deny | `kbMirror.rotate` |
 | Disconnect mirror | implemented | deny | allow | deny | `kbMirror.disconnect` |
 | Activate / push mirror | implemented | deny | allow | deny | `kbMirror.activate`, `kbMirror.push` |

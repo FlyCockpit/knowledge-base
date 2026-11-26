@@ -1,13 +1,17 @@
 import { spawn } from "node:child_process";
-import { writeSync } from "node:fs";
+import { rmSync, writeFileSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
+  classifySshExit,
   drainMirrorGroup,
   encodeMirrorReply,
   fixedSshArgs,
   MIRROR_REPLY_FD,
   type MirrorReply,
+  mirrorFailureCode,
+  parseSshLegStatus,
   processIdentity,
+  SSH_STATUS_FILE,
   writeMirrorMarker,
 } from "./lib/mirror-ssh";
 
@@ -45,10 +49,21 @@ if (process.argv[2] === "--ssh") {
     process.exit(128);
   const ssh = spawn("/usr/bin/ssh", fixedSshArgs({ ...c, command }), {
     env: safeEnv,
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "pipe"],
+  });
+  // stderr is read only to classify the ssh client's own failure; it is
+  // bounded, never forwarded and never logged.
+  let stderr = "";
+  ssh.stderr!.on("data", (chunk: Buffer) => {
+    if (stderr.length < 16_384) stderr += chunk.toString("latin1");
   });
   ssh.once("error", () => process.exit(128));
-  ssh.once("close", (code) => process.exit(code ?? 128));
+  ssh.once("close", (code) => {
+    try {
+      writeFileSync(`${c.dir}/${SSH_STATUS_FILE}`, classifySshExit(code, stderr), { mode: 0o600 });
+    } catch {}
+    process.exit(code ?? 128);
+  });
 } else if (process.argv[2] === "--git") {
   // The group cannot reach the network until its supervisor persists ownership.
   // Losing the supervisor pipe also kills this entire group independently.
@@ -95,6 +110,7 @@ if (process.argv[2] === "--ssh") {
   const timer = setTimeout(stop, c.timeoutMs);
   async function git(args: string[]) {
     if (stopped) throw new Error("stopped");
+    rmSync(`${c.dir}/${SSH_STATUS_FILE}`, { force: true });
     const result = await new Promise<{ code: number | null; text: string }>((resolve, reject) => {
       const child = spawn(process.execPath, [c.wrapper, "--git", configPath, ...args], {
         cwd: c.repo,
@@ -134,13 +150,17 @@ if (process.argv[2] === "--ssh") {
       await drainMirrorGroup(pgid);
       pgid = undefined;
     }
-    return result;
+    const status = parseSshLegStatus(
+      await readFile(`${c.dir}/${SSH_STATUS_FILE}`, "latin1").catch(() => ""),
+    );
+    return { ...result, status };
   }
   let result: MirrorReply = { state: "UNKNOWN", resultCode: "INTERRUPTED" };
   try {
     if (!/^[0-9a-f]{40}$/.test(c.sha)) throw new Error("invalid sha");
     const remote = await git(["ls-remote", "--refs", c.url, "refs/heads/main"]);
-    if (remote.code !== 0) result = { state: "FAILED", resultCode: "SSH_REJECTED" };
+    if (remote.code !== 0)
+      result = { state: "FAILED", resultCode: mirrorFailureCode("read", remote.status) };
     else if (!c.activate && remote.text.trim() === `${c.sha}\trefs/heads/main`)
       result = { state: "COMPLETED", resultCode: "RECONCILED" };
     else {
@@ -160,15 +180,31 @@ if (process.argv[2] === "--ssh") {
           ? { state: "COMPLETED", resultCode: c.activate ? "VERIFIED" : "PUSHED" }
           : // An aggregate Git exit code also covers lost acknowledgements
             // after acceptance. Only an explicit per-ref rejection proves
-            // that this single-ref push did not update remote main.
-            rejected
-            ? { state: "FAILED", resultCode: "PUSH_REJECTED" }
-            : { state: "UNKNOWN", resultCode: "REMOTE_OUTCOME_UNKNOWN" };
+            // that this single-ref push did not update remote main. A dry run
+            // never changes the remote, so its failure is always named.
+            c.activate
+            ? {
+                state: "FAILED",
+                resultCode: mirrorFailureCode("write", pushed.status, pushed.text),
+              }
+            : rejected
+              ? {
+                  state: "FAILED",
+                  resultCode:
+                    mirrorFailureCode("write", null, pushed.text) === "REMOTE_DIVERGED"
+                      ? "REMOTE_DIVERGED"
+                      : "PUSH_REJECTED",
+                }
+              : { state: "UNKNOWN", resultCode: "REMOTE_OUTCOME_UNKNOWN" };
     }
-    if (stopped) result = { state: "UNKNOWN", resultCode: "REMOTE_OUTCOME_UNKNOWN" };
+    // A stopped connection test changed nothing remotely: it timed out.
+    if (stopped)
+      result = c.activate
+        ? { state: "FAILED", resultCode: "NETWORK_UNAVAILABLE" }
+        : { state: "UNKNOWN", resultCode: "REMOTE_OUTCOME_UNKNOWN" };
   } catch {
     result =
-      dispatchedPush || stopped
+      dispatchedPush || (stopped && !c.activate)
         ? { state: "UNKNOWN", resultCode: "TRANSPORT_UNAVAILABLE" }
         : { state: "FAILED", resultCode: "TRANSPORT_UNAVAILABLE" };
   } finally {

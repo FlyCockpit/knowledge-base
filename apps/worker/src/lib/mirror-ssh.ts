@@ -31,7 +31,17 @@ export const MIRROR_REPLY_FD = 3;
 const MIRROR_REPLY_MAX_BYTES = 256;
 const MIRROR_REPLIES = {
   COMPLETED: ["RECONCILED", "VERIFIED", "PUSHED"],
-  FAILED: ["SSH_REJECTED", "PUSH_REJECTED", "TRANSPORT_UNAVAILABLE"],
+  FAILED: [
+    "SSH_REJECTED",
+    "PUSH_REJECTED",
+    "TRANSPORT_UNAVAILABLE",
+    "HOST_KEY_MISMATCH",
+    "KEY_NOT_ADDED",
+    "REPO_NOT_FOUND",
+    "READ_ONLY_KEY",
+    "REMOTE_DIVERGED",
+    "NETWORK_UNAVAILABLE",
+  ],
   UNKNOWN: ["INTERRUPTED", "REMOTE_OUTCOME_UNKNOWN", "TRANSPORT_UNAVAILABLE"],
 } as const;
 type MirrorReplies = typeof MIRROR_REPLIES;
@@ -53,6 +63,72 @@ export function parseMirrorReply(bytes: Buffer): MirrorReply | undefined {
   const codes: readonly string[] = MIRROR_REPLIES[state as keyof MirrorReplies];
   return codes.includes(match[2]!) ? ({ state, resultCode: match[2] } as MirrorReply) : undefined;
 }
+/**
+ * How the SSH leg of one Git command ended, read from the local OpenSSH
+ * client only: exit 255 is an ssh-level failure (its own fixed messages),
+ * any other non-zero exit is the remote command's. The token is written to
+ * the private scratch; no remote or ssh text ever leaves the helper.
+ */
+export type SshLegStatus = "OK" | "HOST_KEY" | "AUTH" | "NETWORK" | "REMOTE_EXIT" | "SSH_ERROR";
+export const SSH_STATUS_FILE = "ssh-status";
+const SSH_LEG_STATUSES: readonly SshLegStatus[] = [
+  "OK",
+  "HOST_KEY",
+  "AUTH",
+  "NETWORK",
+  "REMOTE_EXIT",
+  "SSH_ERROR",
+];
+export function parseSshLegStatus(text: string): SshLegStatus | null {
+  return (SSH_LEG_STATUSES as readonly string[]).includes(text) ? (text as SshLegStatus) : null;
+}
+export function classifySshExit(code: number | null, stderr: string): SshLegStatus {
+  if (code === 0) return "OK";
+  if (code !== 255) return code === null ? "SSH_ERROR" : "REMOTE_EXIT";
+  if (
+    /Host key verification failed\.|REMOTE HOST IDENTIFICATION HAS CHANGED|No [A-Z0-9-]+ host key is known for/.test(
+      stderr,
+    )
+  )
+    return "HOST_KEY";
+  if (/Permission denied \(/.test(stderr)) return "AUTH";
+  if (
+    /Connection refused|Connection timed out|Operation timed out|No route to host|Network is unreachable|Could not resolve hostname|Connection reset|Connection closed by|kex_exchange_identification/.test(
+      stderr,
+    )
+  )
+    return "NETWORK";
+  return "SSH_ERROR";
+}
+
+type FailureCode = MirrorReplies["FAILED"][number];
+const LEG_FAILURE: Partial<Record<SshLegStatus, FailureCode>> = {
+  HOST_KEY: "HOST_KEY_MISMATCH",
+  AUTH: "KEY_NOT_ADDED",
+  NETWORK: "NETWORK_UNAVAILABLE",
+};
+/** Remote main has commits this KB does not: a normal push would never fast-forward. */
+const DIVERGED = /^!\t[^\t]+:refs\/heads\/main\t\[rejected\] \((?:fetch first|non-fast-forward)\)/m;
+
+/**
+ * Plain-words failure of the advertisement (`ls-remote`, read access) or of
+ * the receive-pack leg (`push`, write access) after a successful read.
+ */
+export function mirrorFailureCode(
+  leg: "read" | "write",
+  status: SshLegStatus | null,
+  porcelain = "",
+): FailureCode {
+  if (leg === "write" && DIVERGED.test(porcelain)) return "REMOTE_DIVERGED";
+  const fromSsh = status ? LEG_FAILURE[status] : undefined;
+  if (fromSsh) return fromSsh;
+  // Authenticated, but the remote refused the command: for the read leg the
+  // repository is missing or this key may not see it; for the write leg the
+  // same key just read it, so it may not write.
+  if (status === "REMOTE_EXIT") return leg === "read" ? "REPO_NOT_FOUND" : "READ_ONLY_KEY";
+  return leg === "read" ? "SSH_REJECTED" : "PUSH_REJECTED";
+}
+
 export type MirrorTransportInput = {
   attemptId: string;
   canonicalRepo: string;

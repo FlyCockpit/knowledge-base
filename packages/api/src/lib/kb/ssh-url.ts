@@ -30,6 +30,12 @@ const MAX_PATH_BYTES = 512;
 const invalid = () => new KbDomainError("INVALID_ARGUMENT", "Invalid mirror URL");
 /** The browser names this reason so the form can explain the private-network egress block. */
 export const MIRROR_PRIVATE_HOST_REASON = "PRIVATE_NETWORK_HOST";
+/** The name did not resolve: told apart so the form can say "check the host name". */
+export const MIRROR_HOST_NOT_FOUND_REASON = "HOST_NOT_FOUND";
+const hostNotFound = () =>
+  new KbDomainError("INVALID_ARGUMENT", "Mirror host not found", undefined, {
+    reason: MIRROR_HOST_NOT_FOUND_REASON,
+  });
 const privateHost = () =>
   new KbDomainError("INVALID_ARGUMENT", "Mirror host is not public", undefined, {
     reason: MIRROR_PRIVATE_HOST_REASON,
@@ -121,7 +127,20 @@ export async function assertMirrorHostEgress(
   parsed: MirrorSshUrl,
   lookup: DnsLookupFn = dnsLookup,
 ): Promise<void> {
-  if (parsed.hostIsIp) return;
+  await resolveMirrorHostAddress(parsed, lookup);
+}
+
+/**
+ * The one address a mirror connection may use: the IP literal itself, or the
+ * first answer of a lookup whose every answer passed the egress policy. The
+ * caller connects to this address, never to the name, so a second lookup
+ * cannot rebind it.
+ */
+export async function resolveMirrorHostAddress(
+  parsed: MirrorSshUrl,
+  lookup: DnsLookupFn = dnsLookup,
+): Promise<string> {
+  if (parsed.hostIsIp) return parsed.host;
   let addresses: LookupAddress[];
   try {
     addresses = await new Promise<LookupAddress[]>((resolve, reject) => {
@@ -130,12 +149,13 @@ export async function assertMirrorHostEgress(
       );
     });
   } catch {
-    throw invalid();
+    throw hostNotFound();
   }
   try {
     assertResolvedAddressesSafe(addresses);
   } catch {
-    // Empty answers stay a plain invalid URL; any blocked address is the egress policy.
-    throw addresses.length === 0 ? invalid() : privateHost();
+    // Empty answers mean the name does not resolve; any blocked address is the egress policy.
+    throw addresses.length === 0 ? hostNotFound() : privateHost();
   }
+  return addresses[0]!.address;
 }

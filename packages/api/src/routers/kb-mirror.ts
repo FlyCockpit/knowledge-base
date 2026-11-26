@@ -5,9 +5,14 @@ import { fromAdmissionError, KbDomainError } from "../lib/kb/errors";
 import {
   configureMirror,
   disconnectMirror,
+  enableUntestedMirror,
   getMirrorStatus,
+  inspectMirrorRemote,
   mirrorAttemptResultSchema,
   mirrorConfigureInput,
+  mirrorEnableUntestedInput,
+  mirrorInspectInput,
+  mirrorInspectSchema,
   mirrorMutationInput,
   mirrorResultSchema,
   mirrorStatusInput,
@@ -15,8 +20,29 @@ import {
   queueMirrorAttempt,
   rotateMirrorKey,
 } from "../lib/kb/mirror";
+import { MIRROR_HOST_KEY_REASONS, MIRROR_URL_REASONS } from "../lib/kb/mirror-remote";
 import { getKbRuntime } from "../lib/kb/runtime";
-import { MIRROR_PRIVATE_HOST_REASON } from "../lib/kb/ssh-url";
+import { MIRROR_HOST_NOT_FOUND_REASON, MIRROR_PRIVATE_HOST_REASON } from "../lib/kb/ssh-url";
+import { createProcedureBudget } from "../lib/procedure-budget";
+
+/** Each inspection opens outbound SSH connections: a per-user budget across all KBs. */
+const inspectBudget = createProcedureBudget({
+  keyPrefix: "rl:mirror-inspect",
+  points: 20,
+  durationSeconds: 600,
+  failClosed: true,
+  overBudgetMessage: () => "Mirror remote check rate limit",
+  unavailableMessage: "Mirror remote check unavailable",
+  unavailableLog: "[mirror] Remote check budget unavailable",
+});
+
+/** Refusals the setup guide explains by name. Each is a fixed code: no host or remote text. */
+const NAMED_REASONS = new Set<string>([
+  MIRROR_PRIVATE_HOST_REASON,
+  MIRROR_HOST_NOT_FOUND_REASON,
+  ...Object.values(MIRROR_URL_REASONS),
+  ...Object.values(MIRROR_HOST_KEY_REASONS),
+]);
 
 async function safe<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -32,15 +58,16 @@ async function safe<T>(run: () => Promise<T>): Promise<T> {
       RATE_LIMITED: "TOO_MANY_REQUESTS",
       STORAGE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
     };
-    // The private-network egress block is the one refusal the form explains by name.
-    const privateHost =
+    const reason = (domain?.details as { reason?: unknown } | undefined)?.reason;
+    const named =
       domain?.code === "INVALID_ARGUMENT" &&
-      (domain.details as { reason?: unknown } | undefined)?.reason === MIRROR_PRIVATE_HOST_REASON;
+      typeof reason === "string" &&
+      NAMED_REASONS.has(reason);
     throw new ORPCError(
       domain ? (codes[domain.code] ?? "INTERNAL_SERVER_ERROR") : "INTERNAL_SERVER_ERROR",
       {
         message: "Mirror operation unavailable",
-        ...(privateHost ? { data: { reason: MIRROR_PRIVATE_HOST_REASON } } : {}),
+        ...(named ? { data: { reason } } : {}),
       },
     );
   }
@@ -76,6 +103,25 @@ export const kbMirrorRouter = {
     .handler(async ({ context, input }) =>
       mirrorStatusSchema.parse(
         await safe(() => getMirrorStatus(getKbRuntime(), browser(context.session.user.id), input)),
+      ),
+    ),
+  /** Normalise a remote and fetch/check its host keys; stores nothing. */
+  inspect: protectedProcedure.input(mirrorInspectInput).handler(async ({ context, input }) => {
+    await inspectBudget(context.session.user.id);
+    return mirrorInspectSchema.parse(
+      await safe(() =>
+        inspectMirrorRemote(getKbRuntime(), browser(context.session.user.id), input),
+      ),
+    );
+  }),
+  /** Confirmed override: enable a first mirror whose connection test failed. */
+  enableUntested: protectedProcedure
+    .input(mirrorEnableUntestedInput)
+    .handler(async ({ context, input }) =>
+      mirrorResultSchema.parse(
+        await safe(() =>
+          enableUntestedMirror(getKbRuntime(), browser(context.session.user.id), input),
+        ),
       ),
     ),
   configure: protectedProcedure

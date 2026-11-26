@@ -17,12 +17,15 @@ import { generateDeployKey } from "@knowledge-base/api/lib/kb/deploy-key";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertMirrorStorage,
+  classifySshExit,
   drainMirrorGroup,
   encodeMirrorReply,
   fixedSshArgs,
   MIRROR_REPLY_FD,
   MirrorDrainError,
+  mirrorFailureCode,
   parseMirrorReply,
+  parseSshLegStatus,
   prepareMirrorScratch,
   processIdentity,
   recoverMirrorScratch,
@@ -716,6 +719,80 @@ describe("mirror transport boundaries", () => {
     } finally {
       seed.seed.destroy();
     }
+  });
+});
+
+describe("connection-test outcomes in plain words", () => {
+  it.each([
+    [0, "", "OK"],
+    [
+      255,
+      "No ED25519 host key is known for [h]:2222 and you have requested strict checking.\r\nHost key verification failed.\r\n",
+      "HOST_KEY",
+    ],
+    [255, "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@", "HOST_KEY"],
+    [255, "git@h: Permission denied (publickey).\r\n", "AUTH"],
+    [255, "ssh: connect to host 1.2.3.4 port 22: Connection refused\r\n", "NETWORK"],
+    [255, "ssh: connect to host 1.2.3.4 port 22: Connection timed out\r\n", "NETWORK"],
+    [255, "kex_exchange_identification: read: Connection reset by peer\r\n", "NETWORK"],
+    [255, "something else entirely", "SSH_ERROR"],
+    [1, "ERROR: Repository not found.", "REMOTE_EXIT"],
+    [128, "", "REMOTE_EXIT"],
+    [null, "", "SSH_ERROR"],
+  ])("ssh exit %s classifies as %s", (code, stderr, expected) => {
+    expect(classifySshExit(code, stderr)).toBe(expected);
+  });
+
+  it("a remote that prints ssh's own words cannot turn its exit into an ssh failure", () => {
+    // Remote text arrives with the remote command's exit status, never 255.
+    expect(classifySshExit(1, "Host key verification failed.")).toBe("REMOTE_EXIT");
+  });
+
+  it.each([
+    ["read", "HOST_KEY", "", "HOST_KEY_MISMATCH"],
+    ["read", "AUTH", "", "KEY_NOT_ADDED"],
+    ["read", "NETWORK", "", "NETWORK_UNAVAILABLE"],
+    ["read", "REMOTE_EXIT", "", "REPO_NOT_FOUND"],
+    ["read", "SSH_ERROR", "", "SSH_REJECTED"],
+    ["read", null, "", "SSH_REJECTED"],
+    ["write", "REMOTE_EXIT", "", "READ_ONLY_KEY"],
+    ["write", "AUTH", "", "KEY_NOT_ADDED"],
+    [
+      "write",
+      "OK",
+      "To ssh://h/o/r.git\n!\tabc:refs/heads/main\t[rejected] (fetch first)\nDone\n",
+      "REMOTE_DIVERGED",
+    ],
+    ["write", "OK", "!\tabc:refs/heads/main\t[rejected] (non-fast-forward)\n", "REMOTE_DIVERGED"],
+    [
+      "write",
+      "OK",
+      "!\tabc:refs/heads/main\t[remote rejected] (pre-receive hook declined)\n",
+      "PUSH_REJECTED",
+    ],
+    ["write", null, "", "PUSH_REJECTED"],
+  ] as const)("%s leg with %s → %s", (leg, status, porcelain, expected) => {
+    expect(mirrorFailureCode(leg, status, porcelain)).toBe(expected);
+  });
+
+  it("reads back only a closed-set status token", () => {
+    expect(parseSshLegStatus("AUTH")).toBe("AUTH");
+    expect(parseSshLegStatus("AUTH\n")).toBeNull();
+    expect(parseSshLegStatus("Permission denied")).toBeNull();
+  });
+
+  it("the reply channel carries every new failure code", () => {
+    for (const code of [
+      "HOST_KEY_MISMATCH",
+      "KEY_NOT_ADDED",
+      "REPO_NOT_FOUND",
+      "READ_ONLY_KEY",
+      "REMOTE_DIVERGED",
+      "NETWORK_UNAVAILABLE",
+    ] as const)
+      expect(
+        parseMirrorReply(Buffer.from(encodeMirrorReply({ state: "FAILED", resultCode: code }))),
+      ).toEqual({ state: "FAILED", resultCode: code });
   });
 });
 

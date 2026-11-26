@@ -16,6 +16,8 @@ vi.mock("@knowledge-base/env/shared", () => ({
   env: { KB_MASTER_KEY: new Secret("fixture-master") },
 }));
 vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({}) }));
+const inspectBudget = vi.hoisted(() => vi.fn(async (_key: string) => {}));
+vi.mock("../lib/procedure-budget", () => ({ createProcedureBudget: () => inspectBudget }));
 vi.mock("../lib/kb/mirror", async (original) => ({
   ...(await original<typeof import("../lib/kb/mirror")>()),
   getMirrorStatus: vi.fn(),
@@ -23,12 +25,16 @@ vi.mock("../lib/kb/mirror", async (original) => ({
   rotateMirrorKey: vi.fn(),
   disconnectMirror: vi.fn(),
   queueMirrorAttempt: vi.fn(),
+  inspectMirrorRemote: vi.fn(),
+  enableUntestedMirror: vi.fn(),
 }));
 
 import {
   configureMirror,
   disconnectMirror,
+  enableUntestedMirror,
   getMirrorStatus,
+  inspectMirrorRemote,
   rotateMirrorKey,
 } from "../lib/kb/mirror";
 import { KB_TOOL_NAMES } from "../lib/kb/protocol/catalog";
@@ -44,10 +50,19 @@ const keyView = {
   remoteVersion: 1,
   state: "PENDING" as const,
   url: "ssh://git@git.example.com/o/r.git",
-  hostKeys: [{ algorithm: "ssh-ed25519", key: "ssh-ed25519 AAAA", fingerprint: "SHA256:x" }],
+  hostKeys: [
+    {
+      algorithm: "ssh-ed25519",
+      key: "ssh-ed25519 AAAA",
+      fingerprint: "SHA256:x",
+      check: "UNPINNED" as const,
+    },
+  ],
   publicKey: "ssh-ed25519 AAAA",
   fingerprint: "SHA256:y",
   createdAt: "2026-09-26T00:00:00.000Z",
+  provider: null,
+  deployKeyUrl: null,
 };
 const status = {
   kbId,
@@ -70,8 +85,15 @@ describe("human mirror controls", () => {
         kbId,
         url: keyView.url,
         hostKeys: ["ssh-ed25519 AAAA"],
+        hostKeyCheck: "CONFIRMED",
         idempotencyKey: randomUUID(),
       }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(client.inspect({ kbId, url: keyView.url })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await expect(
+      client.enableUntested({ kbId, keyId: keyView.keyId, idempotencyKey: randomUUID() }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(client.rotate({ kbId, idempotencyKey: randomUUID() })).rejects.toMatchObject({
       code: "UNAUTHORIZED",
@@ -89,11 +111,15 @@ describe("human mirror controls", () => {
       "activate",
       "configure",
       "disconnect",
+      "enableUntested",
+      "inspect",
       "push",
       "rotate",
       "status",
     ]);
     expect(getMirrorStatus).not.toHaveBeenCalled();
+    expect(inspectMirrorRemote).not.toHaveBeenCalled();
+    expect(inspectBudget).not.toHaveBeenCalled();
   });
 
   it("passes the browser principal and master key; serialized responses never carry key material", async () => {
@@ -112,6 +138,7 @@ describe("human mirror controls", () => {
       kbId,
       url: keyView.url,
       hostKeys: ["ssh-ed25519 AAAA"],
+      hostKeyCheck: "CONFIRMED" as const,
       idempotencyKey: randomUUID(),
     };
     const result = await client.configure(input);
@@ -134,6 +161,41 @@ describe("human mirror controls", () => {
     expect(
       JSON.stringify(await client.disconnect({ kbId, idempotencyKey: randomUUID() })),
     ).not.toContain("LEAK");
+    vi.mocked(enableUntestedMirror).mockResolvedValue(leaky as never);
+    expect(
+      JSON.stringify(
+        await client.enableUntested({ kbId, keyId: keyView.keyId, idempotencyKey: randomUUID() }),
+      ),
+    ).not.toContain("LEAK");
+  });
+
+  it("charges the per-user remote-check budget before inspecting and projects only public fields", async () => {
+    const client = createRouterClient(kbMirrorRouter, { context: () => context });
+    vi.mocked(inspectMirrorRemote).mockResolvedValue({
+      url: keyView.url,
+      host: "git.example.com",
+      port: 22,
+      provider: null,
+      deployKeyUrl: null,
+      fingerprintsSource: null,
+      reachable: true,
+      hostKeys: keyView.hostKeys,
+      verdict: "CONFIRM",
+      banner: "LEAK-banner",
+    } as never);
+    const result = await client.inspect({ kbId, url: "git@git.example.com:o/r" });
+    expect(inspectBudget).toHaveBeenCalledWith("owner");
+    expect(inspectMirrorRemote).toHaveBeenCalledWith(
+      {},
+      { kind: "browser", userId: "owner" },
+      { kbId, url: "git@git.example.com:o/r" },
+    );
+    expect(result.verdict).toBe("CONFIRM");
+    expect(JSON.stringify(result)).not.toContain("LEAK");
+    inspectBudget.mockRejectedValueOnce(new Error("over budget"));
+    vi.mocked(inspectMirrorRemote).mockClear();
+    await expect(client.inspect({ kbId, url: keyView.url })).rejects.toBeDefined();
+    expect(inspectMirrorRemote).not.toHaveBeenCalled();
   });
 
   it("scrubs exception data", async () => {
@@ -145,12 +207,43 @@ describe("human mirror controls", () => {
     });
   });
 
+  it.each([
+    ["NOT_A_GIT_URL", "notaurl"],
+    ["SSH_USER_NOT_GIT", "root@git.example.com:o/r.git"],
+    ["HTTPS_PORT", "https://git.example.com:3000/o/r"],
+    ["PRIVATE_NETWORK_HOST", "https://10.1.2.3/o/r"],
+  ])("names the %s refusal of a remote", async (reason, url) => {
+    const client = createRouterClient(kbMirrorRouter, { context: () => context });
+    const { normalizeMirrorRemote } = await import("../lib/kb/mirror-remote");
+    vi.mocked(inspectMirrorRemote).mockImplementation(async (_r, _p, raw) => {
+      normalizeMirrorRemote((raw as { url: string }).url);
+      throw new Error("unreachable");
+    });
+    await expect(client.inspect({ kbId, url })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      data: { reason },
+    });
+  });
+
+  it("never names a reason outside the closed set", async () => {
+    const client = createRouterClient(kbMirrorRouter, { context: () => context });
+    const { KbDomainError } = await import("../lib/kb/errors");
+    vi.mocked(inspectMirrorRemote).mockRejectedValue(
+      new KbDomainError("INVALID_ARGUMENT", "x", undefined, { reason: "remote said: secret" }),
+    );
+    await expect(client.inspect({ kbId, url: keyView.url })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      data: undefined,
+    });
+  });
+
   it("names the private-network egress block and nothing else", async () => {
     const client = createRouterClient(kbMirrorRouter, { context: () => context });
     const input = {
       kbId,
       url: "ssh://git@127.0.0.1:2222/e2e/mirror.git",
       hostKeys: ["ssh-ed25519 AAAA"],
+      hostKeyCheck: "CONFIRMED" as const,
       idempotencyKey: randomUUID(),
     };
     const { parseMirrorSshUrl } = await import("../lib/kb/ssh-url");

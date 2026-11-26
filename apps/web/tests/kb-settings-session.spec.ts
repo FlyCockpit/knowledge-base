@@ -288,7 +288,7 @@ test("warm and cold KB navigation retires profile approvals, sealed/member/mirro
     await page.getByLabel("Email address").fill("retired@example.invalid");
     await selectTab(page, "mirror");
     await page
-      .getByLabel("Remote SSH URL")
+      .getByLabel("Remote repository URL")
       .fill("ssh://git@retired.example.invalid/owner/repo.git");
     // Hidden tabs keep their drafts while this KB stays open.
     await expect(page.getByLabel("Secret value")).toHaveValue("retired KB draft");
@@ -301,7 +301,7 @@ test("warm and cold KB navigation retires profile approvals, sealed/member/mirro
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     await expect(page.getByLabel("Secret value")).toHaveValue("");
     await expect(page.getByLabel("Email address")).toHaveValue("");
-    await expect(page.getByLabel("Remote SSH URL")).toHaveValue("");
+    await expect(page.getByLabel("Remote repository URL")).toHaveValue("");
   }
 });
 

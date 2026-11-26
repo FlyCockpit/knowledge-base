@@ -76,6 +76,8 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbMirror.activate | human mirror control |
 | kbMirror.configure | human mirror control |
 | kbMirror.disconnect | human mirror control |
+| kbMirror.enableUntested | human mirror control |
+| kbMirror.inspect | human mirror control |
 | kbMirror.push | human mirror control |
 | kbMirror.rotate | human mirror control |
 | kbMirror.status | human mirror control |

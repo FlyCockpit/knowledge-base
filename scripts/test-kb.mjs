@@ -184,6 +184,8 @@ export const SUITES = {
       "apps/worker/src/handlers/push-mirror.test.ts",
       "apps/worker/src/lib/mirror-ssh.test.ts",
       "packages/api/src/lib/kb/ssh-url.test.ts",
+      "packages/api/src/lib/kb/mirror-remote.test.ts",
+      "packages/api/src/lib/kb/ssh-host-scan.test.ts",
       "packages/api/src/lib/kb/deploy-key.test.ts",
       "packages/api/src/lib/kb/mirror.test.ts",
       "packages/api/src/routers/kb-mirror.test.ts",

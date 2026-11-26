@@ -34,8 +34,10 @@ import {
   activateVerifiedDeployKey,
   configureMirror,
   disconnectMirror,
+  enableUntestedMirror,
   finishMirrorAttempt,
   getMirrorStatus,
+  inspectMirrorRemote,
   type MirrorStatus,
   queueMirrorAttempt,
   registerMirrorExecutor,
@@ -210,7 +212,12 @@ async function setup() {
   setKbRecoveryComplete(true);
   runtime.ratePort = createMemoryRatePort();
   const configure = (
-    patch: Partial<{ url: string; hostKeys: string[]; idempotencyKey: string }> = {},
+    patch: Partial<{
+      url: string;
+      hostKeys: string[];
+      hostKeyCheck: "PUBLISHED" | "CONFIRMED";
+      idempotencyKey: string;
+    }> = {},
     principal: Principal = actor(owner.id),
     lookup: DnsLookupFn = publicLookup,
   ) =>
@@ -221,6 +228,7 @@ async function setup() {
         kbId: kb.id,
         url: "ssh://git@git.example.com/team/kb.git",
         hostKeys: [hostKey()],
+        hostKeyCheck: "CONFIRMED",
         idempotencyKey: randomUUID(),
         ...patch,
       },
@@ -1491,4 +1499,270 @@ describe("mirror execution against real SSH", () => {
     },
     1,
   );
+});
+
+describe("guided setup against real SSH", () => {
+  let f: Awaited<ReturnType<typeof setup>>;
+  let ssh: Awaited<ReturnType<typeof createSshFixture>> | undefined;
+  let port: number;
+  let closedPort: number;
+  beforeAll(async () => {
+    requireBuiltArtifact(
+      resolve(import.meta.dirname, "../../../../apps/worker/dist/ssh-wrapper.mjs"),
+      "pnpm test:kb --build-only mirror",
+      false,
+    );
+    f = await setup();
+    ssh = await createSshFixture();
+    port = Number(/:(\d+)\//.exec(ssh.url)![1]);
+    const { createServer } = await import("node:net");
+    const probe = createServer();
+    await new Promise<void>((done) => probe.listen(0, "127.0.0.1", done));
+    closedPort = (probe.address() as { port: number }).port;
+    await new Promise<void>((done) => probe.close(() => done()));
+  }, 180_000);
+  afterAll(async () => {
+    await ssh?.close();
+  }, 180_000);
+
+  /** Configure a pending key, optionally add it remotely, and run its connection test. */
+  async function testConnection(
+    patch: { url?: string; hostKeys?: string[] } = {},
+    authorize = true,
+  ) {
+    const configured = await f.configure({
+      url: patch.url ?? ssh!.url,
+      hostKeys: patch.hostKeys ?? [ssh!.hostKey],
+    });
+    const pending = configured.mirror.pending!;
+    await ssh!.authorize(authorize ? [pending.publicKey] : []);
+    const queued = await queueMirrorAttempt(
+      runtime,
+      actor(f.owner.id),
+      { kbId: f.kbId, idempotencyKey: randomUUID() },
+      "ACTIVATE",
+    );
+    await prisma.durableJob.update({
+      where: { id: queued.attemptId },
+      data: { state: "PUBLISHED", leaseUntil: null },
+    });
+    await runMirrorDelivery(prisma, {
+      durableJobId: queued.attemptId,
+      workerId: `guided:${randomUUID()}`,
+      connectionString: db.urls.runtime,
+      reposDir,
+      masterKey,
+      scratchRoot: ssh!.options.root,
+      transport: (input) => runMirrorSsh(input, { ...ssh!.options, timeoutMs: 10_000 }),
+    });
+    const status = await getMirrorStatus(runtime, actor(f.owner.id), { kbId: f.kbId });
+    return { pending, status };
+  }
+  const override = async (keyId?: string) =>
+    enableUntestedMirror(runtime, actor(f.owner.id), {
+      kbId: f.kbId,
+      keyId:
+        keyId ??
+        (await getMirrorStatus(runtime, actor(f.owner.id), { kbId: f.kbId })).pending?.keyId ??
+        "none",
+      idempotencyKey: randomUUID(),
+    });
+
+  it("normalises any remote spelling and asks to confirm an unpinned host's scanned key", async () => {
+    const resolveAddress = vi.fn(ssh!.options.resolveAddress);
+    await expect(
+      inspectMirrorRemote(
+        runtime,
+        actor(f.other.id),
+        { kbId: f.kbId, url: ssh!.url },
+        { resolveAddress },
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" }); // a non-member learns nothing, not even existence
+    expect(resolveAddress).not.toHaveBeenCalled(); // no lookup or connection before authorization
+    const result = await inspectMirrorRemote(
+      runtime,
+      actor(f.owner.id),
+      { kbId: f.kbId, url: `git+ssh://git@mirror.example.invalid:${port}/o/r` },
+      { resolveAddress },
+    );
+    expect(result).toMatchObject({
+      url: ssh!.url,
+      provider: null,
+      reachable: true,
+      verdict: "CONFIRM",
+      hostKeys: [{ key: ssh!.hostKey, check: "UNPINNED" }],
+    });
+    const unreachable = await inspectMirrorRemote(
+      runtime,
+      actor(f.owner.id),
+      { kbId: f.kbId, url: `ssh://git@mirror.example.invalid:${closedPort}/o/r.git` },
+      { resolveAddress },
+    );
+    expect(unreachable).toMatchObject({ reachable: false, hostKeys: [], verdict: "UNREACHABLE" });
+  }, 60_000);
+
+  it("connects only to the address the egress policy approved, with one lookup", async () => {
+    const { connect: netConnect } = await import("node:net");
+    const answer = (addresses: string[]) =>
+      vi.fn(((_h: string, _o: unknown, cb: (e: null, a: LookupAddress[]) => void) =>
+        cb(
+          null,
+          addresses.map((address) => ({ address, family: 4 })),
+        )) as unknown as DnsLookupFn);
+    // The fixture listens on loopback; the connector records what inspect asked for.
+    const connect = vi.fn((target: { host: string; port: number }) =>
+      netConnect({ host: "127.0.0.1", port: target.port }),
+    );
+    const url = `ssh://git@mirror.example.invalid:${port}/o/r.git`;
+    const lookup = answer(["93.184.216.10"]);
+    const result = await inspectMirrorRemote(
+      runtime,
+      actor(f.owner.id),
+      { kbId: f.kbId, url },
+      { lookup, connect },
+    );
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(lookup.mock.calls[0]![0]).toBe("mirror.example.invalid");
+    expect(connect).toHaveBeenCalled();
+    expect(new Set(connect.mock.calls.map(([target]) => `${target.host}:${target.port}`))).toEqual(
+      new Set([`93.184.216.10:${port}`]),
+    );
+    expect(result).toMatchObject({ verdict: "CONFIRM", hostKeys: [{ key: ssh!.hostKey }] });
+    for (const addresses of [["93.184.216.10", "10.9.8.7"], ["127.0.0.1"], ["::ffff:10.0.0.1"]]) {
+      connect.mockClear();
+      await expect(
+        inspectMirrorRemote(
+          runtime,
+          actor(f.owner.id),
+          { kbId: f.kbId, url },
+          { lookup: answer(addresses), connect },
+        ),
+      ).rejects.toMatchObject({ details: { reason: "PRIVATE_NETWORK_HOST" } });
+      expect(connect).not.toHaveBeenCalled();
+    }
+  }, 60_000);
+
+  it("refuses a provider host whose keys do not match the published fingerprints", async () => {
+    await expect(
+      f.configure({
+        url: "git@github.com:owner/repo.git",
+        hostKeys: [hostKey()],
+        hostKeyCheck: "PUBLISHED",
+      }),
+    ).rejects.toMatchObject({ details: { reason: "HOST_KEY_MISMATCH" } });
+    await expect(f.configure({ hostKeyCheck: "PUBLISHED" })).rejects.toMatchObject({
+      details: { reason: "HOST_KEYS_UNCONFIRMED" },
+    });
+    expect(
+      (await getMirrorStatus(runtime, actor(f.owner.id), { kbId: f.kbId })).pending,
+    ).toBeNull();
+  });
+
+  it("an untested key cannot be enabled", async () => {
+    await f.configure({ url: ssh!.url, hostKeys: [ssh!.hostKey] });
+    await expect(override()).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("names a key that was not added", async () => {
+    const { status } = await testConnection({}, false);
+    expect(status.lastTest).toMatchObject({
+      action: "ACTIVATE",
+      state: "FAILED",
+      resultCode: "KEY_NOT_ADDED",
+    });
+    expect(status.active).toBeNull();
+  }, 60_000);
+
+  it("names a host-key mismatch and never lets it be overridden", async () => {
+    const { status } = await testConnection({ hostKeys: [hostKey()] });
+    expect(status.lastTest).toMatchObject({ state: "FAILED", resultCode: "HOST_KEY_MISMATCH" });
+    await expect(override()).rejects.toMatchObject({ code: "CONFLICT" });
+  }, 60_000);
+
+  it("names a missing repository", async () => {
+    await ssh!.mode("missing");
+    try {
+      const { status } = await testConnection();
+      expect(status.lastTest).toMatchObject({ state: "FAILED", resultCode: "REPO_NOT_FOUND" });
+    } finally {
+      await ssh!.mode("normal");
+    }
+  }, 60_000);
+
+  it("names an unreachable host", async () => {
+    const { status } = await testConnection({
+      url: `ssh://git@mirror.example.invalid:${closedPort}/o/r.git`,
+    });
+    expect(status.lastTest).toMatchObject({ state: "FAILED", resultCode: "NETWORK_UNAVAILABLE" });
+  }, 60_000);
+
+  it("names a read-only key; the confirmed override then enables the first key", async () => {
+    await ssh!.mode("readonly");
+    try {
+      const { pending, status } = await testConnection();
+      expect(status.lastTest).toMatchObject({ state: "FAILED", resultCode: "READ_ONLY_KEY" });
+      expect(await ssh!.pushCount()).toBe(0);
+      // A confirmation names the key it was given for: any other key is refused.
+      await expect(override("k".repeat(24))).rejects.toMatchObject({ code: "CONFLICT" });
+      const enabled = await override(pending.keyId);
+      expect(enabled.mirror).toMatchObject({ state: "ACTIVE", pending: null });
+      expect(enabled.mirror.active?.keyId).toBe(pending.keyId);
+    } finally {
+      await ssh!.mode("normal");
+    }
+    await disconnectMirror(runtime, actor(f.owner.id), {
+      kbId: f.kbId,
+      idempotencyKey: randomUUID(),
+    });
+  }, 60_000);
+
+  it("a passing test activates the key without changing the remote", async () => {
+    const { pending, status } = await testConnection();
+    expect(status).toMatchObject({
+      state: "ACTIVE",
+      pending: null,
+      lastTest: null,
+      lastPush: null,
+    });
+    expect(status.active?.keyId).toBe(pending.keyId);
+    expect(status.lastAttempt).toMatchObject({
+      action: "ACTIVATE",
+      state: "COMPLETED",
+      resultCode: "VERIFIED",
+    });
+    expect(await ssh!.mainSha()).toBeNull();
+  }, 60_000);
+
+  it("names a diverged remote and keeps the working key", async () => {
+    const active = (await getMirrorStatus(runtime, actor(f.owner.id), { kbId: f.kbId })).active!;
+    await ssh!.diverge();
+    const { pending, status } = await testConnection();
+    expect(status.lastTest).toMatchObject({ state: "FAILED", resultCode: "REMOTE_DIVERGED" });
+    await ssh!.authorize([active.publicKey, pending.publicKey]);
+    expect(status.active?.keyId).toBe(active.keyId);
+    // A rotation never takes the override: the working key stays in place.
+    await expect(override()).rejects.toMatchObject({ code: "CONFLICT" });
+    const push = await queueMirrorAttempt(
+      runtime,
+      actor(f.owner.id),
+      { kbId: f.kbId, idempotencyKey: randomUUID() },
+      "PUSH",
+    );
+    await prisma.durableJob.update({
+      where: { id: push.attemptId },
+      data: { state: "PUBLISHED", leaseUntil: null },
+    });
+    await runMirrorDelivery(prisma, {
+      durableJobId: push.attemptId,
+      workerId: `guided:${randomUUID()}`,
+      connectionString: db.urls.runtime,
+      reposDir,
+      masterKey,
+      scratchRoot: ssh!.options.root,
+      transport: (input) => runMirrorSsh(input, { ...ssh!.options, timeoutMs: 10_000 }),
+    });
+    expect(
+      (await getMirrorStatus(runtime, actor(f.owner.id), { kbId: f.kbId })).lastPush,
+    ).toMatchObject({ action: "PUSH", state: "FAILED", resultCode: "REMOTE_DIVERGED" });
+  }, 60_000);
 });

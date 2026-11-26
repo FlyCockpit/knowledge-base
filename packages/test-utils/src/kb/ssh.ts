@@ -104,9 +104,16 @@ export async function createSshFixture() {
 set -eu
 touch /fixture/connected
 while [ "$(cat /fixture/mode)" = pause ]; do sleep 0.05; done
+mode="$(cat /fixture/mode)"
+# missing: the repository does not exist for this key; readonly: it may read, not write.
 case "$SSH_ORIGINAL_COMMAND" in
-  "git-upload-pack '/o/r.git'") exec git-upload-pack /o/r.git ;;
-  "git-receive-pack '/o/r.git'") echo push >> /fixture/pushes; exec git-receive-pack /o/r.git ;;
+  "git-upload-pack '/o/r.git'")
+    if [ "$mode" = missing ]; then echo "ERROR: Repository not found." >&2; exit 1; fi
+    exec git-upload-pack /o/r.git ;;
+  "git-receive-pack '/o/r.git'")
+    if [ "$mode" = missing ]; then echo "ERROR: Repository not found." >&2; exit 1; fi
+    if [ "$mode" = readonly ]; then echo "ERROR: The key you are authenticating with has been marked as read only." >&2; exit 1; fi
+    echo push >> /fixture/pushes; exec git-receive-pack /o/r.git ;;
   *) exit 1 ;;
 esac
 `,
@@ -225,7 +232,9 @@ while [ "$(cat /fixture/mode)" = lost-reply ]; do sleep 0.05; done
       },
       authorize: (keys: string[]) =>
         writeFile(join(dir, "authorized_keys"), `${keys.join("\n")}\n`, { mode: 0o600 }),
-      async mode(mode: "normal" | "pause" | "lost-reply" | "accepted-eof") {
+      async mode(
+        mode: "normal" | "pause" | "lost-reply" | "accepted-eof" | "missing" | "readonly",
+      ) {
         await rm(join(dir, "connected"), { force: true });
         await rm(join(dir, "accepted"), { force: true });
         await writeFile(join(dir, "mode"), mode);
