@@ -40,6 +40,7 @@ import { useKbHeadSha } from "@/hooks/use-kb-head-sha";
 import { useKbRecentChanges } from "@/hooks/use-kb-recent-changes";
 import { useKbTree } from "@/hooks/use-kb-tree";
 import { useKbWorkspaceTabs } from "@/hooks/use-kb-workspace-tabs";
+import { useLatest } from "@/hooks/use-latest";
 import { useMainScrollerHeight } from "@/hooks/use-main-scroller-height";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMountEffect } from "@/hooks/use-mount-effect";
@@ -128,6 +129,10 @@ export function searchOfTab(tab: WorkspaceTab): WorkspaceSearch {
 }
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** The open editor's Save button (null when no editor is open). */
+const editorSaveButton = () => document.querySelector<HTMLElement>('[data-testid="editor-save"]');
+const focusEditorSave = () => editorSaveButton()?.focus();
 
 /**
  * Where a tab's unsaved draft is kept (the session's own draft key): PR mode
@@ -261,6 +266,9 @@ export function KbWorkspace({
     }
   }
   const questions = useRef(0);
+  // The dialog of the latest question (kept while it closes).
+  const [questionKey, setQuestionKey] = useState(0);
+  if (pending && pending.id !== questionKey) setQuestionKey(pending.id);
   const nextQuestion = () => ++questions.current;
   const [mac] = useState(isMacPlatform);
   const panelId = useId();
@@ -278,6 +286,17 @@ export function KbWorkspace({
     });
   };
   const tabOf = (key: string) => tabs.state.tabs.find((tab) => tabKey(tab) === key) ?? null;
+  // A Save from the question that didn't go through, while that question is
+  // still the one asked: focus goes to the editor's Save (where it says why) as
+  // the question closes, through that dialog's own focus return, so the two
+  // never race. A question already put aside leaves focus where it went.
+  const [saveFocusQuestion, setSaveFocusQuestion] = useState<number | null>(null);
+  const pendingNow = useLatest(pending);
+  const focusSaveAfterQuestion = (question: number) => {
+    if (pendingNow.current?.id !== question) return;
+    setSaveFocusQuestion(question);
+    requestAnimationFrame(focusEditorSave);
+  };
   /** Keyboard focus never falls to the page when its tab goes: the strip keeps it. */
   const refocusStrip = () =>
     requestAnimationFrame(() => {
@@ -459,10 +478,8 @@ export function KbWorkspace({
     unsavable: () => setPending((p) => (p ? { ...p, saveWhenReady: false } : p)),
     nothing: () => setPending(null),
     failed: (id) => {
+      focusSaveAfterQuestion(id);
       setPending((p) => (p?.id === id ? null : p));
-      requestAnimationFrame(() =>
-        document.querySelector<HTMLElement>('[data-testid="editor-save"]')?.focus(),
-      );
     },
   });
   useResolvePendingClose(pending, editor, finish);
@@ -778,8 +795,10 @@ export function KbWorkspace({
       <ShortcutsSheet open={shortcuts} onOpenChange={setShortcuts} mac={mac} />
       {fileOps.dialogs}
       <DirtyCloseDialog
-        // One dialog per question: its own Saving… state never carries over.
-        key={pending?.id ?? 0}
+        // One dialog per question: its own Saving… state never carries over. A
+        // closing question keeps its dialog, so its own focus return runs.
+        key={questionKey}
+        returnFocus={saveFocusQuestion === questionKey ? editorSaveButton : undefined}
         // Stays open while a file being saved opens (busy until it is saved).
         open={pendingTab !== null && (pendingEditor ? pendingEditor.dirty : true)}
         name={pendingTab ? basename(pendingTab.path) || t("detail.newDocument") : ""}
@@ -802,10 +821,8 @@ export function KbWorkspace({
           // the person see it there, with focus on its Save and its status.
           // Only this question is dropped (another may have been asked since).
           if (!saved) {
+            focusSaveAfterQuestion(question);
             setPending((p) => (p?.id === question ? null : p));
-            requestAnimationFrame(() =>
-              document.querySelector<HTMLElement>('[data-testid="editor-save"]')?.focus(),
-            );
           }
           return saved;
         }}

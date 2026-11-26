@@ -24,6 +24,7 @@ export function DirtyCloseDialog({
   onSave,
   onDiscard,
   onCancel,
+  returnFocus,
 }: {
   /** The file's name, as on its tab. */
   name: string;
@@ -39,6 +40,11 @@ export function DirtyCloseDialog({
   onSave: () => Promise<boolean>;
   onDiscard: () => void;
   onCancel: () => void;
+  /**
+   * Where focus goes as the question closes, e.g. the editor's Save after a
+   * save that failed (absent: Base UI's default return).
+   */
+  returnFocus?: () => HTMLElement | null;
 }) {
   const { t } = useTranslation("kb");
   const [ownSave, setSaving] = useState(false);
@@ -61,7 +67,12 @@ export function DirtyCloseDialog({
         if (!next && details.reason === "escape-key") onCancel();
       }}
     >
-      <AlertDialogContent data-testid="kb-dirty-close">
+      <AlertDialogContent
+        data-testid="kb-dirty-close"
+        // Only with a target: without one, Base UI's own default return applies
+        // (a function, even returning true, would override its checks).
+        {...(returnFocus && { finalFocus: () => dirtyCloseFinalFocus(returnFocus) })}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{t("workspace.dirtyClose.title", { name })}</AlertDialogTitle>
           <AlertDialogDescription>{t("workspace.dirtyClose.description")}</AlertDialogDescription>
@@ -76,6 +87,11 @@ export function DirtyCloseDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+/** Pure: the dialog's final focus — the caller's target, else Base UI's default return. */
+export function dirtyCloseFinalFocus(returnFocus?: () => HTMLElement | null): HTMLElement | true {
+  return returnFocus?.() ?? true;
 }
 
 /** The dialog's buttons and the reason Save is unavailable (exported for tests). */

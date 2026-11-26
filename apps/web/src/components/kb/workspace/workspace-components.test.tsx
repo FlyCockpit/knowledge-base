@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { DirtyCloseActions } from "./dirty-close-dialog";
+import { DirtyCloseActions, dirtyCloseFinalFocus } from "./dirty-close-dialog";
 import { FileTree, revealPath, scrollIntoViewTop, windowRange } from "./file-tree";
 import { highlightSegments, QuickOpenRow } from "./quick-open";
 import { ResizeHandle, resizeKeyTarget } from "./resize-handle";
@@ -273,5 +273,14 @@ describe("shortcuts sheet", () => {
     expect(pc).toContain("Ctrl S");
     expect(pc).not.toContain("⌘");
     expect(pc).toContain("Alt alternates");
+  });
+});
+
+describe("dirty-close final focus", () => {
+  it("returns focus to the caller's target (Save after a failed save), else Base UI's default", () => {
+    const save = { tagName: "BUTTON" } as unknown as HTMLElement;
+    expect(dirtyCloseFinalFocus(() => save)).toBe(save);
+    expect(dirtyCloseFinalFocus(() => null)).toBe(true);
+    expect(dirtyCloseFinalFocus()).toBe(true);
   });
 });
