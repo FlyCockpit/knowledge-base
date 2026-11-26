@@ -21,11 +21,11 @@ async function state(page: Page): Promise<State> {
   expect(response.ok()).toBe(true);
   return response.json();
 }
-async function start(page: Page) {
+async function start(page: Page, options: { loopbackPort?: number } = {}) {
   const name = `App ${randomUUID()}`;
-  const response = await page.request.get(
-    `${fx.origin}/fixture/mcp/start?name=${encodeURIComponent(name)}`,
-  );
+  const query = new URLSearchParams({ name });
+  if (options.loopbackPort) query.set("loopbackPort", String(options.loopbackPort));
+  const response = await page.request.get(`${fx.origin}/fixture/mcp/start?${query}`);
   expect(response.ok()).toBe(true);
   return { ...((await response.json()) as { clientId: string; url: string }), name };
 }
@@ -393,6 +393,23 @@ test("empty/default PAT creation by keyboard submits once and clears the secret 
   expect(Math.round((Date.parse(input.expiresAt) - Date.now()) / 86_400_000)).toBe(90);
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect.poll(async () => (await caches(page)).includes("kbp_")).toBe(false);
+});
+
+test("a native client's portless loopback registration completes on its listening port", async ({
+  page,
+}) => {
+  // Codex registers http://127.0.0.1/callback and listens on a random free port.
+  const port = 49152 + Math.floor(Math.random() * 16000);
+  await page.route(`http://127.0.0.1:${port}/callback**`, (route) =>
+    route.fulfill({ body: "Native callback" }),
+  );
+  const request = await start(page, { loopbackPort: port });
+  await review(page, request);
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`^http://127\\.0\\.0\\.1:${port}/callback\\?code=`));
+  const grant = (await state(page)).grants.find((g) => g.clientId === request.clientId)!;
+  expect(grant.revokedAt).toBeNull();
+  expect(grant.consentIntents[0]?.approvedAt).toBeTruthy();
 });
 
 test("fresh OAuth denial returns the real access_denied callback without a grant", async ({

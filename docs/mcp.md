@@ -5,6 +5,10 @@ Connect an interactive MCP client to `https://kb.example/mcp` using OAuth.
 (`claude mcp add --transport http kb <url>`, then `/mcp` → Authenticate), Codex
 (`codex mcp add kb --url <url>`, `codex mcp login kb`) and other clients' JSON.
 The issuer is `https://kb.example/api/auth`; discovery and MCP are always on.
+Clients register by dynamic client registration or a client metadata document
+(Codex uses one). A native client's loopback redirect (`http://127.0.0.1/…`,
+`http://localhost/…`, `http://[::1]/…`) may come back on any port (RFC 8252); every
+other part of a redirect URI must match exactly.
 The canonical resource comes from `BETTER_AUTH_URL`. For a headless harness,
 mint a personal access token in `/{lang}/settings/mcp`, or use
 [CLI device login](./cli.md). Send a PAT as `Authorization: Bearer` through

@@ -1118,13 +1118,22 @@ export async function createKbBrowserFixture(options: {
     });
     fixture.get("/fixture/mcp/start", async (c) => {
       const name = c.req.query("name") ?? "MCP browser app";
+      // Codex shape: a native client registers a portless loopback callback and
+      // comes back on whatever port it is listening on (RFC 8252 §7.3).
+      const loopbackPort = c.req.query("loopbackPort");
+      const registeredRedirect = loopbackPort
+        ? "http://127.0.0.1/callback"
+        : "https://client.invalid/cb";
+      const redirectUri = loopbackPort
+        ? `http://127.0.0.1:${Number(loopbackPort)}/callback`
+        : registeredRedirect;
       const registration = await oauthHandler(
         new Request(`${options.origin}/api/auth/oauth2/register`, {
           method: "POST",
           headers: { host: new URL(options.origin).host, "content-type": "application/json" },
           body: JSON.stringify({
             client_name: name,
-            redirect_uris: ["https://client.invalid/cb"],
+            redirect_uris: [registeredRedirect],
             token_endpoint_auth_method: "none",
             grant_types: ["authorization_code", "refresh_token"],
             response_types: ["code"],
@@ -1137,7 +1146,7 @@ export async function createKbBrowserFixture(options: {
       const client = (await registration.json()) as { client_id: string };
       const query = new URLSearchParams({
         client_id: client.client_id,
-        redirect_uri: "https://client.invalid/cb",
+        redirect_uri: redirectUri,
         response_type: "code",
         code_challenge_method: "S256",
         code_challenge: createHash("sha256").update("v".repeat(43)).digest("base64url"),

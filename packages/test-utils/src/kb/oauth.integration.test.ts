@@ -568,6 +568,112 @@ describe("DCR loopback redirects (RFC 8252)", () => {
     expect(response.status).toBe(400);
     expect(await prisma.oauthClient.count({ where: { redirectUris: { has: redirect } } })).toBe(0);
   });
+
+  it("a portless loopback registration completes consent, code and token on any port (Codex's shape)", async () => {
+    const registration = await send("/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Portless loopback",
+        redirect_uris: ["http://127.0.0.1/callback"],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        scope: "mcp:read offline_access",
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const { client_id: clientId } = z
+      .object({ client_id: z.string() })
+      .parse(await registration.json());
+    const user = await prisma.user.create({
+      data: {
+        name: "Loopback",
+        email: `${randomUUID()}@example.invalid`,
+        emailVerified: true,
+        twoFactorEnabled: true,
+      },
+    });
+    const session = await prisma.session.create({
+      data: { userId: user.id, token: randomUUID(), expiresAt: new Date(Date.now() + 3600_000) },
+    });
+    const signed = `${session.token}.${createHmac("sha256", secret).update(session.token).digest("base64")}`;
+    const cookie = `__Secure-better-auth.session_token=${encodeURIComponent(signed)}`;
+    const pkce = "w".repeat(43);
+    const authorize = (redirect: string) =>
+      send(
+        `/api/auth/oauth2/authorize?${new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: redirect,
+          response_type: "code",
+          code_challenge_method: "S256",
+          code_challenge: createHash("sha256").update(pkce).digest("base64url"),
+          resource,
+          scope: "mcp:read offline_access",
+          state: randomUUID(),
+        })}`,
+        { headers: { cookie } },
+      );
+    // Another path is not this client's redirect: Better Auth sends the person to its own
+    // error page, never to that address, and issues no code.
+    const foreign = await authorize("http://127.0.0.1:45853/other");
+    expect(foreign.status).toBe(302);
+    const refused = new URL(foreign.headers.get("location")!, baseUrl);
+    expect(refused.origin).toBe(baseUrl);
+    expect(refused.searchParams.get("error")).toBe("invalid_redirect");
+    expect(refused.searchParams.has("code")).toBe(false);
+    const actor = { userId: user.id, sessionId: session.id };
+    // One code per call: Better Auth consumes a code before it checks the redirect.
+    const codeFor = async (redirect: string) => {
+      const response = await authorize(redirect);
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get("location")!, baseUrl);
+      expect(location.pathname).toBe("/en-US/mcp-consent");
+      const oauthQuery = location.search.slice(1);
+      const intent = await service.prepare(actor, oauthQuery);
+      await service.approve(actor, {
+        ...intent,
+        oauthQuery,
+        selection: { scopes: ["mcp:read", "offline_access"], toolGroups: ["read"], acl: [] },
+        explicitConsent: true,
+      });
+      const consent = await send("/api/auth/oauth2/consent", {
+        method: "POST",
+        headers: { cookie, origin: baseUrl, "content-type": "application/json" },
+        body: JSON.stringify({ oauth_query: oauthQuery, accept: true }),
+      });
+      expect(consent.status).toBe(200);
+      const back = new URL(z.object({ url: z.string() }).parse(await consent.json()).url);
+      expect(`${back.origin}${back.pathname}`).toBe(redirect);
+      const code = back.searchParams.get("code");
+      expect(code).toMatch(/\S/);
+      return code ?? "";
+    };
+    const redeem = (code: string, redirect: string) =>
+      send("/api/auth/oauth2/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: clientId,
+          resource,
+          redirect_uri: redirect,
+          code,
+          code_verifier: pkce,
+        }),
+      });
+    const redirect = "http://127.0.0.1:45853/callback";
+    expect((await redeem(await codeFor(redirect), redirect)).status).toBe(200);
+    // The code stays bound to the exact redirect it was issued for: no port variation at the token endpoint.
+    for (const other of ["http://127.0.0.1/callback", "http://127.0.0.1:45854/callback"]) {
+      const refusedToken = await redeem(await codeFor(redirect), other);
+      expect(refusedToken.status).toBe(400);
+      expect(await refusedToken.json()).toMatchObject({
+        error: "invalid_grant",
+        error_description: "redirect_uri mismatch",
+      });
+    }
+  });
 });
 
 describe("OAuth provider wire integration", () => {

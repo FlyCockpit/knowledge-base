@@ -16,6 +16,7 @@ import {
   MCP_KB_PERMISSIONS,
   normalizeGrantCeiling,
 } from "./mcp-grant";
+import { isRegisteredRedirectUri } from "./mcp-redirect";
 import { MCP_TOOL_GROUPS } from "./mcp-tool-groups";
 import { isImpersonatedSession } from "./roles";
 import { sealedApprovalExpirySchema, sealedRecipientPublicKey } from "./sealed-recipient";
@@ -459,7 +460,8 @@ export function createMcpConsentService(options: {
           session.expiresAt <= now() ||
           !client ||
           client.disabled ||
-          !client.redirectUris.includes(query.redirectUri) ||
+          // The rule Better Auth applied before signing: only a loopback port may differ.
+          !isRegisteredRedirectUri(client.redirectUris, query.redirectUri) ||
           !client.grantTypes.includes("authorization_code") ||
           !subset(query.scopes, client.scopes) ||
           !link ||

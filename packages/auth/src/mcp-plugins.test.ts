@@ -1,11 +1,8 @@
 import prisma from "@knowledge-base/db";
 import { describe, expect, it, vi } from "vitest";
 import { fetchClientMetadataResource } from "./mcp-cimd";
-import {
-  isStrictLoopbackHttpRedirect,
-  registrationRedirectPolicy,
-  resolveMcpPlugins,
-} from "./mcp-plugins";
+import { registrationRedirectPolicy, resolveMcpPlugins } from "./mcp-plugins";
+import { isRegisteredRedirectUri, isStrictLoopbackHttpRedirect } from "./mcp-redirect";
 
 const captured = vi.hoisted(() => ({ mcp: vi.fn(), cimd: vi.fn() }));
 vi.mock("@better-auth/mcp", () => ({ mcp: captured.mcp }));
@@ -135,5 +132,52 @@ describe("strict loopback redirect parsing (fails closed on parser disagreement)
       registrationRedirectPolicy({ redirect_uris: [uri], token_endpoint_auth_method: "none" })
         ?.kind,
     ).not.toBe("native");
+  });
+});
+
+describe("registered redirect matching (RFC 8252 §7.3, as Better Auth's authorize applies it)", () => {
+  // Codex's client metadata document registers portless loopback callbacks.
+  const codex = ["http://127.0.0.1/callback", "http://localhost/callback"];
+
+  it("lets only the port of a loopback http redirect vary", () => {
+    expect(isRegisteredRedirectUri(codex, "http://127.0.0.1:45853/callback")).toBe(true);
+    expect(isRegisteredRedirectUri(codex, "http://localhost:1234/callback")).toBe(true);
+    expect(isRegisteredRedirectUri(codex, "http://127.0.0.1/callback")).toBe(true);
+    expect(isRegisteredRedirectUri(["http://[::1]:8080/cb"], "http://[::1]:9/cb")).toBe(true);
+    expect(
+      isRegisteredRedirectUri(["http://127.0.0.1:3000/cb?x=1"], "http://127.0.0.1:4000/cb?x=1"),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["another path", "http://127.0.0.1:45853/other"],
+    ["another query", "http://127.0.0.1:45853/callback?x=1"],
+    ["another loopback host", "http://[::1]:45853/callback"],
+    ["https", "https://127.0.0.1:45853/callback"],
+    ["userinfo", "http://evil@127.0.0.1:45853/callback"],
+    ["a look-alike host", "http://127.0.0.1.evil.example:45853/callback"],
+    ["a fragment", "http://127.0.0.1:45853/callback#x"],
+    ["port 0", "http://127.0.0.1:0/callback"],
+  ])("refuses %s", (_label, uri) => {
+    expect(isRegisteredRedirectUri(codex, uri)).toBe(false);
+  });
+
+  it.each([
+    "http://127.0.0.1/callback#x",
+    "http://127.0.0.1/callback#",
+    "https://user:pw@client.example/cb",
+    "not a url",
+  ])("refuses %s even when it is registered verbatim, as Better Auth does", (uri) => {
+    expect(isRegisteredRedirectUri([uri], uri)).toBe(false);
+  });
+
+  it("keeps every non-loopback redirect an exact match", () => {
+    const web = ["https://client.example/cb"];
+    expect(isRegisteredRedirectUri(web, "https://client.example/cb")).toBe(true);
+    expect(isRegisteredRedirectUri(web, "https://client.example:8443/cb")).toBe(false);
+    expect(
+      isRegisteredRedirectUri(["http://client.example/cb"], "http://client.example:80/cb"),
+    ).toBe(false);
+    expect(isRegisteredRedirectUri([], "http://127.0.0.1:45853/callback")).toBe(false);
   });
 });

@@ -10,6 +10,7 @@ import { jwt } from "better-auth/plugins";
 import { fetchClientMetadataResource } from "./mcp-cimd";
 import { canonicalMcpResource } from "./mcp-config";
 import { createMcpConsentService, McpConsentError, verifyOAuthQuery } from "./mcp-consent";
+import { isStrictLoopbackHttpRedirect } from "./mcp-redirect";
 import {
   issueMcpGenerationClaims,
   MCP_ACCESS_TOKEN_LIFETIME_SECONDS,
@@ -20,41 +21,6 @@ import {
 const scopes = ["mcp:read", "mcp:write", "offline_access"];
 const digest = (token: string) => createHash("sha256").update(token).digest("base64url");
 const invalidGrant = () => new APIError("BAD_REQUEST", { error: "invalid_grant" });
-
-const NATIVE_HTTP_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/**
- * An `http` redirect on an exact loopback host (`localhost`, `127.0.0.1`, `[::1]`),
- * with an optional port and path. Fails closed on anything ambiguous: userinfo
- * (`@`), backslashes, percent-encoding or whitespace in the authority, and any
- * disagreement between this literal reading and WHATWG URL parsing (which is what
- * Better Auth and the browser use). Both must name the same loopback host.
- */
-export function isStrictLoopbackHttpRedirect(uri: string): boolean {
-  if (/[\\\s]/.test(uri)) return false;
-  const literal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d{1,5}))?(?:[/?][^#]*)?$/i.exec(
-    uri,
-  );
-  if (!literal) return false;
-  const host = literal[1]!.toLowerCase();
-  const port = literal[2];
-  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    return false;
-  }
-  return (
-    parsed.protocol === "http:" &&
-    parsed.username === "" &&
-    parsed.password === "" &&
-    parsed.hostname.toLowerCase() === host &&
-    NATIVE_HTTP_LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase()) &&
-    // WHATWG drops a default/explicit port identically; any other rewrite is a disagreement.
-    (port === undefined || parsed.port === "" || parsed.port === String(Number(port)))
-  );
-}
 
 function isLoopbackHost(uri: string): boolean {
   try {
