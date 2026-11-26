@@ -106,7 +106,8 @@ function GrantEditSession({
     setSnapshot(selectionFromGrant({ ...target, acl: data.pages.flatMap((page) => page.items) }));
   return (
     <Sheet open onOpenChange={onOpenChange}>
-      <SheetContent>
+      {/* A long form: the wide side sheet. */}
+      <SheetContent size="wide">
         <SheetHeader>
           <SheetTitle>{t("settings:credentials.edit.title", { name: target.name })}</SheetTitle>
           <SheetDescription>{t("settings:credentials.edit.description")}</SheetDescription>

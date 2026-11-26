@@ -187,7 +187,7 @@ describe("ApiKeyList", () => {
     expect(markup).toContain(`${enSettings.credentials.kbUnavailable}: Read, Propose`);
     expect(markup).not.toContain("b".repeat(24));
     expect(markup).toContain("—");
-    expect(markup).toContain("Write mode: Direct edits only");
+    expect(markup).toContain("Write mode: Agent edits only");
     expect(markup).toContain('aria-label="Revoke Agent token"');
     expect(markup).not.toContain('aria-label="Revoke Revoked token"');
     expect(markup).not.toContain(enSettings.apiKeys.childCanCreate);

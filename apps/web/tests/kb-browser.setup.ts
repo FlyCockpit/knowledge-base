@@ -21,6 +21,9 @@ const HARNESS_BY_PATH: Record<string, string> = {
   "/kb-editor": "editor",
   "/en-US/mcp-consent": "mcp",
   "/en-US/settings/mcp": "mcp",
+  "/en-US/settings/mcp/new": "mcp",
+  "/en-US/settings/api-keys": "mcp",
+  "/en-US/settings/api-keys/new": "mcp",
   "/en-US/device": "mcp",
   "/mcp-exit": "mcp",
 };

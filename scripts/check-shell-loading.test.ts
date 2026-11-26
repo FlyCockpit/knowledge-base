@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { judgeShellLoading, type ShellFrame, type ShellRecording } from "./check-shell-loading.ts";
+import {
+  INIT_SCRIPT,
+  judgeShellLoading,
+  type ShellFrame,
+  type ShellRecording,
+} from "./check-shell-loading.ts";
 
 const shell: ShellFrame = {
   t: 0,
@@ -117,5 +122,12 @@ describe("judgeShellLoading", () => {
     assert.deepEqual(judgeShellLoading("p", recording([]), true), [
       "p: no painted frame was recorded",
     ]);
+  });
+});
+
+describe("probe privacy", () => {
+  it("records structure only, never page text (a page can show private documents)", () => {
+    for (const reader of ["innerText", "textContent", "innerHTML", "outerHTML"])
+      assert.equal(INIT_SCRIPT.includes(reader), false, reader);
   });
 });

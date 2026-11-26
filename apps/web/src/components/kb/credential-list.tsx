@@ -1,21 +1,7 @@
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
-import {
-  MCP_TOOL_GROUPS,
-  MCP_TOOL_PRESETS,
-  type McpToolPreset,
-} from "@knowledge-base/auth/mcp-tool-groups";
+import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
 import { Button } from "@knowledge-base/ui/components/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@knowledge-base/ui/components/dialog";
 import { toast } from "@knowledge-base/ui/components/sileo";
-import { SelectField, TextField } from "@knowledge-base/ui/components/text-field";
-import { useForm } from "@tanstack/react-form";
 import {
   type MutationObserverOptions,
   type QueryClient,
@@ -23,37 +9,28 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { KeyRound, Plus } from "lucide-react";
 import type * as React from "react";
-import { useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
-import z from "zod";
 import { InlineRetry } from "@/components/inline-retry";
-import { CreateCapabilityPicker, KbAccessPicker } from "@/components/kb/acl-picker";
-import { AuthoringModePicker, AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
-import { AdvancedSection, CreateFooter } from "@/components/kb/credential-dialog-parts";
+import { scopeLabel } from "@/components/kb/acl-picker";
+import { AuthoringModeSummary } from "@/components/kb/authoring-mode-picker";
 import type { GrantEditTarget } from "@/components/kb/grant-edit-sheet";
-import { McpClientSetup } from "@/components/kb/mcp-connect";
-import { RadioCards } from "@/components/kb/radio-cards";
-import { presetFor, ToolGroupPicker } from "@/components/kb/tool-group-picker";
+import { presetFor } from "@/components/kb/tool-group-picker";
 import { LoadMore } from "@/components/load-more";
 import { SecretReveal } from "@/components/secret-reveal";
 import { StatusPill } from "@/components/status-pill";
 import {
   type CredentialSelection,
   effectiveSelection,
-  emptySelection,
   type GrantSelection,
   isConsentRejection,
   type LiveKbOption,
-  type SelectionAction,
   selectionIssues,
-  selectionReducer,
   toGrantSelection,
-  useLiveKbOptions,
 } from "@/hooks/use-mcp-consent";
 import { scopeForGroups } from "@/lib/mcp-connect";
-import { isBrowserOffline } from "@/lib/network-failure";
 import { orpc } from "@/utils/orpc";
 
 type Client = AppRouterClient;
@@ -70,7 +47,6 @@ export const MAX_TTL_DAYS = 365;
 export const EXPIRY_PRESETS = ["30", "90", "365"] as const;
 export const EXPIRY_CHOICES = [...EXPIRY_PRESETS, "custom", "none"] as const;
 export type PatExpiryChoice = (typeof EXPIRY_CHOICES)[number];
-const DEFAULT_EXPIRY: PatExpiryChoice = "90";
 
 function localDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -99,6 +75,25 @@ export function patExpiresAtFromChoice(
   if (!date || date <= now || date.getTime() > now.getTime() + MAX_TTL_DAYS * DAY_MS)
     return { ok: false };
   return { ok: true, expiresAt: date };
+}
+
+/**
+ * The expiry choice as one line for a collapsed Lifetime section: "Expires in
+ * 90 days", "Expires on <date>", or the never-expires label (`noneKey`, which
+ * differs between tokens and keys).
+ */
+export function expiryChoiceLabel(
+  t: TFunction<"settings">,
+  choice: PatExpiryChoice,
+  customDate: string,
+  noneKey: "credentials.expiryNone" | "apiKeys.expiryNone",
+): string {
+  if (choice === "none") return t(noneKey);
+  if (choice !== "custom") return t("credentials.expiresInDays", { count: Number(choice) });
+  const date = localDate(customDate);
+  return date
+    ? t("credentials.expiresOn", { date: date.toLocaleDateString() })
+    : t("credentials.expiryCustom");
 }
 
 /**
@@ -231,7 +226,7 @@ export function CredentialList({
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                   <KeyRound className="size-4" aria-hidden />
                 </span>
-                <div className="min-w-0 flex-1 space-y-1">
+                <div className="min-w-0 flex-1 basis-56 space-y-1">
                   <p className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="truncate font-medium">{token.name}</span>
                     <TokenStatePill revokedAt={token.revokedAt} expiresAt={token.expiresAt} />
@@ -240,7 +235,7 @@ export function CredentialList({
                     {token.lookupPrefix}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {token.scopes.join(" ")} ·{" "}
+                    {token.scopes.map((scope) => scopeLabel(t, scope)).join(", ")} ·{" "}
                     {token.revokedAt
                       ? t("credentials.revoked")
                       : token.expiresAt === null
@@ -291,7 +286,7 @@ export function CredentialList({
           <ul className="divide-y rounded-md border">
             {apps.map((grant) => (
               <li key={grant.id} className="flex flex-wrap items-start gap-3 p-3">
-                <div className="min-w-0 flex-1 space-y-1">
+                <div className="min-w-0 flex-1 basis-56 space-y-1">
                   <p className="truncate font-medium">
                     {grant.clientName ?? grant.clientId ?? grant.id}
                   </p>
@@ -302,7 +297,7 @@ export function CredentialList({
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    {grant.scopes.join(" ")} ·{" "}
+                    {grant.scopes.map((scope) => scopeLabel(t, scope)).join(", ")} ·{" "}
                     {grant.revokedAt
                       ? t("credentials.revoked")
                       : t("credentials.approved", { date: date(grant.createdAt) })}
@@ -570,21 +565,17 @@ export function PatSecretReveal({ secret }: { secret: string }) {
   );
 }
 
-/** The answers to "What should this token do?": a tool preset, or a custom group set from Advanced. */
-type TokenPurpose = McpToolPreset | "custom";
-
 /**
  * The PAT create draft as a grant: the scope follows from the tool groups
- * (write when any group changes data), and nothing is granted until a
- * purpose is chosen, so no scope is ever preselected.
+ * (write when any group changes data), so it is never asked for.
  */
 export function patDraftGrant(
   selection: CredentialSelection,
   live: readonly LiveKbOption[],
-  purposeChosen: boolean,
 ): GrantSelection {
-  const scopes = purposeChosen ? [scopeForGroups(effectiveSelection(selection).toolGroups)] : [];
-  return toGrantSelection(selection, live, scopes);
+  return toGrantSelection(selection, live, [
+    scopeForGroups(effectiveSelection(selection).toolGroups),
+  ]);
 }
 
 /** Why Create is disabled, in the order the form asks (empty when it can be created). */
@@ -595,298 +586,3 @@ export function patDraftIssueKeys(grant: GrantSelection): string[] {
       : `settings:credentials.picker.issues.${issue}`,
   );
 }
-
-/**
- * Create → Dialog. Nothing is preselected: the token does nothing until a
- * purpose is chosen. Closing resets and unmounts this form. Reopening owns a
- * new observer/draft, so late responses cannot reveal the abandoned secret in
- * the new dialog. The reveal ends with how to connect a client.
- */
-export function PatCreateDialog({
-  open,
-  onOpenChange,
-  serverUrl,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** This server's URL, for the connect snippets after the reveal. */
-  serverUrl: string;
-}) {
-  return open ? <PatCreateForm onOpenChange={onOpenChange} serverUrl={serverUrl} /> : null;
-}
-
-function PatCreateForm({
-  onOpenChange,
-  serverUrl,
-}: {
-  onOpenChange: (open: boolean) => void;
-  serverUrl: string;
-}) {
-  const { t } = useTranslation(["settings", "common", "errors"]);
-  const queryClient = useQueryClient();
-  const { query: kbQuery, live } = useLiveKbOptions();
-  const [selection, dispatch] = useReducer(selectionReducer, undefined, emptySelection);
-  const [purposeChosen, setPurposeChosen] = useState(false);
-  const grant = patDraftGrant(selection, live, purposeChosen);
-  const issues = patDraftIssueKeys(grant);
-  const writes = grant.scopes.includes("mcp:write");
-  const purpose: TokenPurpose | null = purposeChosen ? presetFor(selection.toolGroups) : null;
-  const mint = useMutation(
-    withPatSecretHygiene(queryClient, orpc.mcpTokens.create.mutationOptions()),
-  );
-  const blocked = mint.isError && !isPatMintRejection(mint.error);
-  // Offline the request is never sent, so nothing can have been created: say so
-  // and send nothing, instead of the "could not confirm" state a failed send gets.
-  const [offlineRefused, setOfflineRefused] = useState(false);
-  const form = useForm({
-    defaultValues: { name: "", expiry: DEFAULT_EXPIRY as PatExpiryChoice, customDate: "" },
-    validators: {
-      onSubmit: z
-        .object({
-          name: z.string().trim().min(1).max(100),
-          expiry: z.enum(EXPIRY_CHOICES),
-          customDate: z.string(),
-        })
-        .refine((value) => patExpiresAtFromChoice(value.expiry, value.customDate, new Date()).ok, {
-          path: ["customDate"],
-          message: t("settings:credentials.expiryInvalid"),
-        }),
-    },
-    onSubmit: async ({ value }) => {
-      if (issues.length > 0 || mint.isPending || blocked) return;
-      const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
-      if (!expiry.ok) return;
-      setOfflineRefused(isBrowserOffline());
-      if (isBrowserOffline()) return;
-      mint.mutate({
-        name: value.name.trim(),
-        scopes: grant.scopes.filter((s) => s !== "offline_access"),
-        toolGroups: grant.toolGroups,
-        acl: grant.acl,
-        allowCreate: grant.allowCreate,
-        createdKbBits: grant.createdKbBits,
-        authoringMode: grant.authoringMode,
-        expiresAt: expiry.expiresAt,
-      });
-    },
-  });
-
-  const close = (next: boolean) => {
-    if (next) return onOpenChange(true);
-    mint.reset();
-    setOfflineRefused(false);
-    form.reset();
-    dispatch({ type: "reset" });
-    setPurposeChosen(false);
-    onOpenChange(false);
-  };
-  // Hand-picked groups are a purpose too: what is ticked is what the token gets.
-  const pick = (action: SelectionAction) => {
-    setPurposeChosen(true);
-    dispatch(action);
-  };
-  const disabled = mint.isPending || kbQuery.isPending;
-  const effective = effectiveSelection(selection);
-
-  const minted = mint.data;
-  return (
-    <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            {minted
-              ? t("settings:credentials.createdTitle")
-              : t("settings:credentials.createTitle")}
-          </DialogTitle>
-          <DialogDescription>
-            {minted
-              ? t("settings:credentials.createdDescription")
-              : t("settings:credentials.createDescription")}
-          </DialogDescription>
-        </DialogHeader>
-        {minted ? (
-          <>
-            <PatSecretReveal secret={minted.secret} />
-            <section className="min-w-0 space-y-2" aria-labelledby="pat-next-connect">
-              <h3 id="pat-next-connect" className="text-sm font-medium">
-                {t("settings:credentials.nextConnect")}
-              </h3>
-              <McpClientSetup serverUrl={serverUrl} token={minted.secret} />
-            </section>
-            <DialogFooter>
-              <Button className="min-h-[44px]" onClick={() => close(false)}>
-                {t("settings:credentials.done")}
-              </Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <form
-            className="min-w-0 space-y-6"
-            onSubmit={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              form.handleSubmit();
-            }}
-          >
-            <form.Field name="name">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("settings:credentials.nameLabel")}
-                  description={t("settings:credentials.nameHelp")}
-                  autoComplete="off"
-                  inputMode="text"
-                  maxLength={100}
-                />
-              )}
-            </form.Field>
-            <RadioCards<TokenPurpose>
-              legend={t("settings:credentials.purposeLegend")}
-              options={[
-                ...PURPOSE_PRESETS.map((value) => ({
-                  value,
-                  label: t(`settings:credentials.picker.presets.${value}.label`),
-                  description: t(`settings:credentials.picker.presets.${value}.description`),
-                })),
-                ...(purpose === "custom"
-                  ? [
-                      {
-                        value: "custom" as const,
-                        label: t("settings:credentials.picker.presets.custom.label"),
-                        description: t("settings:credentials.picker.presets.custom.description"),
-                      },
-                    ]
-                  : []),
-              ]}
-              value={purpose}
-              disabled={disabled}
-              onChange={(next) => {
-                if (next !== "custom")
-                  pick({ type: "setToolGroups", groups: MCP_TOOL_PRESETS[next] });
-              }}
-            />
-            {writes && (
-              <AuthoringModePicker
-                value={selection.authoringMode}
-                onChange={(mode) => dispatch({ type: "setAuthoringMode", mode })}
-                disabled={disabled}
-              />
-            )}
-            {kbQuery.isError ? (
-              <InlineRetry
-                message={t("settings:credentials.kbsLoadError")}
-                onRetry={() => kbQuery.refetch()}
-              />
-            ) : (
-              <KbAccessPicker
-                live={live}
-                selection={selection}
-                onChange={dispatch}
-                disabled={disabled}
-              />
-            )}
-            {kbQuery.hasNextPage && (
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-[44px]"
-                disabled={kbQuery.isFetchingNextPage}
-                onClick={() => kbQuery.fetchNextPage()}
-              >
-                {t("common:actions.loadMore")}
-              </Button>
-            )}
-            <form.Field name="expiry">
-              {(field) => (
-                <SelectField
-                  field={field}
-                  label={t("settings:credentials.expiryLabel")}
-                  description={t("settings:credentials.expiryHelp", { max: MAX_TTL_DAYS })}
-                  // The value is a day count ("90"); show it with its unit.
-                  options={[
-                    ...EXPIRY_PRESETS.map((days) => ({
-                      value: days,
-                      label: t("settings:credentials.expiryDays", { count: Number(days) }),
-                    })),
-                    { value: "custom", label: t("settings:credentials.expiryCustom") },
-                    { value: "none", label: t("settings:credentials.expiryNone") },
-                  ]}
-                />
-              )}
-            </form.Field>
-            <form.Subscribe selector={(state) => state.values.expiry}>
-              {(expiry) =>
-                expiry === "custom" ? (
-                  <form.Field name="customDate">
-                    {(field) => (
-                      <TextField
-                        field={field}
-                        type="date"
-                        label={t("settings:credentials.expiryDateLabel")}
-                        autoComplete="off"
-                        inputMode="numeric"
-                      />
-                    )}
-                  </form.Field>
-                ) : expiry === "none" ? (
-                  <p role="status" className="text-sm text-destructive">
-                    {t("settings:credentials.noExpiryWarning")}
-                  </p>
-                ) : null
-              }
-            </form.Subscribe>
-            <AdvancedSection
-              label={t("settings:credentials.advanced")}
-              defaultOpen={purpose === "custom"}
-            >
-              <ToolGroupPicker
-                groups={effective.toolGroups}
-                onChange={pick}
-                writeScope={writes}
-                authoringMode={selection.authoringMode}
-                allowCreate={effective.allowCreate}
-                offerSealed
-                kbs={live.flatMap((kb) => {
-                  const bits = effective.acl[kb.kbId] ?? [];
-                  return bits.length ? [{ name: kb.name, bits }] : [];
-                })}
-                createdKbBits={effective.allowCreate ? effective.createdKbBits : []}
-                disabled={disabled}
-                showPresets={false}
-              />
-              {/* Creating needs the kb_admin group, which writes: ticking it chooses write access. */}
-              <CreateCapabilityPicker
-                selection={selection}
-                onChange={pick}
-                writeScopeSelected
-                disabled={disabled}
-              />
-            </AdvancedSection>
-            {offlineRefused && (
-              <p role="alert" className="text-sm text-destructive">
-                {t("errors:offline")}
-              </p>
-            )}
-            {mint.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                {isPatMintRejection(mint.error)
-                  ? t("settings:credentials.createError")
-                  : t("settings:credentials.createUncertain", { name: mint.variables?.name ?? "" })}
-              </p>
-            )}
-            <CreateFooter
-              reasons={issues.map((key) => t(key))}
-              pending={mint.isPending}
-              blocked={blocked}
-              submitLabel={t("settings:credentials.createSubmit")}
-              pendingLabel={t("settings:credentials.creating")}
-              onCancel={() => close(false)}
-            />
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-const PURPOSE_PRESETS = Object.keys(MCP_TOOL_PRESETS) as McpToolPreset[];

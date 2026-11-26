@@ -239,22 +239,39 @@ for (const mode of ["success-unmount", "failure-replace", "success-replace"] as 
   });
 }
 
+/** The Create token page's own submit button (the list page's "Create token" opens the page). */
+const mintButton = (page: Page) =>
+  page.locator('form[data-slot="form-page"]').getByRole("button", { name: "Create token" });
+
 async function openMint(page: Page, name: string) {
   await page.goto(`${fx.origin}/en-US/settings/mcp`);
   await page.getByRole("button", { name: "Create token", exact: true }).click();
+  // A page of its own, deep-linkable.
+  await expect(page).toHaveURL(/\/en-US\/settings\/mcp\/new$/);
   await page.getByRole("textbox", { name: "Token name", exact: true }).fill(name);
-  // Nothing is preselected: the token does nothing until a purpose is chosen.
+  // It starts on Read (read-only); no knowledge base is preselected.
   const purpose = page.getByRole("radiogroup", { name: "What should this token do?" });
-  await expect(purpose.getByRole("radio", { checked: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }),
-  ).toBeDisabled();
-  await expect(page.getByText("Choose what the token should do.", { exact: true })).toBeVisible();
-  const read = purpose.getByRole("radio", { name: "Read", exact: true });
-  await expect(read).toBeEnabled();
-  await read.press("Space");
-  await expect(read).toBeChecked();
+  await expect(purpose.getByRole("radio", { checked: true })).toHaveCount(1);
+  await expect(purpose.getByRole("radio", { name: "Read", exact: true })).toBeChecked();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await expect(mintButton(page)).toBeEnabled();
+  // The action bar says what Create will make.
+  await expect(page.getByTestId("create-note")).toContainText("Read");
+  await expect(page.getByTestId("create-note")).toContainText("Expires in 90 days");
 }
+/** Scroll the page scroller part way down and return where it is. */
+async function scrollMainDown(page: Page) {
+  return page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('[data-scroll-restoration-id="app-main"]')!;
+    main.scrollTop = 160;
+    return main.scrollTop;
+  });
+}
+const mainScrollTop = (page: Page) =>
+  page.evaluate(
+    () => document.querySelector<HTMLElement>('[data-scroll-restoration-id="app-main"]')!.scrollTop,
+  );
+
 async function caches(page: Page) {
   return page.evaluate(() => {
     const client = (
@@ -302,15 +319,14 @@ test("reply-lost PAT mint refreshes the list and requires unrecoverable-token re
     expect((await route.fetch()).status()).toBe(200);
     await route.abort("failed");
   });
-  await page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }).click();
+  await mintButton(page).click();
   await expect(page.getByRole("alert")).toContainText("We could not confirm whether");
   await expect(page.getByRole("alert")).toContainText("revoke it before trying again");
-  await expect(
-    page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText("Go back to the list");
+  await expect(mintButton(page)).toBeDisabled();
   const token = (await state(page)).tokens.find((t) => t.name === name)!;
   expect(token.revokedAt).toBeNull();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("link", { name: "Cancel", exact: true }).click();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   const row = page.locator("li").filter({ has: page.getByText(name, { exact: true }) });
   await row.getByRole("button", { name: `Revoke ${name}`, exact: true }).click();
@@ -334,11 +350,12 @@ test("offline, Create token sends nothing and says so instead of the could-not-c
   });
   await page.context().setOffline(true);
   try {
-    const create = page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Create token", exact: true });
+    const create = mintButton(page);
     await create.click();
-    await expect(page.getByRole("alert")).toContainText("You're offline");
+    // In the sticky action bar, where Create was pressed, however far the page scrolled.
+    const alert = page.locator('[data-slot="form-action-bar"]').getByRole("alert");
+    await expect(alert).toContainText("You're offline");
+    await expect(alert).toBeInViewport();
     await expect(page.getByText("We could not confirm whether", { exact: false })).toHaveCount(0);
     await expect(create).toBeEnabled();
     expect(sent).toBe(0);
@@ -346,7 +363,7 @@ test("offline, Create token sends nothing and says so instead of the could-not-c
     await page.context().setOffline(false);
   }
   // Back online, the same draft creates the token.
-  await page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }).click();
+  await mintButton(page).click();
   await expect.poll(async () => (await state(page)).tokens.some((t) => t.name === name)).toBe(true);
   expect(sent).toBe(1);
 });
@@ -357,25 +374,32 @@ test("pending close/reopen does not reveal the old secret or replace a newer dra
   await openMint(page, `Pending ${randomUUID()}`);
   const held = await hold(page, "**/rpc/mcpTokens/create");
   try {
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Create token", exact: true })
-      .click();
+    await mintButton(page).click();
     await held.ready;
     const secret = (JSON.parse(held.body()) as { json: { secret: string } }).json.secret;
     expect(secret).toMatch(/^kbp_/);
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    // Leaving the page drops its mutation; coming back starts a new draft.
+    await page.getByRole("link", { name: "Cancel", exact: true }).click();
     await page.getByRole("button", { name: "Create token", exact: true }).click();
+    await expect(page).toHaveURL(/\/en-US\/settings\/mcp\/new$/);
     const name = `New draft ${randomUUID()}`;
     await page.getByRole("textbox", { name: "Token name", exact: true }).fill(name);
+    // A short window, so the new draft's page scrolls.
+    await page.setViewportSize({ width: 1280, height: 500 });
+    const scrolled = await scrollMainDown(page);
+    expect(scrolled).toBeGreaterThan(0);
     const delivered = page.waitForResponse((r) => r.url().endsWith("/rpc/mcpTokens/create"));
     held.release();
     await delivered;
     await settled(page);
+    // The abandoned mint's success does not touch the page that is open now.
+    expect(await mainScrollTop(page)).toBe(scrolled);
     await expect.poll(async () => (await caches(page)).includes(secret)).toBe(false);
     await expect(page.getByRole("textbox", { name: "Token name", exact: true })).toHaveValue(name);
     await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
-    await expect(page.getByRole("radio", { checked: true })).toHaveCount(0);
+    // Only the new draft's own default (Read) is chosen.
+    await expect(page.getByRole("radio", { checked: true })).toHaveCount(1);
+    await expect(page.getByRole("radio", { name: "Read", exact: true })).toBeChecked();
     await expect(page.getByText(secret, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Copy token" })).toHaveCount(0);
   } finally {
@@ -396,7 +420,7 @@ test("empty/default PAT creation by keyboard submits once and clears the secret 
   await expect(page.getByRole("button", { name: "Copy token" })).toBeVisible();
   // The reveal ends with the next step: connecting a client, the token kept out of the command.
   await expect(page.getByRole("heading", { name: "Next: connect your client" })).toBeVisible();
-  await expect(page.getByRole("dialog").getByText(/read -rs KB_MCP_TOKEN/)).toBeVisible();
+  await expect(page.getByText(/read -rs KB_MCP_TOKEN/)).toBeVisible();
   expect(inputs).toHaveLength(1);
   const input = (
     JSON.parse(inputs[0]!) as {
@@ -419,7 +443,8 @@ test("empty/default PAT creation by keyboard submits once and clears the secret 
     createdKbBits: [],
   });
   expect(Math.round((Date.parse(input.expiresAt) - Date.now()) / 86_400_000)).toBe(90);
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("link", { name: "Done", exact: true }).click();
+  await expect(page).toHaveURL(/\/en-US\/settings\/mcp$/);
   await expect.poll(async () => (await caches(page)).includes("kbp_")).toBe(false);
 });
 
@@ -522,7 +547,113 @@ test("MCP access leads with this server's URL and per-client setup, OAuth first"
   );
   // Clients that can't sign in get a token from the same place.
   await card.getByRole("button", { name: "Use a token instead", exact: true }).click();
+  await expect(page).toHaveURL(/\/en-US\/settings\/mcp\/new$/);
+  await expect(page.getByRole("radiogroup", { name: "What should this token do?" })).toBeVisible();
+});
+
+/** The Create API key page, with a name and the reach that needs no knowledge base. */
+async function openKeyPage(page: Page, name: string) {
+  await page.goto(`${fx.origin}/en-US/settings/api-keys`);
+  await page.getByRole("button", { name: "Create API key", exact: true }).click();
+  await expect(page).toHaveURL(/\/en-US\/settings\/api-keys\/new$/);
+  // Read on chosen knowledge bases, none chosen for you, no capability.
   await expect(
-    page.getByRole("dialog").getByRole("radiogroup", { name: "What should this token do?" }),
-  ).toBeVisible();
+    page.getByRole("radio", { name: "Chosen knowledge bases", exact: true }),
+  ).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Read", exact: true })).toBeChecked();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Key name", exact: true }).fill(name);
+  await page.getByRole("radio", { name: "All knowledge bases I can access", exact: true }).check();
+}
+const keyButton = (page: Page) =>
+  page.locator('form[data-slot="form-page"]').getByRole("button", { name: "Create key" });
+
+test("API key page: a reply that lands after leaving never reveals its secret", async ({
+  page,
+}) => {
+  await openKeyPage(page, `Pending key ${randomUUID()}`);
+  const held = await hold(page, "**/rpc/apiKeys/create");
+  try {
+    await keyButton(page).click();
+    await held.ready;
+    const secret = (JSON.parse(held.body()) as { json: { secret: string } }).json.secret;
+    expect(secret).toMatch(/^kbk_/);
+    // Leaving drops the page's mutation; the next draft starts fresh.
+    await page.getByRole("link", { name: "Cancel", exact: true }).click();
+    await expect(page).toHaveURL(/\/en-US\/settings\/api-keys$/);
+    await page.getByRole("button", { name: "Create API key", exact: true }).click();
+    const name = `New key draft ${randomUUID()}`;
+    await page.getByRole("textbox", { name: "Key name", exact: true }).fill(name);
+    await page.setViewportSize({ width: 1280, height: 500 });
+    const scrolled = await scrollMainDown(page);
+    expect(scrolled).toBeGreaterThan(0);
+    const delivered = page.waitForResponse((r) => r.url().endsWith("/rpc/apiKeys/create"));
+    held.release();
+    await delivered;
+    await settled(page);
+    // The abandoned mint's success does not touch the page that is open now.
+    expect(await mainScrollTop(page)).toBe(scrolled);
+    await expect.poll(async () => (await caches(page)).includes(secret)).toBe(false);
+    await expect(page.getByRole("textbox", { name: "Key name", exact: true })).toHaveValue(name);
+    await expect(page.getByText(secret, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy API key" })).toHaveCount(0);
+  } finally {
+    held.release();
+  }
+});
+
+test("API key page: problems show next to their section, then the secret once; Done clears it", async ({
+  page,
+}) => {
+  await page.goto(`${fx.origin}/en-US/settings/api-keys/new`);
+  await keyButton(page).click();
+  // The empty name is focused and named under the field; the missing KB under the KB list.
+  await expect(page.getByRole("textbox", { name: "Key name", exact: true })).toBeFocused();
+  await expect(page.getByText("This field is required.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Choose at least one knowledge base.").first()).toBeVisible();
+  const name = `Key ${randomUUID()}`;
+  await page.getByRole("textbox", { name: "Key name", exact: true }).fill(name);
+  await page.getByRole("radio", { name: "All knowledge bases I can access", exact: true }).check();
+  await expect(page.getByTestId("create-note")).toHaveText(
+    "Reach: all knowledge bases you can access · Permissions: Read · May only list and read knowledge base details · Expires in 365 days",
+  );
+  await keyButton(page).click();
+  await expect(page.getByRole("heading", { name: "Your new API key" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy API key" })).toBeVisible();
+  const secret =
+    (
+      await page.locator('[data-secret-reveal] [data-slot="copy-field-value"]').textContent()
+    )?.trim() ?? "";
+  expect(secret).toMatch(/^kbk_/);
+  await page.getByRole("link", { name: "Done", exact: true }).click();
+  await expect(page).toHaveURL(/\/en-US\/settings\/api-keys$/);
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect.poll(async () => (await caches(page)).includes(secret)).toBe(false);
+});
+
+test("offline, the API key page sends nothing and says so; back online the same draft creates it", async ({
+  page,
+}) => {
+  const name = `Offline key ${randomUUID()}`;
+  await openKeyPage(page, name);
+  let sent = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/rpc/apiKeys/create")) sent += 1;
+  });
+  await page.context().setOffline(true);
+  try {
+    await keyButton(page).click();
+    // In the sticky action bar, where Create was pressed, however far the page scrolled.
+    const alert = page.locator('[data-slot="form-action-bar"]').getByRole("alert");
+    await expect(alert).toContainText("You're offline");
+    await expect(alert).toBeInViewport();
+    await expect(page.getByText(/could(n't| not) confirm/)).toHaveCount(0);
+    await expect(keyButton(page)).toBeEnabled();
+    expect(sent).toBe(0);
+  } finally {
+    await page.context().setOffline(false);
+  }
+  await keyButton(page).click();
+  await expect(page.getByRole("heading", { name: "Your new API key" })).toBeVisible();
+  expect(sent).toBe(1);
 });

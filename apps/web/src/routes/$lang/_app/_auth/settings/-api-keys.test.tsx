@@ -8,10 +8,13 @@ import { component as Component } from "./api-keys?tsr-split=component";
 const fixture = vi.hoisted(() => ({
   error: null as unknown,
   revoke: [] as { apiKey: unknown; choice: boolean | null }[],
+  navigate: vi.fn(),
+  onCreate: null as (() => void) | null,
 }));
 vi.mock("@tanstack/react-router", () => ({
   lazyRouteComponent: () => () => null,
   Link: ({ children }: { children: ReactNode }) => <a href="/en-US/settings/mcp">{children}</a>,
+  useNavigate: () => fixture.navigate,
   createFileRoute: () => (options: { component: ComponentType }) => ({
     options,
     useParams: () => ({ lang: "en-US" }),
@@ -35,28 +38,38 @@ vi.mock("@tanstack/react-query", async (original) => ({
   }),
 }));
 vi.mock("@/components/kb/api-key-list", () => ({
-  ApiKeyList: ({ keys, footer }: { keys: { name: string }[]; footer: ReactNode }) => (
-    <div>
-      {keys.map((row) => (
-        <p key={row.name}>{row.name}</p>
-      ))}
-      {footer}
-    </div>
-  ),
-  ApiKeyDetailsDialog: () => <div>details-dialog-mounted</div>,
+  ApiKeyList: ({
+    keys,
+    footer,
+    onCreate,
+  }: {
+    keys: { name: string }[];
+    footer: ReactNode;
+    onCreate: () => void;
+  }) => {
+    fixture.onCreate = onCreate;
+    return (
+      <div>
+        {keys.map((row) => (
+          <p key={row.name}>{row.name}</p>
+        ))}
+        {footer}
+      </div>
+    );
+  },
+  ApiKeyDetailsSheet: () => <div>details-dialog-mounted</div>,
   ApiKeyRevokeDialog: (props: { apiKey: unknown; choice: boolean | null }) => {
     fixture.revoke.push(props);
     return null;
   },
   apiKeyRevokeToast: () => "toast",
 }));
-vi.mock("@/components/kb/api-key-create-dialog", () => ({
-  ApiKeyCreateDialog: () => <div>create-dialog-mounted</div>,
-}));
 
 beforeEach(() => {
   fixture.error = null;
   fixture.revoke = [];
+  fixture.navigate.mockClear();
+  fixture.onCreate = null;
 });
 function render() {
   const client = new QueryClient();
@@ -71,13 +84,13 @@ function render() {
   }
 }
 
-it("explains the key, lists keys with Load more and mounts create, details and a closed revoke confirm", () => {
+it("explains the key, lists keys with Load more and mounts details and a closed revoke confirm", () => {
   const out = render();
   expect(out).toContain("settings:apiKeys.intro");
   expect(out).toContain('href="/en-US/settings/mcp"');
   expect(out).toContain("key-alpha");
   expect(out).toContain("actions.loadMore");
-  expect(out).toContain("create-dialog-mounted");
+  expect(out).toContain("details-dialog-mounted");
   expect(out).toContain("details-dialog-mounted");
   // Revoke is type-to-confirm, closed until a row asks for it, and its
   // "also revoke its tokens" starts on the key's own setting (no choice yet).
@@ -88,7 +101,7 @@ it("keeps the loaded list after a transient failure, with an inline retry", () =
   fixture.error = new Error("offline");
   const out = render();
   expect(out).toContain("key-alpha");
-  expect(out).toContain("create-dialog-mounted");
+  expect(out).toContain("details-dialog-mounted");
   expect(out).toContain("actions.tryAgain");
 });
 
@@ -98,7 +111,16 @@ it.each(["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"])(
     fixture.error = { code };
     const out = render();
     expect(out).not.toContain("key-alpha");
-    expect(out).not.toContain("create-dialog-mounted");
+    expect(out).not.toContain("details-dialog-mounted");
     expect(out).toContain("actions.tryAgain");
   },
 );
+
+it("opens the Create API key page (a page of its own, not a dialog)", () => {
+  render();
+  fixture.onCreate?.();
+  expect(fixture.navigate).toHaveBeenCalledWith({
+    to: "/$lang/settings/api-keys/new",
+    params: { lang: "en-US" },
+  });
+});

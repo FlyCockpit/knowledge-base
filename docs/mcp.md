@@ -47,9 +47,11 @@ created KB does not widen that token's approved bits or another grant's ACL.
 
 Every connection also names its tool groups (`read`, `edit`, `assets`, `export`,
 `pull_requests`, `index_admin`, `kb_admin`, `sealed`); the web offers the Read
-(default), Propose edits and Direct edits presets. Creating a PAT asks for one of
-them first, with nothing preselected, and derives the scope from the chosen groups
-(`mcp:write` when any of them changes data); single groups are under Advanced. A call to a tool outside the
+(default), Propose edits and Direct edits presets. Creating a PAT (its own page,
+`/settings/mcp/new`) starts on Read, the read-only preset, and derives the scope
+from the chosen groups (`mcp:write` when any of them changes data); single groups
+are under Advanced. No knowledge base, write mode or capability that changes data
+is ever preselected. A call to a tool outside the
 groups is `FORBIDDEN`; `knowledge_bases_list` and `knowledge_bases_get` need no
 group. Asset changes inside `knowledge_changes_apply` need `assets`, Markdown
 uploads need `edit` and asset uploads `assets`. Git fetch and asset reads need

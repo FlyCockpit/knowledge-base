@@ -40,6 +40,8 @@ import { Route as LangAppAuthSettingsMcpRouteImport } from './routes/$lang/_app/
 import { Route as LangAppAuthSettingsSecurityRouteImport } from './routes/$lang/_app/_auth/settings/security'
 import { Route as LangAppAuthKbsKbIdDocumentsRouteImport } from './routes/$lang/_app/_auth/kbs/$kbId/documents'
 import { Route as LangAppAuthKbsKbIdSettingsRouteImport } from './routes/$lang/_app/_auth/kbs/$kbId/settings'
+import { Route as LangAppAuthSettingsApiKeysNewRouteImport } from './routes/$lang/_app/_auth/settings_/api-keys/new'
+import { Route as LangAppAuthSettingsMcpNewRouteImport } from './routes/$lang/_app/_auth/settings_/mcp/new'
 import { Route as LangAppAuthKbsKbIdPrsIndexRouteImport } from './routes/$lang/_app/_auth/kbs/$kbId/prs/index'
 import { Route as LangAppAuthKbsKbIdPrsNumberRouteImport } from './routes/$lang/_app/_auth/kbs/$kbId/prs/$number'
 
@@ -201,6 +203,18 @@ const LangAppAuthKbsKbIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => LangAppAuthKbsKbIdRoute,
   } as any)
+const LangAppAuthSettingsApiKeysNewRoute =
+  LangAppAuthSettingsApiKeysNewRouteImport.update({
+    id: '/settings_/api-keys/new',
+    path: '/settings/api-keys/new',
+    getParentRoute: () => LangAppAuthRoute,
+  } as any)
+const LangAppAuthSettingsMcpNewRoute =
+  LangAppAuthSettingsMcpNewRouteImport.update({
+    id: '/settings_/mcp/new',
+    path: '/settings/mcp/new',
+    getParentRoute: () => LangAppAuthRoute,
+  } as any)
 const LangAppAuthKbsKbIdPrsIndexRoute =
   LangAppAuthKbsKbIdPrsIndexRouteImport.update({
     id: '/prs/',
@@ -243,6 +257,8 @@ export interface FileRoutesByFullPath {
   '/$lang/settings/': typeof LangAppAuthSettingsIndexRoute
   '/$lang/kbs/$kbId/documents': typeof LangAppAuthKbsKbIdDocumentsRoute
   '/$lang/kbs/$kbId/settings': typeof LangAppAuthKbsKbIdSettingsRoute
+  '/$lang/settings/api-keys/new': typeof LangAppAuthSettingsApiKeysNewRoute
+  '/$lang/settings/mcp/new': typeof LangAppAuthSettingsMcpNewRoute
   '/$lang/kbs/$kbId/prs/$number': typeof LangAppAuthKbsKbIdPrsNumberRoute
   '/$lang/kbs/$kbId/prs/': typeof LangAppAuthKbsKbIdPrsIndexRoute
 }
@@ -272,6 +288,8 @@ export interface FileRoutesByTo {
   '/$lang/settings': typeof LangAppAuthSettingsIndexRoute
   '/$lang/kbs/$kbId/documents': typeof LangAppAuthKbsKbIdDocumentsRoute
   '/$lang/kbs/$kbId/settings': typeof LangAppAuthKbsKbIdSettingsRoute
+  '/$lang/settings/api-keys/new': typeof LangAppAuthSettingsApiKeysNewRoute
+  '/$lang/settings/mcp/new': typeof LangAppAuthSettingsMcpNewRoute
   '/$lang/kbs/$kbId/prs/$number': typeof LangAppAuthKbsKbIdPrsNumberRoute
   '/$lang/kbs/$kbId/prs': typeof LangAppAuthKbsKbIdPrsIndexRoute
 }
@@ -308,6 +326,8 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/settings/': typeof LangAppAuthSettingsIndexRoute
   '/$lang/_app/_auth/kbs/$kbId/documents': typeof LangAppAuthKbsKbIdDocumentsRoute
   '/$lang/_app/_auth/kbs/$kbId/settings': typeof LangAppAuthKbsKbIdSettingsRoute
+  '/$lang/_app/_auth/settings_/api-keys/new': typeof LangAppAuthSettingsApiKeysNewRoute
+  '/$lang/_app/_auth/settings_/mcp/new': typeof LangAppAuthSettingsMcpNewRoute
   '/$lang/_app/_auth/kbs/$kbId/prs/$number': typeof LangAppAuthKbsKbIdPrsNumberRoute
   '/$lang/_app/_auth/kbs/$kbId/prs/': typeof LangAppAuthKbsKbIdPrsIndexRoute
 }
@@ -342,6 +362,8 @@ export interface FileRouteTypes {
     | '/$lang/settings/'
     | '/$lang/kbs/$kbId/documents'
     | '/$lang/kbs/$kbId/settings'
+    | '/$lang/settings/api-keys/new'
+    | '/$lang/settings/mcp/new'
     | '/$lang/kbs/$kbId/prs/$number'
     | '/$lang/kbs/$kbId/prs/'
   fileRoutesByTo: FileRoutesByTo
@@ -371,6 +393,8 @@ export interface FileRouteTypes {
     | '/$lang/settings'
     | '/$lang/kbs/$kbId/documents'
     | '/$lang/kbs/$kbId/settings'
+    | '/$lang/settings/api-keys/new'
+    | '/$lang/settings/mcp/new'
     | '/$lang/kbs/$kbId/prs/$number'
     | '/$lang/kbs/$kbId/prs'
   id:
@@ -406,6 +430,8 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/settings/'
     | '/$lang/_app/_auth/kbs/$kbId/documents'
     | '/$lang/_app/_auth/kbs/$kbId/settings'
+    | '/$lang/_app/_auth/settings_/api-keys/new'
+    | '/$lang/_app/_auth/settings_/mcp/new'
     | '/$lang/_app/_auth/kbs/$kbId/prs/$number'
     | '/$lang/_app/_auth/kbs/$kbId/prs/'
   fileRoutesById: FileRoutesById
@@ -634,6 +660,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppAuthKbsKbIdSettingsRouteImport
       parentRoute: typeof LangAppAuthKbsKbIdRoute
     }
+    '/$lang/_app/_auth/settings_/api-keys/new': {
+      id: '/$lang/_app/_auth/settings_/api-keys/new'
+      path: '/settings/api-keys/new'
+      fullPath: '/$lang/settings/api-keys/new'
+      preLoaderRoute: typeof LangAppAuthSettingsApiKeysNewRouteImport
+      parentRoute: typeof LangAppAuthRoute
+    }
+    '/$lang/_app/_auth/settings_/mcp/new': {
+      id: '/$lang/_app/_auth/settings_/mcp/new'
+      path: '/settings/mcp/new'
+      fullPath: '/$lang/settings/mcp/new'
+      preLoaderRoute: typeof LangAppAuthSettingsMcpNewRouteImport
+      parentRoute: typeof LangAppAuthRoute
+    }
     '/$lang/_app/_auth/kbs/$kbId/prs/': {
       id: '/$lang/_app/_auth/kbs/$kbId/prs/'
       path: '/prs'
@@ -692,12 +732,16 @@ interface LangAppAuthRouteChildren {
   LangAppAuthSettingsRoute: typeof LangAppAuthSettingsRouteWithChildren
   LangAppAuthKbsKbIdRoute: typeof LangAppAuthKbsKbIdRouteWithChildren
   LangAppAuthKbsIndexRoute: typeof LangAppAuthKbsIndexRoute
+  LangAppAuthSettingsApiKeysNewRoute: typeof LangAppAuthSettingsApiKeysNewRoute
+  LangAppAuthSettingsMcpNewRoute: typeof LangAppAuthSettingsMcpNewRoute
 }
 
 const LangAppAuthRouteChildren: LangAppAuthRouteChildren = {
   LangAppAuthSettingsRoute: LangAppAuthSettingsRouteWithChildren,
   LangAppAuthKbsKbIdRoute: LangAppAuthKbsKbIdRouteWithChildren,
   LangAppAuthKbsIndexRoute: LangAppAuthKbsIndexRoute,
+  LangAppAuthSettingsApiKeysNewRoute: LangAppAuthSettingsApiKeysNewRoute,
+  LangAppAuthSettingsMcpNewRoute: LangAppAuthSettingsMcpNewRoute,
 }
 
 const LangAppAuthRouteWithChildren = LangAppAuthRoute._addFileChildren(

@@ -54,7 +54,7 @@
     "appsTitle": "Connected apps",
     "create": "Create token",
     "createTitle": "Create a personal access token",
-    "createDescription": "Choose what the token may do and which knowledge bases it reaches. Nothing is selected until you choose it.",
+    "createDescription": "It starts on Read: it can search and read the knowledge bases you choose, and change nothing.",
     "nameLabel": "Token name",
     "expiryLabel": "Expiry",
     "expiryHelp": "A dated token expires at most {{max}} days from now. A token with no expiry stays valid until you revoke it.",
@@ -68,7 +68,7 @@
     "createSubmit": "Create token",
     "creating": "Creating…",
     "createError": "The token was not created. Your selection may no longer be allowed — review it and try again.",
-    "secretOnce": "Copy this token now. It will not be shown again, and closing this dialog removes it from this page.",
+    "secretOnce": "Copy this token now. It will not be shown again, and leaving this page removes it.",
     "copySecret": "Copy token",
     "done": "Done",
     "kbsLoadError": "Couldn't load your knowledge bases.",
@@ -97,9 +97,9 @@
     "picker": {
       "scopesLegend": "Access type",
       "scopes": {
-        "read": "Read (mcp:read)",
-        "write": "Read and change (mcp:write)",
-        "offline": "Stay connected without signing in again (offline_access)",
+        "read": "Read only",
+        "write": "Read and change",
+        "offline": "Stay connected without signing in again",
         "unknown": "Other: {{scope}}"
       },
       "toolsLegend": "Tools",
@@ -214,9 +214,11 @@
         "writeModeRequired": "Choose a write mode."
       },
       "previewNoUsableTools": "The agent can't use any of the selected tools yet. The notes below say what's missing.",
-      "kbBitName": "{{kb}}: {{bit}}"
+      "kbBitName": "{{kb}}: {{bit}}",
+      "previewToolCount_one": "Show the {{count}} tool name the agent sees",
+      "previewToolCount_other": "Show the {{count}} tool names the agent sees"
     },
-    "createUncertain": "We could not confirm whether “{{name}}” was created. The token list is being refreshed. Close this dialog, find any new token with that name, and revoke it before trying again: its secret cannot be recovered.",
+    "createUncertain": "We could not confirm whether “{{name}}” was created. The token list is being refreshed. Go back to the list, find any new token with that name, and revoke it before trying again: its secret cannot be recovered.",
     "morePermissions": "More knowledge base permissions exist. Load more to inspect them.",
     "toolGroupsSummary": "Tools: {{groups}}",
     "edit": {
@@ -312,21 +314,21 @@
     "revokeAllCopyConfirm": "Copy confirmation text",
     "writeMode": {
       "legend": "Write mode",
-      "hint": "How this credential may change knowledge bases. Choose one; the server checks it on every write.",
+      "hint": "How the agent may change knowledge bases: through dreams, by editing documents, or both. Choose one; the server checks it on every write.",
       "limited": "The command-line login asked for a narrower write mode, so only these are offered.",
       "summary": "Write mode: {{mode}}",
       "modes": {
         "dream": {
           "label": "Dreams only",
-          "description": "Consolidates notes through dreams. Dreams only update documents written by dreams or agents, never a person's."
+          "description": "Only background dreams that tidy and consolidate notes. They update documents written by dreams or agents, never a person's."
         },
         "edit": {
-          "label": "Direct edits only",
-          "description": "Creates, edits and deletes documents, uploads and pull requests. Its changes are labelled Agent."
+          "label": "Agent edits only",
+          "description": "Creates, edits and deletes documents and uploads, and opens pull requests. Whether a change goes straight to the main branch or waits as a pull request depends on the token's purpose and its permissions. Changes are labelled Agent."
         },
         "both": {
-          "label": "Dreams and direct edits",
-          "description": "Both: dreams, and direct edits labelled Agent."
+          "label": "Dreams and agent edits",
+          "description": "Both: dreams, and agent edits labelled Agent."
         }
       }
     },
@@ -336,7 +338,14 @@
     "nameHelp": "Name it after the agent or machine that will use it.",
     "purposeLegend": "What should this token do?",
     "purposeRequired": "Choose what the token should do.",
-    "advanced": "Advanced: tool groups and creating knowledge bases"
+    "advanced": "Advanced: tool groups and creating knowledge bases",
+    "lifetime": "Lifetime",
+    "expiresInDays_one": "Expires in {{count}} day",
+    "expiresInDays_other": "Expires in {{count}} days",
+    "expiresOn": "Expires on {{date}}",
+    "sections": {
+      "token": "Token"
+    }
   },
   "apiKeys": {
     "intro": "A REST API key (kbk_…) lets your own automation create, list and delete knowledge bases and mint MCP tokens for them through /api/v1. It never reads or writes documents itself, and it can't be used as an MCP token.",
@@ -398,8 +407,8 @@
     "createSubmit": "Create key",
     "createError": "The API key wasn't created. Check your choices and try again.",
     "createQuota": "You already have the most active API keys allowed. Revoke one first.",
-    "createUncertain": "We couldn't confirm whether \"{{name}}\" was created. Check the list before trying again.",
-    "secretOnce": "Copy this API key now. It won't be shown again, and closing this dialog removes it from this page.",
+    "createUncertain": "We couldn't confirm whether \"{{name}}\" was created. Go back to the list and check it before trying again.",
+    "secretOnce": "Copy this API key now. It won't be shown again, and leaving this page removes it.",
     "copySecret": "Copy API key",
     "reachSummary": {
       "all": "Reach: all knowledge bases you can access",
@@ -477,7 +486,7 @@
     "createdTitle": "Your new API key",
     "createdDescription": "Copy it, then try it with the commands below.",
     "childPurposeLegend": "What may the tokens it mints do?",
-    "childAdvanced": "Advanced: tool groups, sealed values and creating knowledge bases",
+    "childAdvanced": "Minted token tools",
     "next": {
       "mintTitle": "Next: mint an MCP token",
       "mintHint": "Paste the key when the first line waits, then press Enter; it never appears on a command line. The commands list the key's knowledge bases, then mint a token for the one whose id you set as KB_ID. The permissions must be within that knowledge base's \"capabilities\" in the list; lower them for one you can only read. Change the name and tools as you need. The reply shows the token once. If it is lost, rerunning the last command with the same MINT_KEY names the token but can't show its secret: revoke that token and mint again with a new MINT_KEY.",
@@ -490,7 +499,21 @@
       "mintCreatedHint": "Paste the key when the first line waits, then press Enter; it never appears on a command line. This key reaches only knowledge bases it creates, so the commands create one first, then mint a token for it (set KB_ID from the reply). The reply shows the token once. If it is lost, rerunning the last command with the same MINT_KEY names the token but can't show its secret: revoke that token and mint again with a new MINT_KEY.",
       "listedId": "an \"id\" from that list",
       "createdId": "the \"id\" of \"kb\" in that reply"
-    }
+    },
+    "sections": {
+      "key": "Key",
+      "access": "Reach and permissions",
+      "tokens": "Minted tokens"
+    },
+    "bitPresets": {
+      "read": "Search and read documents. Nothing can be changed.",
+      "propose": "Read, and suggest changes as pull requests.",
+      "write": "Read, propose, and change the main branch directly.",
+      "manage": "Full control, including every other permission.",
+      "customLabel": "Custom",
+      "custom": "Pick single permissions, such as Review on its own."
+    },
+    "capabilitiesHint": "Without any of these, the key can only list knowledge bases and read their details."
   },
   "providers": {
     "title": "Embedding providers",

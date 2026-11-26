@@ -16,6 +16,9 @@
  *     "user": { "email": "…", "password": "…" },    a second, non-admin account
  *     "kbId": "…"                                   a KB the admin owns
  *   }
+ *
+ * The admin also needs one personal access token and one API key (created on
+ * Settings → MCP access / API keys) for the revoke dialogs.
  */
 import { readFileSync } from "node:fs";
 
@@ -143,13 +146,16 @@ export interface DialogCase {
 }
 
 /**
- * Every dialog the app ships that a fresh stack can open (the admin, a second
- * user and one KB the admin owns), confirmations included. Dialogs that need
- * more data or state first are not listed yet: an open PR (merge, close), an
- * accepted member (revoke, transfer), a mirror, the sealed values (the panel
- * shows them only to an owner it has confirmed), a document (delete,
- * download, restore an earlier revision), an existing key, token or provider (details, revoke), the model
- * runtime and the 2FA policy confirmations. A dialog that cannot
+ * Every dialog the app ships that the checks' stack can open (the admin, a
+ * second user, one KB the admin owns, and one personal access token and one
+ * API key the admin created on the Create pages), confirmations included.
+ * Dialogs that need more data or state first are not listed yet: an open PR
+ * (merge, close), an accepted member (revoke, transfer), a mirror, sealed
+ * values (the panel needs a sealed-ready KB: add, give access, revoke,
+ * delete), a document (delete, download, restore an earlier revision), a
+ * provider (revoke), the model runtime and the 2FA policy confirmations.
+ * Create API key and Create token are pages, and API key details is a wide
+ * side sheet, not dialogs. A dialog that cannot
  * fit moves to a page or a wide side sheet and leaves this list; there is no
  * exemption field.
  */
@@ -176,19 +182,18 @@ export const DIALOGS: DialogCase[] = [
     steps: [{ click: '[data-testid="profile-rebuild"]' }],
   },
   {
-    name: "Create API key",
+    name: "Revoke API key",
     path: "/en-US/settings/api-keys",
-    role: "user",
-    // The list's heading: only once the keys have loaded (the layout's h1 is earlier).
-    ready: "#api-keys-title",
-    steps: [{ clickText: "Create API key" }],
+    role: "admin",
+    ready: '[aria-label^="Details for "]',
+    steps: [{ click: 'section[aria-labelledby="api-keys-title"] [aria-label^="Revoke "]' }],
   },
   {
-    name: "Create MCP token",
+    name: "Revoke token",
     path: "/en-US/settings/mcp",
-    role: "user",
-    ready: "#credentials-tokens",
-    steps: [{ clickText: "Create token" }],
+    role: "admin",
+    ready: 'section[aria-labelledby="credentials-tokens"] [aria-label^="Revoke "]',
+    steps: [{ click: 'section[aria-labelledby="credentials-tokens"] [aria-label^="Revoke "]' }],
   },
   {
     name: "Add embedding provider",
@@ -255,5 +260,23 @@ export const SHELL_PAGES: ShellPage[] = [
     path: "/en-US/settings/api-keys",
     role: "admin",
     ready: "#api-keys-title",
+  },
+  {
+    name: "settings MCP access",
+    path: "/en-US/settings/mcp",
+    role: "admin",
+    ready: 'section[aria-labelledby="credentials-tokens"]',
+  },
+  {
+    name: "create API key",
+    path: "/en-US/settings/api-keys/new",
+    role: "admin",
+    ready: 'form[data-slot="form-page"] [role="radiogroup"]',
+  },
+  {
+    name: "create token",
+    path: "/en-US/settings/mcp/new",
+    role: "admin",
+    ready: 'form[data-slot="form-page"] [role="radiogroup"]',
   },
 ];

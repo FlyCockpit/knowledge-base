@@ -2,14 +2,13 @@ import { env } from "@knowledge-base/env/web";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InlineRetry } from "@/components/inline-retry";
 
-import { ApiKeyCreateDialog } from "@/components/kb/api-key-create-dialog";
 import {
-  ApiKeyDetailsDialog,
+  ApiKeyDetailsSheet,
   ApiKeyList,
   ApiKeyRevokeDialog,
   type ApiKeyRow,
@@ -39,7 +38,7 @@ function ApiKeySettings() {
   const { lang } = Route.useParams();
   const { t } = useTranslation(["settings", "common"]);
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
+  const navigate = useNavigate();
   const [details, setDetails] = useState<ApiKeyRow | null>(null);
   const [pending, setPending] = useState<ApiKeyRow | null>(null);
   // "Also revoke its tokens" once changed; null = the key's own setting.
@@ -121,7 +120,7 @@ function ApiKeySettings() {
       <ApiKeyList
         lang={lang}
         keys={rows}
-        onCreate={() => setCreateOpen(true)}
+        onCreate={() => navigate({ to: "/$lang/settings/api-keys/new", params: { lang } })}
         onDetails={setDetails}
         onRevoke={askRevoke}
         footer={
@@ -132,12 +131,7 @@ function ApiKeySettings() {
           />
         }
       />
-      <ApiKeyCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        serverUrl={env.VITE_SERVER_URL}
-      />
-      <ApiKeyDetailsDialog
+      <ApiKeyDetailsSheet
         apiKey={detailsRow}
         lang={lang}
         serverUrl={env.VITE_SERVER_URL}

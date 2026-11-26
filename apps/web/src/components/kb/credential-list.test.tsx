@@ -179,6 +179,18 @@ describe("CredentialList", () => {
     expect(markup).not.toContain("kbp_");
   });
 
+  it("names each access type in words, never the raw scope id", () => {
+    const markup = html();
+    expect(markup).toContain(enSettings.credentials.picker.scopes.read);
+    expect(markup).toContain(enSettings.credentials.picker.scopes.write);
+    expect(markup).not.toContain("mcp:read");
+    expect(markup).not.toContain("mcp:write");
+  });
+
+  it("keeps the text column wide enough that the row's buttons wrap below it on a phone", () => {
+    expect(html()).toContain('class="min-w-0 flex-1 basis-56 space-y-1"');
+  });
+
   it("offers revoke only for live credentials", () => {
     const markup = html();
     const revokes = markup.match(new RegExp(`>${enSettings.credentials.revoke}<`, "g")) ?? [];
@@ -412,27 +424,21 @@ describe("PAT create draft", () => {
     bit: "read",
   });
 
-  it("grants no scope until a purpose is chosen, and says so first", () => {
-    const grant = patDraftGrant(withKb, live, false);
-    expect(grant.scopes).toEqual([]);
-    expect(patDraftIssueKeys(grant)[0]).toBe("settings:credentials.purposeRequired");
-  });
-
   it("derives the scope from the chosen purpose instead of asking for it", () => {
-    expect(patDraftGrant(withKb, live, true).scopes).toEqual(["mcp:read"]);
-    expect(patDraftIssueKeys(patDraftGrant(withKb, live, true))).toEqual([]);
+    expect(patDraftGrant(withKb, live).scopes).toEqual(["mcp:read"]);
+    expect(patDraftIssueKeys(patDraftGrant(withKb, live))).toEqual([]);
     const propose = selectionReducer(withKb, {
       type: "setToolGroups",
       groups: ["read", "edit", "pull_requests"],
     });
-    const grant = patDraftGrant(propose, live, true);
+    const grant = patDraftGrant(propose, live);
     expect(grant.scopes).toEqual(["mcp:write"]);
     // Writing still needs an explicit write mode; none is preselected.
     expect(patDraftIssueKeys(grant)).toEqual([
       "settings:credentials.picker.issues.writeModeRequired",
     ]);
     const chosen = selectionReducer(propose, { type: "setAuthoringMode", mode: "edit" });
-    expect(patDraftGrant(chosen, live, true)).toMatchObject({
+    expect(patDraftGrant(chosen, live)).toMatchObject({
       scopes: ["mcp:write"],
       authoringMode: "edit",
       acl: [{ kbId: "a".repeat(24), bits: ["read"] }],
@@ -441,7 +447,7 @@ describe("PAT create draft", () => {
 
   it("creating knowledge bases makes the token write (its kb_admin group changes data)", () => {
     const creating = selectionReducer(withKb, { type: "setAllowCreate", value: true });
-    const grant = patDraftGrant(creating, live, true);
+    const grant = patDraftGrant(creating, live);
     expect(grant.toolGroups).toContain("kb_admin");
     expect(grant.scopes).toEqual(["mcp:write"]);
   });
@@ -451,7 +457,7 @@ describe("PAT create draft", () => {
       selectionReducer(withKb, { type: "setAuthoringMode", mode: "both" }),
       { type: "setToolGroups", groups: ["read"] },
     );
-    expect(patDraftGrant(back, live, true)).toMatchObject({
+    expect(patDraftGrant(back, live)).toMatchObject({
       scopes: ["mcp:read"],
       authoringMode: null,
     });

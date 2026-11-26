@@ -139,22 +139,34 @@ export function ToolGroupPicker({
       >
         <h4 className="font-medium">{t("credentials.picker.previewTitle")}</h4>
         {preview.tools.length === 0 ? (
-          <p className="text-muted-foreground">
-            {/* The groups may have tools the agent can't use yet; the notes say why. */}
-            {preview.needWrite.length + preview.noEligibleKb.length > 0
-              ? t("credentials.picker.previewNoUsableTools")
-              : t("credentials.picker.previewNoTools")}
-          </p>
+          <>
+            <p className="text-muted-foreground">
+              {/* The groups may have tools the agent can't use yet; the notes say why. */}
+              {preview.needWrite.length + preview.noEligibleKb.length > 0
+                ? t("credentials.picker.previewNoUsableTools")
+                : t("credentials.picker.previewNoTools")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("credentials.picker.previewSupporting", { tools: preview.supporting.join(", ") })}
+            </p>
+          </>
         ) : (
-          <ul className="space-y-0.5 font-mono text-xs break-words">
-            {preview.tools.map((name) => (
-              <li key={name}>{name}</li>
-            ))}
-          </ul>
+          // The groups' names say what the agent can do; the tool ids are for
+          // developers checking an agent's tool list, one click away.
+          <details>
+            <summary className="flex min-h-[44px] cursor-pointer items-center font-medium underline underline-offset-4">
+              {t("credentials.picker.previewToolCount", { count: preview.tools.length })}
+            </summary>
+            <ul className="space-y-0.5 pb-2 font-mono text-xs break-words">
+              {preview.tools.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+            <p className="pb-2 text-xs text-muted-foreground">
+              {t("credentials.picker.previewSupporting", { tools: preview.supporting.join(", ") })}
+            </p>
+          </details>
         )}
-        <p className="text-xs text-muted-foreground">
-          {t("credentials.picker.previewSupporting", { tools: preview.supporting.join(", ") })}
-        </p>
         <p className="text-xs break-words">
           {kbNames.length === 0
             ? t("credentials.picker.previewNoKbs")

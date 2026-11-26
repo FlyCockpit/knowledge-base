@@ -10,8 +10,11 @@ const fixture = vi.hoisted(() => ({
   tokenError: null as unknown,
   grantError: null as unknown,
 }));
+const navigate = vi.hoisted(() => vi.fn());
+const captured = vi.hoisted(() => ({ onCreate: null as (() => void) | null }));
 vi.mock("@tanstack/react-router", () => ({
   lazyRouteComponent: () => () => null,
+  useNavigate: () => navigate,
   createFileRoute: () => (options: { component: ComponentType }) => ({
     options,
     useParams: () => ({ lang: "en-US" }),
@@ -44,21 +47,27 @@ vi.mock("@/components/kb/credential-list", () => ({
   CredentialList: ({
     tokens,
     grants,
+    onCreate,
   }: {
     tokens: { name: string }[];
     grants: { name: string }[];
-  }) => (
-    <div>
-      {[...tokens, ...grants].map((row) => (
-        <p key={row.name}>{row.name}</p>
-      ))}
-    </div>
-  ),
-  PatCreateDialog: () => <div>credential-dialog-mounted</div>,
+    onCreate: () => void;
+  }) => {
+    captured.onCreate = onCreate;
+    return (
+      <div>
+        {[...tokens, ...grants].map((row) => (
+          <p key={row.name}>{row.name}</p>
+        ))}
+      </div>
+    );
+  },
   editTargetFromToken: vi.fn(),
   editTargetFromGrant: vi.fn(),
 }));
-vi.mock("@/components/kb/grant-edit-sheet", () => ({ GrantEditSheet: () => null }));
+vi.mock("@/components/kb/grant-edit-sheet", () => ({
+  GrantEditSheet: () => <div>edit-sheet-mounted</div>,
+}));
 vi.mock("@/components/confirm-delete-dialog", () => ({ ConfirmDeleteDialog: () => null }));
 
 beforeEach(() => {
@@ -86,7 +95,7 @@ it.each(["tokens", "grants"])(
     const out = render();
     expect(out).toContain("token-alpha");
     expect(out).toContain("grant-beta");
-    expect(out).toContain("credential-dialog-mounted");
+    expect(out).toContain("edit-sheet-mounted");
     expect(out).toContain("actions.tryAgain");
   },
 );
@@ -97,7 +106,7 @@ it.each(["UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND"])(
     const out = render();
     expect(out).not.toContain("token-alpha");
     expect(out).not.toContain("grant-beta");
-    expect(out).not.toContain("credential-dialog-mounted");
+    expect(out).not.toContain("edit-sheet-mounted");
     expect(out).toContain("actions.tryAgain");
   },
 );
@@ -106,4 +115,13 @@ it("leads with the connect card: the MCP URL and client setup before the credent
   expect(out).toContain("connect.title");
   expect(out).toMatch(/\/mcp/);
   expect(out.indexOf("connect.title")).toBeLessThan(out.indexOf("token-alpha"));
+});
+
+it("opens the Create token page (a page of its own, not a dialog)", () => {
+  render();
+  captured.onCreate?.();
+  expect(navigate).toHaveBeenCalledWith({
+    to: "/$lang/settings/mcp/new",
+    params: { lang: "en-US" },
+  });
 });

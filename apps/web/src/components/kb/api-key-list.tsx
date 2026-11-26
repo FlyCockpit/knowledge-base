@@ -1,13 +1,14 @@
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
 import { Button } from "@knowledge-base/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@knowledge-base/ui/components/dialog";
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@knowledge-base/ui/components/sheet";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -148,7 +149,7 @@ export function ApiKeyList({ lang, keys, onCreate, onDetails, onRevoke, footer }
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                 <KeyRound className="size-4" aria-hidden />
               </span>
-              <div className="min-w-0 flex-1 space-y-1">
+              <div className="min-w-0 flex-1 basis-56 space-y-1">
                 <p className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="truncate font-medium">{apiKey.name}</span>
                   <TokenStatePill revokedAt={apiKey.revokedAt} expiresAt={apiKey.expiresAt} />
@@ -185,8 +186,11 @@ export function ApiKeyList({ lang, keys, onCreate, onDetails, onRevoke, footer }
   );
 }
 
-/** View details → Dialog: the key's knowledge bases and the tokens it minted. */
-export function ApiKeyDetailsDialog({
+/**
+ * View details → a wide side sheet (too long for a dialog: the key's
+ * knowledge bases, the minting example and the tokens it minted).
+ */
+export function ApiKeyDetailsSheet({
   apiKey,
   lang,
   serverUrl,
@@ -200,26 +204,28 @@ export function ApiKeyDetailsDialog({
 }) {
   const { t } = useTranslation(["settings", "common"]);
   return (
-    <Dialog open={apiKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90svh] sm:max-w-2xl">
+    <Sheet open={apiKey !== null} onOpenChange={onOpenChange}>
+      <SheetContent size="wide">
         {apiKey && (
           <>
-            <DialogHeader>
-              <DialogTitle>{apiKey.name}</DialogTitle>
-              <DialogDescription className="font-mono">kbk_{apiKey.lookupPrefix}</DialogDescription>
-            </DialogHeader>
-            <div className="min-w-0 space-y-1">
-              <ApiKeySummary apiKey={apiKey} lang={lang} />
-            </div>
-            {apiKey.kbCount > 0 && <ApiKeyKbs grantId={apiKey.grantId} />}
-            {!apiKey.revokedAt && !expired(apiKey.expiresAt) && (
-              <ApiKeyNextSteps
-                serverUrl={serverUrl}
-                ceiling={apiKey.allowMintChildren ? apiKey : null}
-              />
-            )}
-            <ApiKeyChildren apiKey={apiKey} lang={lang} />
-            <DialogFooter>
+            <SheetHeader>
+              <SheetTitle>{apiKey.name}</SheetTitle>
+              <SheetDescription className="font-mono">kbk_{apiKey.lookupPrefix}</SheetDescription>
+            </SheetHeader>
+            <SheetBody className="min-w-0 space-y-6">
+              <div className="min-w-0 space-y-1">
+                <ApiKeySummary apiKey={apiKey} lang={lang} />
+              </div>
+              {apiKey.kbCount > 0 && <ApiKeyKbs grantId={apiKey.grantId} />}
+              {!apiKey.revokedAt && !expired(apiKey.expiresAt) && (
+                <ApiKeyNextSteps
+                  serverUrl={serverUrl}
+                  ceiling={apiKey.allowMintChildren ? apiKey : null}
+                />
+              )}
+              <ApiKeyChildren apiKey={apiKey} lang={lang} />
+            </SheetBody>
+            <SheetFooter>
               <Button
                 type="button"
                 variant="outline"
@@ -228,11 +234,11 @@ export function ApiKeyDetailsDialog({
               >
                 {t("common:actions.close")}
               </Button>
-            </DialogFooter>
+            </SheetFooter>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 

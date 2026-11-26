@@ -1,4 +1,5 @@
 import type { McpAuthoringMode } from "@knowledge-base/auth/mcp-authoring-mode";
+import type { TFunction } from "i18next";
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -47,6 +48,14 @@ const SCOPE_KEY: Record<string, "read" | "write" | "offline"> = {
   offline_access: "offline",
 };
 
+/** A scope's human label ("Read only"); an unknown scope keeps its id ("Other: x"). */
+export function scopeLabel(t: TFunction<"settings">, scope: string): string {
+  const key = SCOPE_KEY[scope];
+  return key
+    ? t(`credentials.picker.scopes.${key}`)
+    : t("credentials.picker.scopes.unknown", { scope });
+}
+
 /**
  * Shared credential ceiling picker for OAuth consent, CLI device approval and
  * PAT creation. Every scope, KB and bit checkbox starts unchecked; there is
@@ -91,11 +100,7 @@ export function AclPicker({
         ) : (
           <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
             {fixedScopes.map((scope) => (
-              <li key={scope}>
-                {SCOPE_KEY[scope]
-                  ? t(`credentials.picker.scopes.${SCOPE_KEY[scope]}`)
-                  : t("credentials.picker.scopes.unknown", { scope })}
-              </li>
+              <li key={scope}>{scopeLabel(t, scope)}</li>
             ))}
           </ul>
         )}
@@ -155,7 +160,11 @@ export function KbAccessPicker({
   onChange,
   disabled = false,
   removalOnly = {},
-}: Pick<AclPickerProps, "live" | "selection" | "onChange" | "disabled" | "removalOnly">) {
+  headless = false,
+}: Pick<AclPickerProps, "live" | "selection" | "onChange" | "disabled" | "removalOnly"> & {
+  /** The page section around it already names it and gives the hint. */
+  headless?: boolean;
+}) {
   const { t } = useTranslation("settings");
   const base = useId();
   const selection = effectiveSelection(draft);
@@ -164,9 +173,13 @@ export function KbAccessPicker({
   const id = (...parts: string[]) => `${base}-${parts.join("-")}`;
   const aclEmpty = Object.keys(selection.acl).length === 0;
   return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-medium">{t("credentials.picker.kbsLegend")}</h3>
-      <p className="text-sm text-muted-foreground">{t("credentials.picker.kbsHint")}</p>
+    <div className="@container space-y-3">
+      {headless ? null : (
+        <>
+          <h3 className="text-sm font-medium">{t("credentials.picker.kbsLegend")}</h3>
+          <p className="text-sm text-muted-foreground">{t("credentials.picker.kbsHint")}</p>
+        </>
+      )}
       {capped && (
         <p role="status" className="text-sm text-muted-foreground">
           {t("credentials.picker.presetCapsBits", {
@@ -177,42 +190,46 @@ export function KbAccessPicker({
       {live.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("credentials.picker.noKbs")}</p>
       ) : (
-        live.map((kb) => (
-          <fieldset key={kb.kbId} className="min-w-0 space-y-2 rounded-md border p-3">
-            <legend className="max-w-full truncate px-1 text-sm font-medium">{kb.name}</legend>
-            {kb.bits.length > 0 && kb.bits.every((bit) => removalOnly[kb.kbId]?.includes(bit)) && (
-              <p className="text-xs text-muted-foreground">
-                {t("credentials.picker.kbUnavailable")}
-              </p>
-            )}
-            {kb.bits
-              .filter((bit) => allowed.includes(bit))
-              .map((bit) => {
-                const checked = (selection.acl[kb.kbId] ?? []).includes(bit);
-                const stale = removalOnly[kb.kbId]?.includes(bit) ?? false;
-                return (
-                  <CheckRow
-                    key={bit}
-                    id={id("kb", kb.kbId, bit)}
-                    checked={checked}
-                    disabled={disabled || (stale && !checked)}
-                    onToggle={() => onChange({ type: "toggleBit", kbId: kb.kbId, bit })}
-                    label={t(`credentials.picker.bits.${bit}.label`)}
-                    // Every KB repeats the same bit labels; name the KB too.
-                    accessibleName={t("credentials.picker.kbBitName", {
-                      kb: kb.name,
-                      bit: t(`credentials.picker.bits.${bit}.label`),
-                    })}
-                    description={
-                      stale
-                        ? t("credentials.picker.removalOnly")
-                        : t(`credentials.picker.bits.${bit}.description`)
-                    }
-                  />
-                );
-              })}
-          </fieldset>
-        ))
+        // Side by side where there is room (a page), stacked in a narrow card.
+        <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+          {live.map((kb) => (
+            <fieldset key={kb.kbId} className="min-w-0 space-y-2 rounded-md border p-3">
+              <legend className="max-w-full truncate px-1 text-sm font-medium">{kb.name}</legend>
+              {kb.bits.length > 0 &&
+                kb.bits.every((bit) => removalOnly[kb.kbId]?.includes(bit)) && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("credentials.picker.kbUnavailable")}
+                  </p>
+                )}
+              {kb.bits
+                .filter((bit) => allowed.includes(bit))
+                .map((bit) => {
+                  const checked = (selection.acl[kb.kbId] ?? []).includes(bit);
+                  const stale = removalOnly[kb.kbId]?.includes(bit) ?? false;
+                  return (
+                    <CheckRow
+                      key={bit}
+                      id={id("kb", kb.kbId, bit)}
+                      checked={checked}
+                      disabled={disabled || (stale && !checked)}
+                      onToggle={() => onChange({ type: "toggleBit", kbId: kb.kbId, bit })}
+                      label={t(`credentials.picker.bits.${bit}.label`)}
+                      // Every KB repeats the same bit labels; name the KB too.
+                      accessibleName={t("credentials.picker.kbBitName", {
+                        kb: kb.name,
+                        bit: t(`credentials.picker.bits.${bit}.label`),
+                      })}
+                      description={
+                        stale
+                          ? t("credentials.picker.removalOnly")
+                          : t(`credentials.picker.bits.${bit}.description`)
+                      }
+                    />
+                  );
+                })}
+            </fieldset>
+          ))}
+        </div>
       )}
       {aclEmpty && (
         <p role="status" className="rounded-md border border-dashed p-3 text-sm">

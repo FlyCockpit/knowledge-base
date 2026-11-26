@@ -138,7 +138,7 @@ export function judgeShellLoading(
 
 // Registered before the first navigation; runs at document start in every
 // frame of the page. Self-contained.
-const INIT_SCRIPT = `(() => {
+export const INIT_SCRIPT = `(() => {
   if (window.top !== window) return;
   const box = (el) => {
     if (!el) return null;
@@ -165,7 +165,9 @@ const INIT_SCRIPT = `(() => {
       dark: document.documentElement.classList.contains("dark"),
       skeleton: !!seen("#main-content [data-route-skeleton]"),
       loading: !!seen('#main-content [data-slot="skeleton"]'),
-      instead: seen("[data-app-header]") || !body ? undefined : (body.innerText || "").replace(/s+/g, " ").trim().slice(0, 120) || "(" + [...body.children].map((el) => el.tagName.toLowerCase() + (el.id ? "#" + el.id : "")).join(" ") + ")",
+      // Structure only, never text: a signed-in page can show private
+      // documents, which must not reach the check's output.
+      instead: seen("[data-app-header]") || !body ? undefined : "(" + [...body.children].map((el) => el.tagName.toLowerCase() + (el.id ? "#" + el.id : "")).join(" ") + ")",
     };
   };
   const frames = [];

@@ -11,9 +11,11 @@ import {
   type ApiKeyDraft,
   ApiKeyDraftPicker,
   apiKeyDraftIssues,
-  emptyApiKeyDraft,
+  apiKeyDraftSummary,
+  bitPresetFor,
+  defaultApiKeyDraft,
   toApiKeyMintInput,
-} from "@/components/kb/api-key-create-dialog";
+} from "@/components/kb/api-key-create";
 import {
   ACTIVE_COUNTS_QUERY_KEY,
   patExpiresAtFromChoice,
@@ -31,15 +33,41 @@ const live: LiveKbOption[] = [
   },
   { kbId: "b".repeat(24), name: "Shared notes", bits: ["read"] },
 ];
-const draft = (patch: Partial<ApiKeyDraft>): ApiKeyDraft => ({ ...emptyApiKeyDraft(), ...patch });
+const draft = (patch: Partial<ApiKeyDraft>): ApiKeyDraft => ({ ...defaultApiKeyDraft(), ...patch });
 const expiresAt = new Date("2099-01-01T00:00:00Z");
 /** Text as React writes it into static markup. */
 const markupText = (text: string) => text.replaceAll("'", "&#x27;").replaceAll('"', "&quot;");
 
 describe("API key create validation", () => {
-  it("preselects nothing: reach and a permission must be chosen", () => {
-    expect(apiKeyDraftIssues(emptyApiKeyDraft(), live)).toEqual(["reachRequired", "bitsRequired"]);
-    expect(apiKeyDraftIssues(draft({ reach: "all", bits: ["read"] }), live)).toEqual([]);
+  it("starts on Read for chosen knowledge bases, with none chosen and no capability", () => {
+    expect(defaultApiKeyDraft()).toMatchObject({
+      reach: "selected",
+      kbIds: [],
+      bits: ["read"],
+      allowCreate: false,
+      allowDelete: false,
+      allowMintChildren: false,
+      childAuthoringMode: null,
+    });
+    // The one thing left to decide is which knowledge bases.
+    expect(apiKeyDraftIssues(defaultApiKeyDraft(), live)).toEqual(["kbRequired"]);
+    expect(apiKeyDraftIssues(draft({ kbIds: ["a".repeat(24)] }), live)).toEqual([]);
+    // A cleared reach or permission set is still refused.
+    expect(apiKeyDraftIssues(draft({ reach: null, bits: [] }), live)).toEqual([
+      "reachRequired",
+      "bitsRequired",
+    ]);
+  });
+
+  it("names a permission preset for each implied set, and Custom for the rest", () => {
+    expect(bitPresetFor(["read"])).toBe("read");
+    expect(bitPresetFor(["propose"])).toBe("propose");
+    expect(bitPresetFor(["read", "propose"])).toBe("propose");
+    expect(bitPresetFor(["write"])).toBe("write");
+    expect(bitPresetFor(["manage"])).toBe("manage");
+    expect(bitPresetFor(["review"])).toBe("custom");
+    expect(bitPresetFor(["write", "review"])).toBe("custom");
+    expect(bitPresetFor([])).toBe("custom");
   });
 
   it("delete needs manage in the ceiling", () => {
@@ -280,10 +308,11 @@ describe("ApiKeyDraftPicker", () => {
     // The quick path: what the tokens do, then whether they end with the key.
     expect(markup).toContain(enSettings.apiKeys.childPurposeLegend);
     expect(markup).toContain(enSettings.apiKeys.childrenEndWithKey.label);
-    // Token KB creation, sealed values and single groups wait under a closed Advanced.
+    // Token KB creation, sealed values and single groups wait under a closed Advanced
+    // section that names the current tools while closed.
     expect(markup).toContain(enSettings.apiKeys.childAdvanced);
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).not.toContain(enSettings.apiKeys.childAllowCreate.label);
+    expect(markup).toMatch(/<details data-slot="advanced-section"(?![^>]*open)/);
+    expect(markup).toContain("Token tools: Read");
     // A Read preset writes nothing, so no write mode is asked for.
     expect(markup).not.toContain(enSettings.credentials.writeMode.legend);
     expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.off));
@@ -301,7 +330,7 @@ describe("ApiKeyDraftPicker", () => {
       }),
     );
     expect(markup).toContain(enSettings.credentials.writeMode.legend);
-    expect(markup).not.toContain(enSettings.apiKeys.childAllowCreate.label);
+    expect(markup).toMatch(/<details data-slot="advanced-section"(?![^>]*open)/);
   });
 
   it("offers sealed values to minted tokens with the per-token approval warning once chosen", () => {
@@ -319,6 +348,73 @@ describe("ApiKeyDraftPicker", () => {
     expect(markup).toContain(enSettings.apiKeys.childAllowCreate.label);
     expect(markup).toContain(markupText(enSettings.apiKeys.childSealedWarning));
     expect(markup).toContain(markupText(enSettings.apiKeys.childrenEndWithKey.on));
+  });
+});
+
+describe("API key page sections", () => {
+  const i18n = createInstance();
+  beforeAll(async () => {
+    await i18n.init({
+      lng: "en-US",
+      fallbackLng: "en-US",
+      ns: ["settings"],
+      defaultNS: "settings",
+      resources: { "en-US": { settings: enSettings } },
+      interpolation: { escapeValue: false },
+      react: { useSuspense: false },
+    });
+  });
+  const html = (value: ApiKeyDraft, issues = apiKeyDraftIssues(value, live)) =>
+    renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyDraftPicker
+          draft={value}
+          onChange={() => undefined}
+          live={live}
+          issues={issues}
+          disabled={false}
+          kbsError={false}
+          kbsPending={false}
+          onRetryKbs={() => undefined}
+        />
+      </I18nextProvider>,
+    );
+
+  it("shows Read checked, and the single permissions only under Custom", () => {
+    const markup = html(defaultApiKeyDraft(), []);
+    expect(markup).toMatch(/<input(?=[^>]*value="read")(?=[^>]*checked="")[^>]*>/);
+    expect(markup).toContain(enSettings.apiKeys.bitPresets.read);
+    expect(markup).not.toContain(enSettings.credentials.picker.bits.review.description);
+    const custom = html(draft({ bits: ["review"] }), []);
+    expect(custom).toMatch(/<input(?=[^>]*value="custom")(?=[^>]*checked="")[^>]*>/);
+    expect(custom).toContain(enSettings.credentials.picker.bits.review.description);
+  });
+
+  it("puts each problem right under the part of the page it is about", () => {
+    const markup = html(defaultApiKeyDraft());
+    const issue = enSettings.apiKeys.issues.kbRequired;
+    expect(markup).toContain(`data-form-issue="true" tabindex="-1" role="alert"`);
+    expect(markup).toContain(issue);
+    // Under the knowledge-base list, before the capabilities section.
+    expect(markup.indexOf(issue)).toBeGreaterThan(markup.indexOf("Shared notes"));
+    expect(markup.indexOf(issue)).toBeLessThan(
+      markup.indexOf(enSettings.apiKeys.capabilitiesLegend),
+    );
+    // Nothing shows before Create was pressed (the page passes no issues then).
+    expect(html(defaultApiKeyDraft(), [])).not.toContain("data-form-issue");
+  });
+
+  it("says what Create will make in one line", () => {
+    const t = i18n.getFixedT("en-US", "settings");
+    expect(
+      apiKeyDraftSummary(
+        t,
+        draft({ kbIds: ["a".repeat(24)], allowMintChildren: true }),
+        "Expires in 365 days",
+      ),
+    ).toBe(
+      "Reach: 1 chosen knowledge base · Permissions: Read · May: mint MCP tokens · Expires in 365 days",
+    );
   });
 });
 

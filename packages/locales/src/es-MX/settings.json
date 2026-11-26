@@ -54,7 +54,7 @@
     "appsTitle": "Aplicaciones conectadas",
     "create": "Crear token",
     "createTitle": "Crear un token de acceso personal",
-    "createDescription": "Elige qué puede hacer el token y a qué bases de conocimiento llega. No hay nada seleccionado hasta que lo elijas.",
+    "createDescription": "Empieza en Lectura: puede buscar y leer las bases de conocimiento que elijas, sin cambiar nada.",
     "nameLabel": "Nombre del token",
     "expiryLabel": "Vencimiento",
     "expiryHelp": "Un token con fecha vence como máximo {{max}} días a partir de hoy. Un token sin vencimiento sigue siendo válido hasta que lo revoques.",
@@ -68,7 +68,7 @@
     "createSubmit": "Crear token",
     "creating": "Creando…",
     "createError": "No se creó el token. Es posible que tu selección ya no esté permitida; revísala e inténtalo de nuevo.",
-    "secretOnce": "Copia este token ahora. No se volverá a mostrar y al cerrar este cuadro se elimina de esta página.",
+    "secretOnce": "Copia este token ahora. No se volverá a mostrar y al salir de esta página se elimina.",
     "copySecret": "Copiar token",
     "done": "Listo",
     "kbsLoadError": "No se pudieron cargar tus bases de conocimiento.",
@@ -97,9 +97,9 @@
     "picker": {
       "scopesLegend": "Tipo de acceso",
       "scopes": {
-        "read": "Lectura (mcp:read)",
-        "write": "Lectura y cambios (mcp:write)",
-        "offline": "Seguir conectado sin volver a iniciar sesión (offline_access)",
+        "read": "Solo lectura",
+        "write": "Lectura y cambios",
+        "offline": "Seguir conectado sin volver a iniciar sesión",
         "unknown": "Otro: {{scope}}"
       },
       "toolsLegend": "Herramientas",
@@ -214,9 +214,11 @@
         "writeModeRequired": "Elige un modo de escritura."
       },
       "previewNoUsableTools": "El agente todavía no puede usar ninguna de las herramientas seleccionadas. Las notas de abajo indican qué falta.",
-      "kbBitName": "{{kb}}: {{bit}}"
+      "kbBitName": "{{kb}}: {{bit}}",
+      "previewToolCount_one": "Mostrar el {{count}} nombre de herramienta que ve el agente",
+      "previewToolCount_other": "Mostrar los {{count}} nombres de herramientas que ve el agente"
     },
-    "createUncertain": "No pudimos confirmar si se creó “{{name}}”. Se está actualizando la lista de tokens. Cierra este diálogo, busca cualquier token nuevo con ese nombre y revócalo antes de intentarlo de nuevo: su secreto no se puede recuperar.",
+    "createUncertain": "No pudimos confirmar si se creó “{{name}}”. Se está actualizando la lista de tokens. Vuelve a la lista, busca cualquier token nuevo con ese nombre y revócalo antes de intentarlo de nuevo: su secreto no se puede recuperar.",
     "morePermissions": "Hay más permisos de bases de conocimiento. Carga más para revisarlos.",
     "toolGroupsSummary": "Herramientas: {{groups}}",
     "edit": {
@@ -312,21 +314,21 @@
     "revokeAllCopyConfirm": "Copiar texto de confirmación",
     "writeMode": {
       "legend": "Modo de escritura",
-      "hint": "Cómo puede cambiar esta credencial las bases de conocimiento. Elige uno; el servidor lo verifica en cada escritura.",
+      "hint": "Cómo puede cambiar el agente las bases de conocimiento: con dreams, editando documentos o ambas cosas. Elige uno; el servidor lo verifica en cada escritura.",
       "limited": "El inicio de sesión desde la línea de comandos pidió un modo de escritura más limitado, así que solo se ofrecen estos.",
       "summary": "Modo de escritura: {{mode}}",
       "modes": {
         "dream": {
           "label": "Solo dreams",
-          "description": "Consolida notas mediante dreams. Un dream solo actualiza documentos escritos por dreams o agentes, nunca los de una persona."
+          "description": "Solo dreams en segundo plano que ordenan y consolidan notas. Actualizan documentos escritos por dreams o agentes, nunca los de una persona."
         },
         "edit": {
-          "label": "Solo ediciones directas",
-          "description": "Crea, edita y elimina documentos, cargas y solicitudes de extracción. Sus cambios se marcan como Agente."
+          "label": "Solo ediciones del agente",
+          "description": "Crea, edita y elimina documentos y cargas, y abre solicitudes de extracción. Que un cambio vaya directo a la rama principal o espere como solicitud de extracción depende del propósito del token y de sus permisos. Los cambios se marcan como Agente."
         },
         "both": {
-          "label": "Dreams y ediciones directas",
-          "description": "Ambos: dreams y ediciones directas marcadas como Agente."
+          "label": "Dreams y ediciones del agente",
+          "description": "Ambos: dreams y ediciones del agente marcadas como Agente."
         }
       }
     },
@@ -336,7 +338,14 @@
     "nameHelp": "Ponle el nombre del agente o del equipo que lo usará.",
     "purposeLegend": "¿Qué debe hacer este token?",
     "purposeRequired": "Elige qué debe hacer el token.",
-    "advanced": "Opciones avanzadas: grupos de herramientas y creación de bases de conocimiento"
+    "advanced": "Opciones avanzadas: grupos de herramientas y creación de bases de conocimiento",
+    "lifetime": "Vigencia",
+    "expiresInDays_one": "Vence en {{count}} día",
+    "expiresInDays_other": "Vence en {{count}} días",
+    "expiresOn": "Vence el {{date}}",
+    "sections": {
+      "token": "Token"
+    }
   },
   "apiKeys": {
     "intro": "Una clave de API REST (kbk_…) permite que tu propia automatización cree, liste y elimine bases de conocimiento y emita tokens MCP para ellas mediante /api/v1. Nunca lee ni escribe documentos por sí misma y no se puede usar como token MCP.",
@@ -398,8 +407,8 @@
     "createSubmit": "Crear clave",
     "createError": "No se creó la clave de API. Revisa tus opciones e inténtalo de nuevo.",
     "createQuota": "Ya tienes el máximo de claves de API activas permitidas. Revoca una primero.",
-    "createUncertain": "No pudimos confirmar si se creó \"{{name}}\". Revisa la lista antes de intentarlo de nuevo.",
-    "secretOnce": "Copia esta clave de API ahora. No se volverá a mostrar y al cerrar este cuadro se elimina de esta página.",
+    "createUncertain": "No pudimos confirmar si se creó \"{{name}}\". Vuelve a la lista y revísala antes de intentarlo de nuevo.",
+    "secretOnce": "Copia esta clave de API ahora. No se volverá a mostrar y al salir de esta página se elimina.",
     "copySecret": "Copiar clave de API",
     "reachSummary": {
       "all": "Alcance: todas las bases de conocimiento a las que tienes acceso",
@@ -477,7 +486,7 @@
     "createdTitle": "Tu nueva clave de API",
     "createdDescription": "Cópiala y luego pruébala con los comandos de abajo.",
     "childPurposeLegend": "¿Qué pueden hacer los tokens que emite?",
-    "childAdvanced": "Opciones avanzadas: grupos de herramientas, valores sellados y creación de bases de conocimiento",
+    "childAdvanced": "Herramientas de los tokens emitidos",
     "next": {
       "mintTitle": "Siguiente: emite un token MCP",
       "mintHint": "Pega la clave cuando la primera línea espere y presiona Enter; nunca aparece en una línea de comandos. Los comandos listan las bases de conocimiento de la clave y luego emiten un token para la que tenga el id que pongas en KB_ID. Los permisos deben estar dentro de las \"capabilities\" de esa base en la lista; redúcelos para una que solo puedes leer. Cambia el nombre y las herramientas como necesites. La respuesta muestra el token una sola vez. Si se pierde, volver a ejecutar el último comando con el mismo MINT_KEY identifica el token pero no puede mostrar su secreto: revoca ese token y emite otro con un MINT_KEY nuevo.",
@@ -490,7 +499,21 @@
       "mintCreatedHint": "Pega la clave cuando la primera línea espere y presiona Enter; nunca aparece en una línea de comandos. Esta clave solo llega a las bases de conocimiento que crea, así que los comandos primero crean una y luego emiten un token para ella (pon en KB_ID el id de la respuesta). La respuesta muestra el token una sola vez. Si se pierde, volver a ejecutar el último comando con el mismo MINT_KEY identifica el token pero no puede mostrar su secreto: revoca ese token y emite otro con un MINT_KEY nuevo.",
       "listedId": "un \"id\" de esa lista",
       "createdId": "el \"id\" de \"kb\" en esa respuesta"
-    }
+    },
+    "sections": {
+      "key": "Clave",
+      "access": "Alcance y permisos",
+      "tokens": "Tokens emitidos"
+    },
+    "bitPresets": {
+      "read": "Buscar y leer documentos. No se puede cambiar nada.",
+      "propose": "Leer y sugerir cambios como solicitudes de cambios.",
+      "write": "Leer, proponer y cambiar la rama principal directamente.",
+      "manage": "Control total, incluidos todos los demás permisos.",
+      "customLabel": "Personalizado",
+      "custom": "Elige permisos sueltos, como Revisar por sí solo."
+    },
+    "capabilitiesHint": "Sin ninguna de estas opciones, la clave solo puede listar bases de conocimiento y leer sus detalles."
   },
   "providers": {
     "title": "Proveedores de embeddings",

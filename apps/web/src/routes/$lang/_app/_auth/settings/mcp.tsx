@@ -3,7 +3,7 @@ import { Button } from "@knowledge-base/ui/components/button";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,6 @@ import {
   editTargetFromGrant,
   editTargetFromToken,
   type GrantRow,
-  PatCreateDialog,
   type TokenRow,
 } from "@/components/kb/credential-list";
 import { GrantEditSheet, type GrantEditTarget } from "@/components/kb/grant-edit-sheet";
@@ -50,7 +49,8 @@ function McpCredentialSettings() {
   const { t } = useTranslation(["settings", "common"]);
   const [revokeAllOpen, setRevokeAllOpen] = useState(false);
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
+  const navigate = useNavigate();
+  const createToken = () => navigate({ to: "/$lang/settings/mcp/new", params: { lang } });
   const [pending, setPending] = useState<Pending>(null);
   const [editing, setEditing] = useState<GrantEditTarget | null>(null);
   const tokens = useInfiniteQuery(
@@ -185,13 +185,13 @@ function McpCredentialSettings() {
         />
       )}
       <div className="mb-8">
-        <McpConnectCard serverUrl={env.VITE_SERVER_URL} onUseToken={() => setCreateOpen(true)} />
+        <McpConnectCard serverUrl={env.VITE_SERVER_URL} onUseToken={createToken} />
       </div>
       <CredentialList
         lang={lang}
         tokens={tokens.data?.pages.flatMap((page) => page.items) ?? []}
         grants={grants.data?.pages.flatMap((page) => page.items) ?? []}
-        onCreate={() => setCreateOpen(true)}
+        onCreate={createToken}
         onEditToken={(row) => setEditing(editTargetFromToken(row))}
         onEditGrant={(row) => setEditing(editTargetFromGrant(row))}
         onRevokeToken={(row) => setPending({ kind: "token", row })}
@@ -214,11 +214,6 @@ function McpCredentialSettings() {
       <div className="mt-8">
         <CliInstall origin={env.VITE_SERVER_URL} />
       </div>
-      <PatCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        serverUrl={env.VITE_SERVER_URL}
-      />
       <GrantEditSheet
         target={editing}
         onOpenChange={(open) => {

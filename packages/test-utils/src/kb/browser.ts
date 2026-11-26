@@ -1416,6 +1416,7 @@ export async function createKbBrowserFixture(options: {
       {
         mcpConsent: await router("mcp-consent.ts", "mcpConsentRouter"),
         mcpTokens: await router("mcp-tokens.ts", "mcpTokensRouter"),
+        apiKeys: await router("api-keys.ts", "apiKeysRouter"),
         mcpGrants: await router("mcp-grants.ts", "mcpGrantsRouter"),
         cliCredentials: await router("cli-credentials.ts", "cliCredentialsRouter"),
         kbModel: await router("kb-model.ts", "kbModelRouter"),
