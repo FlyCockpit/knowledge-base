@@ -10,6 +10,8 @@
  *   G9: web source follows the app theme: no literal colours, no Tailwind arbitrary colour values and
  *       no `prefers-color-scheme` outside packages/ui/src/styles/globals.css, unless the line carries
  *       a reasoned `theme-exempt: <reason>` comment.
+ *   G10: text scales and stays at least 12px: no arbitrary px font size in a class (`text-[13px]`)
+ *       and no rem/em one below 0.75 (docs/ui.md § Viewport scale).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -350,6 +352,16 @@ const ARBITRARY_COLOR =
   /-\[(?:color:)?(?:#[0-9a-f]{3,8}|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\()/i;
 const THEME_MESSAGE =
   "follows the OS or a fixed colour instead of the app theme (stored choice > OS, the `.dark` class). Fix: use the theme tokens (bg-popover, text-foreground, var(--state-*)…) and `dark:` variants; new colours become tokens in packages/ui/src/styles/globals.css (docs/ui.md § Shell rules).";
+/**
+ * G10: an arbitrary font size in px (`text-[13px]`, `text-[10px]/4`), which
+ * does not follow the root viewport scale, or in rem/em below 0.75 (12px).
+ * Lengths behind a `length:` hint count too; variables and other units don't.
+ */
+function fixedOrTinyText(base: string): boolean {
+  const match = /^text-\[(?:length:)?(\d*\.?\d+)(px|rem|em)\](?:\/[\w.[\]()-]+)?$/.exec(base);
+  if (!match) return false;
+  return match[2] === "px" || Number(match[1]) < 0.75;
+}
 function isThemeScanned(file: string): boolean {
   return (
     /^(apps\/web|packages\/ui)\/src\//.test(file) &&
@@ -422,10 +434,12 @@ export function scanWebSource(file: string, source: string): Finding[] {
         }
         const gutters = new Set<string>();
         const colors = new Set<string>();
+        const fixedText = new Set<string>();
         for (const set of sets) {
           for (const u of set.tokens.map(utility)) {
             if (tag === "main" && /scrollbar-gutter:(?!auto\])/.test(u.base)) gutters.add(u.base);
             if (isThemeScanned(file) && ARBITRARY_COLOR.test(u.base)) colors.add(u.base);
+            if (isThemeScanned(file) && fixedOrTinyText(u.base)) fixedText.add(u.base);
           }
         }
         if (gutters.size)
@@ -436,6 +450,12 @@ export function scanWebSource(file: string, source: string): Finding[] {
           );
         if (colors.size)
           add(attr, "G9", `Literal colour class (${[...colors].join(", ")}) ${THEME_MESSAGE}`);
+        if (fixedText.size)
+          add(
+            attr,
+            "G10",
+            `Fixed or sub-12px text size (${[...fixedText].join(", ")}): a px size does not grow with the large-screen root scale, and no text is smaller than 12px. Fix: use the type scale, text-xs (12px) at the smallest; truncate or wrap a label that does not fit (docs/ui.md § Viewport scale).`,
+          );
       }
       const style = attrs.find((attr) => name(attr.name) === "style");
       const styleValue = node(style?.value);

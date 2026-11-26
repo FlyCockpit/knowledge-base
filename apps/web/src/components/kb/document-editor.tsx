@@ -369,7 +369,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   return (
     <div className="min-w-0 space-y-4">
       {viewingRevision !== null && (
-        <div role="status" className="rounded-md border p-3 text-sm">
+        <div role="status" className="rounded-md border p-3 text-sm [&_p]:max-w-prose">
           <p>{t("kb:editor.oldRevision", { sha: short(viewingRevision) })}</p>
           {props.onOpenLatest && (
             <Button variant="outline" className="mt-2 min-h-[44px]" onClick={props.onOpenLatest}>
@@ -379,10 +379,10 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
         </div>
       )}
       {editable && controls.editMode === "proposal" && (
-        <p className="text-sm text-muted-foreground">{t("kb:editor.proposalNote")}</p>
+        <p className="max-w-prose text-sm text-muted-foreground">{t("kb:editor.proposalNote")}</p>
       )}
       {viewingRevision === null && controls.editMode === "none" && (
-        <p className="text-sm text-muted-foreground">{t("kb:editor.readOnlyNote")}</p>
+        <p className="max-w-prose text-sm text-muted-foreground">{t("kb:editor.readOnlyNote")}</p>
       )}
       {props.isNew && editable ? (
         <div className="min-w-0 space-y-2">
@@ -780,7 +780,7 @@ function EditorOutcomeNotice({
   outcome: EditorOutcome;
 }) {
   const { t } = useTranslation("kb");
-  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm";
+  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm [&_p]:max-w-prose";
   switch (outcome.kind) {
     case "applied":
       return (
@@ -1360,7 +1360,7 @@ export function KbProposalDocumentEditor({
   } = useQuery(
     orpc.pullRequests.conflicts.queryOptions({ input: { kbId: kb.id, number }, retry: false }),
   );
-  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm";
+  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm [&_p]:max-w-prose";
   const leave = (
     <Button variant="outline" className="min-h-[44px]" onClick={onLeave}>
       {t("prMode.leave")}
@@ -1450,7 +1450,7 @@ function ProposalModeVersions({
   const [{ yoursSha, mainSha, prHeadSha, entry }] = useState(opened);
   const yours = useRevisionRead(kb.id, path, yoursSha);
   const theirs = useRevisionRead(kb.id, path, mainSha);
-  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm";
+  const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm [&_p]:max-w-prose";
   if (yours.read.isPending || theirs.read.isPending) return <ProposalModeSkeleton />;
   for (const state of [yours, theirs])
     if (state.read.isError && !state.missing)
@@ -1564,7 +1564,7 @@ function ProposalModeSession({
     <div data-testid="pr-mode" data-state="ready" className="min-w-0 space-y-4">
       <div
         role="status"
-        className="min-w-0 space-y-2 rounded-md border border-primary/40 p-3 text-sm"
+        className="min-w-0 space-y-2 rounded-md border border-primary/40 p-3 text-sm [&_p]:max-w-prose"
       >
         <p className="font-medium">{t("prMode.title", { number })}</p>
         <p>{t("prMode.body")}</p>

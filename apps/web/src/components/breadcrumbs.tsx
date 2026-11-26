@@ -10,6 +10,9 @@ export type Crumb = {
   render?: (className: string, children: ReactNode) => ReactNode;
   /** Monospace label (a document path). */
   mono?: boolean;
+  /** Hidden below `sm:` with its chevron, where it would only repeat the
+   * page heading right below it on a line of its own. */
+  hideOnPhone?: boolean;
 };
 
 const LINK_CLASS =
@@ -29,11 +32,19 @@ export function Breadcrumbs({ items, className }: { items: readonly Crumb[]; cla
           return (
             <Fragment key={item.key}>
               {index > 0 && (
-                <li aria-hidden="true" className="text-muted-foreground">
+                <li
+                  aria-hidden="true"
+                  className={cn("text-muted-foreground", item.hideOnPhone && "max-sm:hidden")}
+                >
                   <ChevronRight className="size-3.5" />
                 </li>
               )}
-              <li className="flex min-w-0 max-w-full items-center">
+              <li
+                className={cn(
+                  "flex min-w-0 max-w-full items-center",
+                  item.hideOnPhone && "max-sm:hidden",
+                )}
+              >
                 {last || !item.render ? (
                   <span
                     aria-current={last ? "page" : undefined}

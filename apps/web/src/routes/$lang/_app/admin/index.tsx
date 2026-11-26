@@ -28,7 +28,7 @@ function AdminOverview() {
     <PageShell width="wide">
       <PageHeader title={t("admin:overview.title")} description={t("admin:overview.description")} />
       {setup?.adminEmailsEmpty && setup.adminExists && (
-        <p data-testid="admin-bootstrap-note" className="text-sm text-muted-foreground">
+        <p data-testid="admin-bootstrap-note" className="max-w-prose text-sm text-muted-foreground">
           <Trans
             i18nKey="setupBanner.firstAccountAdmin"
             ns="admin"

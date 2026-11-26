@@ -181,7 +181,7 @@ function SecurityPolicyCard({
           >
             <div className="space-y-1">
               <p className="font-medium">{policy.title}</p>
-              <p className="text-sm text-muted-foreground">{policy.description}</p>
+              <p className="max-w-prose text-sm text-muted-foreground">{policy.description}</p>
             </div>
             <Button
               variant={policy.enabled ? "destructive" : "default"}

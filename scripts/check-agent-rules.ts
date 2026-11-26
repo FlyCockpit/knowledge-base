@@ -45,11 +45,11 @@
  *   that are excluded from SEO discovery, so extra rows there are not
  *   violations. A PUBLIC_PATHS array this cannot parse fails closed.
  *
- * GATE 4 — SHELL RULES G8/G9, in scripts/check-web-conventions.ts: no
+ * GATE 4 — SHELL RULES G8–G10, in scripts/check-web-conventions.ts: no
  *   scrollbar gutter on a page scroller, no site <footer> in a route file, no
  *   literal colours or prefers-color-scheme outside
  *   packages/ui/src/styles/globals.css (a reasoned `theme-exempt:` comment
- *   marks a deliberate fixed colour). Fixtures:
+ *   marks a deliberate fixed colour), no px or sub-12px text size. Fixtures:
  *   scripts/check-web-conventions.test.ts, run by --self-test. Rules:
  *   docs/ui.md § Shell rules
  */
@@ -489,7 +489,7 @@ function listSourceFiles(dir: string, keep: (rel: string) => boolean): string[] 
 // -- main ---------------------------------------------------------------------
 
 function main(): void {
-  // Gate 4, shell rules G8/G9 (scroller gutter, route footers, theme colours):
+  // Gate 4, shell rules G8–G10 (scroller gutter, route footers, theme colours, text size):
   // docs/ui.md § Shell rules
   const failures: string[] = checkWebConventions(ROOT);
 
@@ -615,7 +615,7 @@ function runSelfTest(): void {
     ["--test", "scripts/check-web-conventions.test.ts"],
     { cwd: ROOT, stdio: "inherit" },
   );
-  check("shell-rule (G8/G9) fixtures pass", webTests.status === 0, webTests.error?.message);
+  check("shell-rule (G8–G10) fixtures pass", webTests.status === 0, webTests.error?.message);
 
   console.log("-- gate 1: route-export lint --");
   check(

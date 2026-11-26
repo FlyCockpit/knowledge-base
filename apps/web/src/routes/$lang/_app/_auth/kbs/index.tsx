@@ -6,7 +6,12 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { createdKbDestination, KbCreateDialog, KbList } from "@/components/kb/kb-list";
+import {
+  createdKbDestination,
+  KB_GRID_CLASS,
+  KbCreateDialog,
+  KbList,
+} from "@/components/kb/kb-list";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
@@ -109,7 +114,7 @@ function KbSection({
         query={{ data, error, isPending, isError, refetch }}
         errorMessage={t("list.loadFailed")}
         skeleton={
-          <div className="grid gap-3 sm:grid-cols-2" aria-busy="true">
+          <div className={`grid gap-3 ${KB_GRID_CLASS}`} aria-busy="true">
             <Skeleton className="h-32 rounded-xl" />
             <Skeleton className="h-32 rounded-xl" />
           </div>

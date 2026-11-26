@@ -54,14 +54,20 @@ export default function BottomNav({ hidden }: { hidden?: boolean }) {
             to={toLangRoute(item.path)}
             params={{ lang }}
             activeOptions={{ exact: item.exact }}
-            className="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-muted-foreground transition-colors min-w-[64px] min-h-[44px]"
+            className="flex min-w-[44px] shrink flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-muted-foreground transition-colors min-h-[44px]"
             activeProps={{
               className:
-                "flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-primary transition-colors min-w-[64px] min-h-[44px]",
+                "flex min-w-[44px] shrink flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-primary transition-colors min-h-[44px]",
             }}
           >
             <item.icon className="size-5" />
-            <span className="text-[10px] font-medium leading-tight">{t(item.labelKey)}</span>
+            {/* 12px minimum. Items size to their label and shrink together;
+                a label that still doesn't fit truncates instead of pushing
+                the bar past the screen edge. See docs/ui.md § Viewport scale
+            */}
+            <span className="max-w-full truncate text-xs font-medium leading-tight">
+              {t(item.labelKey)}
+            </span>
           </Link>
         ))}
       </div>

@@ -265,6 +265,15 @@
   }
   html {
     @apply font-sans;
+    /* Large-screen scale (docs/ui.md § Viewport scale). Every size in the
+       app is rem, so this one rule grows type, controls, page widths and
+       dialogs together on big screens: the browser's default (100 %, 16px
+       unless the user changed it) up to a 1920 CSS px long side, then a
+       linear ramp (+1px per 240px) to 150 % at 3840 (a 4K screen at 100 % scaling, in either
+       orientation). Screens at 1920 and below, phones, and 4K at 200 %
+       (1920 CSS px) are unchanged. Media queries keep using the browser
+       default, so breakpoints do not move. */
+    font-size: clamp(100%, calc(100% + (max(100vw, 100vh) - 1920px) / 240), 150%);
     height: 100%;
     overscroll-behavior: none;
     /* Defense-in-depth backstop: never let a child produce page-level

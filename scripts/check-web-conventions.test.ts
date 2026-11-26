@@ -75,6 +75,38 @@ describe("scanWebSource G8: the shells own the scroller and the footer", () => {
   });
 });
 
+describe("scanWebSource G10: text scales and stays at least 12px", () => {
+  it("rejects px font sizes and rem/em sizes below 0.75", () => {
+    for (const token of [
+      "text-[10px]",
+      "text-[13px]",
+      "md:text-[18px]",
+      "text-[10px]/4",
+      "text-[length:11px]",
+      "text-[0.625rem]",
+      "text-[.7em]",
+    ])
+      rejects("G10", `<span className="${token} font-medium" />`);
+    rejects("G10", '<span className={cn("uppercase", compact && "text-[11px]")} />');
+  });
+  it("accepts the type scale, rem sizes from 0.75 and non-size text utilities", () => {
+    for (const token of [
+      "text-xs",
+      "text-sm/relaxed",
+      "text-[0.75rem]",
+      "text-[1.125rem]",
+      "text-[0.875em]",
+      "[&_code]:text-[0.875em]",
+      "text-[var(--step)]",
+      "text-[length:var(--step)]",
+      "text-(--step)",
+      "min-h-[44px]",
+    ])
+      accepts(`<span className="${token}" />`);
+    accepts('<span className="text-[10px]" />', "apps/web/src/components/example.test.tsx");
+  });
+});
+
 describe("scanWebSource G9: surfaces follow the app theme", () => {
   it("rejects literal colour classes and prefers-color-scheme in app source", () => {
     for (const token of [

@@ -42,6 +42,15 @@ import { orpc } from "@/utils/orpc";
 
 export type KbItem = Awaited<ReturnType<AppRouterClient["kbs"]["list"]>>["items"][number];
 
+/**
+ * As many 15rem-or-wider columns as the list's width holds: one on phones,
+ * two on most tablets, three in the default page column. It follows the
+ * column, not the viewport, so the sidebar's width counts, and it is rem, so
+ * a 4K screen gets the same three columns, scaled (docs/ui.md § Viewport
+ * scale), instead of two cards stretched across the screen.
+ */
+export const KB_GRID_CLASS = "grid-cols-[repeat(auto-fill,minmax(min(100%,15rem),1fr))]";
+
 export const kbHref = (lang: string, kbId: string) =>
   `/${encodeURIComponent(lang)}/kbs/${encodeURIComponent(kbId)}`;
 
@@ -100,7 +109,7 @@ export function KbList({
     );
   }
   return (
-    <ul className="grid min-w-0 gap-3 sm:grid-cols-2">
+    <ul className={`grid min-w-0 gap-3 ${KB_GRID_CLASS}`}>
       {items.map((kb) => (
         <li key={kb.id} data-owner={kb.isOwner ? "true" : "false"} className="min-w-0">
           <a

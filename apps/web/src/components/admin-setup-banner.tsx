@@ -1,14 +1,16 @@
 import { isAdminRole } from "@knowledge-base/auth/roles";
 import { Button } from "@knowledge-base/ui/components/button";
+import { cn } from "@knowledge-base/ui/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, KeyRound } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
+import { PAGE_COLUMN_CLASS } from "@/components/page-shell";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { orpc } from "@/utils/orpc";
 
 const BANNER_CLASS =
-  "border-b border-yellow-300 bg-yellow-100 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100";
+  "border-b border-yellow-300 bg-yellow-100 py-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100";
 
 /**
  * Admin-setup banners in the app shell.
@@ -60,9 +62,9 @@ export function AdminSetupBanner() {
   const setupKeyReminder =
     isAdmin && setupKey?.setupKeySet ? (
       <div role="alert" className={BANNER_CLASS}>
-        <div className="flex items-start gap-3">
+        <div className={cn(PAGE_COLUMN_CLASS, "flex items-start gap-3")}>
           <KeyRound className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-          <div className="min-w-0 flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1 [&_p]:max-w-prose">
             <p className="font-medium">{t("setupKeyBanner.title")}</p>
             <p className="text-yellow-900/90 dark:text-yellow-100/90">
               <Trans
@@ -81,9 +83,9 @@ export function AdminSetupBanner() {
     return (
       <>
         <div role="alert" className={BANNER_CLASS}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+          <div className={cn(PAGE_COLUMN_CLASS, "flex flex-col gap-3 sm:flex-row sm:items-start")}>
             <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-            <div className="flex-1 space-y-1">
+            <div className="flex-1 space-y-1 [&_p]:max-w-prose">
               <p className="font-medium">{t("setupBanner.errorTitle")}</p>
               <p className="text-yellow-900/90 dark:text-yellow-100/90">
                 {t("setupBanner.errorMessage")}
@@ -103,9 +105,9 @@ export function AdminSetupBanner() {
   return (
     <>
       <div role="alert" className={BANNER_CLASS}>
-        <div className="flex items-start gap-3">
+        <div className={cn(PAGE_COLUMN_CLASS, "flex items-start gap-3")}>
           <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-          <div className="flex-1 space-y-1">
+          <div className="flex-1 space-y-1 [&_p]:max-w-prose">
             <p className="font-medium">{t("setupBanner.title")}</p>
             <p className="text-yellow-900/90 dark:text-yellow-100/90">
               <Trans

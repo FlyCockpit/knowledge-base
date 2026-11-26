@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
-import { KbList } from "@/components/kb/kb-list";
+import { KB_GRID_CLASS, KbList } from "@/components/kb/kb-list";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
 import { activeTokenCount } from "@/lib/credential-counts";
@@ -132,7 +132,7 @@ function DashboardPage() {
             </Link>
           </div>
           {!kbsLoaded && !owned.isError && !shared.isError ? (
-            <div className="grid gap-3 sm:grid-cols-2" aria-busy="true">
+            <div className={`grid gap-3 ${KB_GRID_CLASS}`} aria-busy="true">
               <Skeleton className="h-32 rounded-xl" />
               <Skeleton className="h-32 rounded-xl" />
             </div>

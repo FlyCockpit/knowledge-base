@@ -112,7 +112,8 @@ function KbLayout() {
     if (onDocument)
       crumbs.push(
         search.mode === "new" || !search.path
-          ? { key: "doc", label: t("detail.newDocument") }
+          ? // The editor's own "New document" heading sits right below.
+            { key: "doc", label: t("detail.newDocument"), hideOnPhone: true }
           : { key: "doc", label: search.path.slice(search.path.lastIndexOf("/") + 1), mono: true },
       );
     if (onPrs)
@@ -144,10 +145,10 @@ function KbLayout() {
     </>
   );
 
-  // The split editor/preview gets the full width; reading keeps a long-read measure.
+  // The split editor/preview uses the whole screen; reading keeps a long-read measure.
   const editing = onDocument && (search.mode === "edit" || search.mode === "new" || !search.path);
   return (
-    <PageShell width={editing ? "wide" : "default"}>
+    <PageShell width={editing ? "full" : "default"}>
       <Breadcrumbs items={crumbs} className="-mt-2" />
       {onSettings ? (
         <>

@@ -242,13 +242,13 @@ function AdminUsers() {
                     return (
                       <li
                         key={user.id}
-                        className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                        className="flex items-start justify-between gap-3 px-4 py-3 sm:items-center"
                       >
                         <div className="min-w-0 flex-1">
                           <p className="flex flex-wrap items-center gap-2 font-medium">
                             <span className="truncate">{user.name || user.email}</span>
                             {isSelf && (
-                              <span className="rounded-full border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                              <span className="rounded-full border bg-muted px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">
                                 {t("admin:users.youBadge")}
                               </span>
                             )}
@@ -391,7 +391,7 @@ function UserActions({
           <Button
             variant="outline"
             size="sm"
-            className="min-h-[44px] self-end sm:self-auto"
+            className="min-h-[44px] shrink-0"
             aria-label={t("users.actionsAriaLabel", { name: user.name || user.email })}
           />
         }
@@ -435,7 +435,7 @@ function RolePill({ isAdmin }: { isAdmin: boolean }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase",
+        "inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium uppercase",
         isAdmin
           ? "bg-violet-500/10 text-violet-700 dark:text-violet-400"
           : "bg-muted text-muted-foreground",
@@ -449,7 +449,7 @@ function RolePill({ isAdmin }: { isAdmin: boolean }) {
 function ArchivedPill() {
   const { t } = useTranslation("admin");
   return (
-    <span className="inline-flex items-center rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-700 dark:text-amber-400">
+    <span className="inline-flex items-center rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs font-medium uppercase text-amber-700 dark:text-amber-400">
       {t("users.archivedBadge")}
     </span>
   );
@@ -458,7 +458,7 @@ function ArchivedPill() {
 function UnverifiedPill() {
   const { t } = useTranslation("admin");
   return (
-    <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+    <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">
       {t("users.unverifiedBadge")}
     </span>
   );

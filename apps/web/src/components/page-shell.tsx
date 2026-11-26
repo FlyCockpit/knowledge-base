@@ -7,7 +7,17 @@ const WIDTH_CLASS = {
   narrow: "max-w-4xl",
   default: "max-w-5xl",
   wide: "max-w-7xl",
+  /** The full-width container, for a split editor that should use the whole
+   * screen. Keeps the 16px edge line. See docs/ui.md § Viewport scale */
+  full: "max-w-none",
 } as const;
+
+const PAGE_FRAME = "container mx-auto px-4";
+
+/** The widest page column, for content inside a full-bleed band (a banner):
+ * the band's background spans the window, its content lines up with the
+ * widest page below it. docs/ui.md § Viewport scale */
+export const PAGE_COLUMN_CLASS = `${PAGE_FRAME} ${WIDTH_CLASS.wide}`;
 
 type PageShellProps = {
   width?: keyof typeof WIDTH_CLASS;
@@ -17,9 +27,7 @@ type PageShellProps = {
 
 export function PageShell({ width = "default", className, children }: PageShellProps) {
   return (
-    <div
-      className={cn("container mx-auto space-y-6 px-4 py-6 md:py-8", WIDTH_CLASS[width], className)}
-    >
+    <div className={cn(PAGE_FRAME, "space-y-6 py-6 md:py-8", WIDTH_CLASS[width], className)}>
       {children}
     </div>
   );
@@ -48,7 +56,7 @@ export function PageHeader({ title, description, meta, actions, className }: Pag
           {title}
         </h1>
         {description ? (
-          <p className="text-sm text-pretty text-muted-foreground">{description}</p>
+          <p className="max-w-prose text-sm text-pretty text-muted-foreground">{description}</p>
         ) : null}
         {meta ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">

@@ -57,7 +57,7 @@ function AdminJobsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t("admin:jobs.title")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin:jobs.description")}</p>
+          <p className="max-w-prose text-sm text-muted-foreground">{t("admin:jobs.description")}</p>
         </div>
         <Button
           className="min-h-[44px]"
