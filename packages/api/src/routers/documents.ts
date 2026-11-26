@@ -16,6 +16,7 @@ import {
   type DocumentMutationRequest,
 } from "../lib/kb/changes";
 import { cursorExpiry, KB_PAGE_DEFAULT, KB_PAGE_MAX, stableFilterHash } from "../lib/kb/cursor";
+import { DELETED_DOCUMENTS_CURSOR, readDeletedDocuments } from "../lib/kb/deleted-documents";
 import { DOCUMENT_HISTORY_CURSOR, readDocumentHistory } from "../lib/kb/document-history";
 import {
   authorizeDocumentRead,
@@ -31,6 +32,11 @@ import { actorKeyForUser } from "../lib/kb/operation-intent";
 import { readDocumentProvenance } from "../lib/kb/parse-markdown";
 import { prismaAuthorityStore } from "../lib/kb/permissions";
 import { kbContentWriteInputSchema } from "../lib/kb/protocol/common";
+import {
+  KB_FIELD_POINTER_RE,
+  KB_INVALID_ARGUMENT_REASONS,
+  type KbInvalidArgumentReason,
+} from "../lib/kb/protocol/envelope";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { cursorPageInput } from "../lib/pagination";
 import { createProcedureBudget } from "../lib/procedure-budget";
@@ -95,6 +101,14 @@ export function documentErrorToOrpc(error: unknown): never {
               : mapped.code === "RATE_LIMITED" || mapped.code === "QUOTA_EXCEEDED"
                 ? "TOO_MANY_REQUESTS"
                 : "INTERNAL_SERVER_ERROR";
+    const details = mapped.details as { reason?: unknown; field?: unknown } | undefined;
+    // Creating a path that already exists: the editor names the path field.
+    if (mapped.code === "CONFLICT" && details?.reason === "PATH_EXISTS") {
+      throw new ORPCError(code, {
+        message: mapped.message,
+        data: { code: "CONFLICT", details: { reason: "PATH_EXISTS" } },
+      });
+    }
     if (mapped.code === "CONFLICT") {
       throw new ORPCError(code, {
         message: mapped.message,
@@ -112,10 +126,30 @@ export function documentErrorToOrpc(error: unknown): never {
         data: { code: "NOT_FOUND", details: { reason: "PATH_NOT_FOUND" } },
       });
     }
+    // A refused argument says which closed rule it broke and which field
+    // (a fixed JSON pointer), so the editor can show it next to that field.
+    // Both are protocol constants: no caller text travels.
+    if (mapped.code === "INVALID_ARGUMENT" && isArgumentReason(details?.reason)) {
+      throw new ORPCError(code, {
+        message: mapped.message,
+        data: {
+          code: mapped.code,
+          details: {
+            reason: details.reason,
+            ...(typeof details.field === "string" && KB_FIELD_POINTER_RE.test(details.field)
+              ? { field: details.field }
+              : {}),
+          },
+        },
+      });
+    }
     throw new ORPCError(code, { message: mapped.message, data: { code: mapped.code } });
   }
   throw error;
 }
+
+const isArgumentReason = (value: unknown): value is KbInvalidArgumentReason =>
+  (KB_INVALID_ARGUMENT_REASONS as readonly unknown[]).includes(value);
 
 const toOrpc = documentErrorToOrpc;
 
@@ -288,6 +322,58 @@ export const documentsRouter = {
           cursor: input.cursor ?? null,
           limit: input.limit,
           query: prismaAssetQuery(runtime.prisma),
+        });
+        await authorizeDocumentRead(admission);
+        return page;
+      } catch (error) {
+        toOrpc(error);
+      }
+    }),
+  /**
+   * "Recently deleted": documents deleted on main in the last 30 days that
+   * its head no longer has, newest first, each with the revision its last
+   * version is read (and restored) at. With `path`, that document's latest
+   * deletion at any age (its own page).
+   * Same read admission and budget as `history`.
+   */
+  deleted: protectedProcedure
+    .input(
+      historyPageInput.extend({
+        kbId,
+        path: path.optional(),
+        cursor: z.string().max(80).regex(DELETED_DOCUMENTS_CURSOR).optional(),
+      }),
+    )
+    .handler(async ({ context, input, signal }) => {
+      try {
+        const readOptions = gitReadOptions({ signal });
+        const runtime = getKbRuntime();
+        const userId = context.session!.user.id;
+        await consumeDocumentReadBudget(userId);
+        const admission = {
+          store: prismaAuthorityStore(runtime.prisma),
+          principal: { kind: "browser" as const, userId },
+          kbId: input.kbId,
+          operation: "read" as const,
+        };
+        await authorizeDocumentRead(admission);
+        const row = await runtime.prisma.knowledgeBase.findUnique({
+          where: { id: input.kbId },
+          select: { headSha: true, state: true },
+        });
+        if (!row || row.state === "TOMBSTONED") {
+          throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+        }
+        const repoPath = kbBareRepoPath(runtime.reposDir, input.kbId);
+        const headSha = await resolvePinnedRevision(repoPath, undefined, row.headSha, readOptions);
+        const page = await readDeletedDocuments({
+          ...readOptions,
+          repoPath,
+          headSha,
+          cursor: input.cursor ?? null,
+          limit: input.limit,
+          query: prismaAssetQuery(runtime.prisma),
+          ...(input.path !== undefined ? { path: input.path } : {}),
         });
         await authorizeDocumentRead(admission);
         return page;

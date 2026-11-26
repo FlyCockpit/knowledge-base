@@ -433,6 +433,33 @@ describe("error classification", () => {
     expect(describeEditorError(orpcError("TOO_MANY_REQUESTS"))).toEqual({ kind: "retryable" });
     expect(describeEditorError(orpcError("NOT_FOUND"))).toEqual({ kind: "error", reason: "gone" });
   });
+  it("names the refused field and rule a save refusal carries (documentErrorToOrpc)", () => {
+    const refused = (reason: string, field?: string) =>
+      orpcError("BAD_REQUEST", {
+        code: "INVALID_ARGUMENT",
+        details: { reason, ...(field ? { field } : {}) },
+      });
+    expect(describeEditorError(refused("NOT_MARKDOWN_PATH", "/path"))).toEqual({
+      kind: "error",
+      reason: "rejected",
+      pathIssue: "notMarkdown",
+    });
+    expect(describeEditorError(refused("INVALID_FRONT_MATTER", "/content/markdown"))).toEqual({
+      kind: "error",
+      reason: "rejected",
+      contentIssue: "frontMatter",
+    });
+    expect(describeEditorError(refused("TOO_LARGE", "/content/markdown"))).toEqual({
+      kind: "error",
+      reason: "tooLarge",
+    });
+    expect(describeEditorError(refused("SCHEMA"))).toEqual({ kind: "error", reason: "rejected" });
+    expect(
+      describeEditorError(
+        orpcError("CONFLICT", { code: "CONFLICT", details: { reason: "PATH_EXISTS" } }),
+      ),
+    ).toEqual({ kind: "error", reason: "rejected", pathIssue: "exists" });
+  });
 });
 
 describe("retireKbSealedData", () => {
@@ -1567,6 +1594,9 @@ describe("each Save is an immutable record until its receipt resolves", () => {
     expect(server.calls[2]).not.toHaveProperty("assets");
     expect(server.calls[2]?.idempotencyKey).not.toBe(server.calls[0]?.idempotencyKey);
     expect(second.outcome).toMatchObject({ kind: "applied", commitSha: H2 });
+    // "Saved" is what the last receipt wrote: the edited draft, never the lost one.
+    expect(first.savedMarkdown).toBeNull();
+    expect(second.savedMarkdown).toBe(linked("v2"));
     expect(second.retired.map((i) => i.uploadId)).toEqual([image.uploadId]);
     expect(second.images).toEqual([]);
     expect(second.memory).toEqual(initialEditorMemory());
@@ -1736,6 +1766,35 @@ describe("each Save is an immutable record until its receipt resolves", () => {
     expect(recreated.document).toEqual({ exists: true, head: H2, path: "notes/a.md" });
     await runSave(deps, recreated, draft("edited"));
     expect(operations).toEqual(["delete", "create", "update"]);
+  });
+
+  it("names the revision a delete removed, after resolving a lost save first (Undo)", async () => {
+    const bases: string[] = [];
+    let lost = false;
+    const { deps: defaults } = recorder();
+    const deps: EditorDeps = {
+      ...defaults,
+      update: async (input) => {
+        bases.push(`update:${input.baseRevision}`);
+        if (!lost) {
+          lost = true;
+          throw new TypeError("lost reply");
+        }
+        return applied({ commitSha: H1 });
+      },
+      remove: async (input) => {
+        bases.push(`delete:${input.baseRevision}`);
+        return applied({ commitSha: H2 });
+      },
+    };
+    const saved = await runSave(deps, { ...start(), images: [] }, draft("v1"));
+    expect(saved.outcome.kind).toBe("retryable");
+    expect(saved.deletedFrom).toBeNull();
+    // Delete resends the unresolved save (it landed as H1), then deletes H1's version.
+    const deleted = await runSave(deps, saved, { kbId: KB, intent: { kind: "delete" } });
+    expect(bases).toEqual([`update:${H0}`, `update:${H0}`, `delete:${H1}`]);
+    expect(deleted.outcome).toMatchObject({ kind: "applied", commitSha: H2 });
+    expect(deleted.deletedFrom).toBe(H1);
   });
 
   it("a recovered create fixes the session's path: the next record updates it, never a stray copy", async () => {

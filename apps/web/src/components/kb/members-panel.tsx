@@ -420,6 +420,7 @@ function MemberBitsSheet({
     }),
   );
   const name = memberLabel(member, t);
+  const requiredId = useId();
   const [confirmSelfDemotion, setConfirmSelfDemotion] = useState(false);
   const send = () => update.mutate({ kbId, shareUserId: member.userId, permissions: bits });
   return (
@@ -475,7 +476,7 @@ function MemberBitsSheet({
               ))}
             </div>
             {bits.length === 0 && (
-              <p className="text-sm text-destructive">
+              <p id={requiredId} className="text-sm text-destructive">
                 {t("settings.members.permissionsRequired")}
               </p>
             )}
@@ -487,6 +488,8 @@ function MemberBitsSheet({
               data-testid="member-edit-save"
               className="min-h-[44px]"
               disabled={update.isPending || bits.length === 0}
+              // A disabled Save says why: the message above it.
+              aria-describedby={bits.length === 0 ? requiredId : undefined}
             >
               {update.isPending ? t("settings.members.pending") : t("settings.members.editSave")}
             </Button>

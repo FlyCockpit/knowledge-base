@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   readDocument: vi.fn(),
   resolve: vi.fn(async () => "e".repeat(40)),
   history: vi.fn(),
+  deleted: vi.fn(),
   findUnique: vi.fn(async () => ({ headSha: "e".repeat(40), state: "ACTIVE" })),
 }));
 
@@ -30,12 +31,17 @@ vi.mock("../lib/kb/documents-read", async (importOriginal) => ({
   readDocumentAtRevision: mocks.readDocument,
   resolvePinnedRevision: mocks.resolve,
 }));
+vi.mock("../lib/kb/deleted-documents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/kb/deleted-documents")>()),
+  readDeletedDocuments: mocks.deleted,
+}));
 vi.mock("../lib/kb/document-history", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/kb/document-history")>()),
   readDocumentHistory: mocks.history,
 }));
 
 import type { Context } from "../context";
+import { invalidArgument, pathExists } from "../lib/kb/argument-reasons";
 import { KbDomainError } from "../lib/kb/errors";
 import { documentErrorToOrpc, documentsRouter } from "./documents";
 
@@ -156,6 +162,52 @@ describe("documents router", () => {
   });
 });
 
+describe("documents refusal details", () => {
+  const thrownBy = (error: unknown) => {
+    try {
+      documentErrorToOrpc(error);
+    } catch (e) {
+      return e as ORPCError<string, unknown>;
+    }
+    throw new Error("expected a throw");
+  };
+
+  it("forwards an argument refusal's closed reason and field pointer only", () => {
+    const thrown = thrownBy(
+      invalidArgument("only markdown document paths are supported", "NOT_MARKDOWN_PATH", "/path"),
+    );
+    expect(thrown.code).toBe("BAD_REQUEST");
+    expect(thrown.data).toEqual({
+      code: "INVALID_ARGUMENT",
+      details: { reason: "NOT_MARKDOWN_PATH", field: "/path" },
+    });
+  });
+
+  it("drops an unknown reason, an unsafe field and any other detail", () => {
+    expect(
+      thrownBy(
+        new KbDomainError("INVALID_ARGUMENT", "x", undefined, { reason: "MADE_UP", secret: "y" }),
+      ).data,
+    ).toEqual({ code: "INVALID_ARGUMENT" });
+    expect(
+      thrownBy(
+        new KbDomainError("INVALID_ARGUMENT", "x", undefined, {
+          reason: "INVALID_PATH",
+          field: "/path/../x y",
+          secret: "y",
+        }),
+      ).data,
+    ).toEqual({ code: "INVALID_ARGUMENT", details: { reason: "INVALID_PATH" } });
+  });
+
+  it("names an existing path on create as PATH_EXISTS, without the path", () => {
+    const thrown = thrownBy(pathExists("path already exists: secret/plan.md", "/path"));
+    expect(thrown.code).toBe("CONFLICT");
+    expect(thrown.data).toEqual({ code: "CONFLICT", details: { reason: "PATH_EXISTS" } });
+    expect(JSON.stringify(thrown.data)).not.toContain("secret");
+  });
+});
+
 describe("documents.get provenance and documents.history", () => {
   const kbId = "a".repeat(24);
   const head = "e".repeat(40);
@@ -246,5 +298,52 @@ describe("documents.get provenance and documents.history", () => {
       code: "NOT_FOUND",
     });
     expect(mocks.history).not.toHaveBeenCalled();
+  });
+});
+
+describe("documents.deleted", () => {
+  const kbId = "a".repeat(24);
+  const head = "e".repeat(40);
+  beforeEach(() => vi.clearAllMocks());
+
+  it("requires a session and validates bounds before any read", async () => {
+    const anonymous = createRouterClient(documentsRouter, { context: () => ({ session: null }) });
+    await expect(anonymous.deleted({ kbId })).rejects.toBeInstanceOf(ORPCError);
+    await expect(signedIn().deleted({ kbId, limit: 51 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await expect(signedIn().deleted({ kbId, path: "x".repeat(513) })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    // A history cursor is not a deleted-list cursor.
+    await expect(signedIn().deleted({ kbId, cursor: `v1.${head}.1` })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    expect(mocks.deleted).not.toHaveBeenCalled();
+    expect(mocks.budget).not.toHaveBeenCalled();
+  });
+
+  it("uses the documents-read budget and read admission, before and after the scan", async () => {
+    const page = { items: [], nextCursor: null };
+    mocks.deleted.mockResolvedValue(page);
+    await expect(signedIn().deleted({ kbId, path: "notes/a.md", limit: 1 })).resolves.toEqual(page);
+    expect(mocks.budget).toHaveBeenCalledWith("reader");
+    expect(mocks.authorize).toHaveBeenCalledTimes(2);
+    expect(mocks.authorize.mock.calls[0]?.[0]).toMatchObject({
+      principal: { kind: "browser", userId: "reader" },
+      kbId,
+      operation: "read",
+    });
+    expect(mocks.deleted).toHaveBeenCalledWith(
+      expect.objectContaining({ headSha: head, path: "notes/a.md", cursor: null, limit: 1 }),
+    );
+  });
+
+  it("a refused read never reaches Git, and a tombstoned KB has no deleted list", async () => {
+    mocks.authorize.mockRejectedValueOnce(new KbDomainError("FORBIDDEN", "no"));
+    await expect(signedIn().deleted({ kbId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    mocks.findUnique.mockResolvedValueOnce({ headSha: head, state: "TOMBSTONED" });
+    await expect(signedIn().deleted({ kbId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mocks.deleted).not.toHaveBeenCalled();
   });
 });

@@ -23,11 +23,11 @@ describe("provenance badge and history actors", () => {
   const render = (node: React.ReactNode) =>
     renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
 
-  it("names each provenance as Person, Agent, Dream or Unspecified", () => {
+  it("says who wrote it: a person, an agent, a dream or unspecified", () => {
     for (const [value, label] of [
-      ["human", "Person"],
-      ["agent", "Agent"],
-      ["dream", "Dream"],
+      ["human", "By a person"],
+      ["agent", "By an agent"],
+      ["dream", "By a dream"],
       ["absent", "Unspecified"],
     ] as const) {
       const markup = render(<ProvenanceBadge provenance={value} />);
@@ -35,7 +35,7 @@ describe("provenance badge and history actors", () => {
       expect(markup).toContain(`data-provenance="${value}"`);
     }
     expect(render(<ProvenanceBadge provenance="agent" prefix="Before" />)).toContain(
-      "Before: Agent",
+      "Before: By an agent",
     );
   });
 
@@ -59,7 +59,7 @@ describe("provenance badge and history actors", () => {
 
   it("has Spanish text for every new key", () => {
     expect(Object.keys(esKb.provenance).sort()).toEqual(Object.keys(enKb.provenance).sort());
-    expect(esKb.provenance.human.label).toBe("Persona");
+    expect(esKb.provenance.human.label).toBe("Por una persona");
     expect(Object.keys(esKb.history).sort()).toEqual(Object.keys(enKb.history).sort());
     expect(esKb.pr.files.writtenBy).toBeTruthy();
     const es = i18n.cloneInstance({ lng: "es-MX" });

@@ -60,6 +60,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | cliCredentials.exchangeDeviceCode | device credential exchange |
 | cliCredentials.registerDeviceRecipient | device public recipient registration |
 | cliCredentials.selectDeviceIntent | human device approval |
+| documents.deleted | browser "Recently deleted" list (paths deleted from main in the last 30 days, or one path at any age, for restore) |
 | documents.history | browser document history view (one path's commits and their attribution) |
 | embeddingProviders.create | human provider credentials |
 | embeddingProviders.listMine | human provider credentials |

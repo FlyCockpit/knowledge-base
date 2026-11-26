@@ -11,7 +11,7 @@ import {
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { cn } from "@knowledge-base/ui/lib/utils";
-import { skipToken, useQuery } from "@tanstack/react-query";
+import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { Download, Pencil } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -19,14 +19,30 @@ import { useTranslation } from "react-i18next";
 
 import { InlineRetry } from "@/components/inline-retry";
 import {
+  DocumentMoreMenu,
   KbDocumentDelete,
   KbProposalDocumentEditor,
   KbSessionEditor,
+  type MoreAction,
 } from "@/components/kb/document-editor";
-import { DocumentHistory, ProvenanceBadge } from "@/components/kb/document-history";
+import {
+  actorLine,
+  DocumentHistory,
+  documentHistoryOptions,
+  ProvenanceBadge,
+  visibleHistoryRows,
+} from "@/components/kb/document-history";
+import { DeletedDocumentNotice, RestoreVersionDialog } from "@/components/kb/document-restore";
 import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument } from "@/components/kb/markdown-view";
 import { StatusPill } from "@/components/status-pill";
+import {
+  draftKey,
+  readDraft,
+  type StoredDraft,
+  useDocumentDraft,
+} from "@/hooks/use-document-draft";
+import { useDocumentRestore } from "@/hooks/use-document-restore";
 import {
   type EditingTarget,
   isPathNotFound,
@@ -34,8 +50,10 @@ import {
   useKbAccessLoss,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { documentTitle } from "@/lib/document-text";
 import { cachedKbName, pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
+import { formatRelativeTime } from "@/utils/relative-time";
 
 /**
  * `proposal`: the writer's pull request this document is being edited in.
@@ -166,6 +184,10 @@ function latestDocumentAt(
 function DocumentPage() {
   const { lang, kbId } = Route.useParams();
   const search = Route.useSearch();
+  // Whose drafts this tab keeps: the session the protected layout resolved
+  // before this page rendered (never a client session still loading).
+  const { session: signedIn } = Route.useRouteContext();
+  const draftOwner = signedIn?.user.id ? `user:${signedIn.user.id}` : null;
   const { t } = useTranslation("kb");
   // The parent layout only renders this route once `kbs.get` has data.
   const { data: kbData } = useQuery(orpc.kbs.get.queryOptions({ input: { kbId }, staleTime: 0 }));
@@ -312,9 +334,42 @@ function DocumentPage() {
       resetScroll: false,
     });
   };
-  const onDeleted = (from: EditingTarget) => {
+  const { restore } = useDocumentRestore();
+  /**
+   * Deleted on main: a success toast naming it, with Undo (restore the
+   * version just deleted as a new revision), then the KB's documents.
+   */
+  const onDeleted = (from: EditingTarget, undo: { revision: string; head: string } | null) => {
     const at = latestDocumentAt(router, from.kbId);
     const latest = at && targetOf(from.kbId, at.search);
+    if (undo)
+      toast.success(t("document.deletedToast", { path: from.path }), {
+        duration: 10_000,
+        action: {
+          label: t("document.undo"),
+          onClick: () =>
+            void restore({
+              kbId: from.kbId,
+              path: from.path,
+              revision: undo.revision,
+              current: { exists: false, head: undo.head },
+            }).then((outcome) => {
+              if (outcome?.kind === "applied" || outcome?.kind === "noop")
+                toast.success(t("restore.restored", { path: from.path }), {
+                  action: {
+                    label: t("restore.open"),
+                    onClick: () =>
+                      void navigate({
+                        to: "/$lang/kbs/$kbId/documents",
+                        params: { lang, kbId: from.kbId },
+                        search: { path: from.path },
+                      }),
+                  },
+                });
+              else if (outcome) toast.error(t("restore.undoFailed", { path: from.path }));
+            }),
+        },
+      });
     if (!latest || editingTargetKey(latest) !== editingTargetKey(from)) return;
     void navigate({ to: "/$lang/kbs/$kbId", params: { lang: at.lang, kbId: from.kbId } });
   };
@@ -322,12 +377,11 @@ function DocumentPage() {
   const kb = kbData.kb;
   if (search.pr !== undefined && search.path) {
     const path = search.path;
-    const slash = path.lastIndexOf("/");
     return (
       <div className="min-w-0 space-y-6">
         <DocumentHeader
-          title={path.slice(slash + 1)}
-          folder={slash >= 0 ? path.slice(0, slash + 1) : undefined}
+          title={documentTitle(null, path)}
+          breadcrumb={path}
           meta={<StatusPill tone="busy">{t("prMode.pill", { number: search.pr })}</StatusPill>}
         />
         <KbProposalDocumentEditor
@@ -336,6 +390,7 @@ function DocumentPage() {
           kb={kb}
           number={search.pr}
           path={path}
+          draftOwner={draftOwner}
           onLeave={() => goTo({ path })}
         />
       </div>
@@ -365,6 +420,34 @@ function DocumentPage() {
   const missingDocument = proposalNumber === null && isPathNotFound(documentRead.error);
   const readFailed = (documentRead.isError && !missingAtHead && !missingDocument) || missingFailed;
   const retryRead = () => void (missingFailed ? baseRead.refetch() : documentRead.refetch());
+  // Main's head has no such document: when main deleted it, say so and offer
+  // its last version back (with or without a draft open). An older revision
+  // that lacks the path is only "not at this revision".
+  const atMainHead =
+    target.target.kind === "main" &&
+    (target.target.rev === null || target.target.rev === kb.headSha);
+  const editMode = kbControls(kb.capabilities).editMode;
+  const missingNotice = atMainHead ? (
+    <DeletedDocumentNotice
+      lang={lang}
+      kbId={kbId}
+      kbHeadSha={kb.headSha}
+      canRestore={editMode !== "none"}
+      proposing={editMode === "proposal"}
+      path={target.path}
+      onRestored={(outcome) =>
+        goTo(
+          outcome.kind === "proposed"
+            ? { path: target.path, proposal: outcome.proposalNumber }
+            : { path: target.path },
+        )
+      }
+    />
+  ) : (
+    <p role="status" className="rounded-md border p-4 text-sm">
+      {t("document.notFound")}
+    </p>
+  );
   if (!live) {
     if (closedNotice) return closedNotice;
     if (absence && proposalNumber !== null)
@@ -384,11 +467,13 @@ function DocumentPage() {
           onRetry={retryProposal}
         />
       );
-    if (proposalNumber === null && isPathNotFound(documentRead.error))
+    if (missingDocument)
       return (
-        <p role="status" className="rounded-md border p-4 text-sm">
-          {t("document.notFound")}
-        </p>
+        <div className="min-w-0 space-y-6">
+          <DocumentHeader title={documentTitle(null, target.path)} breadcrumb={target.path} />
+          {missingNotice}
+          <DocumentHistory lang={lang} kbId={kbId} path={target.path} />
+        </div>
       );
     if (readFailed) return <InlineRetry message={t("editor.loadFailed")} onRetry={retryRead} />;
     return (
@@ -412,11 +497,7 @@ function DocumentPage() {
           onRetry={retryProposal}
         />
       )}
-      {missingDocument && (
-        <p role="status" className="rounded-md border p-4 text-sm">
-          {t("document.notFound")}
-        </p>
-      )}
+      {missingDocument && missingNotice}
       {readFailed && (
         <InlineRetry variant="destructive" message={t("editor.loadFailed")} onRetry={retryRead} />
       )}
@@ -435,6 +516,7 @@ function DocumentPage() {
         onAdvance={(next, previous) => advanceSession(sessionId, next, previous)}
         goTo={goTo}
         onDeleted={onDeleted}
+        draftOwner={draftOwner}
       />
     </div>
   );
@@ -463,6 +545,7 @@ function DocumentView({
   goTo,
   onDeleted,
   onAdvance,
+  draftOwner,
 }: {
   lang: string;
   kb: ViewKb;
@@ -475,23 +558,66 @@ function DocumentView({
   target: EditingTarget;
   onAdvance: (next: EditingTarget, previous: EditingTarget) => void;
   goTo: (target: DocumentSearch, replace?: boolean) => void;
-  onDeleted: (from: EditingTarget) => void;
+  onDeleted: (from: EditingTarget, undo: { revision: string; head: string } | null) => void;
+  /** The signed-in person's actor key: drafts are theirs only (null: none kept). */
+  draftOwner: string | null;
 }) {
   const { t } = useTranslation("kb");
   const kbId = target.kbId;
   const proposal = target.target.kind === "proposal" ? target.target : null;
   // A new draft ("New document") until its create receipt moves the target.
   const draft = target.path === "";
+  const userId = draftOwner;
+  // Unsaved work kept in this tab for this target (pinned revisions are
+  // read-only: nothing to keep). Read once, as the session opens.
+  const keyOf = (of: EditingTarget) =>
+    userId === null || (of.target.kind === "main" && of.target.rev !== null)
+      ? null
+      : draftKey({
+          userId,
+          kbId: of.kbId,
+          path: of.path,
+          proposal: of.target.kind === "proposal" ? of.target.number : null,
+        });
+  const [recovered] = useState<StoredDraft | null>(() => {
+    const key = keyOf(target);
+    const stored = key ? readDraft(key) : null;
+    // A new draft is unsaved with only its path typed, too.
+    const unsaved =
+      stored !== null &&
+      (stored.markdown !== (document?.markdown ?? "") || (draft && (stored.path ?? "") !== ""));
+    return unsaved ? stored : null;
+  });
   const editor = useKbEditor({
     target,
     // A session mounts only with a matching successful read, or as a new
     // draft on the KB head. Later read failures do not reinitialize this
     // hook or replace its live draft.
     initialMarkdown: document?.markdown ?? "",
-    baseRevision: document?.commitSha ?? kb.headSha ?? "",
+    // A recovered draft writes against the head it was written on.
+    baseRevision: recovered?.base ?? document?.commitSha ?? kb.headSha ?? "",
+    recovered: recovered
+      ? {
+          markdown: recovered.markdown,
+          images: recovered.images ?? [],
+          ...(draft ? { path: recovered.path ?? "" } : {}),
+        }
+      : undefined,
     initialExists: !draft,
     onTargetAdvance: onAdvance,
   });
+  useDocumentDraft({
+    key: keyOf(target),
+    dirty: editor.dirty,
+    pending: editor.pending,
+    markdown: editor.markdown,
+    base: editor.baseRevision,
+    path: draft ? editor.path : undefined,
+    images: editor.stagedImages,
+    pendingUpload: editor.pendingUpload,
+  });
+  const [restoring, setRestoring] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const onProposed = (number: number, created: boolean) => {
     if (proposal?.number === number) return;
     toast.success(
@@ -509,6 +635,9 @@ function DocumentView({
   const gone = absence !== null && !editor.exists;
   // Without a branch head there is no base revision to write against.
   const writable = kb.headSha !== null && controls.editMode !== "none" && pinned === null && open;
+  // An older main revision can be written back as the newest one.
+  const canRestore =
+    pinned !== null && kb.headSha !== null && controls.editMode !== "none" && !proposal;
   // "new" stays editing while a create's own navigation to `mode=edit` is pending.
   const editing = draft || search.mode === "edit" || search.mode === "new";
   const at = {
@@ -519,21 +648,52 @@ function DocumentView({
         ? { rev: target.target.rev }
         : {}),
   };
-  const slash = target.path.lastIndexOf("/");
+  const canDelete = writable && !absence && !draft;
+  // Secondary and destructive actions live in one "More actions" menu.
+  const moreActions: MoreAction[] = canDelete
+    ? [
+        {
+          key: "delete",
+          label: t("editor.delete"),
+          destructive: true,
+          disabled: editor.pending,
+          testId: "document-delete",
+          onSelect: () => setDeleting(true),
+        },
+      ]
+    : [];
+  const doneEditing = (
+    <Link
+      to="/$lang/kbs/$kbId/documents"
+      params={{ lang, kbId }}
+      search={at}
+      className={cn(buttonVariants({ variant: "outline", size: "touch" }))}
+    >
+      {t("document.doneEditing")}
+    </Link>
+  );
 
   return (
     <div className="min-w-0 space-y-6">
       <DocumentHeader
-        title={draft ? t("detail.newDocument") : target.path.slice(slash + 1)}
-        mono={!draft}
-        folder={slash >= 0 ? target.path.slice(0, slash + 1) : undefined}
+        // The document's own title (its H1), with the path as a quiet breadcrumb.
+        title={
+          draft ? t("detail.newDocument") : documentTitle(document?.markdown ?? null, target.path)
+        }
+        breadcrumb={draft ? undefined : target.path}
         meta={
           !draft && (
             <>
-              <StatusPill tone="muted" className="font-mono">
-                {t("document.revision", { sha: short(document?.commitSha ?? editor.baseRevision) })}
-              </StatusPill>
-              {pinned && <StatusPill tone="busy">{t("document.olderRevision")}</StatusPill>}
+              {pinned ? (
+                <StatusPill tone="busy" title={t("document.revision", { sha: short(pinned) })}>
+                  {t("document.olderRevision")}
+                </StatusPill>
+              ) : (
+                !proposal &&
+                document && (
+                  <LastSaved lang={lang} kbId={kbId} path={target.path} rev={document.commitSha} />
+                )
+              )}
               {document && <ProvenanceBadge provenance={document.provenance} />}
               {proposal && (
                 <Link
@@ -550,45 +710,43 @@ function DocumentView({
           )
         }
         actions={
-          !draft && (
+          // While editing, every action is in the editor's own bar; a
+          // read-only edit view (older revision, closed proposal) has none.
+          !draft &&
+          !gone &&
+          (editing ? (
+            !writable && doneEditing
+          ) : (
             <>
-              {gone ? null : editing ? (
+              {writable && (
                 <Link
                   to="/$lang/kbs/$kbId/documents"
                   params={{ lang, kbId }}
-                  search={at}
-                  className={cn(buttonVariants({ variant: "outline", size: "touch" }))}
+                  search={{ ...at, mode: "edit" }}
+                  data-testid="document-edit"
+                  className={buttonVariants({ size: "touch" })}
                 >
-                  {t("document.doneEditing")}
+                  <Pencil aria-hidden className="size-4" />
+                  {controls.editMode === "direct" ? t("document.edit") : t("document.suggest")}
                 </Link>
-              ) : (
-                writable && (
-                  <Link
-                    to="/$lang/kbs/$kbId/documents"
-                    params={{ lang, kbId }}
-                    search={{ ...at, mode: "edit" }}
-                    data-testid="document-edit"
-                    className={buttonVariants({ size: "touch" })}
-                  >
-                    <Pencil aria-hidden className="size-4" />
-                    {controls.editMode === "direct" ? t("document.edit") : t("document.suggest")}
-                  </Link>
-                )
               )}
-              {!editing && document && <DownloadDialog kbId={kbId} rev={document.commitSha} />}
-              {writable && !absence && (
-                <KbDocumentDelete
-                  lang={lang}
-                  kbId={kbId}
-                  editor={editor}
-                  proposing={controls.editMode === "proposal"}
-                  onDeleted={() => onDeleted(target)}
-                />
-              )}
+              {document && <DownloadDialog kbId={kbId} rev={document.commitSha} />}
+              <DocumentMoreMenu actions={moreActions} />
             </>
-          )
+          ))
         }
       />
+      {canDelete && (
+        <KbDocumentDelete
+          lang={lang}
+          kbId={kbId}
+          editor={editor}
+          proposing={controls.editMode === "proposal"}
+          open={deleting}
+          onOpenChange={setDeleting}
+          onDeleted={(undo) => onDeleted(target, undo)}
+        />
+      )}
       {absence && (
         <AbsenceNotice
           lang={lang}
@@ -606,14 +764,79 @@ function DocumentView({
           role="status"
           className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
         >
-          <p>{t("editor.oldRevision", { sha: short(pinned) })}</p>
-          <Button
-            variant="outline"
-            className="mt-2 min-h-[44px]"
-            onClick={() => goTo({ path: target.path })}
-          >
-            {t("editor.openLatest")}
-          </Button>
+          <p>
+            {t(canRestore ? "editor.oldRevisionRestore" : "editor.oldRevision", {
+              sha: short(pinned),
+            })}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {canRestore && (
+              <Button
+                data-testid="document-restore"
+                className="min-h-[44px]"
+                onClick={() => setRestoring(true)}
+              >
+                {controls.editMode === "proposal"
+                  ? t("restore.proposeThis")
+                  : t("restore.restoreThis")}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              className="min-h-[44px]"
+              onClick={() => goTo({ path: target.path })}
+            >
+              {t("editor.openLatest")}
+            </Button>
+          </div>
+          {canRestore && kb.headSha && (
+            <RestoreVersionDialog
+              lang={lang}
+              kbId={kbId}
+              kbHeadSha={kb.headSha}
+              proposing={controls.editMode === "proposal"}
+              path={target.path}
+              revision={pinned}
+              open={restoring}
+              onOpenChange={setRestoring}
+              onRestored={(outcome) => {
+                setRestoring(false);
+                goTo(
+                  outcome.kind === "proposed"
+                    ? { path: target.path, proposal: outcome.proposalNumber }
+                    : { path: target.path },
+                );
+              }}
+            />
+          )}
+        </div>
+      )}
+      {editor.dirty && (recovered || !editing) && (
+        <div
+          role="status"
+          data-testid="document-draft-notice"
+          className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        >
+          <p>
+            {recovered
+              ? t("draft.recovered", {
+                  time: new Date(recovered.savedAt).toLocaleTimeString(lang, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }),
+                })
+              : t("draft.unsaved")}
+          </p>
+          {!editing && writable && (
+            <Link
+              to="/$lang/kbs/$kbId/documents"
+              params={{ lang, kbId }}
+              search={{ ...at, mode: "edit" }}
+              className={buttonVariants({ size: "touch" })}
+            >
+              {t("draft.continue")}
+            </Link>
+          )}
         </div>
       )}
       {gone ? null : editing ? (
@@ -624,9 +847,17 @@ function DocumentView({
           editor={editor}
           closed={!open}
           viewingRevision={pinned}
-          preview={{ rev: editor.baseRevision, assets: document?.assetRefs ?? [] }}
+          // Media resolve at the revision the document was read at, with that
+          // read's own manifest (a recovered draft's base may be older).
+          preview={
+            document
+              ? { rev: document.commitSha, assets: document.assetRefs }
+              : { rev: editor.baseRevision, assets: [] }
+          }
           onOpenLatest={(path) => goTo({ path, mode: "edit" })}
           onProposed={(number, created) => void onProposed(number, created)}
+          doneAction={draft ? undefined : doneEditing}
+          moreActions={moreActions}
         />
       ) : document ? (
         // Rendered at the commit the document was read at, so media stay pinned to it.
@@ -708,9 +939,11 @@ function ProposalNotice({
   editing: boolean;
 }) {
   const { t } = useTranslation("kb");
-  const { data: proposal } = useQuery(
+  const { data: proposal, error } = useQuery(
     orpc.pullRequests.forDocument.queryOptions({ input: { kbId, path }, retry: false }),
   );
+  // A denial here rechecks the KB like the page's other reads.
+  useKbAccessLoss(kbId, [error]);
   if (!proposal || proposal.isDream) return null;
   return (
     <div
@@ -744,29 +977,72 @@ function ProposalNotice({
 
 function DocumentHeader({
   title,
-  folder,
+  breadcrumb,
   meta,
   actions,
-  mono = true,
 }: {
   title: string;
-  /** File names are monospace; a plain heading ("New document") is not. */
-  mono?: boolean;
-  folder?: string;
+  /** The document's path, shown quietly above its title. */
+  breadcrumb?: string;
   meta?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
       <header className="min-w-0 space-y-1.5">
-        {folder && <p className="truncate font-mono text-xs text-muted-foreground">{folder}</p>}
-        <h1 className={cn("text-lg font-semibold break-all sm:text-xl", mono && "font-mono")}>
-          {title}
-        </h1>
+        {breadcrumb && (
+          <p
+            data-testid="document-breadcrumb"
+            className="truncate font-mono text-xs text-muted-foreground"
+          >
+            {breadcrumb}
+          </p>
+        )}
+        <h1 className="text-lg font-semibold break-words sm:text-xl">{title}</h1>
         {meta && <div className="flex flex-wrap items-center gap-2">{meta}</div>}
       </header>
       {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
     </div>
+  );
+}
+
+/**
+ * "Last saved 5 minutes ago by Ana in the web app": the document's latest
+ * change on main, from its history (the same query as the History list).
+ * The revision id stays one hover away and in History.
+ */
+function LastSaved({
+  lang,
+  kbId,
+  path,
+  rev,
+}: {
+  lang: string;
+  kbId: string;
+  path: string;
+  rev: string;
+}) {
+  const { t } = useTranslation("kb");
+  const { data, error } = useInfiniteQuery(documentHistoryOptions(kbId, path));
+  const latest = visibleHistoryRows(data?.pages, error !== null)[0];
+  if (!latest || latest.committedAt === null) return null;
+  const at = Date.parse(latest.committedAt);
+  const when = formatRelativeTime(at, lang);
+  return (
+    <span
+      data-testid="document-last-saved"
+      data-revision={latest.sha}
+      title={t("document.lastSavedTitle", {
+        date: new Date(at).toLocaleString(lang),
+        sha: short(latest.sha),
+        rev: short(rev),
+      })}
+      className="text-sm text-muted-foreground"
+    >
+      {latest.actor.kind === "unattributed"
+        ? t("document.lastSavedUnattributed", { when })
+        : t("document.lastSaved", { when, actor: actorLine(t, latest.actor) })}
+    </span>
   );
 }
 

@@ -46,7 +46,7 @@
     "conflict": "Someone else changed these details. Your draft is kept. Close and reopen to load the latest version.",
     "error": "Couldn't save the details.",
     "deleteTitle": "Delete {{name}}?",
-    "deleteDescription": "The knowledge base is removed for everyone. Only its owner can do this.",
+    "deleteDescription": "The knowledge base, its documents and their history are removed for everyone, and it can't be restored. To keep a copy, use Download on any of its documents first. Only its owner can do this.",
     "deletePrompt": "Type DELETE to confirm",
     "copyToken": "Copy confirmation text",
     "deleted": "Knowledge base deleted.",
@@ -120,7 +120,36 @@
     "uploadExpired": "An upload expired before it was saved. Insert any new images again, then save.",
     "tooManyImages": "One save can add at most {{max}} new images. Remove some image links, save, then insert the rest.",
     "offline": "You're offline. The change will be sent when you reconnect.",
-    "deleteProposalDescription": "Deleting proposes the removal in your pull request. Main stays unchanged until a reviewer merges it. Earlier revisions stay in history."
+    "deleteProposalDescription": "Deleting proposes the removal in your pull request. Main stays unchanged until a reviewer merges it. Earlier revisions stay in history.",
+    "pathIssue": {
+      "empty": "Enter a path, e.g. notes/meeting.md.",
+      "absolute": "Use a relative path without a leading / or drive letter, e.g. notes/meeting.md.",
+      "segment": "Remove the empty, . or .. folder names (for example a double / or a trailing /).",
+      "characters": "Remove the backslashes or invisible control characters from the path.",
+      "portable": "Names can't contain < > : \" | ? * or start or end with a space or a dot.",
+      "reserved": "That name is reserved (for example .git, .assets or con). Choose another.",
+      "tooLong": "The path is too long. Use at most 512 bytes.",
+      "tooDeep": "The path has too many folders. Use at most 31.",
+      "notMarkdown": "Document paths end in .md, e.g. notes/meeting.md.",
+      "exists": "A document already exists at this path. Choose another path, or open that document.",
+      "caseCollision": "Another document or folder has this path in different capitals. Choose another path.",
+      "invalid": "This path can't be used. Use letters, digits, - and _, folders separated by /, ending in .md."
+    },
+    "contentIssue": {
+      "frontMatter": "The front matter (the --- block at the top) isn't valid. Fix it or remove it, then save.",
+      "markdown": "The text can't be saved as Markdown. Check for unusual characters, then save.",
+      "characters": "The text contains invisible control characters. Remove them, then save.",
+      "duplicateId": "The front matter id is already used by another document. Change or remove it, then save.",
+      "sealed": "The text refers to a sealed value that was revoked. Remove that reference, then save."
+    },
+    "unsaved": "Unsaved changes",
+    "saved": "All changes saved",
+    "proposedStatus": "Sent to pull request #{{number}}",
+    "noChanges": "No unsaved changes",
+    "discard": "Discard changes",
+    "discardTitle": "Discard your changes?",
+    "discardDescription": "The draft goes back to the last saved version. Your changes are lost.",
+    "oldRevisionRestore": "Viewing revision {{sha}}. Restore it to make it the latest version, or open the latest version to edit."
   },
   "outcome": {
     "appliedTitle": "Saved to main",
@@ -820,11 +849,20 @@
     "openMain": "Open the main version",
     "edit": "Edit",
     "suggest": "Suggest changes",
-    "doneEditing": "Done editing",
+    "doneEditing": "Done",
     "download": "Download",
     "downloadTitle": "Download or clone",
     "downloadDescription": "Download this revision as a ZIP file, or clone the knowledge base with Git.",
-    "notFound": "This document doesn't exist at this revision. Check the path or open another revision."
+    "notFound": "This document doesn't exist at this revision. Check the path or open another revision.",
+    "deletedOn": "This document was deleted on {{date}} ({{actor}}).",
+    "deletedRecoverable": "Its earlier versions stay in history: restore the last one, or open any revision below.",
+    "deletedLoadFailed": "Couldn't check whether this document was deleted.",
+    "deletedToast": "Deleted {{path}}.",
+    "undo": "Undo",
+    "moreActions": "More actions",
+    "lastSaved": "Last saved {{when}} by {{actor}}",
+    "lastSavedUnattributed": "Last saved {{when}}",
+    "lastSavedTitle": "{{date}} · revision {{sha}} (read at {{rev}})"
   },
   "prMode": {
     "pill": "Pull request #{{number}}",
@@ -855,15 +893,15 @@
   "provenance": {
     "prefixed": "{{prefix}}: {{label}}",
     "human": {
-      "label": "Person",
+      "label": "By a person",
       "description": "Written by a person in the web app. Dreams can't change it."
     },
     "agent": {
-      "label": "Agent",
+      "label": "By an agent",
       "description": "Written by an agent's direct edit. Dreams may update it."
     },
     "dream": {
-      "label": "Dream",
+      "label": "By a dream",
       "description": "Written by a dream. Dreams may update it."
     },
     "absent": {
@@ -884,5 +922,57 @@
     "noSubject": "(no subject)",
     "unknownDate": "unknown date",
     "meta": "{{actor}} · {{date}} · {{sha}}"
+  },
+  "restore": {
+    "title": "Restore this version?",
+    "description": "{{path}} goes back to its version at revision {{sha}}. This is saved as a new revision; the current version stays in history.",
+    "descriptionProposal": "This proposes putting {{path}} back to its version at revision {{sha}}, in your pull request. Main is unchanged until a reviewer merges it.",
+    "descriptionDeleted": "{{path}} comes back with its version at revision {{sha}}. This is saved as a new revision.",
+    "descriptionDeletedProposal": "This proposes bringing {{path}} back with its version at revision {{sha}}, in your pull request. Main is unchanged until a reviewer merges it.",
+    "loadFailed": "Couldn't load the versions to compare.",
+    "same": "The current version already has this text. There's nothing to restore.",
+    "changesLabel": "Changes from the current version",
+    "diffHint": "Lines marked - are removed from the current version, lines marked + come back.",
+    "diffDeleted": "The document doesn't exist now. All of this text comes back.",
+    "unchangedLines_one": "{{count}} unchanged line",
+    "unchangedLines_other": "{{count}} unchanged lines",
+    "lineAdded": "Added: ",
+    "lineRemoved": "Removed: ",
+    "cancel": "Cancel",
+    "confirm": "Restore this version",
+    "confirmProposal": "Propose restoring",
+    "pending": "Restoring…",
+    "restored": "Restored {{path}}.",
+    "open": "Open",
+    "conflict": "The document changed while you were looking. Review the current version above, then restore again.",
+    "conflictProposal": "Your open pull request #{{number}} already changes this document. Open it to restore the version there.",
+    "conflictInProposal": "Your open pull request #{{number}} already changes this document. The changes above are from its version; restore again to put this version in the pull request.",
+    "exists": "A document was created at this path meanwhile. Open it and restore from its history instead.",
+    "restoreThis": "Restore this version",
+    "proposeThis": "Propose restoring this version",
+    "restoreLast": "Restore the last version",
+    "proposeLast": "Propose restoring the last version",
+    "viewLast": "View the last version",
+    "undoFailed": "Couldn't restore {{path}}. Open Recently deleted on the knowledge base page to try again."
+  },
+  "draft": {
+    "recovered": "Your unsaved changes from {{time}} were kept on this device. They aren't saved yet.",
+    "continue": "Continue editing",
+    "unsaved": "You have unsaved changes to this document. This page shows the saved version."
+  },
+  "deleted": {
+    "title": "Recently deleted",
+    "description": "Documents deleted from main in the last {{days}} days, newest first. Restoring one saves its last version as a new revision. A document deleted earlier still opens from its link, with its history.",
+    "loadFailed": "Couldn't load the recently deleted documents.",
+    "empty": "No documents deleted in the last {{days}} days are still deleted.",
+    "capped": "Only the most recent deletions are listed. Open an older one from its link.",
+    "cappedEmpty": "None of the most recent deletions are still deleted. An older deleted document still opens from its link.",
+    "meta": "Deleted {{date}} · {{actor}}",
+    "view": "View",
+    "viewNamed": "View the last version of {{path}}",
+    "restore": "Restore",
+    "restoreNamed": "Restore {{path}}",
+    "propose": "Propose restoring",
+    "proposeNamed": "Propose restoring {{path}}"
   }
 }

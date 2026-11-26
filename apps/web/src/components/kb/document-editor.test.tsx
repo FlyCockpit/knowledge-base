@@ -21,6 +21,7 @@ import {
   describeEditorError,
   type ImageStageRun,
   kbControls,
+  type PendingUpload,
   previewAfterSaves,
 } from "@/hooks/use-kb-editor";
 import { renderWithTestRouter as renderToStaticMarkup } from "@/lib/router-test-utils";
@@ -44,6 +45,38 @@ vi.mock("@/components/confirm-delete-dialog", () => ({
       data-token={props.confirmToken}
     >
       {props.title} | {props.description} | {props.confirmLabel}
+    </div>
+  ),
+}));
+
+/**
+ * The overflow menu's popup renders in a portal once opened (nothing in
+ * static markup): a stand-in renders its items inline, so they are visible.
+ */
+vi.mock("@knowledge-base/ui/components/dropdown-menu", () => ({
+  DropdownMenu: (props: { children: React.ReactNode }) => <div>{props.children}</div>,
+  DropdownMenuTrigger: (props: { render: ReactElement; children: React.ReactNode }) => (
+    <div data-testid="menu-trigger">
+      {props.render}
+      {props.children}
+    </div>
+  ),
+  DropdownMenuContent: (props: { children: React.ReactNode }) => (
+    <div role="menu">{props.children}</div>
+  ),
+  DropdownMenuItem: (props: {
+    children: React.ReactNode;
+    variant?: string;
+    disabled?: boolean;
+    "data-testid"?: string;
+  }) => (
+    <div
+      role="menuitem"
+      data-testid={props["data-testid"]}
+      data-variant={props.variant}
+      aria-disabled={props.disabled ? "true" : undefined}
+    >
+      {props.children}
     </div>
   ),
 }));
@@ -186,6 +219,111 @@ describe("DocumentEditorView outcomes", () => {
   });
 });
 
+describe("DocumentEditorView path rule and save state", () => {
+  const pathInput = (out: string) =>
+    /<input[^>]*data-testid="editor-path"[^>]*>/.exec(out)?.[0] ?? "";
+  it("names the refused path rule under the field, linked and marked invalid", () => {
+    const out = render({
+      isNew: true,
+      path: "notes/plan.md",
+      outcome: { kind: "error", reason: "rejected", pathIssue: "exists" },
+    });
+    const error = /<p id="([^"]+)" data-testid="editor-path-error"[^>]*>([^<]*)</.exec(out);
+    expect(error?.[2]).toBe(enKb.editor.pathIssue.exists);
+    expect(pathInput(out)).toContain('aria-invalid="true"');
+    expect(pathInput(out)).toContain(`aria-describedby="${error?.[1]}`);
+    // Not repeated as a generic refusal below the editor.
+    expect(out).not.toContain(enKb.editor.rejected);
+  });
+  it("shows no path error before the field was left or a save was tried", () => {
+    const out = render({ isNew: true, path: "Onboarding checklist" });
+    expect(out).not.toContain('data-testid="editor-path-error"');
+    expect(pathInput(out)).not.toContain('aria-invalid="true"');
+  });
+  it("names a refused content rule instead of a vague rejection", () => {
+    const out = render({
+      outcome: { kind: "error", reason: "rejected", contentIssue: "frontMatter" },
+    });
+    expect(out).toContain(enKb.editor.contentIssue.frontMatter.replace("'", "&#x27;"));
+    expect(out).not.toContain(enKb.editor.rejected);
+    // It is the Markdown field's error: next to it, and named by it.
+    const error = /<p id="([^"]+)" role="alert" data-testid="editor-content-error"/.exec(out);
+    const field = /<textarea[^>]*data-testid="editor-markdown"[^>]*>/.exec(out)?.[0] ?? "";
+    expect(field).toContain('aria-invalid="true"');
+    expect(field).toContain(`aria-describedby="${error?.[1]}"`);
+    // Under both panes, not inside the Markdown column: the boxes stay aligned.
+    expect(out.indexOf('data-testid="editor-content-error"')).toBeGreaterThan(
+      out.indexOf('data-testid="editor-preview"'),
+    );
+    expect(out.indexOf('data-testid="editor-preview"')).toBeGreaterThan(-1);
+  });
+  it("marks unsaved changes next to Save, with Discard in the bar's More menu", () => {
+    const out = render({ dirty: true, onDiscard: () => {} });
+    expect(out).toMatch(/data-testid="editor-save-bar" class="sticky bottom-0/);
+    expect(out).toMatch(/data-testid="editor-save-status" data-dirty="true"[^>]*>Unsaved changes</);
+    const bar = out.slice(out.indexOf('data-testid="editor-save-bar"'));
+    expect(bar).toContain('data-testid="document-more"');
+    expect(bar).toMatch(/role="menuitem" data-testid="editor-discard"[^>]*>Discard changes</);
+    const save = /<button[^>]*data-testid="editor-save"[^>]*>/.exec(out)?.[0] ?? "";
+    const status = /<span id="([^"]+)" role="status" data-testid="editor-save-status"/.exec(out);
+    expect(save).toContain(`aria-describedby="${status?.[1]}"`);
+  });
+  it("says the last save landed once nothing is unsaved", () => {
+    const out = render({
+      dirty: false,
+      outcome: { kind: "applied", commitSha: NEW_HEAD, indexJobId: null },
+    });
+    expect(out).toMatch(/data-dirty="false"[^>]*>All changes saved</);
+    expect(out).not.toContain('data-testid="editor-discard"');
+    // Nothing else to offer: no empty menu.
+    expect(out).not.toContain('data-testid="document-more"');
+  });
+  it("keeps Done and Delete document in the one editor bar, Delete in the menu", () => {
+    const out = render({
+      doneAction: <a href="/done">Done</a>,
+      moreActions: [
+        {
+          key: "delete",
+          label: enKb.editor.delete,
+          destructive: true,
+          testId: "document-delete",
+          onSelect: () => {},
+        },
+      ],
+    });
+    const bar = out.slice(out.indexOf('data-testid="editor-save-bar"'));
+    expect(bar).toContain('<a href="/done">Done</a>');
+    expect(bar).toMatch(
+      /role="menuitem" data-testid="document-delete" data-variant="destructive"[^>]*>Delete document</,
+    );
+    // The revision a save writes against is a tooltip, not body text.
+    expect(out).not.toMatch(/>Editing on /);
+    expect(bar).toContain(`data-base-revision="${HEAD}"`);
+  });
+  it("lines both panes up: one toolbar above them, equal headers and boxes", () => {
+    const out = render({ image: { onFiles: () => {}, status: null } });
+    const toolbar = out.indexOf('data-testid="editor-toolbar"');
+    const insert = out.indexOf('data-testid="editor-insert-image"');
+    const grid = out.indexOf("grid min-w-0 gap-4 lg:grid-cols-2");
+    expect(toolbar).toBeGreaterThan(-1);
+    expect(insert).toBeGreaterThan(toolbar);
+    expect(insert).toBeLessThan(grid);
+    const markdownHeader = /<label[^>]*class="([^"]*)" for=/.exec(out)?.[1] ?? "";
+    const previewHeader = /<h3 id="[^"]+" class="([^"]*)">Preview</.exec(out)?.[1] ?? "";
+    expect(markdownHeader).toMatch(/flex h-6 items-center text-sm font-medium$/);
+    expect(previewHeader).toBe("flex h-6 items-center text-sm font-medium");
+    expect(out).toMatch(/data-testid="editor-markdown"/);
+    expect(out).toMatch(/min-h-\[60svh\] min-w-0 flex-1 resize-none/);
+    expect(out).toMatch(/min-h-\[60svh\] min-w-0 flex-1 overflow-x-hidden/);
+  });
+  it("hides only the app's provenance stamp from the Markdown field", () => {
+    const stamped = render({ markdown: "---\nprovenance: human\n---\n# Title\n\nBody" });
+    expect(stamped).toMatch(/data-testid="editor-markdown"[^>]*># Title\n\nBody<\/textarea>/);
+    const own = render({ markdown: "---\ntitle: Mine\nprovenance: human\n---\nBody" });
+    expect(own).toContain("---\ntitle: Mine\nprovenance: human\n---\nBody</textarea>");
+  });
+});
+
 describe("hrefs", () => {
   it("document href pins the cited commit", () => {
     expect(kbDocumentHref("en-US", KB, { path: "a b.md", rev: OLD })).toBe(
@@ -261,6 +399,8 @@ describe("submitPath", () => {
   it("trims only a new document's typed path; an existing path is sent exactly", () => {
     expect(submitPath("  notes/new.md ", true)).toBe("notes/new.md");
     expect(submitPath(" notes/a.md", false)).toBe(" notes/a.md");
+    // The server takes composed (NFC) paths; a decomposed name is the same text.
+    expect(submitPath("cafe\u0301.md", true)).toBe("caf\u00e9.md");
   });
 });
 
@@ -336,6 +476,35 @@ describe("image insertion while typing", () => {
     };
   }
 
+  it("reports the placeholder block it wrote while uploading, then clears it", async () => {
+    let draft = "hello TARGET world";
+    const reports: (PendingUpload | null)[] = [];
+    let release: (run: ImageStageRun) => void = () => {};
+    const finished = insertImagesIntoDraft({
+      files: [{ name: "a.png" }],
+      at: { start: 6, end: 12 },
+      selected: "TARGET",
+      draft,
+      onPending: (pending) => reports.push(pending),
+      newId: () => "id1",
+      placeholderAlt: (name) => `Uploading ${name}`,
+      updateDraft: (update) => {
+        draft = update(draft);
+      },
+      insert: () => new Promise<ImageStageRun>((resolve) => (release = resolve)),
+      onStatus: () => {},
+    });
+    expect(reports).toEqual([
+      { inserted: "\n\n![Uploading a.png](kb-upload:id1)\n\n", selected: "TARGET" },
+    ]);
+    // Exactly the block in the draft: a kept draft can put the selection back.
+    expect(draft).toBe(`hello ${reports[0]?.inserted} world`);
+    await Promise.resolve();
+    release(staged("assets/a.png"));
+    await finished;
+    expect(reports.at(-1)).toBeNull();
+  });
+
   it("lands where the selection was, as its own paragraph, even while the user types", async () => {
     const h = harness("hello TARGET world");
     const finished = h.done([{ name: "a.png" }], { start: 6, end: 12 });
@@ -349,8 +518,27 @@ describe("image insertion while typing", () => {
   });
 
   it("inserts at the caret only once the textarea was focused", () => {
-    expect(imageInsertAt(null, 20)).toEqual({ start: 20, end: 20 });
-    expect(imageInsertAt({ selectionStart: 3, selectionEnd: 5 }, 20)).toEqual({ start: 3, end: 5 });
+    const text = "x".repeat(20);
+    expect(imageInsertAt(null, text)).toEqual({ start: 20, end: 20 });
+    expect(imageInsertAt({ selectionStart: 3, selectionEnd: 5 }, text)).toEqual({
+      start: 3,
+      end: 5,
+    });
+    // A textarea counts CRLF as one character; the draft keeps CRLF. In
+    // "A\r\nBC", the textarea's "C" is 3..4, which is 4..5 in the draft.
+    expect(imageInsertAt({ selectionStart: 3, selectionEnd: 4 }, "A\r\nBC")).toEqual({
+      start: 4,
+      end: 5,
+    });
+    expect(imageInsertAt({ selectionStart: 2, selectionEnd: 2 }, "A\r\nBC")).toEqual({
+      start: 3,
+      end: 3,
+    });
+    // Past the end clamps to the end.
+    expect(imageInsertAt({ selectionStart: 9, selectionEnd: 9 }, "A\r\nB")).toEqual({
+      start: 4,
+      end: 4,
+    });
   });
 
   it("an untouched editor appends at the end and never corrupts the first heading", async () => {
@@ -550,6 +738,8 @@ describe("committed images keep rendering after a save", () => {
       const editor: ComponentProps<typeof KbSessionEditor>["editor"] = {
         markdown: "![cat](/assets/cat.png)",
         setMarkdown: () => {},
+        dirty: false,
+        discard: () => {},
         baseRevision: NEW_HEAD,
         path: "notes/a.md",
         setPath: () => {},
@@ -559,7 +749,11 @@ describe("committed images keep rendering after a save", () => {
         pending: false,
         paused: false,
         proposal: true,
+        proposalHead: null,
+        pendingUpload: null,
+        setPendingUpload: () => {},
         submit: async () => undefined,
+        deleteDocument: async () => undefined,
         adoptHead: () => {},
         insertImage: async () => undefined,
         stagedImages: [],
@@ -664,6 +858,7 @@ describe("PR mode deletion-only resolution", () => {
             kb={{ id: KB, headSha: MAIN, capabilities: ["read", "propose"] }}
             number={5}
             path={PATH}
+            draftOwner={null}
             onLeave={() => {}}
           />
         </I18nextProvider>

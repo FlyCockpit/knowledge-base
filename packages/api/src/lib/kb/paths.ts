@@ -51,8 +51,11 @@ export type PathIssueCode =
 
 export type PathIssue = { code: PathIssueCode; message: string };
 
+// TextEncoder, not Buffer: the web app runs this same validator before a save.
+const utf8 = new TextEncoder();
+
 export function pathByteLength(path: string): number {
-  return Buffer.byteLength(path, "utf8");
+  return utf8.encode(path).byteLength;
 }
 
 export function normalizeKbPath(
@@ -561,8 +564,8 @@ function segmentHasControlChar(segment: string): boolean {
 }
 
 function isValidUtf8String(text: string): boolean {
-  const bytes = Buffer.from(text, "utf8");
-  return bytes.toString("utf8") === text;
+  // Lone surrogates encode as U+FFFD, so they never round-trip.
+  return new TextDecoder().decode(utf8.encode(text)) === text;
 }
 
 export const KB_MANAGED_GITIGNORE = "# kb managed\n";

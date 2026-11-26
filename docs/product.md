@@ -50,6 +50,25 @@ what a person wrote. The web app shows the label, each document's history (who
 or which credential wrote each version) and the writer of each file in PR
 review. See [write modes and provenance](./mcp.md#write-modes-and-provenance).
 
+Nothing written to main is lost from the web app's view. Any earlier version
+of a document can be restored, after a line diff against the current one, as a
+new revision (a pull request for a writer who proposes). A deleted document
+keeps its history: Undo on the delete notice, its own page (its old link, at
+any age), and the KB's "Recently deleted" list (documents deleted from main in
+the last 30 days; at most the newest 1,000 deleting changes, and the list says
+when that cuts it short) bring its last version back the same way. Unsaved
+edits are marked next to Save, kept in the browser tab across a reload
+(`sessionStorage`, per person; dropped when KB access is lost), with the images
+uploaded for them, and reopened against the revision they were written on
+(main and the pull request head while resolving a pull request), so a document
+that moved meanwhile is a conflict, never an overwrite. Deleting a whole knowledge base is final.
+
+The label lives in the document's front matter (`provenance: <value>`, stamped
+by the server on every write; a client never chooses it). When that stamp is
+the whole front matter, the web editor doesn't show it as text: the "By a
+person" / "By an agent" chip says it, and the bytes stay as stored. Front
+matter a person wrote is shown and edited as typed.
+
 ## Optional asset authority
 
 Disk CAS remains the default. Opt-in S3 makes remote objects authoritative and

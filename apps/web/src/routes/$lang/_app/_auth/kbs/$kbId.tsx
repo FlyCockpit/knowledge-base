@@ -14,6 +14,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Breadcrumbs, type Crumb } from "@/components/breadcrumbs";
 import { InlineRetry } from "@/components/inline-retry";
+import { DeletedDocuments } from "@/components/kb/deleted-documents";
 import { kbDocumentHref } from "@/components/kb/kb-links";
 import {
   KbDeleteDialog,
@@ -302,7 +303,7 @@ function KbHome({ kb, lang }: { kb: KbItem; lang: string }) {
     }),
   );
   const documentsAccessLost = useKbAccessLoss(kb.id, [docs.error]);
-  const openDocument = (search: { path?: string; rev?: string; mode?: "new" }) =>
+  const openDocument = (search: { path?: string; rev?: string; mode?: "new"; proposal?: number }) =>
     navigate({ to: "/$lang/kbs/$kbId/documents", params: { lang, kbId: kb.id }, search });
   const items = docs.data?.pages.flatMap((page) => page?.items ?? []) ?? [];
 
@@ -369,6 +370,17 @@ function KbHome({ kb, lang }: { kb: KbItem; lang: string }) {
       <div className="rounded-xl bg-card p-4 ring-1 ring-foreground/10 sm:p-6">
         <SearchPanel key={kb.id} lang={lang} kbId={kb.id} onOpen={openDocument} />
       </div>
+      <DeletedDocuments
+        key={`deleted:${kb.id}`}
+        lang={lang}
+        kbId={kb.id}
+        kbHeadSha={kb.headSha}
+        canRestore={controls.editMode !== "none"}
+        proposing={controls.editMode === "proposal"}
+        onRestored={(path, proposal) =>
+          openDocument(proposal === null ? { path } : { path, proposal })
+        }
+      />
     </div>
   );
 }

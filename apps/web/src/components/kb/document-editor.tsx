@@ -1,5 +1,11 @@
 import { Button } from "@knowledge-base/ui/components/button";
 import { CopyField } from "@knowledge-base/ui/components/copy-field";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@knowledge-base/ui/components/dropdown-menu";
 import { Input } from "@knowledge-base/ui/components/input";
 import { Label } from "@knowledge-base/ui/components/label";
 import { toast } from "@knowledge-base/ui/components/sileo";
@@ -8,15 +14,22 @@ import { Textarea } from "@knowledge-base/ui/components/textarea";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ImagePlus } from "lucide-react";
+import { ImagePlus, MoreHorizontal } from "lucide-react";
 import { type ReactNode, useDeferredValue, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
 import { type MarkdownContext, MarkdownView } from "@/components/kb/markdown-view";
 import type { AssetRef } from "@/components/kb/media";
 import { SegmentedControl } from "@/components/segmented-control";
+import {
+  draftKey,
+  readDraft,
+  type StoredDraft,
+  useDocumentDraft,
+} from "@/hooks/use-document-draft";
 import { useFileDropTarget } from "@/hooks/use-file-drop-target";
 import {
   confirmableConflict,
@@ -27,9 +40,12 @@ import {
   type ImageStageRun,
   type KbControls,
   kbControls,
+  type PendingUpload,
   previewAfterSaves,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { documentPathIssue } from "@/lib/document-path";
+import { joinProvenanceStamp, splitProvenanceStamp } from "@/lib/document-text";
 import { orpc } from "@/utils/orpc";
 
 const short = (sha: string) => sha.slice(0, 12);
@@ -71,6 +87,16 @@ type DocumentEditorViewProps = {
    * the draft stays readable, with no save, image upload or proposal note.
    */
   closed?: boolean;
+  /**
+   * The draft differs from what was last read or saved: the save bar says
+   * "Unsaved changes" (and Discard, with `onDiscard`).
+   */
+  dirty?: boolean;
+  onDiscard?: () => void;
+  /** Leaves editing (the page's "Done"), at the end of the editor bar. */
+  doneAction?: ReactNode;
+  /** More document actions (e.g. Delete document) for the bar's overflow menu. */
+  moreActions?: readonly MoreAction[];
   /** Image upload; absent where images can't be added. */
   image?: {
     /**
@@ -92,6 +118,56 @@ export type ImageStatus =
       name: string;
       error: Extract<ImageStageRun, { ok: false }>["error"];
     };
+
+/** One entry of a document's overflow menu. */
+export type MoreAction = {
+  key: string;
+  label: string;
+  onSelect: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
+  testId?: string;
+};
+
+/**
+ * "More actions" for a document: the secondary and destructive ones (Discard
+ * changes, Delete document), kept out of the way of the primary action.
+ * A menu item only opens its dialog; the dialog lives outside the menu.
+ */
+export function DocumentMoreMenu({ actions }: { actions: readonly MoreAction[] }) {
+  const { t } = useTranslation("kb");
+  if (actions.length === 0) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="touch"
+            data-testid="document-more"
+            aria-label={t("document.moreActions")}
+          />
+        }
+      >
+        <MoreHorizontal aria-hidden className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        {actions.map((action) => (
+          <DropdownMenuItem
+            key={action.key}
+            className="min-h-[44px]"
+            variant={action.destructive ? "destructive" : "default"}
+            disabled={action.disabled}
+            data-testid={action.testId}
+            onClick={action.onSelect}
+          >
+            {action.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /** Files carried by a paste, in order. */
 function pastedFiles(list: DataTransfer | null): File[] {
@@ -134,8 +210,14 @@ function ImageStatusLine({ status }: { status: ImageStatus }) {
  * KB paths), so reads that back a decision use this same value.
  */
 export function submitPath(path: string, isNew: boolean): string {
-  return isNew ? path.trim() : path;
+  // NFC as well: the server takes composed paths only, and it is the same text.
+  return isNew ? path.trim().normalize("NFC") : path;
 }
+
+/** Both pane headers: one height, so the two boxes start on the same line. */
+const PANE_HEADER = "flex h-6 items-center text-sm font-medium";
+/** Both pane boxes: the grid row stretches them, so they also end together. */
+const PANE_BOX = "min-h-[60svh] min-w-0 flex-1";
 
 /**
  * Live preview of the draft through the one safe renderer:
@@ -177,12 +259,12 @@ function DraftPreview({
     <section
       data-testid="editor-preview"
       aria-labelledby={headingId}
-      className={cn("min-w-0 space-y-2", hidden && "hidden lg:block")}
+      className={cn("flex min-w-0 flex-col gap-2", hidden && "hidden lg:flex")}
     >
-      <h3 id={headingId} className="text-sm font-medium">
+      <h3 id={headingId} className={PANE_HEADER}>
         {t("editor.previewLabel")}
       </h3>
-      <div className="min-h-[60svh] min-w-0 overflow-x-hidden rounded-md border bg-card p-4">
+      <div className={cn(PANE_BOX, "overflow-x-hidden rounded-md border bg-card p-4")}>
         <MarkdownView markdown={deferred} context={context} />
       </div>
     </section>
@@ -190,24 +272,46 @@ function DraftPreview({
 }
 
 /**
- * Where inserted images go: the selection of a textarea the user has
- * focused, else the end of the draft. A never-focused textarea reports a caret
- * at 0, which would glue the image onto the first line.
+ * Where inserted images go in `text` (the shown body): the selection of a
+ * textarea the user has focused, else the end of the draft. A never-focused
+ * textarea reports a caret at 0, which would glue the image onto the first
+ * line. A textarea counts each CRLF as one character (its value is
+ * LF-normalized) while the draft keeps the bytes it was given, so its
+ * offsets are mapped back onto `text`.
  */
 export function imageInsertAt(
   focused: { selectionStart: number; selectionEnd: number } | null,
-  length: number,
+  text: string,
 ): { start: number; end: number } {
-  return focused
-    ? { start: focused.selectionStart, end: focused.selectionEnd }
-    : { start: length, end: length };
+  if (!focused) return { start: text.length, end: text.length };
+  return {
+    start: textOffset(text, focused.selectionStart),
+    end: textOffset(text, focused.selectionEnd),
+  };
+}
+
+/** The index in `text` of a textarea offset that counts CRLF as one. */
+function textOffset(text: string, shown: number): number {
+  let index = 0;
+  for (let seen = 0; seen < shown && index < text.length; seen += 1) {
+    index += text[index] === "\r" && text[index + 1] === "\n" ? 2 : 1;
+  }
+  return index;
 }
 
 export function DocumentEditorView(props: DocumentEditorViewProps) {
   const { t } = useTranslation(["kb", "common"]);
   const textareaId = useId();
   const pathId = useId();
+  const pathHintId = useId();
+  const pathErrorId = useId();
+  const saveStatusId = useId();
   const imageHintId = useId();
+  const contentErrorId = useId();
+  const pathRef = useRef<HTMLInputElement>(null);
+  // The path rule is shown once the field was left or a save was tried.
+  const [pathChecked, setPathChecked] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   // State, not a ref: the drop registration follows the mounted element.
   const [textarea, setTextarea] = useState<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -221,7 +325,37 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   // The caret means something only once the user put it there: an untouched
   // textarea reports 0, which would glue an image onto the first line.
   const [touched, setTouched] = useState(false);
-  const selection = () => imageInsertAt(touched ? textarea : null, props.markdown.length);
+  // The app's provenance-only front matter is not shown: the chip says it
+  // and the server stamps it on every save. The draft keeps the exact bytes.
+  const { stamp, body } = splitProvenanceStamp(props.markdown);
+  const selection = () => {
+    const shown = imageInsertAt(touched ? textarea : null, body);
+    return { start: shown.start + stamp.length, end: shown.end + stamp.length };
+  };
+  // A new document's path: the server's own rule, before any save is sent;
+  // a refusal naming the path (e.g. it already exists) shows here as well.
+  const typedPath = submitPath(props.path, props.isNew);
+  const localPathIssue = props.isNew ? documentPathIssue(typedPath) : null;
+  // A refusal of the path stands until the path is changed.
+  const [pathEditedAfter, setPathEditedAfter] = useState<EditorOutcome | null>(null);
+  const refusedPath =
+    outcome?.kind === "error" && outcome.pathIssue && props.isNew && pathEditedAfter !== outcome
+      ? outcome.pathIssue
+      : null;
+  const pathIssue = (pathChecked && localPathIssue) || refusedPath;
+  // A refused content rule is the Markdown field's own error.
+  const contentIssue = outcome?.kind === "error" ? outcome.contentIssue : undefined;
+  const textareaDescribedBy =
+    [contentIssue ? contentErrorId : null, image ? imageHintId : null].filter(Boolean).join(" ") ||
+    undefined;
+  const save = () => {
+    if (localPathIssue) {
+      setPathChecked(true);
+      pathRef.current?.focus();
+      return;
+    }
+    props.onSave();
+  };
   const sendFiles = (files: File[]) => {
     if (image && files.length > 0 && !props.pending) image.onFiles(files, selection());
   };
@@ -254,77 +388,118 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
         <div className="min-w-0 space-y-2">
           <Label htmlFor={pathId}>{t("kb:editor.pathLabel")}</Label>
           <Input
+            ref={pathRef}
             id={pathId}
+            data-testid="editor-path"
             value={props.path}
             readOnly={props.pathLocked}
-            onChange={(e) => props.onPathChange(e.target.value)}
+            onChange={(e) => {
+              setPathEditedAfter(outcome);
+              props.onPathChange(e.target.value);
+            }}
+            onBlur={() => {
+              if (props.path.trim() !== "") setPathChecked(true);
+            }}
             autoComplete="off"
             inputMode="url"
             maxLength={512}
             placeholder={t("kb:editor.pathPlaceholder")}
+            aria-invalid={pathIssue ? true : undefined}
+            aria-describedby={pathIssue ? `${pathErrorId} ${pathHintId}` : pathHintId}
           />
-          <p className="text-xs text-muted-foreground">{t("kb:editor.pathHint")}</p>
+          {pathIssue && (
+            <p
+              id={pathErrorId}
+              data-testid="editor-path-error"
+              className="text-sm text-destructive"
+            >
+              {t(`kb:editor.pathIssue.${pathIssue}`)}
+            </p>
+          )}
+          <p id={pathHintId} className="text-xs text-muted-foreground">
+            {t("kb:editor.pathHint")}
+          </p>
         </div>
       ) : props.showPath !== false ? (
         <p className="truncate font-mono text-sm">{props.path}</p>
       ) : null}
       {editable && (
-        <SegmentedControl
-          className="lg:hidden"
-          ariaLabel={t("kb:editor.paneLabel")}
-          value={pane}
-          onChange={setPane}
-          items={[
-            { value: "write", label: t("kb:editor.markdownLabel") },
-            { value: "preview", label: t("kb:editor.previewLabel") },
-          ]}
-        />
+        // One toolbar over both panes, so the two panes start on the same line.
+        <div
+          data-testid="editor-toolbar"
+          className="flex min-w-0 flex-wrap items-center justify-between gap-2"
+        >
+          {editable && (
+            <SegmentedControl
+              className="lg:hidden"
+              ariaLabel={t("kb:editor.paneLabel")}
+              value={pane}
+              onChange={setPane}
+              items={[
+                { value: "write", label: t("kb:editor.markdownLabel") },
+                { value: "preview", label: t("kb:editor.previewLabel") },
+              ]}
+            />
+          )}
+          {image && (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="touch"
+                data-testid="editor-insert-image"
+                disabled={props.pending}
+                aria-describedby={imageHintId}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImagePlus aria-hidden className="size-4" />
+                {t("kb:editor.image.insert")}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden
+                accept={EDITOR_IMAGE_MIMES.join(",")}
+                multiple
+                data-testid="editor-image-input"
+                onChange={(e) => {
+                  sendFiles(Array.from(e.target.files ?? []));
+                  // The same file can be chosen again after an error.
+                  e.target.value = "";
+                }}
+              />
+              <p id={imageHintId} className="min-w-0 text-xs text-muted-foreground">
+                {t("kb:editor.image.hint")}
+              </p>
+            </div>
+          )}
+        </div>
       )}
+      {image?.status && <ImageStatusLine status={image.status} />}
       <div className={editable ? "grid min-w-0 gap-4 lg:grid-cols-2" : "min-w-0"}>
-        <div className={cn("min-w-0 space-y-2", editable && pane !== "write" && "hidden lg:block")}>
-          <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-2">
-            <Label htmlFor={textareaId}>{t("kb:editor.markdownLabel")}</Label>
-            {image && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="touch"
-                  data-testid="editor-insert-image"
-                  disabled={props.pending}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <ImagePlus aria-hidden className="size-4" />
-                  {t("kb:editor.image.insert")}
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="sr-only"
-                  tabIndex={-1}
-                  aria-hidden
-                  accept={EDITOR_IMAGE_MIMES.join(",")}
-                  multiple
-                  data-testid="editor-image-input"
-                  onChange={(e) => {
-                    sendFiles(Array.from(e.target.files ?? []));
-                    // The same file can be chosen again after an error.
-                    e.target.value = "";
-                  }}
-                />
-              </>
-            )}
-          </div>
-          {/* Raw Markdown editor: the bytes saved are exactly what is typed here. */}
+        <div
+          className={cn(
+            "flex min-w-0 flex-col gap-2",
+            editable && pane !== "write" && "hidden lg:flex",
+          )}
+        >
+          <Label htmlFor={textareaId} className={PANE_HEADER}>
+            {t("kb:editor.markdownLabel")}
+          </Label>
+          {/* Raw Markdown editor: the bytes saved are exactly what is typed here
+              (the app's own provenance stamp aside, which the server writes). */}
           <Textarea
             ref={setTextarea}
             id={textareaId}
             data-testid="editor-markdown"
-            value={props.markdown}
-            onChange={(e) => props.onMarkdownChange(e.target.value)}
+            value={body}
+            onChange={(e) => props.onMarkdownChange(joinProvenanceStamp(stamp, e.target.value))}
             readOnly={!editable}
             spellCheck
-            aria-describedby={image ? imageHintId : undefined}
+            aria-invalid={contentIssue ? true : undefined}
+            aria-describedby={textareaDescribedBy}
             onFocus={() => setTouched(true)}
             onDragOver={
               image
@@ -345,16 +520,11 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
                 : undefined
             }
             className={cn(
-              "min-h-[60svh] font-mono text-sm leading-relaxed",
+              PANE_BOX,
+              "resize-none font-mono text-sm leading-relaxed",
               dragging && "border-primary ring-2 ring-ring",
             )}
           />
-          {image && (
-            <p id={imageHintId} className="text-xs text-muted-foreground">
-              {t("kb:editor.image.hint")}
-            </p>
-          )}
-          {image?.status && <ImageStatusLine status={image.status} />}
         </div>
         {editable && (
           <DraftPreview
@@ -369,26 +539,100 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
           />
         )}
       </div>
+      {/* Below both panes, so their boxes keep ending on one line; the
+          textarea still names it (`aria-describedby`). */}
+      {contentIssue && (
+        <p
+          id={contentErrorId}
+          role="alert"
+          data-testid="editor-content-error"
+          className="text-sm text-destructive"
+        >
+          {t(`kb:editor.contentIssue.${contentIssue}`)}
+        </p>
+      )}
       {props.paused && (
         <p role="status" className="text-sm">
           {t("kb:editor.offline")}
         </p>
       )}
-      {outcome && <EditorOutcomeNotice {...props} outcome={outcome} />}
+      {outcome &&
+        !(outcome.kind === "error" && ((outcome.pathIssue && props.isNew) || contentIssue)) && (
+          <EditorOutcomeNotice {...props} outcome={outcome} />
+        )}
       {editable && (
-        <div className="flex flex-wrap items-center gap-2">
+        // Save and its state stay in view while a long draft scrolls.
+        <div
+          data-testid="editor-save-bar"
+          className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-background/95 px-1 py-3 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur"
+        >
           <Button
             data-testid="editor-save"
             className="min-h-[44px]"
             disabled={props.pending}
-            onClick={props.onSave}
+            aria-describedby={saveStatusId}
+            onClick={save}
           >
             {props.pending ? t("kb:editor.saving") : saveLabel}
           </Button>
-          <span className="text-xs text-muted-foreground">
-            {t("kb:editor.baseRevision", { sha: short(props.baseRevision) })}
+          <span
+            id={saveStatusId}
+            role="status"
+            data-testid="editor-save-status"
+            data-dirty={props.dirty ? "true" : "false"}
+            data-base-revision={props.baseRevision}
+            // The revision a save writes against, for whoever needs it.
+            title={t("kb:editor.baseRevision", { sha: short(props.baseRevision) })}
+            className={cn(
+              "text-sm",
+              props.dirty
+                ? "font-medium text-amber-700 dark:text-amber-400"
+                : "text-muted-foreground",
+            )}
+          >
+            {props.pending
+              ? t("kb:editor.saving")
+              : props.dirty
+                ? t("kb:editor.unsaved")
+                : outcome?.kind === "applied" || outcome?.kind === "noop"
+                  ? t("kb:editor.saved")
+                  : outcome?.kind === "proposed"
+                    ? t("kb:editor.proposedStatus", { number: outcome.proposalNumber })
+                    : t("kb:editor.noChanges")}
           </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {props.doneAction}
+            <DocumentMoreMenu
+              actions={[
+                ...(props.dirty && props.onDiscard && !props.pending
+                  ? [
+                      {
+                        key: "discard",
+                        label: t("kb:editor.discard"),
+                        testId: "editor-discard",
+                        onSelect: () => setConfirmDiscard(true),
+                      },
+                    ]
+                  : []),
+                ...(props.moreActions ?? []),
+              ]}
+            />
+          </div>
         </div>
+      )}
+      {props.onDiscard && (
+        <ConfirmActionDialog
+          open={confirmDiscard}
+          onOpenChange={setConfirmDiscard}
+          title={t("kb:editor.discardTitle")}
+          description={t("kb:editor.discardDescription")}
+          confirmLabel={t("kb:editor.discard")}
+          destructive
+          onConfirm={() => {
+            setConfirmDiscard(false);
+            props.onDiscard?.();
+          }}
+        />
       )}
     </div>
   );
@@ -615,9 +859,11 @@ function EditorOutcomeNotice({
     case "error":
       return (
         <p role="alert" className="text-sm text-destructive">
-          {t(outcome.reason === "unknown" ? "editor.error" : `editor.${outcome.reason}`, {
-            max: DOCUMENT_STAGED_ASSETS_MAX,
-          })}
+          {outcome.pathIssue
+            ? t(`editor.pathIssue.${outcome.pathIssue}`)
+            : t(outcome.reason === "unknown" ? "editor.error" : `editor.${outcome.reason}`, {
+                max: DOCUMENT_STAGED_ASSETS_MAX,
+              })}
         </p>
       );
   }
@@ -717,11 +963,17 @@ export async function insertImagesIntoDraft<F extends { name: string }>({
   updateDraft,
   insert,
   onStatus,
+  draft: snapshot,
+  onPending,
 }: {
   files: readonly F[];
   at: { start: number; end: number };
   /** The text the selection covered, restored if nothing gets inserted. */
   selected: string;
+  /** The draft as the files arrived (what `at` and `selected` refer to). */
+  draft?: string;
+  /** The placeholder block while uploads are pending, then null (kept drafts store around it). */
+  onPending?: (pending: PendingUpload | null) => void;
   newId: () => string;
   placeholderAlt: (name: string) => string;
   updateDraft: (update: (draft: string) => string) => void;
@@ -739,6 +991,12 @@ export async function insertImagesIntoDraft<F extends { name: string }>({
   );
   const separator = "\n\n";
   let inserted = "";
+  if (snapshot !== undefined && onPending) {
+    const from = Math.min(at.start, snapshot.length);
+    const to = Math.min(Math.max(at.end, from), snapshot.length);
+    const { lead, trail } = paragraphBreaks(snapshot.slice(0, from), snapshot.slice(to));
+    onPending({ inserted: lead + tokens.join(separator) + trail, selected });
+  }
   updateDraft((draft) => {
     const from = Math.min(at.start, draft.length);
     const to = Math.min(Math.max(at.end, from), draft.length);
@@ -769,27 +1027,34 @@ export async function insertImagesIntoDraft<F extends { name: string }>({
           draft,
         );
     });
-  for (const [index, file] of files.entries()) {
-    const name = file.name || "image";
-    const token = tokens[index] ?? "";
-    onStatus({ kind: "uploading", name, percent: 0 });
-    const run = await insert(file, {
-      onProgress: (sent, total) =>
-        onStatus({
-          kind: "uploading",
-          name,
-          percent: Math.floor((Math.min(sent, total) / Math.max(1, total)) * 100),
-        }),
-      onWait: (seconds) => onStatus({ kind: "waiting", name, seconds }),
-    });
-    // A retired session or a save already in flight: nothing was sent.
-    if (!run?.ok) {
-      abandon(index);
-      onStatus(run ? { kind: "error", name, error: run.error } : null);
-      return;
+  try {
+    await uploadEach();
+  } finally {
+    onPending?.(null);
+  }
+  async function uploadEach() {
+    for (const [index, file] of files.entries()) {
+      const name = file.name || "image";
+      const token = tokens[index] ?? "";
+      onStatus({ kind: "uploading", name, percent: 0 });
+      const run = await insert(file, {
+        onProgress: (sent, total) =>
+          onStatus({
+            kind: "uploading",
+            name,
+            percent: Math.floor((Math.min(sent, total) / Math.max(1, total)) * 100),
+          }),
+        onWait: (seconds) => onStatus({ kind: "waiting", name, seconds }),
+      });
+      // A retired session or a save already in flight: nothing was sent.
+      if (!run?.ok) {
+        abandon(index);
+        onStatus(run ? { kind: "error", name, error: run.error } : null);
+        return;
+      }
+      settle(token, run.markdown);
+      onStatus({ kind: "staged", name });
     }
-    settle(token, run.markdown);
-    onStatus({ kind: "staged", name });
   }
 }
 
@@ -810,6 +1075,9 @@ type EditorProps = {
   onProposed?: (proposalNumber: number, created: boolean) => void;
   /** See `DocumentEditorViewProps.closed`. */
   closed?: boolean;
+  /** See `DocumentEditorViewProps.doneAction` and `.moreActions`. */
+  doneAction?: ReactNode;
+  moreActions?: readonly MoreAction[];
 };
 
 /**
@@ -851,6 +1119,8 @@ export function KbSessionEditor({
   onOpenLatest,
   onProposed,
   closed,
+  doneAction,
+  moreActions,
   editor,
 }: EditorProps & { editor: KbEditorSession }) {
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
@@ -872,6 +1142,8 @@ export function KbSessionEditor({
         files,
         at,
         selected: editor.markdown.slice(at.start, at.end),
+        draft: editor.markdown,
+        onPending: editor.setPendingUpload,
         newId: () => crypto.randomUUID(),
         placeholderAlt: (name) => t("editor.image.placeholder", { name }),
         updateDraft: editor.setMarkdown,
@@ -906,6 +1178,10 @@ export function KbSessionEditor({
       // After a save the preview reads the revision it produced.
       preview={effectivePreview}
       stagedImages={editor.stagedImages}
+      dirty={editor.dirty}
+      onDiscard={editor.discard}
+      doneAction={doneAction}
+      moreActions={moreActions}
       image={{ onFiles: (files, at) => void onFiles(files, at), status: imageStatus }}
       onSave={async () => {
         // A typed path is trimmed once, as the record that fixes it is made.
@@ -931,7 +1207,8 @@ export function KbSessionEditor({
 type StaleDelete = { headSha: string; proposalNumber: number | null };
 
 /**
- * Delete document, a document-header action. It sends the
+ * Delete document: the confirmation behind the document's "Delete document"
+ * menu action (`open` is the page's; the menu only opens it). It sends the
  * delete through the page's editing session, so after a proposed edit it
  * targets that proposal's head. A conflict (the document moved, or the
  * caller's open proposal is ahead) re-reads the document and asks again
@@ -942,31 +1219,42 @@ export function KbDocumentDelete({
   kbId,
   editor,
   proposing = false,
+  open,
+  onOpenChange: setOpen,
   onDeleted,
 }: {
   lang: string;
   kbId: string;
   editor: KbEditorSession;
   proposing?: boolean;
-  onDeleted: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /**
+   * Deleted on main. `undo` names the revision whose version was deleted
+   * (the delete's own base, which the server confirmed unchanged) and the
+   * head the delete wrote; null when it was already gone (noop).
+   */
+  onDeleted: (undo: { revision: string; head: string } | null) => void;
 }) {
   const { t } = useTranslation(["kb", "common"]);
   // The session's own document: the one its delete record names.
   const { path } = editor;
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [stale, setStale] = useState<StaleDelete | null>(null);
   const head = useRevisionRead(kbId, path, stale?.headSha ?? null);
   const send = async (rebase?: StaleDelete) => {
     setOpen(false);
-    const outcome = await editor.submit({ kind: "delete" }, rebase);
+    const run = await editor.deleteDocument(rebase);
     // A retired page (another KB opened meanwhile) gets no outcome.
-    if (!outcome) return;
+    if (!run) return;
+    const { outcome, deletedFrom } = run;
     setStale(null);
     switch (outcome.kind) {
       case "applied":
+        onDeleted(deletedFrom ? { revision: deletedFrom, head: outcome.commitSha } : null);
+        return;
       case "noop":
-        onDeleted();
+        onDeleted(null);
         return;
       case "proposed":
         toast.success(
@@ -1003,50 +1291,37 @@ export function KbDocumentDelete({
     }
   };
   return (
-    <>
-      <Button
-        variant="destructive"
-        size="touch"
-        disabled={editor.pending}
-        onClick={() => {
-          setStale(null);
-          setOpen(true);
-        }}
-      >
-        {t("kb:editor.delete")}
-      </Button>
-      <ConfirmDeleteDialog
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          if (!next) setStale(null);
-        }}
-        title={t("kb:editor.deleteTitle", { path })}
-        description={
-          !stale
-            ? t(
-                proposing || editor.proposal
-                  ? "kb:editor.deleteProposalDescription"
-                  : "kb:editor.deleteDescription",
-              )
-            : stale.proposalNumber !== null
-              ? t("kb:editor.deleteStaleProposal", {
-                  number: stale.proposalNumber,
-                  sha: stale.headSha.slice(0, 12),
-                })
-              : t("kb:editor.deleteStale", { sha: stale.headSha.slice(0, 12) })
-        }
-        confirmToken="DELETE"
-        typePrompt={t("kb:editor.deletePrompt")}
-        copyAriaLabel={t("kb:editor.copyToken")}
-        isPending={editor.pending}
-        // Reconfirming deletes the reported head: only after it was read and shown.
-        disabled={stale !== null && !head.ready}
-        onConfirm={() => void send(stale ?? undefined)}
-      >
-        {stale && <RevisionPreview lang={lang} kbId={kbId} rev={stale.headSha} state={head} />}
-      </ConfirmDeleteDialog>
-    </>
+    <ConfirmDeleteDialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setStale(null);
+      }}
+      title={t("kb:editor.deleteTitle", { path })}
+      description={
+        !stale
+          ? t(
+              proposing || editor.proposal
+                ? "kb:editor.deleteProposalDescription"
+                : "kb:editor.deleteDescription",
+            )
+          : stale.proposalNumber !== null
+            ? t("kb:editor.deleteStaleProposal", {
+                number: stale.proposalNumber,
+                sha: stale.headSha.slice(0, 12),
+              })
+            : t("kb:editor.deleteStale", { sha: stale.headSha.slice(0, 12) })
+      }
+      confirmToken="DELETE"
+      typePrompt={t("kb:editor.deletePrompt")}
+      copyAriaLabel={t("kb:editor.copyToken")}
+      isPending={editor.pending}
+      // Reconfirming deletes the reported head: only after it was read and shown.
+      disabled={stale !== null && !head.ready}
+      onConfirm={() => void send(stale ?? undefined)}
+    >
+      {stale && <RevisionPreview lang={lang} kbId={kbId} rev={stale.headSha} state={head} />}
+    </ConfirmDeleteDialog>
   );
 }
 
@@ -1064,12 +1339,15 @@ export function KbProposalDocumentEditor({
   kb,
   number,
   path,
+  draftOwner,
   onLeave,
 }: {
   lang: string;
   kb: ProposalModeKb;
   number: number;
   path: string;
+  /** The signed-in person's actor key: unsaved drafts are theirs only (null: none kept). */
+  draftOwner: string | null;
   /** Leave PR mode: open the document as main has it. */
   onLeave: () => void;
 }) {
@@ -1129,6 +1407,7 @@ export function KbProposalDocumentEditor({
         entry,
       }}
       leave={leave}
+      draftOwner={draftOwner}
     />
   );
 }
@@ -1151,11 +1430,13 @@ function ProposalModeVersions({
   path,
   opened,
   leave,
+  draftOwner,
 }: {
   lang: string;
   kb: ProposalModeKb;
   number: number;
   path: string;
+  draftOwner: string | null;
   opened: {
     yoursSha: string;
     mainSha: string;
@@ -1202,6 +1483,7 @@ function ProposalModeVersions({
       onMain={theirs.read.data !== undefined}
       source={source}
       leave={leave}
+      draftOwner={draftOwner}
     />
   );
 }
@@ -1218,6 +1500,7 @@ function ProposalModeSession({
   onMain,
   source,
   leave,
+  draftOwner,
 }: {
   lang: string;
   kb: ProposalModeKb;
@@ -1233,15 +1516,41 @@ function ProposalModeSession({
   /** The version the draft starts from; null when both sides deleted it. */
   source: { markdown: string; commitSha: string; assetRefs: AssetRef[] } | null;
   leave: ReactNode;
+  draftOwner: string | null;
 }) {
   const { t } = useTranslation("kb");
+  // Unsaved work kept in this tab (the signed-in person's own). A recovered
+  // draft writes against the main and PR heads it was written on, so a PR
+  // or main that moved since is a conflict, never an overwrite.
+  const [key] = useState(() =>
+    draftOwner === null
+      ? null
+      : draftKey({ userId: draftOwner, kbId: kb.id, path, proposal: number, resolving: true }),
+  );
+  const [recovered] = useState<StoredDraft | null>(() => {
+    const stored = key ? readDraft(key) : null;
+    return stored && stored.markdown !== (source?.markdown ?? "") ? stored : null;
+  });
   // Writes go against main with the PR named at the head PR mode read.
   const editor = useKbEditor({
     target: { kbId: kb.id, path, target: { kind: "proposal", number } },
     initialMarkdown: source?.markdown ?? "",
-    baseRevision: mainSha,
-    proposalHead: prHeadSha,
+    baseRevision: recovered?.base ?? mainSha,
+    proposalHead: recovered?.proposalHead ?? prHeadSha,
     initialExists: !deleted,
+    recovered: recovered
+      ? { markdown: recovered.markdown, images: recovered.images ?? [] }
+      : undefined,
+  });
+  useDocumentDraft({
+    key,
+    dirty: editor.dirty,
+    pending: editor.pending,
+    markdown: editor.markdown,
+    base: editor.baseRevision,
+    proposalHead: editor.proposalHead ?? undefined,
+    images: editor.stagedImages,
+    pendingUpload: editor.pendingUpload,
   });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const theirs = useRevisionRead(kb.id, path, entry?.theirsSha ?? mainSha);
@@ -1259,6 +1568,16 @@ function ProposalModeSession({
       >
         <p className="font-medium">{t("prMode.title", { number })}</p>
         <p>{t("prMode.body")}</p>
+        {recovered && editor.dirty && (
+          <p data-testid="pr-mode-draft-recovered">
+            {t("draft.recovered", {
+              time: new Date(recovered.savedAt).toLocaleTimeString(lang, {
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            })}
+          </p>
+        )}
         {!resolved && entry && source && (
           <p data-testid="pr-mode-conflict">
             {t(entry.standing ? "prMode.standing" : "prMode.conflict")}
@@ -1345,6 +1664,8 @@ function ProposalModeSession({
           viewingRevision={null}
           preview={{ rev: source.commitSha, assets: source.assetRefs }}
           onOpenLatest={() => {}}
+          // Leaving PR mode is in the editor bar too, next to Save.
+          doneAction={leave}
         />
       ) : (
         editor.outcome && (

@@ -447,7 +447,11 @@ export function KbRenderedDocument({
     ],
   );
   return (
-    <article data-testid="kb-rendered-document" className="min-w-0 space-y-4">
+    <article
+      data-testid="kb-rendered-document"
+      data-revision={document.commitSha}
+      className="min-w-0 space-y-4"
+    >
       {showRevision && (
         <p className="text-xs text-muted-foreground">
           {t("viewer.revision", { sha: document.commitSha.slice(0, 12) })}

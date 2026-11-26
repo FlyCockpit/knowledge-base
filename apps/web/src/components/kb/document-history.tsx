@@ -75,6 +75,15 @@ export function visibleHistoryRows<R>(
   return denied ? [] : (pages ?? []).flatMap((page) => [...(page?.items ?? [])]);
 }
 
+/** The history's pages: one query, shared by the list and a deleted document's notice. */
+export function documentHistoryOptions(kbId: string, path: string) {
+  return orpc.documents.history.infiniteOptions({
+    input: (cursor: string | undefined) => ({ kbId, path, limit: 20, cursor }),
+    initialPageParam: undefined,
+    getNextPageParam: (last) => last?.nextCursor ?? undefined,
+  });
+}
+
 export function DocumentHistory({
   lang,
   kbId,
@@ -85,13 +94,7 @@ export function DocumentHistory({
   path: string;
 }) {
   const { t } = useTranslation("kb");
-  const history = useInfiniteQuery(
-    orpc.documents.history.infiniteOptions({
-      input: (cursor: string | undefined) => ({ kbId, path, limit: 20, cursor }),
-      initialPageParam: undefined,
-      getNextPageParam: (last) => last?.nextCursor ?? undefined,
-    }),
-  );
+  const history = useInfiniteQuery(documentHistoryOptions(kbId, path));
   const {
     data,
     error,

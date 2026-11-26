@@ -13,7 +13,7 @@ import i18n, { createRequestI18n } from "./i18n";
 import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
 import { canonicalOriginFromDocument, parseCanonicalOrigin } from "./lib/public-home-head";
 import { routeTree } from "./routeTree.gen";
-import { friendly } from "./utils/friendly-error";
+import { friendly, isNotFound } from "./utils/friendly-error";
 import { orpc } from "./utils/orpc";
 
 // Read the per-request CSP nonce forwarded by the API server on the
@@ -83,6 +83,11 @@ export function getRouter() {
         // cache below — so a flaky connection doesn't spam toasts on top of
         // the InlineRetry the page already shows.
         if (query.meta?.skipGlobalErrorToast) return;
+        // A read answering "not found" is a state of the page that asked
+        // (a deleted document, an invitation's KB before it is accepted, a
+        // revoked share), and every page renders it in place. A toast
+        // offering "Try again" on top would be false: retrying can't help.
+        if (isNotFound(error)) return;
         toast.error(friendly(error), {
           action: {
             label: i18n.t("common:actions.tryAgain"),

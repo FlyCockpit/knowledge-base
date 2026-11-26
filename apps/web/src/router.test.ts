@@ -94,6 +94,46 @@ describe("query error toast retry", () => {
   });
 });
 
+it.each([
+  { error: Object.assign(new Error("gone"), { code: "NOT_FOUND" }), toasts: false },
+  { error: Object.assign(new Error("gone"), { status: 404 }), toasts: false },
+  { error: Object.assign(new Error("denied"), { code: "FORBIDDEN" }), toasts: true },
+  { error: Object.assign(new Error("busy"), { status: 429 }), toasts: true },
+])(
+  "a read failing with $error.message toasts only when retrying can help",
+  async ({ error, toasts }) => {
+    vi.stubGlobal("window", {});
+    const client = getRouter().options.context.queryClient;
+    try {
+      await expect(
+        client.fetchQuery({ queryKey: ["kb"], queryFn: () => Promise.reject(error), retry: false }),
+      ).rejects.toBe(error);
+      expect(vi.mocked(toast.error).mock.calls.length > 0).toBe(toasts);
+    } finally {
+      client.clear();
+      vi.mocked(toast.error).mockClear();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it("still toasts a mutation that finds nothing: an action the user took failed", async () => {
+  vi.stubGlobal("window", {});
+  const client = getRouter().options.context.queryClient;
+  try {
+    const mutation = client.getMutationCache().build(client, {
+      mutationFn: () => Promise.reject(Object.assign(new Error("gone"), { code: "NOT_FOUND" })),
+      retry: false,
+    });
+    await expect(mutation.execute(undefined)).rejects.toThrow("gone");
+    expect(toast.error).toHaveBeenCalledOnce();
+  } finally {
+    client.clear();
+    vi.mocked(toast.error).mockClear();
+    vi.unstubAllGlobals();
+  }
+});
+
 it.each([true, false])(
   "a mutation with skipGlobalErrorToast=%s toasts its failure only without it",
   async (skip) => {

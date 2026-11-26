@@ -46,7 +46,7 @@
     "conflict": "Alguien más cambió estos detalles. Tu borrador se conserva. Cierra y vuelve a abrir para cargar la versión más reciente.",
     "error": "No se pudieron guardar los detalles.",
     "deleteTitle": "¿Eliminar {{name}}?",
-    "deleteDescription": "La base de conocimiento se elimina para todos. Solo su propietario puede hacerlo.",
+    "deleteDescription": "La base de conocimiento, sus documentos y su historial se eliminan para todos, y no se puede restaurar. Para conservar una copia, usa primero Descargar en cualquiera de sus documentos. Solo su propietario puede hacer esto.",
     "deletePrompt": "Escribe DELETE para confirmar",
     "copyToken": "Copiar texto de confirmación",
     "deleted": "Base de conocimiento eliminada.",
@@ -120,7 +120,36 @@
     "uploadExpired": "Una subida caducó antes de guardarse. Vuelve a insertar las imágenes nuevas y guarda.",
     "tooManyImages": "Un guardado puede agregar como máximo {{max}} imágenes nuevas. Quita algunos enlaces de imagen, guarda y luego inserta las demás.",
     "offline": "No tienes conexión. El cambio se enviará cuando te reconectes.",
-    "deleteProposalDescription": "La eliminación se propone en tu solicitud de cambios. La rama principal no cambia hasta que un revisor la integre. Las revisiones anteriores permanecen en el historial."
+    "deleteProposalDescription": "La eliminación se propone en tu solicitud de cambios. La rama principal no cambia hasta que un revisor la integre. Las revisiones anteriores permanecen en el historial.",
+    "pathIssue": {
+      "empty": "Escribe una ruta, p. ej., notas/reunion.md.",
+      "absolute": "Usa una ruta relativa sin / inicial ni letra de unidad, p. ej., notas/reunion.md.",
+      "segment": "Quita los nombres de carpeta vacíos, . o .. (por ejemplo, una / doble o una / final).",
+      "characters": "Quita de la ruta las barras invertidas o los caracteres de control invisibles.",
+      "portable": "Los nombres no pueden contener < > : \" | ? * ni empezar o terminar con un espacio o un punto.",
+      "reserved": "Ese nombre está reservado (por ejemplo, .git, .assets o con). Elige otro.",
+      "tooLong": "La ruta es demasiado larga. Usa como máximo 512 bytes.",
+      "tooDeep": "La ruta tiene demasiadas carpetas. Usa como máximo 31.",
+      "notMarkdown": "Las rutas de documentos terminan en .md, p. ej., notas/reunion.md.",
+      "exists": "Ya existe un documento en esta ruta. Elige otra ruta o abre ese documento.",
+      "caseCollision": "Otro documento o carpeta tiene esta ruta con otras mayúsculas. Elige otra ruta.",
+      "invalid": "No se puede usar esta ruta. Usa letras, dígitos, - y _, carpetas separadas por / y termina en .md."
+    },
+    "contentIssue": {
+      "frontMatter": "El front matter (el bloque --- del inicio) no es válido. Corrígelo o quítalo y vuelve a guardar.",
+      "markdown": "El texto no se puede guardar como Markdown. Revisa si hay caracteres inusuales y vuelve a guardar.",
+      "characters": "El texto contiene caracteres de control invisibles. Quítalos y vuelve a guardar.",
+      "duplicateId": "Otro documento ya usa el id del front matter. Cámbialo o quítalo y vuelve a guardar.",
+      "sealed": "El texto hace referencia a un valor sellado que se revocó. Quita esa referencia y vuelve a guardar."
+    },
+    "unsaved": "Cambios sin guardar",
+    "saved": "Todos los cambios guardados",
+    "proposedStatus": "Enviado a la solicitud de cambios #{{number}}",
+    "noChanges": "No hay cambios sin guardar",
+    "discard": "Descartar cambios",
+    "discardTitle": "¿Descartar tus cambios?",
+    "discardDescription": "El borrador vuelve a la última versión guardada. Tus cambios se pierden.",
+    "oldRevisionRestore": "Estás viendo la revisión {{sha}}. Restáurala para que sea la versión más reciente, o abre la versión más reciente para editar."
   },
   "outcome": {
     "appliedTitle": "Guardado en main",
@@ -820,11 +849,20 @@
     "openMain": "Abrir la versión principal",
     "edit": "Editar",
     "suggest": "Sugerir cambios",
-    "doneEditing": "Terminar de editar",
+    "doneEditing": "Listo",
     "download": "Descargar",
     "downloadTitle": "Descargar o clonar",
     "downloadDescription": "Descarga esta revisión como archivo ZIP o clona la base de conocimiento con Git.",
-    "notFound": "Este documento no existe en esta revisión. Revisa la ruta o abre otra revisión."
+    "notFound": "Este documento no existe en esta revisión. Revisa la ruta o abre otra revisión.",
+    "deletedOn": "Este documento se eliminó el {{date}} ({{actor}}).",
+    "deletedRecoverable": "Sus versiones anteriores se quedan en el historial: restaura la última o abre cualquier revisión abajo.",
+    "deletedLoadFailed": "No se pudo comprobar si este documento se eliminó.",
+    "deletedToast": "Se eliminó {{path}}.",
+    "undo": "Deshacer",
+    "moreActions": "Más acciones",
+    "lastSaved": "Guardado por última vez {{when}} por {{actor}}",
+    "lastSavedUnattributed": "Guardado por última vez {{when}}",
+    "lastSavedTitle": "{{date}} · revisión {{sha}} (leído en {{rev}})"
   },
   "prMode": {
     "pill": "Solicitud de cambios #{{number}}",
@@ -855,15 +893,15 @@
   "provenance": {
     "prefixed": "{{prefix}}: {{label}}",
     "human": {
-      "label": "Persona",
+      "label": "Por una persona",
       "description": "Escrito por una persona en la aplicación web. Los dreams no pueden cambiarlo."
     },
     "agent": {
-      "label": "Agente",
+      "label": "Por un agente",
       "description": "Escrito por la edición directa de un agente. Los dreams pueden actualizarlo."
     },
     "dream": {
-      "label": "Dream",
+      "label": "Por un dream",
       "description": "Escrito por un dream. Los dreams pueden actualizarlo."
     },
     "absent": {
@@ -884,5 +922,57 @@
     "unknownDate": "fecha desconocida",
     "noSubject": "(sin asunto)",
     "meta": "{{actor}} · {{date}} · {{sha}}"
+  },
+  "restore": {
+    "title": "¿Restaurar esta versión?",
+    "description": "{{path}} vuelve a su versión de la revisión {{sha}}. Se guarda como una revisión nueva; la versión actual se queda en el historial.",
+    "descriptionProposal": "Esto propone devolver {{path}} a su versión de la revisión {{sha}}, en tu solicitud de cambios. La rama principal no cambia hasta que un revisor la integre.",
+    "descriptionDeleted": "{{path}} vuelve con su versión de la revisión {{sha}}. Se guarda como una revisión nueva.",
+    "descriptionDeletedProposal": "Esto propone recuperar {{path}} con su versión de la revisión {{sha}}, en tu solicitud de cambios. La rama principal no cambia hasta que un revisor la integre.",
+    "loadFailed": "No se pudieron cargar las versiones para compararlas.",
+    "same": "La versión actual ya tiene este texto. No hay nada que restaurar.",
+    "changesLabel": "Cambios respecto a la versión actual",
+    "diffHint": "Las líneas marcadas con - se quitan de la versión actual; las marcadas con + vuelven.",
+    "diffDeleted": "El documento no existe ahora. Todo este texto vuelve.",
+    "unchangedLines_one": "{{count}} línea sin cambios",
+    "unchangedLines_other": "{{count}} líneas sin cambios",
+    "lineAdded": "Agregada: ",
+    "lineRemoved": "Quitada: ",
+    "cancel": "Cancelar",
+    "confirm": "Restaurar esta versión",
+    "confirmProposal": "Proponer la restauración",
+    "pending": "Restaurando…",
+    "restored": "Se restauró {{path}}.",
+    "open": "Abrir",
+    "conflict": "El documento cambió mientras lo revisabas. Revisa la versión actual arriba y vuelve a restaurar.",
+    "conflictProposal": "Tu solicitud de cambios abierta #{{number}} ya cambia este documento. Ábrela para restaurar la versión ahí.",
+    "conflictInProposal": "Tu pull request abierta #{{number}} ya cambia este documento. Los cambios de arriba son respecto a su versión; restaura de nuevo para poner esta versión en la pull request.",
+    "exists": "Mientras tanto se creó un documento en esta ruta. Ábrelo y restaura desde su historial.",
+    "restoreThis": "Restaurar esta versión",
+    "proposeThis": "Proponer restaurar esta versión",
+    "restoreLast": "Restaurar la última versión",
+    "proposeLast": "Proponer restaurar la última versión",
+    "viewLast": "Ver la última versión",
+    "undoFailed": "No se pudo restaurar {{path}}. Abre Eliminados recientemente en la página de la base de conocimiento para intentarlo de nuevo."
+  },
+  "draft": {
+    "recovered": "Tus cambios sin guardar de las {{time}} se conservaron en este dispositivo. Todavía no están guardados.",
+    "continue": "Seguir editando",
+    "unsaved": "Tienes cambios sin guardar en este documento. Esta página muestra la versión guardada."
+  },
+  "deleted": {
+    "title": "Eliminados recientemente",
+    "description": "Documentos eliminados de la rama principal en los últimos {{days}} días, del más reciente al más antiguo. Al restaurar uno, su última versión se guarda como una revisión nueva. Un documento eliminado antes todavía se abre desde su enlace, con su historial.",
+    "loadFailed": "No se pudieron cargar los documentos eliminados recientemente.",
+    "empty": "Ningún documento eliminado en los últimos {{days}} días sigue eliminado.",
+    "capped": "Solo se muestran las eliminaciones más recientes. Abre una más antigua desde su enlace.",
+    "cappedEmpty": "Ninguna de las eliminaciones más recientes sigue eliminada. Un documento eliminado antes todavía se abre desde su enlace.",
+    "meta": "Eliminado {{date}} · {{actor}}",
+    "view": "Ver",
+    "viewNamed": "Ver la última versión de {{path}}",
+    "restore": "Restaurar",
+    "restoreNamed": "Restaurar {{path}}",
+    "propose": "Proponer restauración",
+    "proposeNamed": "Proponer restaurar {{path}}"
   }
 }

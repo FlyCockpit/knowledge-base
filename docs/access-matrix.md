@@ -69,6 +69,7 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | List documents | implemented | deny | allow | deny | `documents.list` |
 | Get document | implemented | deny | allow | deny | `documents.get` |
 | Document history (bounded, read access) | implemented | deny | allow | deny | `documents.history` |
+| Recently deleted documents list (last 30 days, bounded, read access) | implemented | deny | allow | deny | `documents.deleted` |
 | Create document | implemented | deny | allow | deny | `documents.create` |
 | Update document | implemented | deny | allow | deny | `documents.update` |
 | Delete document | implemented | deny | allow | deny | `documents.delete` |

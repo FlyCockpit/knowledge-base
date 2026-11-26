@@ -1,6 +1,7 @@
 /** Real route/client/router regressions; faults occur AFTER real handlers. */
 import { randomUUID } from "node:crypto";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json" with { type: "json" };
+import enErrors from "@knowledge-base/locales/src/en-US/errors.json" with { type: "json" };
 import enKb from "@knowledge-base/locales/src/en-US/kb.json" with { type: "json" };
 import { expect, type Page, type Request, test } from "@playwright/test";
 import { minimalPng } from "../../../packages/api/src/lib/kb/fixtures/media-bytes";
@@ -233,7 +234,7 @@ test("offline save explains its pause and resumes the same draft", async ({ page
   await boot(page);
   const kb = await createKb(page, "Before offline");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue(human("Before offline"));
+  await expect(markdown(page)).toHaveValue("Before offline");
   await markdown(page).fill("Saved after reconnecting");
   await page.context().setOffline(true);
   try {
@@ -346,7 +347,7 @@ test("cached document pins its own commit, preserves conflict draft and advances
   await boot(page);
   const kb = await createKb(page, "Snapshot A");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue(human("Snapshot A"));
+  await expect(markdown(page)).toHaveValue("Snapshot A");
   await go(page, at(kb.id));
   const remote = await page.evaluate(
     async ({ kbId, baseRevision, path }) => {
@@ -367,7 +368,7 @@ test("cached document pins its own commit, preserves conflict draft and advances
     { kbId: kb.id, baseRevision: kb.headSha!, path: docPath },
   );
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue(human("Snapshot A"));
+  await expect(markdown(page)).toHaveValue("Snapshot A");
   await markdown(page).fill("Local draft C");
   await save(page).click();
   await expect(page.getByText(enKb.outcome.conflictTitle, { exact: true })).toBeVisible();
@@ -376,9 +377,10 @@ test("cached document pins its own commit, preserves conflict draft and advances
   // The version that saving would replace is read and shown before adopting.
   await expect(page.getByTestId("revision-preview")).toContainText("Remote B");
   await page.getByRole("button", { name: enKb.outcome.adoptHead }).click();
-  await expect(
-    page.getByText(`Editing on ${remote.commitSha.slice(0, 12)}`, { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByTestId("editor-save-status")).toHaveAttribute(
+    "data-base-revision",
+    remote.commitSha,
+  );
   await save(page).click();
   await expect(page.getByText(enKb.outcome.appliedTitle, { exact: true })).toBeVisible();
   await markdown(page).fill("Next draft D");
@@ -455,7 +457,7 @@ for (const existing of [false, true])
     }, a.id);
     await expect(markdown(page)).toHaveValue("A unsaved private draft");
     await go(page, at(b.id, existing ? docPath : ""));
-    await expect(markdown(page)).toHaveValue(existing ? human("Private B") : "");
+    await expect(markdown(page)).toHaveValue(existing ? "Private B" : "");
     if (!existing)
       await expect(page.getByLabel(enKb.editor.pathLabel, { exact: true })).toHaveValue("");
   });
@@ -489,7 +491,7 @@ test("retired editor delete cannot navigate away from cached successor", async (
   await prime(page, b.id);
   await go(page, at(a.id, docPath));
   const hold = await holdOnce(page, "documents", "delete");
-  await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
+  await openDelete(page);
   const dialog = page.getByRole("alertdialog");
   await dialog.getByPlaceholder("DELETE").fill("DELETE");
   await dialog.getByRole("button", { name: enCommon.actions.delete, exact: true }).press("Enter");
@@ -533,6 +535,12 @@ test("a recovered create leaves New document with the live draft; its path stays
 const readAt = (kbId: string, path = docPath) =>
   `/en-US/kbs/${kbId}/documents?${new URLSearchParams({ path })}`;
 
+/** Open Delete document from the document's More actions menu. */
+async function openDelete(page: Page) {
+  await page.getByTestId("document-more").click();
+  await page.getByRole("menuitem", { name: enKb.editor.delete, exact: true }).click();
+}
+
 /** Confirm the open Delete document dialog. */
 async function confirmDelete(page: Page) {
   const dialog = page.getByRole("alertdialog");
@@ -575,7 +583,7 @@ test("header delete after a proposed edit targets the proposal head", async ({ p
   );
   expect(proposalHead).toMatch(/^[0-9a-f]{40}$/);
   // The same session's Delete writes against the proposal it just advanced to.
-  await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
+  await openDelete(page);
   await confirmDelete(page);
   // Deleted in the proposal is a state of its own, never a failed read
   // (its head read reports PATH_NOT_FOUND) and nothing deletes it again.
@@ -589,9 +597,7 @@ test("header delete after a proposed edit targets the proposal head", async ({ p
   const deletedState = async () => {
     await expect(notice).toBeVisible();
     await expect(page.getByText(enKb.editor.loadFailed)).toHaveCount(0);
-    await expect(page.getByRole("button", { name: enKb.editor.delete, exact: true })).toHaveCount(
-      0,
-    );
+    await expect(page.getByTestId("document-more")).toHaveCount(0);
     await expect(markdown(page)).toHaveCount(0);
   };
   await deletedState();
@@ -703,11 +709,10 @@ for (const existing of [false, true])
     );
     await page.getByRole("link", { name: enKb.document.doneEditing, exact: true }).click();
     await expect(page.getByTestId("kb-rendered-document")).toContainText("Draft with image");
-    await expect(
-      page.getByText(enKb.document.revision.replace("{{sha}}", imageHead.slice(0, 12)), {
-        exact: true,
-      }),
-    ).toBeVisible();
+    await expect(page.getByTestId("kb-rendered-document")).toHaveAttribute(
+      "data-revision",
+      imageHead,
+    );
     await page.getByTestId("document-edit").click();
     await expect(markdown(page)).toHaveValue(/Draft with image/);
     // Reload reopens the proposal's head; the next save extends it.
@@ -721,18 +726,18 @@ for (const existing of [false, true])
     // switched in place (the route stays mounted) and through history.
     if (existing) {
       await go(page, at(kb.id, docPath));
-      await expect(markdown(page)).toHaveValue(human("Main text"));
+      await expect(markdown(page)).toHaveValue("Main text");
       await page.goBack();
-      await expect(markdown(page)).toHaveValue(human("Four"));
+      await expect(markdown(page)).toHaveValue("Four");
       await page.goForward();
-      await expect(markdown(page)).toHaveValue(human("Main text"));
+      await expect(markdown(page)).toHaveValue("Main text");
       await page.goBack();
-      await expect(markdown(page)).toHaveValue(human("Four"));
+      await expect(markdown(page)).toHaveValue("Four");
     }
     // Leave and return: still the same proposal.
     await go(page, at(kb.id));
     await go(page, proposalHref.pathname + proposalHref.search);
-    await expect(markdown(page)).toHaveValue(human("Four"));
+    await expect(markdown(page)).toHaveValue("Four");
     await save("Five", 6);
     // A failed proposal lookup never falls back to main; its retry recovers it.
     await go(page, at(kb.id));
@@ -741,7 +746,7 @@ for (const existing of [false, true])
     await expect(page.getByText(`Couldn't load pull request #${number}.`)).toBeVisible();
     await expect(markdown(page)).toHaveCount(0);
     await page.getByRole("button", { name: enCommon.actions.tryAgain, exact: true }).click();
-    await expect(markdown(page)).toHaveValue(human("Five"));
+    await expect(markdown(page)).toHaveValue("Five");
     await save("Six", 7);
     // Main never changed.
     if (existing) expect((await read(page, kb.id)).markdown).toBe(human("Main text"));
@@ -767,7 +772,7 @@ test("a reopened page's delete updates the open proposal and shows its numbered 
   await go(page, readAt(kb.id));
   await expect(page.getByTestId("kb-rendered-document")).toContainText("Main text");
   const bases = watchDeletes(page);
-  await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
+  await openDelete(page);
   await confirmDelete(page);
   const again = page.getByRole("alertdialog");
   await expect(again).toContainText(/Your open proposal #\d+ already has changes/);
@@ -826,7 +831,7 @@ test("delete after a concurrent edit re-reads, asks again and deletes the latest
     },
     { kbId: kb.id, baseRevision: kb.headSha!, path: docPath },
   );
-  await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
+  await openDelete(page);
   await confirmDelete(page);
   // Nothing was deleted: the dialog shows the reported head and asks again.
   const dialog = page.getByRole("alertdialog");
@@ -871,7 +876,7 @@ test("a failed re-read of the reported head keeps delete disabled until Retry su
       return route.abort("failed");
     return route.continue();
   });
-  await page.getByRole("button", { name: enKb.editor.delete, exact: true }).click();
+  await openDelete(page);
   await confirmDelete(page);
   const dialog = page.getByRole("alertdialog");
   const preview = dialog.getByTestId("revision-preview");
@@ -1732,7 +1737,7 @@ test("receipt advances a live session without discarding typing during a held sa
   ).toBe(true);
   await as(page, "manager");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue(human("Main text"));
+  await expect(markdown(page)).toHaveValue("Main text");
   const held = await holdOnce(page, "documents", "update");
   await markdown(page).fill("Saved One");
   await page.getByTestId("editor-save").click();
@@ -1789,7 +1794,7 @@ test("a new session cannot use cached proposal bytes after New document and fail
   await expect(page.getByText(`Couldn't load pull request #${number}.`)).toBeVisible();
   await expect(markdown(page)).toHaveCount(0);
   await page.getByRole("button", { name: enCommon.actions.tryAgain, exact: true }).click();
-  await expect(markdown(page)).toHaveValue(human("Advanced elsewhere"));
+  await expect(markdown(page)).toHaveValue("Advanced elsewhere");
 });
 
 for (const write of ["text", "image"] as const)
@@ -1808,7 +1813,7 @@ for (const write of ["text", "image"] as const)
         await as(page, "manager");
       }
       await go(page, at(kb.id, docPath));
-      await expect(markdown(page)).toHaveValue(human("ORIGINAL MAIN"));
+      await expect(markdown(page)).toHaveValue("ORIGINAL MAIN");
       // Document failures on a later proposal head also must not expose a
       // previous proposal revision as a fallback.
       if (refresh === "document") {
@@ -1901,7 +1906,7 @@ test("a held proposal receipt preserves Done editing selected while saving", asy
   ).toBe(true);
   await as(page, "manager");
   await go(page, at(kb.id, docPath));
-  await expect(markdown(page)).toHaveValue(human("ORIGINAL MAIN"));
+  await expect(markdown(page)).toHaveValue("ORIGINAL MAIN");
   const held = await holdOnce(page, "documents", "update");
   await markdown(page).fill("SAVED PROPOSAL");
   await page.getByTestId("editor-save").click();
@@ -1937,7 +1942,7 @@ for (const write of ["update", "image", "create"] as const)
       await page.getByLabel(enKb.editor.pathLabel).fill(path);
     } else {
       await go(page, at(kbA.id, docPath));
-      await expect(markdown(page)).toHaveValue(human("MAIN A"));
+      await expect(markdown(page)).toHaveValue("MAIN A");
     }
     // An image is staged and then committed by the held save.
     const held = await holdOnce(page, "documents", write === "create" ? "create" : "update");
@@ -1987,7 +1992,7 @@ for (const write of ["update", "image", "create"] as const)
     const url = new URL(page.url());
     expect(url.pathname).toContain(kbB.id);
     expect(url.searchParams.has("proposal")).toBe(false);
-    await expect(markdown(page)).toHaveValue(human("MAIN B"));
+    await expect(markdown(page)).toHaveValue("MAIN B");
     // The receipt itself was real: A has the writer's proposal.
     const open = await page.evaluate(
       ({ kbId }) =>
@@ -2069,3 +2074,122 @@ for (const status of ["CLOSED", "MERGED"] as const)
         status === "MERGED" ? "PROPOSED" : "MAIN TEXT",
       );
     });
+
+/** Actions in these flows fail with Playwright's action log instead of the test timeout. */
+const ACTION_MS = 15_000;
+
+test("Discard changes on a new draft clears its path and text, after asking", async ({ page }) => {
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, at(kb.id, ""));
+  const status = page.getByTestId("editor-save-status");
+  await expect(status).toHaveAttribute("data-dirty", "false");
+  await page.getByLabel(enKb.editor.pathLabel).fill("notes/draft.md", { timeout: ACTION_MS });
+  await markdown(page).fill("Draft text", { timeout: ACTION_MS });
+  await expect(status).toHaveAttribute("data-dirty", "true");
+  await expect(status).toHaveText(enKb.editor.unsaved);
+  // Discard lives in the editor bar's More actions menu and asks first.
+  await page.getByTestId("document-more").click({ timeout: ACTION_MS });
+  await page
+    .getByRole("menuitem", { name: enKb.editor.discard, exact: true })
+    .click({ timeout: ACTION_MS });
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText(enKb.editor.discardTitle);
+  // Keyboard activation: the harness loads no app CSS, so a modal's inert
+  // layer is unstyled and would swallow a pointer click (as in kb-pr.spec).
+  await confirm
+    .getByRole("button", { name: enKb.editor.discard, exact: true })
+    .press("Enter", { timeout: ACTION_MS });
+  await expect(page.getByLabel(enKb.editor.pathLabel)).toHaveValue("");
+  await expect(markdown(page)).toHaveValue("");
+  await expect(status).toHaveAttribute("data-dirty", "false");
+});
+
+test("an earlier revision is restored as a new one after its diff is shown", async ({ page }) => {
+  await boot(page);
+  const kb = await createKb(page, "Version one");
+  const first = kb.headSha!;
+  await page.evaluate(
+    ({ kbId, baseRevision, path }) =>
+      window.__kbEditor.orpc.documents.update.call({
+        kbId,
+        baseRevision,
+        path,
+        content: { markdown: "Version two" },
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    { kbId: kb.id, baseRevision: first, path: docPath },
+  );
+  await go(
+    page,
+    `/en-US/kbs/${kb.id}/documents?${new URLSearchParams({ path: docPath, rev: first })}`,
+  );
+  await page.getByTestId("document-restore").click({ timeout: ACTION_MS });
+  const dialog = page.getByTestId("restore-dialog");
+  const diff = dialog.getByTestId("restore-diff");
+  await expect(diff).toContainText("Version two");
+  await expect(diff).toContainText("Version one");
+  await dialog.getByTestId("restore-confirm").press("Enter", { timeout: ACTION_MS });
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).searchParams.get("rev")).toBeNull();
+  await expect.poll(async () => (await read(page, kb.id)).markdown).toBe(human("Version one"));
+  await expect(page.getByText(enErrors.notFound)).toHaveCount(0);
+});
+
+test("a deleted document comes back with Undo, with no false not-found toast", async ({ page }) => {
+  await boot(page);
+  const kb = await createKb(page, "Keep me");
+  await go(page, `/en-US/kbs/${kb.id}/documents?${new URLSearchParams({ path: docPath })}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Keep me");
+  // Delete is in More actions, not next to Edit.
+  await expect(page.getByRole("button", { name: enKb.editor.delete, exact: true })).toHaveCount(0);
+  await openDelete(page);
+  await confirmDelete(page);
+  await expect(
+    page.getByText(enKb.document.deletedToast.replace("{{path}}", docPath)),
+  ).toBeVisible();
+  await expect(page.getByText(enErrors.notFound)).toHaveCount(0);
+  // The toast shows its action once expanded (hover, or its own autopilot).
+  await page
+    .getByText(enKb.document.deletedToast.replace("{{path}}", docPath))
+    .hover({ timeout: ACTION_MS });
+  // The toast library renders its action as a link-styled button (`<a>`).
+  await page
+    .getByRole("link", { name: enKb.document.undo, exact: true })
+    .click({ timeout: ACTION_MS });
+  // Until Undo's save lands the document is still deleted, and a throwing
+  // poll callback is not retried: read "not there yet" as null.
+  await expect
+    .poll(async () => (await read(page, kb.id).catch(() => null))?.markdown ?? null)
+    .toBe(human("Keep me"));
+  await expect(page.getByText(enErrors.notFound)).toHaveCount(0);
+});
+
+test("Recently deleted on the KB page lists a deleted document and says its window", async ({
+  page,
+}) => {
+  await boot(page);
+  const kb = await createKb(page, "Gone soon");
+  await go(page, `/en-US/kbs/${kb.id}/documents?${new URLSearchParams({ path: docPath })}`);
+  await openDelete(page);
+  await confirmDelete(page);
+  await expect(
+    page.getByText(enKb.document.deletedToast.replace("{{path}}", docPath)),
+  ).toBeVisible();
+  await go(page, `/en-US/kbs/${kb.id}`);
+  const toggle = page.getByTestId("deleted-documents-toggle");
+  await expect(toggle).toHaveText(enKb.deleted.title);
+  await toggle.click({ timeout: ACTION_MS });
+  await expect(
+    page.getByText(enKb.deleted.description.replace("{{days}}", "30"), { exact: true }),
+  ).toBeVisible();
+  const list = page.getByTestId("deleted-documents");
+  await expect(list).toContainText(docPath);
+  await expect(
+    list.getByRole("link", {
+      name: enKb.deleted.viewNamed.replace("{{path}}", docPath),
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText(enKb.deleted.capped)).toHaveCount(0);
+});

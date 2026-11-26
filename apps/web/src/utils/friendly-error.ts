@@ -55,6 +55,16 @@ export function isRateLimit(error: unknown): boolean {
   return e.status === 429 || e.code === "TOO_MANY_REQUESTS";
 }
 
+/**
+ * True for a NOT_FOUND / 404 answer. A query answering this renders it as
+ * the page's own state, so the global query toast skips it (`router.tsx`).
+ */
+export function isNotFound(error: unknown): boolean {
+  const e = asErrorShape(error);
+  if (!e) return false;
+  return e.status === 404 || e.code === "NOT_FOUND";
+}
+
 type ErrorShape = {
   status?: number;
   code?: string;

@@ -183,7 +183,7 @@ async function readCommitBatch(
 }
 
 /** `<spec>` → blob sha and size through one `git cat-file --batch-check`; absent when missing. */
-async function batchCheckBlobs(
+export async function batchCheckBlobs(
   repoPath: string,
   specs: readonly string[],
   options: GitReadOptions,

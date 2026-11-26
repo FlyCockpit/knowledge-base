@@ -7,7 +7,9 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useRef, useState } from "react";
 import z from "zod";
 
+import { forgetKbDrafts } from "@/hooks/use-document-draft";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
+import { type DocumentPathIssue, pathIssueFromReason } from "@/lib/document-path";
 import { orpc } from "@/utils/orpc";
 
 /**
@@ -118,7 +120,37 @@ export type EditorOutcome =
   | {
       kind: "error";
       reason: "tooLarge" | "rejected" | "gone" | "uploadExpired" | "tooManyImages" | "unknown";
+      /** A refusal naming the path: shown under the path field. */
+      pathIssue?: DocumentPathIssue;
+      /** A refusal naming the content, by its closed reason. */
+      contentIssue?: ContentIssue;
     };
+
+/** Why the server refused a draft's content (`kb:editor.contentIssue.<issue>`). */
+export type ContentIssue = "frontMatter" | "markdown" | "characters" | "duplicateId" | "sealed";
+
+const CONTENT_ISSUES: Record<string, ContentIssue> = {
+  INVALID_FRONT_MATTER: "frontMatter",
+  INVALID_MARKDOWN: "markdown",
+  CONTROL_CHARACTER: "characters",
+  DUPLICATE_DOCUMENT_ID: "duplicateId",
+  SEALED_REFERENCE_REVOKED: "sealed",
+};
+
+/** The refused rule and field a save refusal names (`documentErrorToOrpc`), if any. */
+function refusalDetails(error: unknown): EditorOutcome {
+  const details = (error as { data?: { details?: { reason?: unknown; field?: unknown } } } | null)
+    ?.data?.details;
+  const reason = details?.reason;
+  if (reason === "TOO_LARGE") return { kind: "error", reason: "tooLarge" };
+  if (details?.field === "/path") {
+    return { kind: "error", reason: "rejected", pathIssue: pathIssueFromReason(reason) };
+  }
+  const contentIssue = typeof reason === "string" ? CONTENT_ISSUES[reason] : undefined;
+  return contentIssue
+    ? { kind: "error", reason: "rejected", contentIssue }
+    : { kind: "error", reason: "rejected" };
+}
 
 /**
  * One save's exact request: what a retry resends, byte for byte, with the
@@ -260,6 +292,8 @@ export function describeEditorError(error: unknown): EditorOutcome {
   switch (code) {
     case "CONFLICT": {
       const details = (error as { data?: { details?: unknown } }).data?.details;
+      if ((details as { reason?: unknown } | undefined)?.reason === "PATH_EXISTS")
+        return { kind: "error", reason: "rejected", pathIssue: "exists" };
       return conflictOutcome(details);
     }
     case "NOT_FOUND":
@@ -267,6 +301,7 @@ export function describeEditorError(error: unknown): EditorOutcome {
       return { kind: "error", reason: "gone" };
     case "BAD_REQUEST":
     case "INVALID_ARGUMENT":
+      return refusalDetails(error);
     case "IDEMPOTENCY_MISMATCH":
     case "UPLOAD_INCOMPLETE":
       return { kind: "error", reason: "rejected" };
@@ -802,6 +837,7 @@ export function useClearSealedWhenNotOwner(kbId: string, isOwner: boolean | unde
 /** Access is gone: forget the KB's private data and re-derive the KB list. */
 function forgetKb(queryClient: QueryClient, kbId: string): void {
   clearKbPrivateQueries(queryClient, kbId);
+  forgetKbDrafts(kbId);
   void queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
 }
 
@@ -892,7 +928,7 @@ export function useKbAccessLoss(kbId: string, errors: readonly unknown[]): boole
   return lost;
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
@@ -903,6 +939,13 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
  * waits for a save.
  */
 export type EditorStagedImage = StagedImage & { objectUrl: string; sentWith?: string };
+
+/**
+ * An image insertion still uploading: the placeholder block it wrote into
+ * the draft and the selection that block replaced. Kept drafts store the
+ * text as if the upload were abandoned now (`storableDraft`).
+ */
+export type PendingUpload = { inserted: string; selected: string };
 
 /**
  * Marks the waiting images the draft links as sent with save `saveId` and
@@ -1062,6 +1105,13 @@ export type SaveRun = SaveState & {
   savedRev: string | null;
   /** The last receipt of this run, also one recovered before a later refusal. */
   receipt: Receipt | null;
+  /** The text the last write receipt saved (or proposed), else null. */
+  savedMarkdown: string | null;
+  /**
+   * The head a delete this run applied was sent against: the revision whose
+   * version it deleted (an earlier unresolved save may have moved it), else null.
+   */
+  deletedFrom: string | null;
 };
 
 const receiptRev = (outcome: EditorOutcome): string | null =>
@@ -1106,6 +1156,8 @@ export async function runSave(
   const retired: EditorStagedImage[] = [];
   let savedRev: string | null = null;
   let receipt: Receipt | null = null;
+  let savedMarkdown: string | null = null;
+  let deletedFrom: string | null = null;
   if (draft.rebase) {
     document = { ...document, head: draft.rebase.headSha };
     proposal = proposalAfterAdopt({
@@ -1133,6 +1185,11 @@ export async function runSave(
       receipt = run.outcome;
       document = { exists: request.op.kind !== "delete", head: rev, path: request.op.path };
       proposal = proposalAfterSave(proposal, run.outcome);
+      savedMarkdown = request.op.kind === "delete" ? null : request.op.markdown;
+      deletedFrom =
+        request.op.kind === "delete" && run.outcome.kind === "applied"
+          ? request.baseRevision
+          : null;
     }
     return run.outcome;
   };
@@ -1145,6 +1202,8 @@ export async function runSave(
     retired,
     savedRev,
     receipt,
+    savedMarkdown,
+    deletedFrom,
   });
   const pending = memory.request;
   if (pending) {
@@ -1257,8 +1316,17 @@ export function useKbEditor(input: {
    * draft opens on path "" (the "New document" page).
    */
   target: EditingTarget;
+  /** The document's text as read (or "" for a new draft): what "saved" means. */
   initialMarkdown: string;
   baseRevision: string;
+  /**
+   * Unsaved work recovered for this target (`useDocumentDraft`): the draft
+   * opens with it, unsaved, and `baseRevision` is then the head it was
+   * written on, so a document that moved since is a conflict, never a
+   * silent overwrite. `path` is a new draft's typed path; `images` the
+   * uploads it links, staged again for its next save (no local preview).
+   */
+  recovered?: { markdown: string; path?: string; images?: readonly StagedImage[] };
   /** False for a document the next save creates (a new draft, or one its proposal deletes). */
   initialExists?: boolean;
   /**
@@ -1276,14 +1344,17 @@ export function useKbEditor(input: {
   const queryClient = useQueryClient();
   const session = useKbMutationSession();
   const kbId = input.target.kbId;
-  const [markdown, setMarkdown] = useState(input.initialMarkdown);
+  const [markdown, setMarkdown] = useState(input.recovered?.markdown ?? input.initialMarkdown);
+  // What the target holds as far as this session knows: the read, then
+  // each write receipt's text. The draft differing from it is unsaved.
+  const [savedMarkdown, setSavedMarkdown] = useState(input.initialMarkdown);
   // The session owns its target. Mirrored in a ref so an operation started
   // before React re-renders reads the target as it is now.
   const [owned, setOwnedState] = useState<SessionTarget>(() => ({
     document: {
       exists: input.initialExists ?? true,
       head: input.baseRevision,
-      path: input.target.path,
+      path: input.target.path === "" ? (input.recovered?.path ?? "") : input.target.path,
     },
     proposal:
       input.target.target.kind === "proposal"
@@ -1309,23 +1380,29 @@ export function useKbEditor(input: {
     [kbId, onTargetAdvance],
   );
   const [outcome, setOutcome] = useState<EditorOutcome | null>(null);
-  const create = useMutation(orpc.documents.create.mutationOptions());
-  const update = useMutation(orpc.documents.update.mutationOptions());
-  const remove = useMutation(orpc.documents.delete.mutationOptions());
-  const begin = useMutation(orpc.kbUploads.begin.mutationOptions());
-  const write = useMutation(orpc.kbUploads.write.mutationOptions());
-  const finish = useMutation(orpc.kbUploads.finish.mutationOptions());
-  // Image uploads report their own errors inline and wait out the upload
-  // budget, so their refusals must not raise the global error toast.
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  // Every save reports its outcome itself (the editor's notice, Delete's
+  // toast), so no refusal raises the global error toast on top. Image uploads
+  // also wait out the upload budget.
   const quiet = { meta: { skipGlobalErrorToast: true } };
+  const create = useMutation({ ...orpc.documents.create.mutationOptions(), ...quiet });
+  const update = useMutation({ ...orpc.documents.update.mutationOptions(), ...quiet });
+  const remove = useMutation({ ...orpc.documents.delete.mutationOptions(), ...quiet });
+  const begin = useMutation({ ...orpc.kbUploads.begin.mutationOptions(), ...quiet });
+  const write = useMutation({ ...orpc.kbUploads.write.mutationOptions(), ...quiet });
+  const finish = useMutation({ ...orpc.kbUploads.finish.mutationOptions(), ...quiet });
   const imageBegin = useMutation({ ...orpc.kbUploads.begin.mutationOptions(), ...quiet });
   const imageWrite = useMutation({ ...orpc.kbUploads.write.mutationOptions(), ...quiet });
   const imageFinish = useMutation({ ...orpc.kbUploads.finish.mutationOptions(), ...quiet });
   const partialImages = useRef<StagedImages>(new Map());
   // Finished image uploads waiting for the next save. The ref mirrors
   // the state so a save reads the list as it is when it is sent.
-  const [stagedImages, setStagedImagesState] = useState<EditorStagedImage[]>([]);
-  const stagedRef = useRef<EditorStagedImage[]>([]);
+  // A recovered draft's uploads, without their local preview URLs.
+  const [recoveredImages] = useState<EditorStagedImage[]>(() =>
+    (input.recovered?.images ?? []).map((image) => ({ ...image, objectUrl: "" })),
+  );
+  const [stagedImages, setStagedImagesState] = useState<EditorStagedImage[]>(recoveredImages);
+  const stagedRef = useRef<EditorStagedImage[]>(recoveredImages);
   const setStagedImages = useCallback((next: EditorStagedImage[]) => {
     stagedRef.current = next;
     setStagedImagesState(next);
@@ -1342,13 +1419,16 @@ export function useKbEditor(input: {
   const [pending, setPending] = useState(false);
   const submitting = useRef(false);
 
-  const submit = useCallback(
+  const execute = useCallback(
     /**
      * `rebase` is an explicit user decision after a conflict (like `adoptHead`):
      * send this intent against that reported head (and the proposal it heads)
      * instead of the session's base.
      */
-    async (intent: SaveIntent, rebase?: { headSha: string; proposalNumber: number | null }) => {
+    async (
+      intent: SaveIntent,
+      rebase?: { headSha: string; proposalNumber: number | null },
+    ): Promise<SaveRun | undefined> => {
       if (submitting.current || !session.current) return;
       submitting.current = true;
       setPending(true);
@@ -1381,6 +1461,7 @@ export function useKbEditor(input: {
           await followProposalHead(queryClient, kbId, run.proposal);
         if (session.current) {
           setOutcome(run.outcome);
+          if (run.savedMarkdown !== null) setSavedMarkdown(run.savedMarkdown);
           // One update of the session's target: document, proposal head and
           // record. A changed target is reported to the page (navigation).
           setOwned({
@@ -1432,7 +1513,7 @@ export function useKbEditor(input: {
           // NOT_FOUND may be a missing document, not a lost KB: re-check first.
           void recheckKbAccess(queryClient, kbId);
         }
-        return session.current ? run.outcome : undefined;
+        return session.current ? run : undefined;
       } finally {
         submitting.current = false;
         if (session.current) setPending(false);
@@ -1451,6 +1532,23 @@ export function useKbEditor(input: {
       setOwned,
       setStagedImages,
     ],
+  );
+  /** Save or delete; the outcome, or undefined for a retired session. */
+  const submit = useCallback(
+    async (intent: SaveIntent, rebase?: { headSha: string; proposalNumber: number | null }) =>
+      (await execute(intent, rebase))?.outcome,
+    [execute],
+  );
+  /**
+   * Delete the document. `deletedFrom` names the revision whose version the
+   * applied delete removed (for Undo), even after resolving an earlier save.
+   */
+  const deleteDocument = useCallback(
+    async (rebase?: { headSha: string; proposalNumber: number | null }) => {
+      const run = await execute({ kind: "delete" }, rebase);
+      return run && { outcome: run.outcome, deletedFrom: run.deletedFrom };
+    },
+    [execute],
   );
 
   /**
@@ -1535,9 +1633,20 @@ export function useKbEditor(input: {
     setOutcome(null);
   }, [outcome, setOwned]);
 
+  const discard = useCallback(() => {
+    setMarkdown(savedMarkdown);
+    // A new draft's typed path is part of it (unless a save already fixed it).
+    if (ownedRef.current.draft) setPath("");
+  }, [savedMarkdown, setPath]);
+  // A new draft is unsaved once anything is typed, its path included.
+  const dirty = markdown !== savedMarkdown || (owned.draft && owned.document.path.trim() !== "");
   return {
     markdown,
     setMarkdown,
+    /** The draft differs from what this session last read or saved. */
+    dirty,
+    /** Back to what the target holds: the explicit "Discard changes". */
+    discard,
     baseRevision: owned.document.head,
     /** The path this session writes (a new draft's typed path until it is fixed). */
     path: owned.document.path,
@@ -1559,7 +1668,13 @@ export function useKbEditor(input: {
       imageFinish,
     ].some((mutation) => mutation.isPaused),
     proposal: owned.proposal !== null,
+    /** The proposal head the next save names (PR mode, proposal targets), else null. */
+    proposalHead: owned.proposal?.headSha ?? null,
+    /** An image insertion still uploading (see `PendingUpload`), else null. */
+    pendingUpload,
+    setPendingUpload,
     submit,
+    deleteDocument,
     adoptHead,
     insertImage,
     stagedImages,
