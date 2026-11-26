@@ -362,6 +362,18 @@ export function createDeviceApprovalService(options: {
           return error("access_denied");
         }
         const minted = await mint(tx, intent.userId, selected, input.name, intent.patExpiresAt);
+        // Keep the public recipient the human compared at approval on the minted PAT, so
+        // the owner's sealed approval form can prefill it. It grants nothing by itself.
+        if (code.recipientKey) {
+          const registered = recipientKey.parse(code.recipientKey);
+          await tx.mcpPersonalToken.update({
+            where: { grantId: minted.grantId },
+            data: {
+              recipientKeyId: registered.recipientKeyId,
+              recipientPublicKey: registered.recipientPublicKey,
+            },
+          });
+        }
         for (const r of selected.recipients)
           await tx.sealedConsumerGrant.create({
             data: {

@@ -8,6 +8,7 @@ import {
   type ApplyResultLike,
   beginImageSave,
   clearKbPrivateQueries,
+  clearKbSealedQueries,
   confirmableConflict,
   DOCUMENT_STAGED_ASSETS_MAX,
   describeEditorError,
@@ -27,6 +28,7 @@ import {
   proposalAfterAdopt,
   proposalAfterSave,
   recheckKbAccess,
+  retireKbSealedData,
   retryAfterMs,
   runEditorOp,
   runImageStage,
@@ -433,6 +435,52 @@ describe("error classification", () => {
   });
 });
 
+describe("retireKbSealedData", () => {
+  it("drops cached sealed data on a refused read without a refetch loop", async () => {
+    const qc = new QueryClient();
+    const listKey = [["kbSealed", "list"], { type: "infinite", input: { kbId: KB, limit: 20 } }];
+    const usageKey = [["kbSealed", "usage"], { type: "query", input: { kbId: KB, recordIds: [] } }];
+    const otherKey = [["kbSealed", "list"], { type: "infinite", input: { kbId: OTHER_KB } }];
+    qc.setQueryData(listKey, { pages: [{ items: ["named value"] }] });
+    // The list refetch was refused: error kept, data still cached until retired.
+    await qc
+      .fetchQuery({
+        queryKey: listKey,
+        queryFn: () => Promise.reject(orpcError("FORBIDDEN")),
+        retry: false,
+      })
+      .catch(() => undefined);
+    qc.setQueryData(usageKey, { complete: true, usage: [] });
+    qc.setQueryData(otherKey, { pages: [] });
+    retireKbSealedData(qc, KB);
+    expect(qc.getQueryState(listKey)?.status).toBe("error");
+    expect(qc.getQueryData(listKey)).toBeUndefined();
+    expect(qc.getQueryData(usageKey)).toBeUndefined();
+    expect(qc.getQueryData(otherKey)).toEqual({ pages: [] });
+  });
+});
+
+describe("clearKbSealedQueries", () => {
+  it("drops owner-only sealed metadata for that KB only, on loss and on lost ownership", () => {
+    const qc = new QueryClient();
+    const sealedKey = (kbId: string) => [
+      ["kbSealed", "list"],
+      { type: "infinite", input: { kbId, limit: 20 } },
+    ];
+    const docKey = [["documents", "get"], { type: "query", input: { kbId: KB, path: "a.md" } }];
+    qc.setQueryData(sealedKey(KB), { pages: [] });
+    qc.setQueryData(sealedKey(OTHER_KB), { pages: [] });
+    qc.setQueryData(docKey, { markdown: "kept" });
+    clearKbSealedQueries(qc, KB);
+    expect(qc.getQueryData(sealedKey(KB))).toBeUndefined();
+    expect(qc.getQueryData(sealedKey(OTHER_KB))).toEqual({ pages: [] });
+    expect(qc.getQueryData(docKey)).toEqual({ markdown: "kept" });
+    qc.setQueryData(sealedKey(KB), { pages: [] });
+    clearKbPrivateQueries(qc, KB);
+    expect(qc.getQueryData(sealedKey(KB))).toBeUndefined();
+  });
+});
+
 describe("clearKbPrivateQueries", () => {
   it("removes every cached private query for that KB and keeps other KBs", () => {
     const qc = new QueryClient();
@@ -488,6 +536,31 @@ describe("recheckKbAccess (clear only on actual access loss)", () => {
     // The refreshed permission check replaces the stale owner flag.
     expect(qc.getQueryData(kbGetKey(KB))).toEqual(fresh);
     expect(qc.getQueryState(kbGetKey(KB))?.status).toBe("success");
+  });
+
+  it("a re-check that says the caller is no longer the owner drops only the sealed metadata", async () => {
+    const qc = seeded();
+    const sealedKey = [["kbSealed", "list"], { type: "infinite", input: { kbId: KB, limit: 20 } }];
+    qc.setQueryData(sealedKey, { pages: [] });
+    const owner = { kb: { id: KB, isOwner: true, capabilities: ["manage"] } };
+    expect(
+      await recheckKbAccess(
+        qc,
+        KB,
+        options(async () => owner),
+      ),
+    ).toBe("kept");
+    expect(qc.getQueryData(sealedKey)).toEqual({ pages: [] });
+    const manager = { kb: { id: KB, isOwner: false, capabilities: ["read", "manage"] } };
+    expect(
+      await recheckKbAccess(
+        qc,
+        KB,
+        options(async () => manager),
+      ),
+    ).toBe("kept");
+    expect(qc.getQueryData(sealedKey)).toBeUndefined();
+    expect(qc.getQueryData(docKey(KB))).toEqual({ markdown: "cached body" });
   });
 
   it.each([

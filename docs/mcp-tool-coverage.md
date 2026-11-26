@@ -95,9 +95,13 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbs.shareUpdate | human sharing |
 | kbs.transferAccept | human ownership transfer |
 | kbs.transferRequest | human ownership transfer |
+| kbSealed.consumers | human sealed approval token picker |
 | kbSealed.enroll | human sealed enrollment |
 | kbSealed.grant | human sealed consumer approval |
+| kbSealed.list | human sealed metadata (no ciphertext) |
 | kbSealed.revoke | human sealed revocation |
+| kbSealed.revokeGrant | human sealed approval revocation |
+| kbSealed.usage | human sealed document usage |
 | mcpConsent.approve | human consent |
 | mcpConsent.prepare | human consent |
 | mcpGrants.countActiveMine | human credential management |

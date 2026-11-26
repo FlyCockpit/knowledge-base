@@ -1244,6 +1244,9 @@ describe("device HTTP/PG boundary", () => {
       expect(pat.grant.acl).toEqual([]);
       expect(pat.grant.allowCreate).toBe(false);
       expect(pat.grant.sealedConsumerGrants).toEqual([]);
+      // No recipient was registered, so none is kept on the PAT.
+      expect(pat.recipientKeyId).toBeNull();
+      expect(pat.recipientPublicKey).toBeNull();
       expect(Date.parse(result.expiresAt) - Date.now()).toBeGreaterThan(89 * 86400000);
       const durable = JSON.stringify([
         row,
@@ -1777,6 +1780,11 @@ describe("device HTTP/PG boundary", () => {
         const pat = await prisma.mcpPersonalToken.findFirst({ where: { userId: f.user.id } });
         if (revoked) expect(pat).toBeNull();
         else {
+          // The registered public recipient stays on the PAT to prefill later approvals.
+          expect(pat).toMatchObject({
+            recipientKeyId: recipient.recipientKeyId,
+            recipientPublicKey: recipient.recipientPublicKey,
+          });
           const rows = await prisma.sealedConsumerGrant.findMany({
             where: { grantId: pat!.grantId },
             take: 2,

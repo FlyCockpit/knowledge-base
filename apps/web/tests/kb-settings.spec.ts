@@ -277,7 +277,7 @@ test("provider secrets live only in the transient form; a late revoke shows prob
 
   await page.getByTestId("provider-create").click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Name").fill("Canary provider");
+  await dialog.getByLabel("Name", { exact: true }).fill("Canary provider");
   await dialog.getByLabel("Endpoint URL").fill(ENDPOINT);
   await dialog.getByLabel("Model").fill("canary-embed");
   await dialog.getByLabel("Dimensions").fill("8");
@@ -300,7 +300,7 @@ test("provider secrets live only in the transient form; a late revoke shows prob
 
   // A second provider re-probed to revision 2; only revision 2 becomes ready.
   await page.getByTestId("provider-create").click();
-  await dialog.getByLabel("Name").fill("Exact provider");
+  await dialog.getByLabel("Name", { exact: true }).fill("Exact provider");
   await dialog.getByLabel("Endpoint URL").fill(ENDPOINT);
   await dialog.getByLabel("Model").fill("exact-embed");
   await dialog.getByLabel("Dimensions").fill("8");
@@ -344,41 +344,74 @@ test("provider secrets live only in the transient form; a late revoke shows prob
   expect(watch.bypass.filter((p) => !p.startsWith("/fixture/"))).toEqual([]);
 });
 
-test("sealed enrollment shows only the opaque reference; grants name one record and one key; managers without ownership see no sealed controls", async ({
+test("sealed values: add a named secret, give one token access with its key, revoke inline, delete; managers without ownership see no sealed controls", async ({
   page,
 }) => {
   const watch = watchMutations(page);
   const SECRET = `sealed-canary-${randomUUID()}`;
+  const NAME = `Browser secret ${randomUUID().slice(0, 8)}`;
   await as(page, "owner");
   await open(page, kbUrl(s.kbId, { tab: "sealed" }), "sealed-panel");
-  await page.getByLabel("Secret value").fill(SECRET);
-  await page.getByTestId("sealed-enroll").click();
-  const reference = page.getByTestId("sealed-reference");
+  await page.getByTestId("sealed-add").first().press("Enter");
+  const add = page.getByTestId("sealed-add-dialog");
+  await expect(add).toBeVisible();
+  // An empty name is refused before anything is sent.
+  await add.getByLabel("Secret value").fill(SECRET);
+  await add.getByTestId("sealed-enroll").press("Enter");
+  await expect(add.getByRole("alert")).toContainText("Enter a name.");
+  await add.getByLabel("Name", { exact: true }).fill(NAME);
+  await add.getByTestId("sealed-enroll").press("Enter");
+  const reference = add.getByTestId("sealed-reference");
   await expect(reference).toBeVisible();
+  await expect(add).toContainText("can't be shown again");
   const token = (await reference.getAttribute("data-reference"))!;
   expect(token).toMatch(/^\{\{sealed:v1:knowledge_base:[0-9a-f-]{36}:[0-9a-f-]{36}\}\}$/);
-  await expect(page.getByLabel("Secret value")).toHaveValue("");
   expect(await everything(page)).not.toContain(SECRET);
   // The literal was sent once and never requested back.
   expect(watch.bodies.filter((b) => b.includes(SECRET))).toHaveLength(1);
+  const enrolls = watch.bodies.filter((b) => b.startsWith("/rpc/kbSealed/enroll"));
+  expect(enrolls.at(-1)).toContain(`"label":"${NAME}"`);
+  await add.getByTestId("sealed-add-another").press("Enter");
+  await expect(add.getByLabel("Secret value")).toHaveValue("");
+  await page.keyboard.press("Escape");
 
+  const card = page.getByTestId("sealed-value").filter({ hasText: NAME });
+  await expect(card).toHaveAttribute("data-reference", token);
+  await expect(card.getByTestId("sealed-no-access")).toBeVisible();
+  await expect(card.getByTestId("sealed-usage-none")).toBeVisible();
+
+  // Give access: pick the token; it has no registered key, so the steps show and
+  // the grant stays refused until a valid key is entered.
+  await card.getByTestId("sealed-give-access").press("Enter");
+  const grant = page.getByTestId("sealed-grant-dialog");
+  const option = grant.locator(`[data-consumer-id="${s.sealedConsumerGrantId}"] input`);
+  await option.focus();
+  await option.press("Space");
+  await expect(option).toBeChecked();
+  await expect(grant.getByTestId("sealed-key-steps")).toContainText("--recipient-key-file");
+  await expect(grant.getByTestId("sealed-grant")).toBeDisabled();
+  await expect(grant.getByTestId("sealed-grant-blocker")).toHaveAttribute(
+    "data-blocker",
+    "needKey",
+  );
   const publicKey = generateKeyPairSync("x25519")
     .publicKey.export({ format: "der", type: "spki" })
     .subarray(-32)
     .toString("base64");
   const recipientKeyId = randomUUID();
-  await page.getByLabel("Sealed reference").fill(token);
-  const kinds = page.getByLabel("Consumer kind");
-  await expect(kinds.locator("option")).toHaveCount(1);
-  await expect(kinds).toHaveValue("pat");
-  await page.getByLabel("Consumer ID").fill(s.sealedConsumerGrantId);
-  await page.getByLabel("Recipient key ID").fill(recipientKeyId);
-  await page.getByLabel("Recipient public key").fill(publicKey);
-  await page.getByTestId("sealed-grant").click();
-  await expect(page.getByTestId("sealed-grant-done")).toBeVisible();
-  const grants = watch.bodies.filter((body) => body.includes('"recipientKeyId"'));
+  await grant.getByTestId("sealed-manual-key").locator("summary").press("Enter");
+  await grant.getByLabel("Key ID").fill("not-a-key");
+  await expect(grant.getByTestId("sealed-grant")).toBeDisabled();
+  await grant.getByLabel("Key ID").fill(recipientKeyId);
+  await grant.getByLabel("Public key").fill(publicKey);
+  await expect(grant.getByTestId("sealed-grant")).toBeEnabled();
+  await grant.getByTestId("sealed-grant").press("Enter");
+  await expect(grant).toHaveCount(0);
+  const grants = watch.bodies.filter((body) => body.startsWith("/rpc/kbSealed/grant "));
   expect(grants).toHaveLength(1);
-  const grantBody: unknown = JSON.parse(grants[0]!.slice(grants[0]!.indexOf(" ") + 1));
+  const grantBody = JSON.parse(grants[0]!.slice(grants[0]!.indexOf(" ") + 1)) as {
+    json: { expiresAt: string };
+  };
   expect(grantBody).toMatchObject({
     json: {
       kbId: s.kbId,
@@ -389,12 +422,54 @@ test("sealed enrollment shows only the opaque reference; grants name one record 
       recipientPublicKey: publicKey,
     },
   });
-  expect(await everything(page)).not.toContain(SECRET);
+  // The default end is the 30-day policy.
+  const days = (Date.parse(grantBody.json.expiresAt) - Date.now()) / 86_400_000;
+  expect(days).toBeGreaterThan(29.9);
+  expect(days).toBeLessThan(30.1);
+  const row = card.getByTestId("sealed-grant-row");
+  await expect(row).toHaveAttribute("data-consumer-id", s.sealedConsumerGrantId);
+  await expect(row).toContainText("Browser sealed recipient");
+  // The row names the key, so two approvals for one token are told apart.
+  await expect(row).toHaveAttribute("data-key-id", recipientKeyId);
+  await expect(row.getByTestId("sealed-grant-key")).toContainText(recipientKeyId.slice(0, 8));
 
-  await page.getByLabel("Reference to revoke").fill(token);
-  await page.getByTestId("sealed-revoke").click();
-  await confirmToken(page, "DELETE", "Revoke record");
-  await expect(page.getByTestId("sealed-revoke-done")).toBeVisible();
+  // A second grant to the same token reuses the key it already has here.
+  await card.getByTestId("sealed-give-access").press("Enter");
+  await option.focus();
+  await option.press("Space");
+  await expect(grant.getByTestId("sealed-key-found")).toHaveAttribute(
+    "data-key-id",
+    recipientKeyId,
+  );
+  // The same token and key already have access here: refused before submit.
+  await expect(grant.getByTestId("sealed-grant")).toBeDisabled();
+  await expect(grant.getByTestId("sealed-grant-blocker")).toHaveAttribute(
+    "data-blocker",
+    "alreadyGranted",
+  );
+  await page.keyboard.press("Escape");
+
+  // Inline revoke removes exactly this token's access.
+  await row.getByTestId("sealed-grant-revoke").press("Enter");
+  await confirmToken(page, "REVOKE", "Revoke access");
+  await expect(card.getByTestId("sealed-no-access")).toBeVisible();
+  const revokes = watch.bodies.filter((body) => body.startsWith("/rpc/kbSealed/revokeGrant"));
+  expect(revokes).toHaveLength(1);
+  expect(JSON.parse(revokes[0]!.slice(revokes[0]!.indexOf(" ") + 1))).toMatchObject({
+    json: {
+      kbId: s.kbId,
+      reference: token,
+      consumerKind: "pat",
+      consumerId: s.sealedConsumerGrantId,
+      recipientKeyId,
+    },
+  });
+
+  // Delete the value (type-to-confirm); it leaves the list.
+  await card.getByTestId("sealed-delete").press("Enter");
+  await confirmToken(page, "DELETE", "Delete value");
+  await expect(card).toHaveCount(0);
+  expect(await everything(page)).not.toContain(SECRET);
 
   // Sealed control is owner-only, so a manager who is not the owner
   // never sees it (the server refuses such a manager regardless).

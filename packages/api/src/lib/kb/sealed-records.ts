@@ -46,11 +46,20 @@ const referenceSchema = z
       return false;
     }
   });
+/** A person's name for a value: trimmed Unicode text without control characters. */
+export const sealedLabelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .refine((v) => v.isWellFormed() && !/[\p{Cc}]/u.test(v));
 export const sealedEnrollInput = z.strictObject({
   ...common,
   namespace: uuidSchema,
   recordId: uuidSchema.optional(),
   plaintext: plaintextSchema,
+  /** Web control plane only; never part of the reference or the ciphertext. */
+  label: sealedLabelSchema.optional(),
 });
 export const sealedRevokeInput = z.strictObject({ ...common, reference: referenceSchema });
 export const sealedGrantInput = sealedRevokeInput.extend({
@@ -61,6 +70,12 @@ export const sealedGrantInput = sealedRevokeInput.extend({
   recipientKeyId: uuidSchema,
   recipientPublicKey: z.string().length(44),
   expiresAt: isoSchema.and(sealedApprovalExpirySchema),
+});
+/** Exactly one approval: record, PAT consumer and recipient key. Never a wildcard. */
+export const sealedRevokeGrantInput = sealedRevokeInput.extend({
+  consumerKind: z.literal("pat"),
+  consumerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  recipientKeyId: uuidSchema,
 });
 const resultSchema = z.strictObject({
   operationId: uuidSchema,
@@ -135,8 +150,8 @@ export function decryptSealedRecord(
 
 /** No network/Git effect: identity, exact owner, mutation, receipt and audit share one
  * authority-locked SQL transaction. Session attributes supplied by a caller are never authority. */
-async function asOwner<T>(
-  runtime: Runtime,
+export async function asOwner<T>(
+  runtime: Pick<KbRuntimeConfig, "coordinator">,
   principal: Principal,
   kbId: string,
   run: (query: LockQuery) => Promise<T>,
@@ -182,7 +197,7 @@ function exactNamespace(runtime: Runtime, kbId: string, namespace: string) {
 async function replay(
   query: LockQuery,
   userId: string,
-  input: z.infer<typeof sealedRevokeInput> | z.infer<typeof sealedEnrollInput>,
+  input: { kbId: string; idempotencyKey: string },
   operation: string,
   requestHash: string,
 ) {
@@ -252,6 +267,8 @@ export async function enrollSealedRecord(
             input.kbId,
             input.namespace,
             input.recordId ?? null,
+            // Present only when given, so an unlabelled request hashes as before.
+            ...(input.label === undefined ? [] : [input.label]),
           ]),
         )
         .update(bytes)
@@ -273,13 +290,14 @@ export async function enrollSealedRecord(
         throw new KbDomainError("CONFLICT", "Record identity already exists");
       await chargeKbMutation(runtime.ratePort, `user:${principal.userId}`, input.kbId);
       await query(
-        `INSERT INTO sealed_record (namespace,"recordId","kbId","ownerId","ownerSnapshot",version,ciphertext) VALUES ($1::uuid,$2::uuid,$3,$4,$4,1,$5)`,
+        `INSERT INTO sealed_record (namespace,"recordId","kbId","ownerId","ownerSnapshot",version,ciphertext,label) VALUES ($1::uuid,$2::uuid,$3,$4,$4,1,$5,$6)`,
         [
           identity.namespace,
           identity.recordId,
           input.kbId,
           principal.userId,
           encryptSealedRecord(literal, identity, master),
+          input.label ?? null,
         ],
       );
       return receipt(
@@ -403,6 +421,41 @@ export async function revokeSealedRecord(
       [identity.namespace, identity.recordId],
     );
     return receipt(query, principal.userId, input, "SEALED_REVOKE", hash, input.reference, true);
+  });
+}
+
+/**
+ * Removes exactly one approval (record + PAT consumer + recipient key). It only
+ * narrows: the record, its ciphertext and every other approval stay. A missing
+ * approval is UNRESOLVED_REFERENCE; a replay returns the first receipt.
+ */
+export async function revokeSealedGrant(
+  runtime: Runtime,
+  principal: Principal,
+  raw: z.input<typeof sealedRevokeGrantInput>,
+): Promise<Result> {
+  const input = sealedRevokeGrantInput.parse(raw),
+    identity = parseSealedReference(input.reference),
+    hash = canonicalRequestHash(input);
+  return asOwner(runtime, principal, input.kbId, async (query) => {
+    exactNamespace(runtime, input.kbId, identity.namespace);
+    if (!(await record(query, input.kbId, identity))) throw unresolved();
+    const prior = await replay(query, principal.userId, input, "SEALED_GRANT_REVOKE", hash);
+    if (prior) return prior;
+    const removed = await query(
+      `DELETE FROM sealed_consumer_grant WHERE namespace=$1::uuid AND "recordId"=$2::uuid
+         AND "consumerKind"=$3 AND "consumerId"=$4 AND "recipientKeyId"=$5::uuid`,
+      [
+        identity.namespace,
+        identity.recordId,
+        input.consumerKind,
+        input.consumerId,
+        input.recipientKeyId,
+      ],
+    );
+    if (!removed.rowCount) throw unresolved();
+    await chargeKbMutation(runtime.ratePort, `user:${principal.userId}`, input.kbId);
+    return receipt(query, principal.userId, input, "SEALED_GRANT_REVOKE", hash, input.reference);
   });
 }
 

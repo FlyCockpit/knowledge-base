@@ -43,6 +43,7 @@ import {
   type Capability,
   clearKbPrivateQueries,
   recheckKbAccess,
+  useClearSealedWhenNotOwner,
   useKbAccessLoss,
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
@@ -876,6 +877,7 @@ export function KbSettingsView({
     orpc.kbs.get.queryOptions({ input: { kbId }, retry: false }),
   );
   const lost = useKbAccessLoss(kbId, [error]);
+  useClearSealedWhenNotOwner(kbId, data?.kb.isOwner);
   const onDenied = () => {
     // A denied control action is not proof of lost access (a manager is
     // refused owner-only actions). Re-check the KB permission: the refetched

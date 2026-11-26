@@ -37,6 +37,11 @@ async function navigate(
     search,
   );
 }
+/** Opens Add secret on the sealed tab (header button, or the empty state's). */
+async function openAddSecret(page: Page) {
+  await page.getByTestId("sealed-add").first().press("Enter");
+  await expect(page.getByTestId("sealed-add-dialog")).toBeVisible();
+}
 async function cache(page: Page) {
   return page.evaluate(() => {
     const client = (
@@ -169,18 +174,23 @@ for (const outcome of ["success", "rejection", "interruption"] as const) {
     }) => {
       await owner(page, "kb");
       const literal = `sealed-${randomUUID()}`;
+      await openAddSecret(page);
+      await page.getByLabel("Name", { exact: true }).fill("draft A");
       await page.getByLabel("Secret value").fill(literal);
       const held = await delay(page, "kbSealed/enroll", outcome);
       try {
-        await page.getByTestId("sealed-enroll").click();
+        await page.getByTestId("sealed-enroll").press("Enter");
         await held.waiting;
         if (retire) {
+          // The secret dialog belongs to the KB: navigating away retires it.
           await navigate(page, { kbId: s.kbId });
-          await expect(page.getByLabel("Secret value")).toHaveValue("");
+          await expect(page.getByTestId("sealed-add-dialog")).toHaveCount(0);
           expect(await cache(page)).not.toContain(literal);
+          await openAddSecret(page);
+          await expect(page.getByLabel("Secret value")).toHaveValue("");
         }
         await page.getByLabel("Secret value").fill("new plaintext draft B");
-        await page.getByLabel("Consumer ID").fill("new recipient draft B");
+        await page.getByLabel("Name", { exact: true }).fill("new name draft B");
         if (!retire) {
           // Even an implicit/programmatic submit while A is pending must not
           // transfer A's completion ownership to the edited draft.
@@ -191,9 +201,11 @@ for (const outcome of ["success", "rejection", "interruption"] as const) {
         held.release();
         await held.done;
         if (!retire) {
-          if (outcome === "success")
+          if (outcome === "success") {
             await expect(page.getByTestId("sealed-reference")).toBeVisible();
-          else await expect(page.getByTestId("sealed-error")).toBeVisible();
+            // The edit made while saving is kept as the next draft.
+            await page.getByTestId("sealed-add-another").press("Enter");
+          } else await expect(page.getByTestId("sealed-error")).toBeVisible();
           await expect(page.getByTestId("sealed-enroll")).toBeEnabled();
         } else {
           await expect
@@ -213,16 +225,17 @@ for (const outcome of ["success", "rejection", "interruption"] as const) {
           await expect(page.getByTestId("sealed-reference")).toHaveCount(0);
         }
         await expect(page.getByLabel("Secret value")).toHaveValue("new plaintext draft B");
-        await expect(page.getByLabel("Consumer ID")).toHaveValue("new recipient draft B");
+        await expect(page.getByLabel("Name", { exact: true })).toHaveValue("new name draft B");
         expect(await cache(page)).not.toContain(literal);
         if (!retire) {
           // A changed draft starts a new operation even when A committed but
           // its acknowledgement was rejected or interrupted.
           await page.unroute("**/rpc/kbSealed/enroll*");
           await page.getByTestId("sealed-enroll").press("Enter");
-          await expect(page.getByLabel("Secret value")).toHaveValue("");
           await expect(page.getByTestId("sealed-reference")).toBeVisible();
-          await expect(page.getByLabel("Consumer ID")).toHaveValue("new recipient draft B");
+          await page.getByTestId("sealed-add-another").press("Enter");
+          await expect(page.getByLabel("Secret value")).toHaveValue("");
+          await expect(page.getByLabel("Name", { exact: true })).toHaveValue("");
         }
       } finally {
         held.release();
@@ -231,6 +244,128 @@ for (const outcome of ["success", "rejection", "interruption"] as const) {
     });
   }
 }
+
+test("a refused token list closes Give access and retires every sealed value on the page", async ({
+  page,
+}) => {
+  await owner(page, "kb");
+  const name = `picker denial ${randomUUID().slice(0, 8)}`;
+  await openAddSecret(page);
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  await page.getByLabel("Secret value").fill(`sealed-${randomUUID()}`);
+  await page.getByTestId("sealed-enroll").press("Enter");
+  await expect(page.getByTestId("sealed-reference")).toBeVisible();
+  await page.keyboard.press("Escape");
+  const card = page.getByTestId("sealed-value").filter({ hasText: name });
+  await expect(card).toBeVisible();
+  // The sealed gate now refuses (e.g. 2FA turned off elsewhere) while kbs.get still says owner.
+  await page.route("**/rpc/kbSealed/consumers*", (route) =>
+    route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        json: { defined: false, code: "FORBIDDEN", status: 403, message: "Forbidden" },
+      }),
+    }),
+  );
+  try {
+    await card.getByTestId("sealed-give-access").press("Enter");
+    await expect(page.getByTestId("sealed-read-denied")).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByTestId("sealed-grant-dialog")).toHaveCount(0);
+    await expect(page.getByTestId("sealed-value")).toHaveCount(0);
+    expect(await cache(page)).not.toContain(name);
+  } finally {
+    await page.unroute("**/rpc/kbSealed/consumers*");
+  }
+});
+
+test("a refused action re-reads the list; a refused re-read retires every sealed value", async ({
+  page,
+}) => {
+  await owner(page, "kb");
+  const name = `action denial ${randomUUID().slice(0, 8)}`;
+  await openAddSecret(page);
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  await page.getByLabel("Secret value").fill(`sealed-${randomUUID()}`);
+  await page.getByTestId("sealed-enroll").press("Enter");
+  await expect(page.getByTestId("sealed-reference")).toBeVisible();
+  await page.keyboard.press("Escape");
+  const card = page.getByTestId("sealed-value").filter({ hasText: name });
+  await expect(card).toBeVisible();
+  // The sealed gate now refuses both the action and reads, while kbs.get still says owner.
+  const error = { json: { defined: false, code: "FORBIDDEN", status: 403, message: "Forbidden" } };
+  const forbidden = (route: import("@playwright/test").Route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify(error) });
+  await page.route("**/rpc/kbSealed/revoke*", forbidden);
+  // The list re-read may travel alone or inside a batch with kbs.get: refuse only
+  // the list member, so the KB permission check itself still succeeds.
+  const isList = (path: string) => path.endsWith("/kbSealed/list");
+  await page.route("**/rpc**", async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.includes("/__batch__"))
+      return isList(url.pathname) ? forbidden(route) : route.fallback();
+    const requests = route.request().postDataJSON() as { url: string }[];
+    if (!requests.some((r) => isList(new URL(r.url).pathname))) return route.fallback();
+    const response = await route.fetch();
+    const body = (await response.text())
+      .split("\n")
+      .map((line) => {
+        if (!line.startsWith("data: ")) return line;
+        const item = JSON.parse(line.slice(6)) as { index: number; status: number; body: unknown };
+        if (isList(new URL(requests[item.index]!.url).pathname)) {
+          item.status = 403;
+          item.body = error;
+        }
+        return `data: ${JSON.stringify(item)}`;
+      })
+      .join("\n");
+    return route.fulfill({ response, body });
+  });
+  try {
+    await card.getByTestId("sealed-delete").press("Enter");
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    // Every open starts empty: wait for that before typing, then confirm.
+    await expect(dialog.getByPlaceholder("DELETE")).toHaveValue("");
+    await dialog.getByPlaceholder("DELETE").fill("DELETE");
+    const confirm = dialog.getByRole("button", { name: "Delete value" });
+    await expect(confirm).toBeEnabled();
+    await confirm.press("Enter");
+    await expect(page.getByTestId("sealed-read-denied")).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(page.getByTestId("sealed-value")).toHaveCount(0);
+    expect(await cache(page)).not.toContain(name);
+  } finally {
+    await page.unroute("**/rpc/kbSealed/revoke*");
+    await page.unroute("**/rpc**");
+  }
+});
+
+test("renaming while a secret saves never keeps the saved value for the next one", async ({
+  page,
+}) => {
+  await owner(page, "kb");
+  const literal = `sealed-${randomUUID()}`;
+  await openAddSecret(page);
+  await page.getByLabel("Name", { exact: true }).fill("rename A");
+  await page.getByLabel("Secret value").fill(literal);
+  const held = await delay(page, "kbSealed/enroll", "success");
+  try {
+    await page.getByTestId("sealed-enroll").press("Enter");
+    await held.waiting;
+    await page.getByLabel("Name", { exact: true }).fill("renamed while saving");
+    held.release();
+    await held.done;
+    await expect(page.getByTestId("sealed-reference")).toBeVisible();
+    await page.getByTestId("sealed-add-another").press("Enter");
+    await expect(page.getByLabel("Secret value")).toHaveValue("");
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue("renamed while saving");
+    expect(await cache(page)).not.toContain(literal);
+  } finally {
+    held.release();
+    await held.done;
+  }
+});
 
 for (const outcome of ["rejection", "interruption"] as const) {
   test(`unchanged sealed retry after ${outcome} reuses its committed receipt`, async ({ page }) => {
@@ -243,10 +378,12 @@ for (const outcome of ["rejection", "interruption"] as const) {
         keys.push(body.json.idempotencyKey);
       }
     });
+    await openAddSecret(page);
+    await page.getByLabel("Name", { exact: true }).fill("unchanged retry");
     await page.getByLabel("Secret value").fill(literal);
     const held = await delay(page, "kbSealed/enroll", outcome);
     try {
-      await page.getByTestId("sealed-enroll").click();
+      await page.getByTestId("sealed-enroll").press("Enter");
       await held.waiting;
       held.release();
       await held.done;
@@ -263,8 +400,9 @@ for (const outcome of ["rejection", "interruption"] as const) {
       expect(await response.json()).toEqual(held.reply());
       expect(keys).toHaveLength(2);
       expect(keys[1]).toBe(keys[0]);
-      await expect(page.getByLabel("Secret value")).toHaveValue("");
       await expect(page.getByTestId("sealed-reference")).toBeVisible();
+      await page.getByTestId("sealed-add-another").press("Enter");
+      await expect(page.getByLabel("Secret value")).toHaveValue("");
       expect(await cache(page)).not.toContain(literal);
     } finally {
       held.release();
@@ -283,7 +421,13 @@ test("warm and cold KB navigation retires profile approvals, sealed/member/mirro
     await navigate(page, { kbId: a });
     await selectTab(page, "sealed");
     await expect(page.getByTestId("sealed-panel")).toBeVisible();
+    // The secret draft lives in a modal dialog: navigating to another KB retires it.
+    await openAddSecret(page);
     await page.getByLabel("Secret value").fill("retired KB draft");
+    await navigate(page, { kbId: b });
+    await expect(page.getByTestId("sealed-add-dialog")).toHaveCount(0);
+    expect(await cache(page)).not.toContain("retired KB draft");
+    await navigate(page, { kbId: a });
     await selectTab(page, "members");
     await page.getByLabel("Email address").fill("retired@example.invalid");
     await selectTab(page, "mirror");
@@ -291,7 +435,8 @@ test("warm and cold KB navigation retires profile approvals, sealed/member/mirro
       .getByLabel("Remote repository URL")
       .fill("ssh://git@retired.example.invalid/owner/repo.git");
     // Hidden tabs keep their drafts while this KB stays open.
-    await expect(page.getByLabel("Secret value")).toHaveValue("retired KB draft");
+    await selectTab(page, "members");
+    await expect(page.getByLabel("Email address")).toHaveValue("retired@example.invalid");
     await selectTab(page, "search");
     await page.getByTestId("profile-rebuild").click();
     await expect(page.getByRole("alertdialog")).toBeVisible();
@@ -299,7 +444,7 @@ test("warm and cold KB navigation retires profile approvals, sealed/member/mirro
     await expect(page.getByTestId("profile-panel")).toBeVisible();
     await expect(page.getByTestId("sealed-panel")).toBeAttached();
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
-    await expect(page.getByLabel("Secret value")).toHaveValue("");
+    await expect(page.getByTestId("sealed-add-dialog")).toHaveCount(0);
     await expect(page.getByLabel("Email address")).toHaveValue("");
     await expect(page.getByLabel("Remote repository URL")).toHaveValue("");
   }
@@ -440,22 +585,21 @@ test("invalid local inputs report errors; name-less Unicode re-probe and exact r
   await expect(row).toHaveAttribute("data-status", "revoked");
   await navigate(page, { kbId: s.editor.kbId, tab: "sealed" });
   await expect(page.getByTestId("sealed-panel")).toBeVisible();
-  await page.getByLabel("Reference to revoke").fill("invalid reference");
-  await page.getByTestId("sealed-revoke").click();
-  await expect(page.getByRole("alert")).toContainText("Enter one exact sealed reference");
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await openAddSecret(page);
+  await page.getByLabel("Name", { exact: true }).fill(`revoke fixture ${randomUUID().slice(0, 8)}`);
   await page.getByLabel("Secret value").fill("revoke fixture");
-  await page.getByTestId("sealed-enroll").click();
+  await page.getByTestId("sealed-enroll").press("Enter");
   const token = page.getByTestId("sealed-reference");
   await expect(token).toBeVisible();
-  await page
-    .getByLabel("Reference to revoke")
-    .fill(`  ${await token.getAttribute("data-reference")}  `);
-  await page.getByTestId("sealed-revoke").click();
+  const reference = (await token.getAttribute("data-reference"))!;
+  await page.keyboard.press("Escape");
+  // No typing references: delete straight from the value's card.
+  const card = page.locator(`[data-testid="sealed-value"][data-reference="${reference}"]`);
+  await card.getByTestId("sealed-delete").press("Enter");
   const confirmation = page.getByRole("alertdialog");
   await confirmation.getByPlaceholder("DELETE").fill("DELETE");
-  await confirmation.getByRole("button", { name: "Revoke record" }).press("Enter");
-  await expect(page.getByTestId("sealed-revoke-done")).toBeVisible();
+  await confirmation.getByRole("button", { name: "Delete value" }).press("Enter");
+  await expect(card).toHaveCount(0);
 });
 
 // builtin-ready replaces the instance-wide built-in model row; restore it so the

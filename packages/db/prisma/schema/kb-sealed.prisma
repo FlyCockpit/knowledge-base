@@ -9,6 +9,8 @@ model SealedRecord {
   ownerSnapshot String
   version       Int                   @default(1)
   ciphertext    String?
+  /// The owner's name for the value (web control plane only; never in references or ciphertext).
+  label         String?
   createdAt     DateTime              @default(now()) @db.Timestamptz(3)
   revokedAt     DateTime?             @db.Timestamptz(3)
   grants        SealedConsumerGrant[]

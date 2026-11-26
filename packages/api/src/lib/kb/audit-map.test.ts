@@ -188,6 +188,7 @@ describe("audit map", () => {
       "model_disable",
       "sealed_enroll",
       "sealed_grant",
+      "sealed_grant_revoke",
       "sealed_resolve_denied",
     ])
       expect(events.has(event), event).toBe(true);

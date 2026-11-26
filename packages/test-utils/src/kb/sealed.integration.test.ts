@@ -42,9 +42,15 @@ import {
 import { setKbRecoveryComplete } from "@knowledge-base/api/lib/kb/recovery";
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import {
+  listSealedConsumers,
+  listSealedValues,
+  sealedValueUsage,
+} from "@knowledge-base/api/lib/kb/sealed-overview";
+import {
   decryptSealedRecord,
   enrollSealedRecord,
   grantSealedRecord,
+  revokeSealedGrant,
   revokeSealedRecord,
 } from "@knowledge-base/api/lib/kb/sealed-records";
 import { parseSealedReference } from "@knowledge-base/api/lib/kb/sealed-reference";
@@ -184,8 +190,10 @@ async function setup() {
     recordId,
     idempotencyKey: randomUUID(),
   };
-  const enroll = (patch: Partial<typeof input> = {}, principal: Principal = actor(owner.id)) =>
-    enrollSealedRecord(runtime, principal, { ...input, ...patch }, masterKey);
+  const enroll = (
+    patch: Partial<typeof input> & { label?: string } = {},
+    principal: Principal = actor(owner.id),
+  ) => enrollSealedRecord(runtime, principal, { ...input, ...patch }, masterKey);
   return { owner, other, kbId: kb.id, base, input, enroll, repo: kbBareRepoPath(reposDir, kb.id) };
 }
 function approval(kbId: string, reference: string) {
@@ -1213,5 +1221,482 @@ describe("sealed recipient resolution against real SQL and pinned Git", () => {
     // A PAT generation of the same owner still receives one.
     await grantAs(f, approval(f.kbId, f.request.reference));
     expect(await grantCount(f)).toBe(before + 1);
+  });
+});
+
+describe("sealed owner overview: names, usage, pickable tokens and single-approval revoke", () => {
+  const resolver: SealedCredentialVerifier = {
+    inspect: async () => ({
+      generationActive: true,
+      instanceEnabled: true,
+      expired: false,
+      banned: false,
+      twoFactorSatisfied: true,
+      consumerKind: "pat",
+    }),
+  };
+  const tokenPrincipal = (userId: string, kbId: string, grantId: string) => ({
+    kind: "token" as const,
+    userId,
+    grantId,
+    grantGeneration: "1",
+    scopes: ["mcp:read"],
+    expiresAt: new Date(Date.now() + 3600000),
+    storedAcl: new Map([[kbId, ["read"]]]),
+  });
+  const mintFor = (userId: string, name: string, patch: Record<string, unknown> = {}) =>
+    mintPersonalToken(runtime, userId, {
+      name,
+      scopes: ["mcp:read"],
+      toolGroups: [...MCP_TOOL_GROUPS],
+      acl: [],
+      ...patch,
+    } as Parameters<typeof mintPersonalToken>[2]);
+  const grantIdOf = async (tokenId: string) =>
+    (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: tokenId } })).grantId;
+
+  it("lists live named values with approvals and never ciphertext or plaintext; pages and drops deleted values", async () => {
+    const f = await setup();
+    const named = await f.enroll({ label: "  Deploy key " });
+    const unnamed = await f.enroll({ recordId: randomUUID(), idempotencyKey: randomUUID() });
+    const deleted = await f.enroll({
+      recordId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      label: "Gone",
+    });
+    await revoke(f, deleted.reference);
+    const minted = await mintFor(f.owner.id, "Laptop CLI", {
+      acl: [{ kbId: f.kbId, bits: ["read"] }],
+    });
+    const grant = {
+      ...approval(f.kbId, named.reference),
+      consumerId: await grantIdOf(minted.token.id),
+    };
+    await grantSealedRecord(runtime, actor(f.owner.id), grant);
+    const log = captureLog();
+    try {
+      const all = await listSealedValues(runtime, actor(f.owner.id), { kbId: f.kbId });
+      expect(all.nextCursor).toBeNull();
+      expect(all.items.map((i) => i.reference).sort()).toEqual(
+        [named.reference, unnamed.reference].sort(),
+      );
+      const item = all.items.find((i) => i.reference === named.reference)!;
+      expect(item.label).toBe("Deploy key");
+      expect(all.items.find((i) => i.reference === unnamed.reference)!.label).toBeNull();
+      expect(Date.parse(item.createdAt)).toBeGreaterThan(0);
+      expect(item.moreGrants).toBe(0);
+      expect(item.grants).toEqual([
+        expect.objectContaining({
+          consumerKind: "pat",
+          consumerId: grant.consumerId,
+          recipientKeyId: grant.recipientKeyId,
+          expiresAt: grant.expiresAt,
+          tokenName: "Laptop CLI",
+          holder: { kind: "self" },
+          active: true,
+        }),
+      ]);
+      const text = JSON.stringify(all);
+      expect(text).not.toContain(canary);
+      expect(text).not.toMatch(/ciphertext|plaintext|recipientPublicKey/i);
+      expect(JSON.stringify(log.records)).not.toContain(canary);
+      // Pages: one at a time, newest first, no repeats.
+      const first = await listSealedValues(runtime, actor(f.owner.id), { kbId: f.kbId, limit: 1 });
+      expect(first.items).toHaveLength(1);
+      expect(first.nextCursor).not.toBeNull();
+      const second = await listSealedValues(runtime, actor(f.owner.id), {
+        kbId: f.kbId,
+        limit: 1,
+        cursor: first.nextCursor!,
+      });
+      expect(second.items).toHaveLength(1);
+      expect(second.nextCursor).toBeNull();
+      expect(new Set([...first.items, ...second.items].map((i) => i.recordId)).size).toBe(2);
+      // A member's approval is active only while their share includes sealed values.
+      const member = await user();
+      const share = await prisma.kbShare.create({
+        data: { kbId: f.kbId, userId: member.id, bits: ["read"], includeSealedValues: true },
+      });
+      const memberToken = await mintFor(member.id, "Member CLI", {
+        acl: [{ kbId: f.kbId, bits: ["read"] }],
+      });
+      const memberGrant = {
+        ...approval(f.kbId, named.reference),
+        consumerId: await grantIdOf(memberToken.token.id),
+      };
+      await grantSealedRecord(runtime, actor(f.owner.id), memberGrant);
+      const memberActive = async () =>
+        (await listSealedValues(runtime, actor(f.owner.id), { kbId: f.kbId })).items
+          .find((i) => i.reference === named.reference)!
+          .grants.find((g) => g.consumerId === memberGrant.consumerId)!.active;
+      expect(await memberActive()).toBe(true);
+      // A temporarily banned holder cannot use it now (live identity), so it is not active.
+      await prisma.user.update({
+        where: { id: member.id },
+        data: { banned: true, banExpires: new Date(Date.now() + 3_600_000) },
+      });
+      expect(await memberActive()).toBe(false);
+      await prisma.user.update({
+        where: { id: member.id },
+        data: { banned: false, banExpires: null },
+      });
+      expect(await memberActive()).toBe(true);
+      await prisma.kbShare.update({
+        where: { id: share.id },
+        data: { includeSealedValues: false },
+      });
+      expect(await memberActive()).toBe(false);
+      // A revoked token's approval stays listed but inactive.
+      await revokePersonalToken(runtime, f.owner.id, minted.token.id);
+      const after = await listSealedValues(runtime, actor(f.owner.id), { kbId: f.kbId });
+      expect(
+        after.items
+          .find((i) => i.reference === named.reference)!
+          .grants.find((g) => g.consumerId === grant.consumerId)!.active,
+      ).toBe(false);
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("refuses every overview read and approval revoke to non-owners and to an owner without 2FA", async () => {
+    const f = await setup();
+    const created = await f.enroll();
+    const grant = approval(f.kbId, created.reference);
+    await grantAs(f, grant);
+    const manager = await user(),
+      member = await user(),
+      admin = await prisma.user.update({
+        where: { id: (await user()).id },
+        data: { role: "admin" },
+      });
+    await prisma.kbShare.create({
+      data: {
+        kbId: f.kbId,
+        userId: manager.id,
+        bits: ["manage", "write", "review", "propose", "read"],
+      },
+    });
+    await prisma.kbShare.create({
+      data: { kbId: f.kbId, userId: member.id, bits: ["read"], includeSealedValues: true },
+    });
+    const revokeOne = (userId: string) =>
+      revokeSealedGrant(runtime, actor(userId), {
+        kbId: f.kbId,
+        reference: created.reference,
+        consumerKind: "pat",
+        consumerId: grant.consumerId,
+        recipientKeyId: grant.recipientKeyId,
+        idempotencyKey: randomUUID(),
+      });
+    for (const userId of [manager.id, member.id, admin.id, f.other.id]) {
+      await denied(listSealedValues(runtime, actor(userId), { kbId: f.kbId }), "NOT_FOUND");
+      await denied(
+        sealedValueUsage(runtime, actor(userId), {
+          kbId: f.kbId,
+          recordIds: [parseSealedReference(created.reference).recordId],
+        }),
+        "NOT_FOUND",
+      );
+      await denied(listSealedConsumers(runtime, actor(userId), { kbId: f.kbId }), "NOT_FOUND");
+      await denied(revokeOne(userId), "NOT_FOUND");
+    }
+    // A token principal is never the browser owner.
+    await denied(
+      listSealedValues(runtime, tokenPrincipal(f.owner.id, f.kbId, grant.consumerId), {
+        kbId: f.kbId,
+      }),
+      "FORBIDDEN",
+    );
+    // Through the real router, with live 2FA turned off (the session snapshot claims it).
+    const liveUser = await prisma.user.update({
+      where: { id: f.owner.id },
+      data: { twoFactorEnabled: false },
+    });
+    const client = createRouterClient(kbSealedRouter, {
+      context: () => ({ session: { user: { ...liveUser, twoFactorEnabled: true } } }),
+    });
+    for (const operation of [
+      () => client.list({ kbId: f.kbId }),
+      () =>
+        client.usage({
+          kbId: f.kbId,
+          recordIds: [parseSealedReference(created.reference).recordId],
+        }),
+      () => client.consumers({ kbId: f.kbId }),
+      () =>
+        client.revokeGrant({
+          kbId: f.kbId,
+          reference: created.reference,
+          consumerKind: "pat",
+          consumerId: grant.consumerId,
+          recipientKeyId: grant.recipientKeyId,
+          idempotencyKey: randomUUID(),
+        }),
+    ])
+      await expect(operation()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await grantCount(f)).toBe(1);
+    await prisma.user.update({ where: { id: f.owner.id }, data: { twoFactorEnabled: true } });
+    expect((await client.list({ kbId: f.kbId })).items).toHaveLength(1);
+  });
+
+  it("offers only the owner's live tokens and eligible members' tokens scoped here, with what would make an approval useless", async () => {
+    const f = await setup();
+    const created = await f.enroll();
+    const good = await mintFor(f.owner.id, "good", { acl: [{ kbId: f.kbId, bits: ["read"] }] });
+    const noSealed = await mintFor(f.owner.id, "no-sealed", {
+      toolGroups: ["read"],
+      acl: [{ kbId: f.kbId, bits: ["read"] }],
+    });
+    await mintFor(f.owner.id, "no-read");
+    const revoked = await mintFor(f.owner.id, "revoked", {
+      acl: [{ kbId: f.kbId, bits: ["read"] }],
+    });
+    await revokePersonalToken(runtime, f.owner.id, revoked.token.id);
+    const expired = await mintFor(f.owner.id, "expired", {
+      acl: [{ kbId: f.kbId, bits: ["read"] }],
+    });
+    await prisma.mcpPersonalToken.update({
+      where: { id: expired.token.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const eligible = await user(),
+      ineligible = await user();
+    await prisma.kbShare.create({
+      data: { kbId: f.kbId, userId: eligible.id, bits: ["read"], includeSealedValues: true },
+    });
+    await prisma.kbShare.create({
+      data: { kbId: f.kbId, userId: ineligible.id, bits: ["read"] },
+    });
+    const memberHere = await mintFor(eligible.id, "member-here", {
+      acl: [{ kbId: f.kbId, bits: ["read"] }],
+    });
+    await mintFor(eligible.id, "member-elsewhere");
+    await mintFor(ineligible.id, "ineligible-here", { acl: [{ kbId: f.kbId, bits: ["read"] }] });
+    await mintFor(f.other.id, "stranger");
+
+    const all = await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId });
+    expect(all.nextCursor).toBeNull();
+    const byName = new Map(all.items.map((c) => [c.name, c]));
+    expect([...byName.keys()].sort()).toEqual(["good", "member-here", "no-read", "no-sealed"]);
+    expect(byName.get("good")).toMatchObject({
+      consumerKind: "pat",
+      consumerId: await grantIdOf(good.token.id),
+      holder: { kind: "self" },
+      problems: [],
+      recipientKey: null,
+    });
+    expect(byName.get("no-sealed")!.problems).toEqual(["missing_sealed_tool_group"]);
+    expect(byName.get("no-read")!.problems).toEqual(["no_read_on_kb"]);
+    // A temporarily banned holder's token is shown, but as unusable for now.
+    await prisma.user.update({
+      where: { id: eligible.id },
+      data: { banned: true, banExpires: new Date(Date.now() + 3_600_000) },
+    });
+    const whileBanned = await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId });
+    expect(whileBanned.items.find((c) => c.name === "member-here")!.problems).toEqual([
+      "holder_inactive",
+    ]);
+    await prisma.user.update({
+      where: { id: eligible.id },
+      data: { banned: false, banExpires: null },
+    });
+    expect(byName.get("member-here")).toMatchObject({
+      consumerId: await grantIdOf(memberHere.token.id),
+      holder: { kind: "member", name: "Fixture" },
+      problems: [],
+    });
+    expect(JSON.stringify(all)).not.toContain(canary);
+
+    // A key registered at device login is offered; otherwise the key already approved here.
+    const { publicKey } = generateKeyPairSync("x25519");
+    const deviceKey = {
+      recipientKeyId: randomUUID(),
+      recipientPublicKey: publicKey
+        .export({ format: "der", type: "spki" })
+        .subarray(-32)
+        .toString("base64"),
+    };
+    await prisma.mcpPersonalToken.update({ where: { id: noSealed.token.id }, data: deviceKey });
+    const grant = {
+      ...approval(f.kbId, created.reference),
+      consumerId: byName.get("good")!.consumerId,
+    };
+    await grantSealedRecord(runtime, actor(f.owner.id), grant);
+    const again = await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId });
+    const keys = new Map(again.items.map((c) => [c.name, c.recipientKey]));
+    expect(keys.get("good")).toEqual({
+      recipientKeyId: grant.recipientKeyId,
+      recipientPublicKey: grant.recipientPublicKey,
+      source: "approved",
+    });
+    expect(keys.get("no-sealed")).toEqual({ ...deviceKey, source: "device" });
+    expect(keys.get("no-read")).toBeNull();
+
+    // Pages: bounded and complete.
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await listSealedConsumers(runtime, actor(f.owner.id), {
+        kbId: f.kbId,
+        limit: 1,
+        cursor,
+      });
+      expect(page.items.length).toBeLessThanOrEqual(1);
+      seen.push(...page.items.map((c) => c.name));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(seen.sort()).toEqual(["good", "member-here", "no-read", "no-sealed"]);
+
+    // Usability counts active temporary access (elevations) like admission does;
+    // an ended or expired elevation counts for nothing.
+    const elevate = (
+      grantId: string,
+      toolGroups: string[],
+      bits: string[] | null,
+      expiresAt = new Date(Date.now() + 3_600_000),
+    ) =>
+      prisma.mcpGrantElevation.create({
+        data: {
+          id: randomUUID(),
+          grantId,
+          expiresAt,
+          toolGroups,
+          createdKbBits: [],
+          createdByUserIdSnapshot: f.owner.id,
+          ...(bits ? { acl: { create: [{ kbId: f.kbId, bits }] } } : {}),
+        },
+      });
+    await elevate(byName.get("no-sealed")!.consumerId, ["sealed"], null);
+    await elevate(byName.get("no-read")!.consumerId, [], ["read"], new Date(Date.now() - 1000));
+    const elsewhere = (await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId }))
+      .items;
+    const problems = new Map(elsewhere.map((c) => [c.name, c.problems]));
+    expect(problems.get("no-sealed")).toEqual([]);
+    expect(problems.get("no-read")).toEqual(["no_read_on_kb"]);
+    await elevate(byName.get("no-read")!.consumerId, [], ["read"]);
+    const lifted = await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId });
+    expect(lifted.items.find((c) => c.name === "no-read")!.problems).toEqual([]);
+    // A member's token scoped here only through active temporary access is offered too.
+    const viaElevation = await mintFor(eligible.id, "member-elevated");
+    await elevate(await grantIdOf(viaElevation.token.id), [], ["read"]);
+    const withMember = await listSealedConsumers(runtime, actor(f.owner.id), { kbId: f.kbId });
+    expect(withMember.items.map((c) => c.name)).toContain("member-elevated");
+    expect(withMember.items.map((c) => c.name)).not.toContain("member-elsewhere");
+  });
+
+  it("revokes exactly one approval, replays its receipt, and leaves the value and other approvals working", async () => {
+    const f = await setup();
+    const created = await f.enroll();
+    const kept = approval(f.kbId, created.reference),
+      removed = approval(f.kbId, created.reference);
+    await grantAs(f, kept);
+    await grantAs(f, removed);
+    const published = await apply(f.kbId, f.owner.id, f.base, created.reference);
+    const request = (grant: typeof kept) => ({
+      kbId: f.kbId,
+      path: "sealed.md",
+      rev: published.commitSha,
+      reference: created.reference,
+      recipientKeyId: grant.recipientKeyId,
+    });
+    const options = { verifier: resolver, masterKey };
+    const resolveFor = (grant: typeof kept) =>
+      resolveSealedReference(
+        runtime,
+        tokenPrincipal(f.owner.id, f.kbId, grant.consumerId),
+        request(grant),
+        options,
+      );
+    expect((await resolveFor(removed)).reference).toBe(created.reference);
+    const input = {
+      kbId: f.kbId,
+      reference: created.reference,
+      consumerKind: "pat" as const,
+      consumerId: removed.consumerId,
+      recipientKeyId: removed.recipientKeyId,
+      idempotencyKey: randomUUID(),
+    };
+    const receipt = await revokeSealedGrant(runtime, actor(f.owner.id), input);
+    expect(receipt).toMatchObject({ reference: created.reference, version: 1, revoked: false });
+    expect(await grantCount(f)).toBe(1);
+    expect((await rowFor(f)).ciphertext).not.toBeNull();
+    await denied(resolveFor(removed), "UNRESOLVED_REFERENCE");
+    expect((await resolveFor(kept)).reference).toBe(created.reference);
+    // Replay returns the first receipt; a changed request under the same key is refused.
+    expect(await revokeSealedGrant(runtime, actor(f.owner.id), input)).toEqual(receipt);
+    await denied(
+      revokeSealedGrant(runtime, actor(f.owner.id), { ...input, consumerId: kept.consumerId }),
+      "IDEMPOTENCY_MISMATCH",
+    );
+    // An approval that does not exist (or no longer does) is unresolved, never a wildcard.
+    for (const patch of [
+      { consumerId: randomUUID() },
+      { recipientKeyId: randomUUID() },
+      { consumerId: kept.consumerId, recipientKeyId: removed.recipientKeyId },
+    ])
+      await denied(
+        revokeSealedGrant(runtime, actor(f.owner.id), {
+          ...input,
+          ...patch,
+          idempotencyKey: randomUUID(),
+        }),
+        "UNRESOLVED_REFERENCE",
+      );
+    await denied(
+      revokeSealedGrant(runtime, actor(f.owner.id), {
+        ...input,
+        reference: `{{sealed:v1:knowledge_base:${f.input.namespace}:${randomUUID()}}}`,
+        idempotencyKey: randomUUID(),
+      }),
+      "UNRESOLVED_REFERENCE",
+    );
+    expect(await grantCount(f)).toBe(1);
+    const audit = await prisma.auditEvent.findMany({ where: { kbId: f.kbId }, take: 50 });
+    expect(audit.filter((e) => e.action === "sealed_grant_revoke")).toHaveLength(1);
+  });
+
+  it("finds the documents on main that use each value, and none for an unused one", async () => {
+    const f = await setup();
+    const used = await f.enroll();
+    const unused = await f.enroll({ recordId: randomUUID(), idempotencyKey: randomUUID() });
+    const ids = [used, unused].map((v) => parseSealedReference(v.reference).recordId);
+    // Unknown ids (or another KB's) are simply not reported.
+    const usage = () =>
+      sealedValueUsage(runtime, actor(f.owner.id), {
+        kbId: f.kbId,
+        recordIds: [...ids, randomUUID()],
+      });
+    const before = await usage();
+    expect(before.usage.map((u) => u.recordId).sort()).toEqual([...ids].sort());
+    expect(before.complete).toBe(true);
+    expect(before.usage.every((u) => u.paths.length === 0)).toBe(true);
+    const first = await apply(f.kbId, f.owner.id, f.base, `Key: ${used.reference}`);
+    await apply(
+      f.kbId,
+      f.owner.id,
+      first.commitSha,
+      `Again ${used.reference} and ${used.reference}`,
+      "notes/other.md",
+    );
+    const after = await usage();
+    expect(after.complete).toBe(true);
+    const byRecord = new Map(after.usage.map((u) => [u.recordId, u]));
+    expect(byRecord.get(parseSealedReference(used.reference).recordId)).toEqual({
+      recordId: parseSealedReference(used.reference).recordId,
+      paths: ["notes/other.md", "sealed.md"],
+      more: false,
+    });
+    expect(byRecord.get(parseSealedReference(unused.reference).recordId)).toEqual({
+      recordId: parseSealedReference(unused.reference).recordId,
+      paths: [],
+      more: false,
+    });
+    // A deleted value is no longer reported.
+    await revoke(f, unused.reference);
+    const last = await usage();
+    expect(last.usage.map((u) => u.recordId)).toEqual([
+      parseSealedReference(used.reference).recordId,
+    ]);
   });
 });

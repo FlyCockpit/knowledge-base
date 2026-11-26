@@ -8,6 +8,8 @@ import {
   SecretLiteral,
   sealedEnrollInput,
   sealedGrantInput,
+  sealedLabelSchema,
+  sealedRevokeGrantInput,
 } from "./sealed-records";
 
 const identity = { namespace: randomUUID(), recordId: randomUUID(), version: 1 };
@@ -78,5 +80,56 @@ describe("sealed at-rest identity and input boundaries", () => {
         idempotencyKey: input.idempotencyKey,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("sealed value names and single-approval revoke input", () => {
+  it("trims a name, bounds it at 120 characters and rejects control characters", () => {
+    expect(sealedLabelSchema.parse("  Deploy key  ")).toBe("Deploy key");
+    expect(sealedLabelSchema.parse("ключ 🔑")).toBe("ключ 🔑");
+    expect(sealedLabelSchema.safeParse("x".repeat(120)).success).toBe(true);
+    for (const bad of [
+      "",
+      "   ",
+      "x".repeat(121),
+      "a\nb",
+      "a\tb",
+      "a\u0000b",
+      "a\u007fb",
+      "a\u0085b",
+    ])
+      expect(sealedLabelSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    const enroll = {
+      kbId: "a".repeat(24),
+      idempotencyKey: randomUUID(),
+      namespace: randomUUID(),
+      plaintext: "v",
+    };
+    expect(sealedEnrollInput.safeParse(enroll).success).toBe(true);
+    expect(sealedEnrollInput.parse({ ...enroll, label: " API " }).label).toBe("API");
+    expect(sealedEnrollInput.safeParse({ ...enroll, label: "a\nb" }).success).toBe(false);
+  });
+  it("names exactly one record, PAT consumer and recipient key, with no wildcard or extra field", () => {
+    const valid = {
+      kbId: "a".repeat(24),
+      idempotencyKey: randomUUID(),
+      reference: `{{sealed:v1:knowledge_base:${randomUUID()}:${randomUUID()}}}`,
+      consumerKind: "pat",
+      consumerId: randomUUID(),
+      recipientKeyId: randomUUID(),
+    };
+    expect(sealedRevokeGrantInput.safeParse(valid).success).toBe(true);
+    for (const patch of [
+      { consumerKind: "oauth" },
+      { consumerId: "*" },
+      { consumerId: "" },
+      { recipientKeyId: "*" },
+      { reference: "*" },
+      { all: true },
+      { recipientPublicKey: Buffer.alloc(32, 9).toString("base64") },
+    ])
+      expect(sealedRevokeGrantInput.safeParse({ ...valid, ...patch }).success).toBe(false);
+    const { recipientKeyId: _, ...noKey } = valid;
+    expect(sealedRevokeGrantInput.safeParse(noKey).success).toBe(false);
   });
 });

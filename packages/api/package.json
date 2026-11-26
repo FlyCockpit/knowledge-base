@@ -91,6 +91,9 @@
     "./lib/kb/private-ip": {
       "default": "./src/lib/kb/private-ip.ts"
     },
+    "./lib/kb/sealed-overview": {
+      "default": "./src/lib/kb/sealed-overview.ts"
+    },
     "./lib/kb/sealed-records": {
       "default": "./src/lib/kb/sealed-records.ts"
     },

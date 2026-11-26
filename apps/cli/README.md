@@ -151,7 +151,8 @@ the verification link. Compare the key ID/public key in the terminal and approva
 page. Nothing is selected by default: select Read on the KB, enter each exact
 sealed reference you own and its expiry, and explicitly add it. Enrolled two-factor
 authentication is required. Ordinary login without this option grants no sealed
-capability. OAuth app consent never offers sealed recipients.
+capability. The minted token keeps the public key, so the web's Sealed values →
+Give access fills it in when you pick this token later. OAuth app consent never offers sealed recipients.
 
 Import an existing PAT using `kb login --token-stdin` with piped input, or
 `kb login --token-file /private/path/token`. There is no token argument or

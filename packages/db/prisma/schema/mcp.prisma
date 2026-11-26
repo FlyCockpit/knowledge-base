@@ -126,28 +126,32 @@ model GrantElevationKbAcl {
 /// (NULL = never expires, an explicit human choice at mint).
 /// Never a second ACL, never the raw secret.
 model McpPersonalToken {
-  id             String    @id @default(cuid(2))
-  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
-  userIdSnapshot String
-  userId         String?
-  user           User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  name           String
-  lookupPrefix   String
-  secretDigest   String
-  grantId        String    @unique @db.Uuid
-  grant          McpGrant  @relation(fields: [grantId], references: [id], onDelete: Restrict)
-  scopes         String[]
-  resource       String
-  expiresAt      DateTime? @db.Timestamptz(3)
-  lastUsedAt     DateTime? @db.Timestamptz(3)
-  revokedAt      DateTime? @db.Timestamptz(3)
+  id                 String    @id @default(cuid(2))
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  userIdSnapshot     String
+  userId             String?
+  user               User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name               String
+  /// Public X25519 recipient the CLI registered during device login
+  /// (`kb login --recipient-key-file`); prefills sealed approvals. Never a capability.
+  recipientKeyId     String?   @db.Uuid
+  recipientPublicKey String?
+  lookupPrefix       String
+  secretDigest       String
+  grantId            String    @unique @db.Uuid
+  grant              McpGrant  @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  scopes             String[]
+  resource           String
+  expiresAt          DateTime? @db.Timestamptz(3)
+  lastUsedAt         DateTime? @db.Timestamptz(3)
+  revokedAt          DateTime? @db.Timestamptz(3)
   /// Set for a child token minted through an API key: it is live only while
   /// that key is, and it is listed and revoked with it.
-  parentApiKeyId String?
-  parentApiKey   ApiKey?   @relation(fields: [parentApiKeyId], references: [id], onDelete: Restrict)
+  parentApiKeyId     String?
+  parentApiKey       ApiKey?   @relation(fields: [parentApiKeyId], references: [id], onDelete: Restrict)
   /// Child mints only: the caller's Idempotency-Key and the request digest.
-  idempotencyKey String?
-  requestHash    String?
+  idempotencyKey     String?
+  requestHash        String?
 
   @@unique([lookupPrefix], map: "mcp_personal_token_lookup_prefix")
   @@unique([secretDigest], map: "mcp_personal_token_secret_digest")

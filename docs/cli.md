@@ -569,6 +569,8 @@ document must reference live records, so a revocation never blocks unrelated
 writes. No local MCP plaintext tool exists.
 For remote device recipient enrollment, login's `--recipient-key-file` points to
 an existing private X25519 host key; only the public descriptor is uploaded.
+The minted PAT keeps that public key, so the web's Sealed values → Give access
+fills it in when you pick the token.
 Compare it before explicit exact-record approval; enrolled 2FA is required.
 Keep private material for the separate kb-client host resolver, never the agent
 stdio transport. [Cockpit seam](./cockpit-adapter.md) explains this boundary.

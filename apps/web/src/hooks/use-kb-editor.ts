@@ -711,6 +711,7 @@ const KB_PRIVATE_ROOTS = [
   "kbAssets",
   "kbExports",
   "kbMirror",
+  "kbSealed",
 ];
 
 /**
@@ -743,6 +744,59 @@ export function clearKbPrivateQueries(
       query.setState({ data: undefined, dataUpdatedAt: 0 });
     else queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
   }
+}
+
+/**
+ * Sealed-value metadata (names, approvals, pickable tokens) is owner-only: drop
+ * it as soon as a fresh permission check says the caller is no longer the owner,
+ * even though they keep read access (e.g. after an ownership transfer).
+ */
+export function clearKbSealedQueries(queryClient: QueryClient, kbId: string): void {
+  for (const query of queryClient.getQueryCache().getAll()) {
+    const [path, keyOptions] = query.queryKey as [unknown, { input?: { kbId?: unknown } }?];
+    if (Array.isArray(path) && path[0] === "kbSealed" && keyOptions?.input?.kbId === kbId)
+      queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
+  }
+}
+
+/**
+ * A sealed read was refused (not owner, 2FA off, signed out): drop the cached
+ * owner-only data at once. A query that ended in that error keeps its error
+ * (no refetch loop) but loses its data; any other sealed query is removed.
+ */
+export function retireKbSealedData(queryClient: QueryClient, kbId: string): void {
+  for (const query of queryClient.getQueryCache().getAll()) {
+    const [path, keyOptions] = query.queryKey as [unknown, { input?: { kbId?: unknown } }?];
+    if (!Array.isArray(path) || path[0] !== "kbSealed" || keyOptions?.input?.kbId !== kbId)
+      continue;
+    if (query.state.status === "error") query.setState({ data: undefined, dataUpdatedAt: 0 });
+    else queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
+  }
+}
+
+export function useRetireSealedOnDenied(
+  kbId: string,
+  denied: boolean,
+  /** Lets an owning panel retire its dialogs and lists too. */
+  onRetired?: () => void,
+): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!denied) return;
+    retireKbSealedData(queryClient, kbId);
+    onRetired?.();
+  }, [denied, kbId, queryClient, onRetired]);
+}
+
+/**
+ * Whenever the KB permission data (`kbs.get`, from any refetch) says the caller
+ * is not the owner, drop the owner-only sealed metadata from the cache.
+ */
+export function useClearSealedWhenNotOwner(kbId: string, isOwner: boolean | undefined): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (isOwner === false) clearKbSealedQueries(queryClient, kbId);
+  }, [isOwner, kbId, queryClient]);
 }
 
 /** Access is gone: forget the KB's private data and re-derive the KB list. */
@@ -796,13 +850,17 @@ export async function recheckKbAccess(
   ]);
   if (!current()) return "kept";
   try {
-    await queryClient.fetchQuery({
+    const fresh: unknown = await queryClient.fetchQuery({
       ...(options as Parameters<QueryClient["fetchQuery"]>[0]),
       queryKey,
       staleTime: 0,
       retry: false,
     });
-    if (current()) publish();
+    if (current()) {
+      publish();
+      if ((fresh as { kb?: { isOwner?: unknown } } | undefined)?.kb?.isOwner !== true)
+        clearKbSealedQueries(queryClient, kbId);
+    }
     return "kept";
   } catch (error) {
     if (!current() || !isAccessLoss(error)) return "kept";
