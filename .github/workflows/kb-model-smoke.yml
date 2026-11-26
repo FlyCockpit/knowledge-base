@@ -81,15 +81,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # One entry for both pinned models, shared by all nine legs (JS and Rust,
-      # every OS): the path string is the same everywhere (it resolves to
-      # runner.temp/kb-models; the acquire step checks that) and
-      # enableCrossOsArchive keeps Windows on the same cache version. Keyed by
-      # the pinned SHAs only; restore never trusts the bytes.
+      # every OS): the workspace-relative path is the same string and layout
+      # everywhere (actions/cache rejects `..`), and enableCrossOsArchive keeps
+      # Windows on the same cache version. `.cache` and `*.gguf` are in
+      # .dockerignore, so the weights never enter the image build context.
+      # Keyed by the pinned SHAs only; restore never trusts the bytes.
       - name: Restore pinned models
         id: models
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ../../_temp/kb-models
+          path: .cache/kb-models
           key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
           enableCrossOsArchive: true
 
@@ -100,9 +101,7 @@ jobs:
           MODELS_CACHE_HIT: ${{ steps.models.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          dir="${{ runner.temp }}/kb-models"
-          [ "$(cd "$GITHUB_WORKSPACE/../../_temp" && pwd -P)" = "$(cd "$RUNNER_TEMP" && pwd -P)" ] \
-            || { echo "::error::../../_temp is not RUNNER_TEMP; fix the model cache path"; exit 1; }
+          dir="${{ github.workspace }}/.cache/kb-models"
           mkdir -p "$dir"
           for kind in GEMMA QWEN; do
             file_var="${kind}_FILE"; url_var="${kind}_URL"
@@ -119,7 +118,7 @@ jobs:
         if: steps.models.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ../../_temp/kb-models
+          path: .cache/kb-models
           key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
           enableCrossOsArchive: true
 
@@ -157,9 +156,9 @@ jobs:
       - name: Real-model lane (host child + Node26-slim image)
         env:
           KB_QWEN_IMAGE: kb-worker-embedding-smoke:ci
-          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.GEMMA_FILE }}
+          KB_GEMMA_MODEL_PATH: ${{ github.workspace }}/.cache/kb-models/${{ env.GEMMA_FILE }}
           KB_GEMMA_EVIDENCE_OUT: ${{ runner.temp }}/gemma-evidence-${{ matrix.arch }}.json
-          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.QWEN_FILE }}
+          KB_QWEN_MODEL_PATH: ${{ github.workspace }}/.cache/kb-models/${{ env.QWEN_FILE }}
           KB_QWEN_EVIDENCE_OUT: ${{ runner.temp }}/qwen-evidence-${{ matrix.arch }}.json
           KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}
         run: pnpm test:kb -- qwen-model
@@ -249,19 +248,18 @@ jobs:
         id: models
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ../../_temp/kb-models
+          path: .cache/kb-models
           key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
           enableCrossOsArchive: true
       - name: Acquire and verify both pinned models
         env:
           MODELS_CACHE_HIT: ${{ steps.models.outputs.cache-hit }}
         run: |
-          [ "$(cd "$GITHUB_WORKSPACE/../../_temp" && pwd -P)" = "$(cd "$RUNNER_TEMP" && pwd -P)" ] \
-            || { echo "::error::../../_temp is not RUNNER_TEMP; fix the model cache path"; exit 1; }
-          mkdir -p "${{ runner.temp }}/kb-models"
+          dir="${{ github.workspace }}/.cache/kb-models"
+          mkdir -p "$dir"
           for kind in GEMMA QWEN; do
             file_var="${kind}_FILE"; url_var="${kind}_URL"; hash_var="${kind}_SHA256"
-            dest="${{ runner.temp }}/kb-models/${!file_var}"
+            dest="$dir/${!file_var}"
             if [ "$MODELS_CACHE_HIT" != true ]; then
               curl --fail --location --proto '=https' --max-redirs 5 --retry 3 -o "$dest" "${!url_var}"
             fi
@@ -276,7 +274,7 @@ jobs:
         if: steps.models.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ../../_temp/kb-models
+          path: .cache/kb-models
           key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
           enableCrossOsArchive: true
       - name: Fetch every platform dependency
@@ -340,8 +338,8 @@ jobs:
       - name: Explicit real-model selection must execute all four tests (both models, retrieval, runtime upgrade)
         env:
           TMPDIR: ${{ runner.temp }}
-          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.GEMMA_FILE }}
-          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.QWEN_FILE }}
+          KB_GEMMA_MODEL_PATH: ${{ github.workspace }}/.cache/kb-models/${{ env.GEMMA_FILE }}
+          KB_QWEN_MODEL_PATH: ${{ github.workspace }}/.cache/kb-models/${{ env.QWEN_FILE }}
           # The executable's platform: its parity reference (the musl legs run a gnu harness).
           KB_MODEL_PLATFORM: ${{ matrix.platform }}
           KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}

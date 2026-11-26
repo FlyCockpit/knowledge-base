@@ -137,6 +137,25 @@ describe("checkLiveDownloads", () => {
   });
 });
 
+/**
+ * A `.`/`..` segment (@actions/glob rejects it), after an inline YAML comment,
+ * YAML quotes and Windows separators.
+ */
+function cachePathEscapes(line: string): boolean {
+  const path = line
+    .replace(/\s+#.*$/, "")
+    .trim()
+    .replace(/^(["'])(.*)\1$/, "$2")
+    .replaceAll("\\", "/");
+  return /(^|\/)\.\.?(\/|$)/.test(path);
+}
+
+/** A .dockerignore negation that could re-include model weights or everything. */
+function reincludesWeights(line: string): boolean {
+  const rule = /^\s*!\s*(.*)$/.exec(line)?.[1]?.replace(/^[/\\]+/, "");
+  return rule !== undefined && /cache|gguf|kb-models|^\*/.test(rule);
+}
+
 describe("live download placement", () => {
   const workflow = readFileSync(join(ROOT, ".github/workflows/kb-model-live-download.yml"), "utf8");
   const smoke = readFileSync(join(ROOT, ".github/workflows/kb-model-smoke.yml"), "utf8");
@@ -213,7 +232,7 @@ describe("live download placement", () => {
       ["restore", "save", "restore", "save"],
     );
     for (const step of modelSteps) {
-      assert.match(step, /\n {10}path: \.\.\/\.\.\/_temp\/kb-models\n/);
+      assert.match(step, /\n {10}path: \.cache\/kb-models\n/);
       assert.match(
         step,
         /\n {10}key: kb-gguf-\$\{\{ env\.GEMMA_SHA256 \}\}-\$\{\{ env\.QWEN_SHA256 \}\}\n/,
@@ -222,17 +241,80 @@ describe("live download placement", () => {
       if (/cache\/save@/.test(step))
         assert.match(step, /if: steps\.models\.outputs\.cache-hit != 'true'/);
     }
-    // The restored path is runner.temp/kb-models, checked on the runner.
+    // Every leg reads the weights where the cache restores them.
+    assert.doesNotMatch(
+      smoke,
+      /runner\.temp \}\}\/kb-models|rust-models|qwen-model\/|gemma-model\//,
+    );
+    for (const kind of ["GEMMA", "QWEN"]) {
+      const value = `\n {10}KB_${kind}_MODEL_PATH: (.*)\n`;
+      const values = [...smoke.matchAll(new RegExp(value, "g"))].map((match) => match[1]);
+      // One in the smoke job, one in rust-smoke, each the exact restored file.
+      assert.deepEqual(
+        values,
+        Array(2).fill(`\${{ github.workspace }}/.cache/kb-models/\${{ env.${kind}_FILE }}`),
+        kind,
+      );
+    }
+    // The weights stay out of the image build context (COPY . . in the builder):
+    // the root .dockerignore excludes them, with no rule re-including them and no
+    // Dockerfile-specific ignore file that would replace it.
+    const dockerignore = readFileSync(join(ROOT, ".dockerignore"), "utf8").split("\n");
+    assert.ok(dockerignore.includes(".cache") && dockerignore.includes("**/*.gguf"));
+    assert.deepEqual(dockerignore.filter(reincludesWeights), []);
+    assert.deepEqual(
+      readdirSync(ROOT).filter(
+        (name) => name.endsWith(".dockerignore") && name !== ".dockerignore",
+      ),
+      [],
+    );
     const acquire = steps.filter((s) => /^name: Acquire and verify both pinned models/.test(s));
     assert.equal(acquire.length, 2);
     for (const step of acquire) {
-      assert.match(step, /"\$GITHUB_WORKSPACE\/\.\.\/\.\.\/_temp".*"\$RUNNER_TEMP"/);
+      assert.match(step, /dir="\$\{\{ github\.workspace \}\}\/\.cache\/kb-models"/);
       // A hit never downloads: a restored entry missing a file fails verification.
       assert.equal(step.split(/\bcurl /).length - 1, 1);
       assert.match(
         step,
         /\n {10}MODELS_CACHE_HIT: \$\{\{ steps\.models\.outputs\.cache-hit \}\}\n[\s\S]*\n {12}if \[ "\$MODELS_CACHE_HIT" != true \]; then\n {14}curl /,
       );
+    }
+  });
+
+  test("the cache path guard sees quoted and Windows-style dot segments", () => {
+    for (const path of [
+      "../x",
+      "./x",
+      "a/../b",
+      '"../x"',
+      "'..\\x'",
+      "a\\..\\b",
+      "..",
+      '"../x" # cache directory',
+    ])
+      assert.ok(cachePathEscapes(path), path);
+    for (const path of [".cache/kb-models", "~/.npm", "node_modules", "a/b..c", '".cache/x"'])
+      assert.ok(!cachePathEscapes(path), path);
+  });
+
+  test("the .dockerignore guard sees any negation that re-includes the weights", () => {
+    for (const line of ["!/**", "!*", "! **/*.gguf", "!.cache/kb-models", "!/.cache", "!\\**"])
+      assert.ok(reincludesWeights(line), line);
+    for (const line of ["!.git/HEAD", "!THIRD-PARTY-LICENSES.md", ".cache", "**/*.gguf", ""])
+      assert.ok(!reincludesWeights(line), line);
+  });
+
+  test("no actions/cache path climbs out of the workspace with ..", () => {
+    // @actions/glob rejects `.`/`..` segments: the save only warns, so the cache
+    // would silently never fill.
+    const dir = join(ROOT, ".github/workflows");
+    for (const name of readdirSync(dir)) {
+      const source = readFileSync(join(dir, name), "utf8");
+      for (const step of source.split(/\n {6}- /).filter((s) => /uses: actions\/cache[@/]/.test(s)))
+        for (const line of /\n {10}path: \|?([^\n]*(?:\n {12}[^\n]*)*)/
+          .exec(step)?.[1]
+          ?.split("\n") ?? [])
+          assert.ok(!cachePathEscapes(line), `${name}: ${line.trim()}`);
     }
   });
 
