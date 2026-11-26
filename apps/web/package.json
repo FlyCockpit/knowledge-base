@@ -35,6 +35,7 @@
     "@tanstack/react-start": "catalog:",
     "better-auth": "catalog:",
     "crossws": "^0.4.17",
+    "decode-named-character-reference": "^1.3.0",
     "i18next": "catalog:",
     "i18next-browser-languagedetector": "catalog:",
     "lucide-react": "catalog:",

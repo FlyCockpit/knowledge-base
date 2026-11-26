@@ -15,7 +15,16 @@ import { cn } from "@knowledge-base/ui/lib/utils";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ImagePlus, MoreHorizontal } from "lucide-react";
-import { type ReactNode, useDeferredValue, useId, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useDeferredValue,
+  useId,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -25,6 +34,7 @@ import { type MarkdownContext, MarkdownView } from "@/components/kb/markdown-vie
 import type { AssetRef } from "@/components/kb/media";
 import { SegmentedControl } from "@/components/segmented-control";
 import {
+  clearDraft,
   draftKey,
   readDraft,
   type StoredDraft,
@@ -44,6 +54,8 @@ import {
   previewAfterSaves,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
+import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
 import { documentPathIssue } from "@/lib/document-path";
 import { joinProvenanceStamp, splitProvenanceStamp } from "@/lib/document-text";
 import { orpc } from "@/utils/orpc";
@@ -65,7 +77,10 @@ type DocumentEditorViewProps = {
   outcome: EditorOutcome | null;
   pending: boolean;
   paused?: boolean;
-  onSave: () => void;
+  /** Resolves true once the draft was saved (or proposed). */
+  onSave: () => Promise<boolean>;
+  /** The view's own Save (same checks as its button), for the workspace's ⌘S and dialogs. */
+  saveRef?: Ref<EditorSaveHandle>;
   onAdoptHead: () => void;
   onOpenLatest?: () => void;
   /** The path line under the controls; off where a document header already names it. */
@@ -348,14 +363,16 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   const textareaDescribedBy =
     [contentIssue ? contentErrorId : null, image ? imageHintId : null].filter(Boolean).join(" ") ||
     undefined;
-  const save = () => {
+  const save = async (): Promise<boolean> => {
+    if (!editable || props.pending) return false;
     if (localPathIssue) {
       setPathChecked(true);
       pathRef.current?.focus();
-      return;
+      return false;
     }
-    props.onSave();
+    return props.onSave();
   };
+  useImperativeHandle(props.saveRef, () => ({ save }));
   const sendFiles = (files: File[]) => {
     if (image && files.length > 0 && !props.pending) image.onFiles(files, selection());
   };
@@ -571,7 +588,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
             className="min-h-[44px]"
             disabled={props.pending}
             aria-describedby={saveStatusId}
-            onClick={save}
+            onClick={() => void save()}
           >
             {props.pending ? t("kb:editor.saving") : saveLabel}
           </Button>
@@ -1078,7 +1095,12 @@ type EditorProps = {
   /** See `DocumentEditorViewProps.doneAction` and `.moreActions`. */
   doneAction?: ReactNode;
   moreActions?: readonly MoreAction[];
+  /** See `DocumentEditorViewProps.saveRef`. */
+  saveRef?: Ref<EditorSaveHandle>;
 };
+
+/** The editor's Save, for callers outside it (the workspace's ⌘S and its dialogs). */
+export type EditorSaveHandle = { save: () => Promise<boolean> };
 
 /**
  * One editing session of a document: the raw draft lives in `useKbEditor`
@@ -1121,6 +1143,7 @@ export function KbSessionEditor({
   closed,
   doneAction,
   moreActions,
+  saveRef,
   editor,
 }: EditorProps & { editor: KbEditorSession }) {
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
@@ -1167,7 +1190,9 @@ export function KbSessionEditor({
       viewingRevision={viewingRevision}
       baseRevision={editor.baseRevision}
       outcome={editor.outcome}
-      pending={editor.pending || imageBusy}
+      // The session's own upload counts too: a remounted editor (the edit view
+      // hidden and shown again) must not save its placeholder.
+      pending={editor.pending || imageBusy || editor.pendingUpload !== null}
       paused={editor.paused}
       pathLocked={!editor.pathEditable}
       closed={closed}
@@ -1183,6 +1208,7 @@ export function KbSessionEditor({
       doneAction={doneAction}
       moreActions={moreActions}
       image={{ onFiles: (files, at) => void onFiles(files, at), status: imageStatus }}
+      saveRef={saveRef}
       onSave={async () => {
         // A typed path is trimmed once, as the record that fixes it is made.
         if (drafting) editor.setPath(submitPath(editor.path, true));
@@ -1198,7 +1224,9 @@ export function KbSessionEditor({
           // an existing document's save may open or extend a proposal.
           if (!drafting && outcome.kind === "proposed")
             onProposed?.(outcome.proposalNumber, outcome.created);
+          return true;
         }
+        return false;
       }}
     />
   );
@@ -1366,6 +1394,17 @@ export function KbProposalDocumentEditor({
       {t("prMode.leave")}
     </Button>
   );
+  // PR mode without an editor (unreadable, the PR closed, a dream's): a kept
+  // draft can only be discarded from the workspace.
+  useWorkspaceNoEditor(
+    !conflictsPending &&
+      (conflictsFailed ||
+        !conflicts ||
+        (conflicts.status !== "OPEN" && conflicts.status !== "CONFLICT") ||
+        conflicts.isDream)
+      ? { path, pr: number }
+      : null,
+  );
   if (conflictsPending) return <ProposalModeSkeleton />;
   if (conflictsFailed || !conflicts)
     return (
@@ -1451,6 +1490,12 @@ function ProposalModeVersions({
   const yours = useRevisionRead(kb.id, path, yoursSha);
   const theirs = useRevisionRead(kb.id, path, mainSha);
   const box = "min-w-0 space-y-2 rounded-md border p-3 text-sm [&_p]:max-w-prose";
+  // A version that can't be read leaves PR mode without an editor (see below).
+  useWorkspaceNoEditor(
+    [yours, theirs].some((state) => state.read.isError && !state.missing)
+      ? { path, pr: number }
+      : null,
+  );
   if (yours.read.isPending || theirs.read.isPending) return <ProposalModeSkeleton />;
   for (const state of [yours, theirs])
     if (state.read.isError && !state.missing)
@@ -1542,8 +1587,10 @@ function ProposalModeSession({
       ? { markdown: recovered.markdown, images: recovered.images ?? [] }
       : undefined,
   });
-  useDocumentDraft({
-    key,
+  // A workspace Discard is final for this session: no draft kept after it.
+  const [discarded, setDiscarded] = useState(false);
+  const kept = useDocumentDraft({
+    key: discarded ? null : key,
     dirty: editor.dirty,
     pending: editor.pending,
     markdown: editor.markdown,
@@ -1553,6 +1600,26 @@ function ProposalModeSession({
     pendingUpload: editor.pendingUpload,
   });
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The workspace's ⌘S and Save / Discard reach this PR-mode session too.
+  const saveHandle = useRef<EditorSaveHandle>(null);
+  useWorkspaceEditorRegistration({
+    kbId: kb.id,
+    owner: draftOwner,
+    tab: { path, pr: number },
+    dirty: editor.dirty,
+    canEdit: false,
+    canSave:
+      kbControls(kb.capabilities).editMode !== "none" && source !== null && !editor.pendingUpload,
+    pending: editor.pending,
+    uploading: editor.pendingUpload !== null,
+    keepDraft: kept.keepNow,
+    save: async () => (saveHandle.current ? saveHandle.current.save() : false),
+    discard: () => {
+      editor.discard();
+      setDiscarded(true);
+      if (key) clearDraft(key);
+    },
+  });
   const theirs = useRevisionRead(kb.id, path, entry?.theirsSha ?? mainSha);
   const base = useRevisionRead(kb.id, path, entry?.baseSha ?? null);
   const writable = kbControls(kb.capabilities).editMode !== "none";
@@ -1664,6 +1731,7 @@ function ProposalModeSession({
           viewingRevision={null}
           preview={{ rev: source.commitSha, assets: source.assetRefs }}
           onOpenLatest={() => {}}
+          saveRef={saveHandle}
           // Leaving PR mode is in the editor bar too, next to Save.
           doneAction={leave}
         />

@@ -60,6 +60,9 @@ const humanOnly = {
     'browser "Recently deleted" list (paths deleted from main in the last 30 days, or one path at any age, for restore)',
   "documents.move":
     "browser document rename/move (a Git rename; the kb/1 change set has no move op)",
+  "documents.tree": "browser file tree and quick open (paths only, no document bodies)",
+  "documents.recentChanges":
+    "browser recently changed documents feed (main's commits and their attribution)",
   "kbs.shareInvite": "human sharing",
   "kbs.shareAccept": "human sharing",
   "kbs.shareList": "human sharing",

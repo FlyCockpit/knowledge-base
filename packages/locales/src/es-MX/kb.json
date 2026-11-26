@@ -1029,5 +1029,124 @@
     "restoreNamed": "Restaurar {{path}}",
     "propose": "Proponer restauración",
     "proposeNamed": "Proponer restaurar {{path}}"
+  },
+  "workspace": {
+    "tree": {
+      "label": "Archivos",
+      "folder": "Carpeta",
+      "unsaved": "cambios sin guardar",
+      "empty": "Todavía no hay documentos."
+    },
+    "tabs": {
+      "label": "Archivos abiertos",
+      "close": "Cerrar {{name}}",
+      "unsaved": "cambios sin guardar",
+      "newDocument": "Documento nuevo",
+      "switcher": "Archivos recientes",
+      "switcherButton": "Archivos recientes ({{count}})",
+      "switcherDescription": "Archivos que abriste en esta base de conocimiento.",
+      "switcherEmpty": "Todavía no hay archivos abiertos."
+    },
+    "dirtyClose": {
+      "title": "¿Guardar los cambios de {{name}}?",
+      "description": "Si lo cierras sin guardar, perderás tus cambios.",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "discard": "Descartar cambios",
+      "cancel": "Cancelar",
+      "cannotSave": "Este documento no se puede guardar ahora. Descarta los cambios o déjalo abierto."
+    },
+    "resize": {
+      "tree": "Cambiar el tamaño de la lista de archivos"
+    },
+    "quickOpen": {
+      "title": "Ir a un archivo",
+      "description": "Escribe parte del nombre de un archivo o una carpeta.",
+      "placeholder": "Buscar archivos por nombre…",
+      "empty": "No hay archivos que coincidan.",
+      "hint": "Enter abre · {{mod}}+Enter abre en una pestaña nueva"
+    },
+    "shortcuts": {
+      "title": "Atajos de teclado",
+      "description": "Atajos del espacio de trabajo de documentos.",
+      "note": "Los navegadores reservan algunas teclas (como Ctrl+W o Ctrl+Tab). Usa las alternativas con Alt cuando un atajo no haga nada.",
+      "or": "o",
+      "command": {
+        "save": "Guardar el documento abierto",
+        "quickOpen": "Ir a un archivo",
+        "closeTab": "Cerrar la pestaña",
+        "nextTab": "Pestaña siguiente",
+        "prevTab": "Pestaña anterior",
+        "toggleEdit": "Mostrar u ocultar el editor",
+        "toggleTree": "Mostrar u ocultar la lista de archivos",
+        "search": "Buscar en esta base de conocimiento",
+        "rename": "Cambiar el nombre del archivo seleccionado",
+        "shortcuts": "Mostrar estos atajos"
+      }
+    },
+    "sidebar": {
+      "label": "Vista de la barra lateral",
+      "files": "Archivos",
+      "search": "Buscar",
+      "outline": "Esquema",
+      "activity": "Actividad"
+    },
+    "outline": {
+      "label": "Esquema del documento",
+      "empty": "Este documento no tiene encabezados.",
+      "noDocument": "Abre un documento para ver sus encabezados."
+    },
+    "search": {
+      "label": "Buscar documentos",
+      "placeholder": "Buscar documentos…",
+      "submit": "Buscar",
+      "idle": "Busca en los documentos de esta base de conocimiento por significado y palabras clave.",
+      "results": "Resultados de la búsqueda"
+    },
+    "shell": {
+      "back": "Volver a todos los archivos",
+      "files": "Archivos",
+      "showTree": "Mostrar la lista de archivos",
+      "hideTree": "Ocultar la lista de archivos",
+      "treeLoadFailed": "No se pudo cargar la lista de archivos.",
+      "treeTruncated": "Solo se muestran los primeros {{count}} archivos. Usa Ir a archivo o la búsqueda para encontrar los demás.",
+      "tabVariant": {
+        "pr": "PR #{{number}}",
+        "proposal": "propuesta #{{number}}",
+        "revision": "versión {{sha}}"
+      },
+      "treePartial": "No se pudieron listar algunos archivos."
+    },
+    "activity": {
+      "label": "Cambios recientes",
+      "agentsOnly": "Solo agentes",
+      "agent": "Un agente",
+      "agentNamed": "Agente: {{name}}",
+      "person": "Una persona",
+      "personNamed": "{{name}}",
+      "unknown": "Desconocido (enviado con Git)",
+      "loadFailed": "No se pudieron cargar los cambios recientes.",
+      "empty": "Todavía no hay cambios en documentos.",
+      "emptyAgents": "Todavía no hay cambios hechos por agentes.",
+      "pathsUnknown": "Este cambio tocó demasiados archivos para listarlos.",
+      "morePaths_one": "y {{count}} archivo más",
+      "morePaths_other": "y {{count}} archivos más",
+      "badge": "Cambiado por un agente {{when}}",
+      "change": {
+        "added": "agregado",
+        "modified": "editado",
+        "deleted": "eliminado",
+        "renamed": "renombrado"
+      }
+    },
+    "reference": {
+      "copyLink": "Copiar enlace",
+      "linkTitle": "Enlace a este documento",
+      "linkDescription": "Cualquier persona con acceso a esta base de conocimiento puede abrirlo.",
+      "copyLinkLabel": "Copiar el enlace",
+      "agentTitle": "Referencia para agentes",
+      "agentDescription": "Un cliente de IA conectado por MCP lee {{path}} en “{{name}}” con esta llamada de herramienta.",
+      "copyAgentLabel": "Copiar la referencia para agentes"
+    }
   }
 }

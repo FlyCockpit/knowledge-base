@@ -1526,6 +1526,7 @@ export async function createKbBrowserFixture(options: {
       editorManagers.set(editorOwner.id, editorManager.id);
       return c.json({
         cookies: { owner: ownerCookie, manager: managerCookie },
+        ownerUserId: editorOwner.id,
         managerUserId: editorManager.id,
         managerEmail: editorManager.email,
       });

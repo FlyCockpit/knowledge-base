@@ -22,8 +22,10 @@ import { DELETED_DOCUMENTS_CURSOR, readDeletedDocuments } from "../lib/kb/delete
 import { DOCUMENT_HISTORY_CURSOR, readDocumentHistory } from "../lib/kb/document-history";
 import {
   authorizeDocumentRead,
+  DOCUMENT_TREE_PAGE_MAX,
   estimateListPageBytes,
   isCommitReachable,
+  listDocumentPathsAtRevision,
   listDocumentsAtRevision,
   readDocumentAtRevision,
   resolvePinnedRevision,
@@ -39,6 +41,7 @@ import {
   KB_INVALID_ARGUMENT_REASONS,
   type KbInvalidArgumentReason,
 } from "../lib/kb/protocol/envelope";
+import { readRecentChanges } from "../lib/kb/recent-changes";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { cursorPageInput } from "../lib/pagination";
 import { createProcedureBudget } from "../lib/procedure-budget";
@@ -73,6 +76,37 @@ const textContent = z.union([
   z.object({ markdown: z.string().max(128 * 1024) }),
   z.object({ uploadId: z.string().uuid() }),
 ]);
+
+/** `documents.tree` pages: paths only, so far larger than `list`'s. */
+const DOCUMENT_TREE_PAGE_DEFAULT = 2000;
+const DOCUMENT_TREE_SORT_KEY = "tree:path:asc";
+
+/**
+ * The workspace's own reads, each its own bucket so they never starve opening
+ * documents: the file tree (read once per KB head: on open and after each
+ * save, create, move or delete) and the recent-changes feed (the same, plus
+ * its pages). 60 a minute each covers a person saving once a second.
+ */
+const consumeDocumentTreeBudget = createProcedureBudget({
+  keyPrefix: "rl:kb-documents-tree",
+  points: 60,
+  durationSeconds: 60,
+  failClosed: true,
+  overBudgetMessage: (retryAfterSeconds) =>
+    `Too many file list requests. Try again in ${retryAfterSeconds}s.`,
+  unavailableMessage: "The file list is temporarily unavailable. Please try again.",
+  unavailableLog: "[kb] documents tree limiter unavailable, failing closed:",
+});
+const consumeRecentChangesBudget = createProcedureBudget({
+  keyPrefix: "rl:kb-recent-changes",
+  points: 60,
+  durationSeconds: 60,
+  failClosed: true,
+  overBudgetMessage: (retryAfterSeconds) =>
+    `Too many recent-changes requests. Try again in ${retryAfterSeconds}s.`,
+  unavailableMessage: "Recent changes are temporarily unavailable. Please try again.",
+  unavailableLog: "[kb] recent changes limiter unavailable, failing closed:",
+});
 
 const consumeDocumentReadBudget = createProcedureBudget({
   keyPrefix: "rl:kb-documents-read",
@@ -390,6 +424,134 @@ export const documentsRouter = {
           limit: input.limit,
           query: prismaAssetQuery(runtime.prisma),
           ...(input.path !== undefined ? { path: input.path } : {}),
+        });
+        await authorizeDocumentRead(admission);
+        return page;
+      } catch (error) {
+        toOrpc(error);
+      }
+    }),
+  /**
+   * Every document path at a revision (main's head by default), for the
+   * browser file tree and quick open: paths only, no document bodies, in
+   * pages of up to 5000 under a signed cursor pinned to the first page's
+   * commit. Browser-only; same read admission and budget as `list`.
+   */
+  tree: protectedProcedure
+    .input(
+      z.object({
+        kbId,
+        rev: sha,
+        limit: z.number().int().min(1).max(DOCUMENT_TREE_PAGE_MAX).optional(),
+        cursor: z.string().max(1024).nullable().optional(),
+      }),
+    )
+    .handler(async ({ context, input, signal }) => {
+      try {
+        const readOptions = gitReadOptions({ signal });
+        const runtime = getKbRuntime();
+        const userId = context.session!.user.id;
+        await consumeDocumentTreeBudget(userId);
+        const admission = {
+          store: prismaAuthorityStore(runtime.prisma),
+          principal: { kind: "browser" as const, userId },
+          kbId: input.kbId,
+          operation: "read" as const,
+        };
+        await authorizeDocumentRead(admission);
+        const row = await runtime.prisma.knowledgeBase.findUnique({
+          where: { id: input.kbId },
+          select: { headSha: true, state: true },
+        });
+        if (!row || row.state === "TOMBSTONED") {
+          throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+        }
+        const repoPath = kbBareRepoPath(runtime.reposDir, input.kbId);
+        const actorKey = actorKeyForUser(userId);
+        // Its own sort key and filter: a `list` cursor never resumes a tree page, nor the reverse.
+        const filterHash = stableFilterHash({ tree: true });
+        let afterPath: string | null = null;
+        let commitSha: string;
+        if (input.cursor) {
+          const payload = runtime.cursorSigner.verify(input.cursor, {
+            actorKey,
+            kbId: input.kbId,
+            filterHash,
+            sortKey: DOCUMENT_TREE_SORT_KEY,
+            revision: "*",
+          });
+          commitSha = payload.revision;
+          if (input.rev && input.rev !== commitSha) {
+            throw new KbDomainError("INVALID_CURSOR", "Invalid cursor");
+          }
+          afterPath = payload.lastKey;
+        } else {
+          commitSha = await resolvePinnedRevision(repoPath, input.rev, row.headSha, readOptions);
+        }
+        const page = await listDocumentPathsAtRevision({
+          ...readOptions,
+          reposDir: runtime.reposDir,
+          kbId: input.kbId,
+          commitSha,
+          limit: input.limit ?? DOCUMENT_TREE_PAGE_DEFAULT,
+          afterPath,
+        });
+        await authorizeDocumentRead(admission);
+        const nextCursor =
+          page.nextAfter === null
+            ? null
+            : runtime.cursorSigner.sign({
+                v: 1,
+                actorKey,
+                kbId: input.kbId,
+                filterHash,
+                sortKey: DOCUMENT_TREE_SORT_KEY,
+                revision: commitSha,
+                lastKey: page.nextAfter,
+                exp: cursorExpiry(),
+              });
+        return { commitSha, paths: page.paths, nextCursor };
+      } catch (error) {
+        toOrpc(error);
+      }
+    }),
+  /**
+   * The KB's recently changed documents: main's first-parent commits that
+   * touch documents, newest first, each with who made it (human, agent or
+   * unknown, from the server's trailer block only) and the documents it
+   * changed. Browser-only; same read admission and budget as `history`.
+   */
+  recentChanges: protectedProcedure
+    .input(historyPageInput.extend({ kbId }))
+    .handler(async ({ context, input, signal }) => {
+      try {
+        const readOptions = gitReadOptions({ signal });
+        const runtime = getKbRuntime();
+        const userId = context.session!.user.id;
+        await consumeRecentChangesBudget(userId);
+        const admission = {
+          store: prismaAuthorityStore(runtime.prisma),
+          principal: { kind: "browser" as const, userId },
+          kbId: input.kbId,
+          operation: "read" as const,
+        };
+        await authorizeDocumentRead(admission);
+        const row = await runtime.prisma.knowledgeBase.findUnique({
+          where: { id: input.kbId },
+          select: { headSha: true, state: true },
+        });
+        if (!row || row.state === "TOMBSTONED") {
+          throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+        }
+        const repoPath = kbBareRepoPath(runtime.reposDir, input.kbId);
+        const headSha = await resolvePinnedRevision(repoPath, undefined, row.headSha, readOptions);
+        const page = await readRecentChanges({
+          ...readOptions,
+          repoPath,
+          headSha,
+          cursor: input.cursor ?? null,
+          limit: input.limit,
+          query: prismaAssetQuery(runtime.prisma),
         });
         await authorizeDocumentRead(admission);
         return page;

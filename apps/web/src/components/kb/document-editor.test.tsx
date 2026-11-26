@@ -114,7 +114,7 @@ function render(overrides: Partial<Props>) {
     baseRevision: HEAD,
     outcome: null,
     pending: false,
-    onSave: () => {},
+    onSave: async () => true,
     onAdoptHead: () => {},
     preview: { rev: HEAD, assets: [] },
     ...overrides,

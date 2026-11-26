@@ -74,6 +74,8 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | Get document | implemented | deny | allow | deny | `documents.get` |
 | Document history (bounded, read access) | implemented | deny | allow | deny | `documents.history` |
 | Recently deleted documents list (last 30 days, bounded, read access) | implemented | deny | allow | deny | `documents.deleted` |
+| Document tree paths (bounded, read access) | implemented | deny | allow | deny | `documents.tree` |
+| Recently changed documents (bounded, read access) | implemented | deny | allow | deny | `documents.recentChanges` |
 | Create document | implemented | deny | allow | deny | `documents.create` |
 | Update document | implemented | deny | allow | deny | `documents.update` |
 | Rename or move document (browser only, one Git rename commit) | implemented | deny | allow | deny | `documents.move` |

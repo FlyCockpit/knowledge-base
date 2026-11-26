@@ -47,9 +47,10 @@ write path. Every document says who wrote it last, stamped by the server: a
 person in the web app (`human`), an agent's direct edit (`agent`) or a dream
 (`dream`). Dreams may consolidate what dreams and agents wrote but never touch
 what a person wrote. The web app shows the label, each document's history (who
-or which credential wrote each version) and the writer of each file in PR
-review. Renaming or moving a document in the web app is one Git rename commit
-(or proposal update) with the bytes unchanged, so its label stays. See
+or which credential wrote each version), the writer of each file in PR
+review, and a KB's recently changed documents (by a person, an agent or a
+Git push). Renaming or moving a document in the web app is one Git rename
+commit (or proposal update) with the bytes unchanged, so its label stays. See
 [write modes and provenance](./mcp.md#write-modes-and-provenance).
 
 Nothing written to main is lost from the web app's view. Any earlier version

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(async () => "e".repeat(40)),
   history: vi.fn(),
   deleted: vi.fn(),
+  treePaths: vi.fn(),
+  recent: vi.fn(),
   findUnique: vi.fn(async () => ({ headSha: "e".repeat(40), state: "ACTIVE" })),
   listDocuments: vi.fn(),
   publication: vi.fn(),
@@ -22,21 +24,31 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/procedure-budget", () => ({
   createProcedureBudget: () => mocks.budget,
 }));
-vi.mock("../lib/kb/runtime", () => ({
-  getKbRuntime: () => ({
-    reposDir: "/repos",
-    prisma: { knowledgeBase: { findUnique: mocks.findUnique } },
-    coordinator: {
-      run: (op: { run: (ctx: { lease: object }) => unknown }) => op.run({ lease: {} }),
-    },
-    createGitExecutor: () => ({}),
-  }),
+vi.mock("../lib/kb/runtime", async () => {
+  const { createCursorSigner } = await import("../lib/kb/cursor");
+  const cursorSigner = createCursorSigner(Buffer.alloc(32, 7));
+  return {
+    getKbRuntime: () => ({
+      reposDir: "/repos",
+      prisma: { knowledgeBase: { findUnique: mocks.findUnique } },
+      cursorSigner,
+      coordinator: {
+        run: (op: { run: (ctx: { lease: object }) => unknown }) => op.run({ lease: {} }),
+      },
+      createGitExecutor: () => ({}),
+    }),
+  };
+});
+vi.mock("../lib/kb/recent-changes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/kb/recent-changes")>()),
+  readRecentChanges: mocks.recent,
 }));
 vi.mock("../lib/kb/documents-read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/kb/documents-read")>()),
   authorizeDocumentRead: mocks.authorize,
   readDocumentAtRevision: mocks.readDocument,
   resolvePinnedRevision: mocks.resolve,
+  listDocumentPathsAtRevision: mocks.treePaths,
   listDocumentsAtRevision: mocks.listDocuments,
 }));
 vi.mock("../lib/kb/changes", async (importOriginal) => ({
@@ -471,5 +483,97 @@ describe("documents.move", () => {
       code: "BAD_REQUEST",
       data: { code: "INVALID_ARGUMENT" },
     });
+  });
+});
+
+describe("documents.tree and documents.recentChanges", () => {
+  const kbId = "a".repeat(24);
+  const head = "e".repeat(40);
+  beforeEach(() => vi.clearAllMocks());
+
+  it("requires a session and validates bounds before any read", async () => {
+    const anonymous = createRouterClient(documentsRouter, { context: () => ({ session: null }) });
+    await expect(anonymous.tree({ kbId })).rejects.toBeInstanceOf(ORPCError);
+    await expect(anonymous.recentChanges({ kbId })).rejects.toBeInstanceOf(ORPCError);
+    await expect(signedIn().tree({ kbId, limit: 5001 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await expect(signedIn().recentChanges({ kbId, limit: 51 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    await expect(
+      signedIn().recentChanges({ kbId, cursor: `v1.${"c".repeat(40)}.0` }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mocks.treePaths).not.toHaveBeenCalled();
+    expect(mocks.recent).not.toHaveBeenCalled();
+    expect(mocks.budget).not.toHaveBeenCalled();
+  });
+
+  it("lists paths with the read budget and admission before and after, and pages under a pinned cursor", async () => {
+    mocks.treePaths.mockResolvedValueOnce({ paths: ["a.md", "b/c.md"], nextAfter: "b/c.md" });
+    const first = await signedIn().tree({ kbId, limit: 2 });
+    expect(first).toMatchObject({ commitSha: head, paths: ["a.md", "b/c.md"] });
+    expect(first?.nextCursor).toEqual(expect.any(String));
+    expect(mocks.budget).toHaveBeenCalledWith("reader");
+    expect(mocks.authorize).toHaveBeenCalledTimes(2);
+    expect(mocks.treePaths).toHaveBeenCalledWith(
+      expect.objectContaining({ kbId, commitSha: head, limit: 2, afterPath: null }),
+    );
+    mocks.resolve.mockClear();
+    mocks.treePaths.mockResolvedValueOnce({ paths: ["d.md"], nextAfter: null });
+    const second = await signedIn().tree({ kbId, cursor: first!.nextCursor });
+    expect(second).toEqual({ commitSha: head, paths: ["d.md"], nextCursor: null });
+    // The cursor pins the revision: no new head resolution, resumes after its last path.
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.treePaths).toHaveBeenLastCalledWith(
+      expect.objectContaining({ commitSha: head, afterPath: "b/c.md", limit: 2000 }),
+    );
+    // A cursor for another revision than the one asked for is refused.
+    await expect(
+      signedIn().tree({ kbId, rev: "f".repeat(40), cursor: first!.nextCursor }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("never resumes a tree page from a documents.list cursor", async () => {
+    const { createCursorSigner, cursorExpiry, stableFilterHash } = await import("../lib/kb/cursor");
+    const listCursor = createCursorSigner(Buffer.alloc(32, 7)).sign({
+      v: 1,
+      actorKey: "user:reader",
+      kbId,
+      filterHash: stableFilterHash({ prefix: null }),
+      sortKey: "path:asc",
+      revision: head,
+      lastKey: "a.md",
+      exp: cursorExpiry(),
+    });
+    await expect(signedIn().tree({ kbId, cursor: listCursor })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    expect(mocks.treePaths).not.toHaveBeenCalled();
+  });
+
+  it("a refused or tombstoned read never reaches Git", async () => {
+    mocks.authorize.mockRejectedValueOnce(new KbDomainError("FORBIDDEN", "no"));
+    await expect(signedIn().tree({ kbId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    mocks.authorize.mockRejectedValueOnce(new KbDomainError("FORBIDDEN", "no"));
+    await expect(signedIn().recentChanges({ kbId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    mocks.findUnique.mockResolvedValueOnce({ headSha: head, state: "TOMBSTONED" });
+    await expect(signedIn().tree({ kbId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    mocks.findUnique.mockResolvedValueOnce({ headSha: head, state: "TOMBSTONED" });
+    await expect(signedIn().recentChanges({ kbId })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mocks.treePaths).not.toHaveBeenCalled();
+    expect(mocks.recent).not.toHaveBeenCalled();
+  });
+
+  it("reads recent changes from main's head with admission before and after", async () => {
+    const page = { items: [], nextCursor: null };
+    mocks.recent.mockResolvedValue(page);
+    const cursor = `v1.${"c".repeat(40)}.20`;
+    await expect(signedIn().recentChanges({ kbId, cursor, limit: 5 })).resolves.toEqual(page);
+    expect(mocks.budget).toHaveBeenCalledWith("reader");
+    expect(mocks.authorize).toHaveBeenCalledTimes(2);
+    expect(mocks.recent).toHaveBeenCalledWith(
+      expect.objectContaining({ headSha: head, cursor, limit: 5 }),
+    );
   });
 });

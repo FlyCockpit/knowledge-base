@@ -63,6 +63,8 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | documents.deleted | browser "Recently deleted" list (paths deleted from main in the last 30 days, or one path at any age, for restore) |
 | documents.history | browser document history view (one path's commits and their attribution) |
 | documents.move | browser document rename/move (a Git rename; the kb/1 change set has no move op) |
+| documents.recentChanges | browser recently changed documents feed (main's commits and their attribution) |
+| documents.tree | browser file tree and quick open (paths only, no document bodies) |
 | embeddingProviders.create | human provider credentials |
 | embeddingProviders.listMine | human provider credentials |
 | embeddingProviders.listSystem | human provider credentials |

@@ -212,6 +212,44 @@ async function readBlobEntriesWithSizes(
   return entries;
 }
 
+/** The most paths one `documents.tree` page returns. */
+export const DOCUMENT_TREE_PAGE_MAX = 5000;
+
+/**
+ * Every Markdown document path at a commit, in byte order like
+ * `listDocumentsAtRevision`, as one bounded page after `afterPath`. Paths
+ * only: one `ls-tree`, no blob reads, so a browser file tree of thousands of
+ * documents costs a handful of requests.
+ */
+export async function listDocumentPathsAtRevision(
+  input: {
+    reposDir: string;
+    kbId: string;
+    commitSha: string;
+    limit: number;
+    afterPath?: string | null;
+  } & GitReadOptions,
+): Promise<{ paths: string[]; nextAfter: string | null }> {
+  const options = gitReadOptions(input);
+  const repoPath = kbBareRepoPath(input.reposDir, input.kbId);
+  if (!(await isCommitReachable(repoPath, input.commitSha, options))) {
+    throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+  }
+  const limit = Math.min(Math.max(input.limit, 1), DOCUMENT_TREE_PAGE_MAX);
+  const entries = await readBlobEntriesWithSizes(repoPath, input.commitSha, options);
+  const sorted = entries
+    .map((entry) => entry.path)
+    .filter((path) => path.endsWith(".md"))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const after = input.afterPath;
+  const remaining = after ? sorted.filter((path) => path > after) : sorted;
+  const paths = remaining.slice(0, limit);
+  return {
+    paths,
+    nextAfter: remaining.length > limit ? (paths[paths.length - 1] ?? null) : null,
+  };
+}
+
 async function readBlobContentAsync(
   repoPath: string,
   blobSha: string,

@@ -14,12 +14,13 @@ import { cn } from "@knowledge-base/ui/lib/utils";
 import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { Download, Pencil } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { InlineRetry } from "@/components/inline-retry";
 import {
   DocumentMoreMenu,
+  type EditorSaveHandle,
   KbDocumentDelete,
   KbProposalDocumentEditor,
   KbSessionEditor,
@@ -38,6 +39,7 @@ import { KbDownloads } from "@/components/kb/downloads";
 import { KbRenderedDocument } from "@/components/kb/markdown-view";
 import { StatusPill } from "@/components/status-pill";
 import {
+  clearDraft,
   draftKey,
   readDraft,
   type StoredDraft,
@@ -51,6 +53,8 @@ import {
   useKbAccessLoss,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
+import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
 import { documentTitle } from "@/lib/document-text";
 import { cachedKbName, pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
@@ -387,6 +391,20 @@ function DocumentPage() {
     if (!latest || editingTargetKey(latest) !== editingTargetKey(from)) return;
     void navigate({ to: "/$lang/kbs/$kbId", params: { lang: at.lang, kbId: from.kbId } });
   };
+  // A target shown without an editor (a final state, or a failed read with no
+  // session): the workspace offers Discard / Cancel only for a kept draft.
+  useWorkspaceNoEditor(
+    target &&
+      !live &&
+      target.path !== "" &&
+      (terminal || documentRead.isError || absence !== null || proposalRead.isError)
+      ? target.target.kind === "proposal"
+        ? { path: target.path, proposal: target.target.number }
+        : target.target.rev
+          ? { path: target.path, rev: target.target.rev }
+          : { path: target.path }
+      : null,
+  );
   if (!kbData) return null;
   const kb = kbData.kb;
   if (search.pr !== undefined && search.path) {
@@ -620,8 +638,12 @@ function DocumentView({
     initialExists: !draft,
     onTargetAdvance: onAdvance,
   });
-  useDocumentDraft({
-    key: keyOf(target),
+  // A workspace Discard is final for this session: it keeps no draft after it
+  // (the keeper drops the stored one as its key goes), even if the session
+  // can't turn clean (an unresolved first save holding a typed path).
+  const [discarded, setDiscarded] = useState(false);
+  const kept = useDocumentDraft({
+    key: discarded ? null : keyOf(target),
     dirty: editor.dirty,
     pending: editor.pending,
     markdown: editor.markdown,
@@ -666,6 +688,50 @@ function DocumentView({
         : {}),
   };
   const canDelete = writable && !absence && !draft;
+  // The workspace (tabs, ⌘S, "close tab", `E`) acts on this session through
+  // its registration; its Save is the editor's own (same checks as the button).
+  const saveHandle = useRef<EditorSaveHandle>(null);
+  // With the edit view hidden (`E`) the draft is still the session's: reopen
+  // the editor and save with its own Save (path, uploads, outcomes in view).
+  const saveHidden = async () => {
+    // An upload still in flight belongs to the editor's own Save (its guard).
+    if (editor.pendingUpload) return false;
+    goTo({ ...at, mode: "edit" }, true);
+    const handle = await nextFrames(() => saveHandle.current, 120);
+    return handle ? handle.save() : false;
+  };
+  const draftKeyNow = keyOf(target);
+  useWorkspaceEditorRegistration({
+    kbId,
+    owner: userId,
+    tab: draft
+      ? { path: "" }
+      : target.target.kind === "proposal"
+        ? { path: target.path, proposal: target.target.number }
+        : target.target.rev
+          ? { path: target.path, rev: target.target.rev }
+          : { path: target.path },
+    dirty: editor.dirty,
+    canEdit: writable && !gone && !draft,
+    canSave: writable && !gone && !editor.pendingUpload,
+    pending: editor.pending,
+    uploading: editor.pendingUpload !== null,
+    keepDraft: kept.keepNow,
+    save: async () =>
+      editor.pendingUpload
+        ? false
+        : saveHandle.current
+          ? saveHandle.current.save()
+          : draft
+            ? false
+            : saveHidden(),
+    discard: () => {
+      editor.discard();
+      setDiscarded(true);
+      // Gone now, not only once the keeper next runs: the tab closes at once.
+      if (draftKeyNow) clearDraft(draftKeyNow);
+    },
+  });
   // Secondary and destructive actions live in one "More actions" menu.
   const moreActions: MoreAction[] = canDelete
     ? [
@@ -882,6 +948,7 @@ function DocumentView({
           }
           onOpenLatest={(path) => goTo({ path, mode: "edit" })}
           onProposed={(number, created) => void onProposed(number, created)}
+          saveRef={saveHandle}
           doneAction={draft ? undefined : doneEditing}
           moreActions={moreActions}
         />
@@ -1095,4 +1162,17 @@ function DownloadDialog({ kbId, rev }: { kbId: string; rev: string }) {
       </Dialog>
     </>
   );
+}
+
+/** Polls `read` once per animation frame until it yields, at most `frames` times. */
+function nextFrames<T>(read: () => T | null, frames: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let left = frames;
+    const tick = () => {
+      const value = read();
+      if (value !== null || left-- <= 0) resolve(value);
+      else requestAnimationFrame(tick);
+    };
+    tick();
+  });
 }

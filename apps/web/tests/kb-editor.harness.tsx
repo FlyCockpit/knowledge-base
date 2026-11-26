@@ -16,6 +16,7 @@ import { I18nextProvider } from "react-i18next";
 import z from "zod";
 import { clearKbPrivateQueries, parseApplyResult, recheckKbAccess } from "@/hooks/use-kb-editor";
 import { authClient } from "@/lib/auth-client";
+import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { Route as KbRoute } from "@/routes/$lang/_app/_auth/kbs/$kbId";
 import { Route as DocumentRoute } from "@/routes/$lang/_app/_auth/kbs/$kbId/documents";
 import { Route as PrDetailRoute } from "@/routes/$lang/_app/_auth/kbs/$kbId/prs/$number";
@@ -52,10 +53,36 @@ await i18n.init({
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5 * 60_000, retry: false } },
 });
-const root = createRootRoute({ component: Outlet });
+// Opt-in app styles (`sessionStorage["kb-harness-styled"] = "1"` before load):
+// layout-dependent specs (the workspace's drawer, sticky panes, widths) run
+// with the real CSS and, like the app, one bounded <main> scroller, since the
+// global CSS clips the document. Unstyled by default for the other specs.
+const styled = window.sessionStorage.getItem("kb-harness-styled") === "1";
+if (styled) await import("../../../packages/ui/src/styles/globals.css");
+const root = createRootRoute({
+  component: styled
+    ? () => (
+        <main
+          data-scroll-restoration-id={MAIN_SCROLLER_ID}
+          style={{ position: "fixed", inset: 0, overflowY: "auto", overflowX: "clip" }}
+        >
+          <Outlet />
+        </main>
+      )
+    : Outlet,
+});
 const lang = createRoute({ getParentRoute: () => root, path: "$lang", component: Outlet });
 const app = createRoute({ getParentRoute: () => lang, id: "_app", component: Outlet });
-const auth = createRoute({ getParentRoute: () => app, id: "_auth", component: Outlet });
+// Styled runs (the workspace spec) also put the signed-in viewer into the route
+// context, as the app's protected layout does (`kb-harness-viewer`: the fixture
+// actor the spec signed in as); other specs keep none.
+const viewer = styled ? window.sessionStorage.getItem("kb-harness-viewer") : null;
+const auth = createRoute({
+  getParentRoute: () => app,
+  id: "_auth",
+  component: Outlet,
+  beforeLoad: viewer ? () => ({ session: { user: { id: viewer } } }) : undefined,
+});
 const index = IndexRoute.update({
   ...{ getParentRoute: () => auth, path: "kbs/" },
   component: IndexRoute.options.component,

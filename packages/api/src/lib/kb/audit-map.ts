@@ -52,6 +52,8 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "rpc:documents.get": read,
   "rpc:documents.history": read,
   "rpc:documents.deleted": read,
+  "rpc:documents.tree": read,
+  "rpc:documents.recentChanges": read,
   "rpc:documents.create": CHANGES,
   "rpc:documents.update": CHANGES,
   "rpc:documents.delete": CHANGES,

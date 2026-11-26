@@ -280,7 +280,14 @@ export class DraftKeeper {
  * save in flight (the browser's own `beforeunload` prompt). `key` null:
  * nothing is kept (a read-only view).
  */
-export function useDocumentDraft(state: DraftState): void {
+export function useDocumentDraft(state: DraftState): {
+  /**
+   * Store the unsaved draft now and say whether it really was kept (read back):
+   * false when storage refused it (blocked, quota) or it is too large to keep.
+   * Leaving an editor whose draft wasn't kept must ask first.
+   */
+  keepNow: () => boolean;
+} {
   const [keeper] = useState(() => new DraftKeeper());
   const { key, dirty, pending, markdown, base, path, proposalHead, images, pendingUpload } = state;
   useEffect(() => {
@@ -322,4 +329,11 @@ export function useDocumentDraft(state: DraftState): void {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [keeper, guard]);
+  return {
+    keepNow: () => {
+      if (!key) return false;
+      keeper.flush();
+      return readDraft(key) !== null;
+    },
+  };
 }

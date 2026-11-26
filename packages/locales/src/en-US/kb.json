@@ -1029,5 +1029,124 @@
     "restoreNamed": "Restore {{path}}",
     "propose": "Propose restoring",
     "proposeNamed": "Propose restoring {{path}}"
+  },
+  "workspace": {
+    "tree": {
+      "label": "Files",
+      "folder": "Folder",
+      "unsaved": "unsaved changes",
+      "empty": "No documents yet."
+    },
+    "tabs": {
+      "label": "Open files",
+      "close": "Close {{name}}",
+      "unsaved": "unsaved changes",
+      "newDocument": "New document",
+      "switcher": "Recent files",
+      "switcherButton": "Recent files ({{count}})",
+      "switcherDescription": "Files you opened in this knowledge base.",
+      "switcherEmpty": "No open files yet."
+    },
+    "dirtyClose": {
+      "title": "Save changes to {{name}}?",
+      "description": "Your changes will be lost if you close it without saving.",
+      "save": "Save",
+      "saving": "Saving…",
+      "discard": "Discard changes",
+      "cancel": "Cancel",
+      "cannotSave": "This document can't be saved right now. Discard the changes or keep it open."
+    },
+    "resize": {
+      "tree": "Resize the file list"
+    },
+    "quickOpen": {
+      "title": "Go to file",
+      "description": "Type part of a file or folder name.",
+      "placeholder": "Search files by name…",
+      "empty": "No matching files.",
+      "hint": "Enter opens · {{mod}}+Enter opens in a new tab"
+    },
+    "shortcuts": {
+      "title": "Keyboard shortcuts",
+      "description": "Shortcuts of the document workspace.",
+      "note": "Browsers keep some keys for themselves (such as Ctrl+W or Ctrl+Tab). Use the Alt alternates when a shortcut does nothing.",
+      "or": "or",
+      "command": {
+        "save": "Save the open document",
+        "quickOpen": "Go to a file",
+        "closeTab": "Close the tab",
+        "nextTab": "Next tab",
+        "prevTab": "Previous tab",
+        "toggleEdit": "Show or hide the editor",
+        "toggleTree": "Show or hide the file list",
+        "search": "Search this knowledge base",
+        "rename": "Rename the selected file",
+        "shortcuts": "Show these shortcuts"
+      }
+    },
+    "sidebar": {
+      "label": "Sidebar view",
+      "files": "Files",
+      "search": "Search",
+      "outline": "Outline",
+      "activity": "Activity"
+    },
+    "outline": {
+      "label": "Document outline",
+      "empty": "This document has no headings.",
+      "noDocument": "Open a document to see its headings."
+    },
+    "search": {
+      "label": "Search documents",
+      "placeholder": "Search documents…",
+      "submit": "Search",
+      "idle": "Search the documents of this knowledge base by meaning and keywords.",
+      "results": "Search results"
+    },
+    "shell": {
+      "back": "Back to all files",
+      "files": "Files",
+      "showTree": "Show the file list",
+      "hideTree": "Hide the file list",
+      "treeLoadFailed": "The file list couldn't be loaded.",
+      "treeTruncated": "Only the first {{count}} files are listed. Use Go to file or search to find the others.",
+      "tabVariant": {
+        "pr": "PR #{{number}}",
+        "proposal": "proposal #{{number}}",
+        "revision": "version {{sha}}"
+      },
+      "treePartial": "Some files couldn't be listed."
+    },
+    "activity": {
+      "label": "Recently changed",
+      "agentsOnly": "Agents only",
+      "agent": "An agent",
+      "agentNamed": "Agent: {{name}}",
+      "person": "A person",
+      "personNamed": "{{name}}",
+      "unknown": "Unknown (pushed with Git)",
+      "loadFailed": "Recent changes couldn't be loaded.",
+      "empty": "No document changes yet.",
+      "emptyAgents": "No changes by agents yet.",
+      "pathsUnknown": "This change touched too many files to list.",
+      "morePaths_one": "and {{count}} more file",
+      "morePaths_other": "and {{count}} more files",
+      "badge": "Changed by an agent {{when}}",
+      "change": {
+        "added": "added",
+        "modified": "edited",
+        "deleted": "deleted",
+        "renamed": "renamed"
+      }
+    },
+    "reference": {
+      "copyLink": "Copy link",
+      "linkTitle": "Link to this document",
+      "linkDescription": "Anyone with access to this knowledge base can open it.",
+      "copyLinkLabel": "Copy the link",
+      "agentTitle": "Reference for agents",
+      "agentDescription": "An AI client connected over MCP reads {{path}} in “{{name}}” with this tool call.",
+      "copyAgentLabel": "Copy the reference for agents"
+    }
   }
 }

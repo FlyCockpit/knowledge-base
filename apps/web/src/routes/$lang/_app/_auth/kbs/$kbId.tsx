@@ -24,6 +24,7 @@ import {
   KbMetadataSheet,
   kbAccessLabelKey,
 } from "@/components/kb/kb-list";
+import { KbWorkspace, type WorkspaceSearch } from "@/components/kb/kb-workspace";
 import { FRESHNESS_TONE, SearchPanel } from "@/components/kb/search-results";
 import { LoadMore } from "@/components/load-more";
 import NotFoundState from "@/components/not-found-state";
@@ -72,8 +73,11 @@ type IndexFreshness = keyof typeof FRESHNESS_TONE;
 function KbLayout() {
   const { lang, kbId } = Route.useParams();
   const { t } = useTranslation("kb");
+  // The session the protected layout resolved before this page rendered.
+  const { session } = Route.useRouteContext();
+  const viewerId = session?.user.id ?? null;
   const matchRoute = useMatchRoute();
-  const search: { path?: string; mode?: string; accept?: string } = useSearch({ strict: false });
+  const search: WorkspaceSearch & { accept?: string } = useSearch({ strict: false });
   // Settings owns its own KB loading: a recipient accepting an invitation
   // cannot read the KB yet, so the layout must not replace it with "unavailable".
   const onSettings = Boolean(matchRoute({ to: "/$lang/kbs/$kbId/settings" }));
@@ -153,10 +157,37 @@ function KbLayout() {
     </>
   );
 
-  // The split editor/preview uses the whole screen; reading keeps a long-read measure.
-  const editing = onDocument && (search.mode === "edit" || search.mode === "new" || !search.path);
+  // The workspace (file tree, tabs, read/edit view) is the KB home and its
+  // documents, full width; the KB's other pages keep their page column.
+  if (kb && !lost && (onDocument || onHome) && kbControls(kb.capabilities).canRead) {
+    return (
+      <KbWorkspace
+        // One workspace per viewer and KB: nothing (tabs, tree, a kept previous
+        // tree or feed) carries over to another KB or another account.
+        key={`${viewerId ?? ""}:${kbId}`}
+        lang={lang}
+        kbId={kbId}
+        kbName={kb.name}
+        viewerId={viewerId}
+        canRead
+        current={onDocument ? search : null}
+      >
+        <div className="space-y-6">
+          <Breadcrumbs items={crumbs} className="-mt-2" />
+          {onDocument ? (
+            <Outlet />
+          ) : (
+            <div className="mx-auto max-w-6xl space-y-6">
+              {chrome(kb, data?.index)}
+              <KbHome key={`home:${kbId}`} kb={kb} lang={lang} />
+            </div>
+          )}
+        </div>
+      </KbWorkspace>
+    );
+  }
   return (
-    <PageShell width={editing ? "full" : "default"}>
+    <PageShell>
       <Breadcrumbs items={crumbs} className="-mt-2" />
       {onSettings ? (
         <>
