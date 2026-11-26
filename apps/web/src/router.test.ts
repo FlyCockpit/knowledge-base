@@ -2,6 +2,12 @@ import { toast } from "@knowledge-base/ui/components/sileo";
 import { QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  connectIdentityPeers,
+  observeDocumentIdentity,
+  replaceDocument,
+  resetDocumentIdentityForTests,
+} from "./lib/document-identity";
 import { getRouter } from "./router";
 
 vi.mock("@knowledge-base/ui/components/sileo", () => ({ toast: { error: vi.fn() } }));
@@ -23,9 +29,12 @@ vi.mock("./i18n", () => ({
 vi.mock("./routeTree.gen", () => ({ routeTree: {} }));
 vi.mock("./utils/orpc", () => ({ orpc: {} }));
 
+/** A browser window as far as the router uses it (the back/forward cache listeners). */
+const browserWindow = () => ({ addEventListener: vi.fn() });
+
 describe("query error toast retry", () => {
   beforeEach(() => {
-    vi.stubGlobal("window", {});
+    vi.stubGlobal("window", browserWindow());
     vi.mocked(toast.error).mockClear();
   });
 
@@ -102,7 +111,7 @@ it.each([
 ])(
   "a read failing with $error.message toasts only when retrying can help",
   async ({ error, toasts }) => {
-    vi.stubGlobal("window", {});
+    vi.stubGlobal("window", browserWindow());
     const client = getRouter().options.context.queryClient;
     try {
       await expect(
@@ -118,7 +127,7 @@ it.each([
 );
 
 it("still toasts a mutation that finds nothing: an action the user took failed", async () => {
-  vi.stubGlobal("window", {});
+  vi.stubGlobal("window", browserWindow());
   const client = getRouter().options.context.queryClient;
   try {
     const mutation = client.getMutationCache().build(client, {
@@ -137,7 +146,7 @@ it("still toasts a mutation that finds nothing: an action the user took failed",
 it.each([true, false])(
   "a mutation with skipGlobalErrorToast=%s toasts its failure only without it",
   async (skip) => {
-    vi.stubGlobal("window", {});
+    vi.stubGlobal("window", browserWindow());
     const client = getRouter().options.context.queryClient;
     try {
       const mutation = client.getMutationCache().build(client, {
@@ -154,6 +163,69 @@ it.each([true, false])(
     }
   },
 );
+
+describe("a request rejected for having no session", () => {
+  beforeEach(() => {
+    resetDocumentIdentityForTests(() => undefined);
+    vi.stubGlobal("window", browserWindow());
+    vi.mocked(toast.error).mockClear();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const unauthorized = () => Object.assign(new Error("signed out"), { code: "UNAUTHORIZED" });
+
+  it("checks the session once instead of toasting each read", async () => {
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    const client = getRouter().options.context.queryClient;
+    try {
+      await Promise.allSettled(
+        ["a", "b", "c"].map((key) =>
+          client.fetchQuery({
+            queryKey: [key],
+            queryFn: () => Promise.reject(unauthorized()),
+            retry: false,
+          }),
+        ),
+      );
+      await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
+      expect(toast.error).not.toHaveBeenCalled();
+    } finally {
+      client.clear();
+    }
+  });
+
+  it("still toasts a mutation, after queueing the same check", async () => {
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    const client = getRouter().options.context.queryClient;
+    try {
+      const mutation = client.getMutationCache().build(client, {
+        mutationFn: () => Promise.reject(unauthorized()),
+        retry: false,
+        meta: { skipGlobalErrorToast: false },
+      });
+      await expect(mutation.execute(undefined)).rejects.toThrow("signed out");
+      expect(toast.error).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
+    } finally {
+      client.clear();
+    }
+  });
+
+  it("seals the client when the document is replaced: nothing written afterwards stays", () => {
+    vi.stubGlobal("window", { ...browserWindow(), location: { reload: vi.fn() } });
+    const client = getRouter().options.context.queryClient;
+    client.setQueryData(["kb"], "A's list");
+    expect(observeDocumentIdentity("a")).toBe(false);
+    expect(observeDocumentIdentity("b")).toBe(true);
+    replaceDocument();
+    expect(client.getQueryData(["kb"])).toBeUndefined();
+    // A late A-era onSuccess → setQueryData.
+    client.setQueryData(["kb"], "A's list again");
+    expect(client.getQueryData(["kb"])).toBeUndefined();
+  });
+});
 
 it("restores the bounded main and delegates hash reveal without page snapshots", () => {
   const { options } = getRouter();

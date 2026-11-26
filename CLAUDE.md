@@ -174,7 +174,7 @@ Hard "never do this" list. If a change requires any of the below, stop and ask t
 - Do not use `git commit --no-verify` to skip pre-commit hooks — fix the failing check instead.
 - Do not disable pinch-zoom (`maximum-scale` / `user-scalable=no`). Fix form-control font size instead.
 - Do not use `@ts-ignore`. Use `@ts-expect-error` with a reason.
-- Route files must not call `authClient.getSession()`. Use `getRouteSession()` from `apps/web/src/server/auth-session.ts`.
+- Route guards use `resolveRouteSession()`, never `authClient.getSession()` or bare `getRouteSession()`.
 - Do not call `.useSession()` except inside `apps/web/src/hooks/use-auth-session.ts`. Everyone else uses `useAuthSession()`.
 - Do not loosen CSP directives (`apps/server/src/security-headers.ts` — that file owns the policy; `index.ts` only mounts it) to include `'unsafe-eval'`, `'wasm-unsafe-eval'`, or wildcard sources.
 - Do not change the `SIGNUP_ENABLED` default or remove admin gates without explicit user request. The same applies to the forced-2FA defaults in `packages/auth/src/two-factor-policy.ts`: `FORCE_2FA_DEFAULTS` requires a second factor of internal (admin) users when the AppSetting row is absent, and `TWO_FACTOR_ENROLLMENT_GRACE_MS` is the only window in which an unenrolled covered user still gets through. It runs from `User.twoFactorGraceStartedAt` (when the requirement first applied: promotion to admin or the policy turned on), or from `createdAt` when that is NULL. Do not flip that default to `false`, lengthen the grace, move a recorded start later, extend it to any check other than forced 2FA, or drop `createdAt`/`twoFactorGraceStartedAt` from a call site or session projection so the grace silently never ends.

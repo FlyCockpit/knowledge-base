@@ -3,7 +3,6 @@ import { useEffect, useMemo } from "react";
 
 import { useKbAccessLoss } from "@/hooks/use-kb-editor";
 import { useKbHeadSha } from "@/hooks/use-kb-head-sha";
-import { VIEWER_SCOPED_CACHE, viewerScopedKey } from "@/lib/viewer-scoped-key";
 import { orpc } from "@/utils/orpc";
 
 /** Tree pages: 2000 paths each, at most this many pages (a 40k-document KB). */
@@ -17,7 +16,7 @@ const TREE_MAX_PAGES = 20;
  * (each moves the head) reads the new tree, and all pages are one snapshot.
  * A KB the viewer can't read, or an empty one (no head), reads nothing.
  */
-export function useKbTree(kbId: string, canRead: boolean, viewerId: string | null) {
+export function useKbTree(kbId: string, canRead: boolean) {
   const head = useKbHeadSha(kbId);
   const options = orpc.documents.tree.infiniteOptions({
     input:
@@ -36,13 +35,7 @@ export function useKbTree(kbId: string, canRead: boolean, viewerId: string | nul
     // A new head keeps the current tree on screen until its tree arrives.
     placeholderData: keepPreviousData,
   });
-  // The viewer's own answer (the app's cache outlives a sign-out): another
-  // account gets another key and reads its own tree; unused, it is dropped.
-  const query = useInfiniteQuery({
-    ...options,
-    ...VIEWER_SCOPED_CACHE,
-    queryKey: viewerScopedKey(options.queryKey, viewerId),
-  });
+  const query = useInfiniteQuery(options);
   const { hasNextPage, isFetchingNextPage, fetchNextPage, isError } = query;
   // The tree needs every page; keep reading while there is a next one.
   useEffect(() => {

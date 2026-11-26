@@ -218,7 +218,7 @@ export function KbWorkspace({
   const draftOwner = viewerId ? `user:${viewerId}` : null;
   const editor = useKbWorkspaceStore((state) => state.editor);
   const layout = useKbWorkspaceLayout();
-  const tree = useKbTree(kbId, canRead, viewerId);
+  const tree = useKbTree(kbId, canRead);
   const head = useKbHeadSha(kbId);
   const currentTab = tabOfSearch(current);
   // Unsaved: the open editor says so, or a tab left with edits kept its draft
@@ -571,7 +571,7 @@ export function KbWorkspace({
   });
   const outlineMarkdown = outlineInput ? (outlineDocument?.markdown ?? null) : undefined;
   // Documents an agent changed lately carry a badge in the tree (same read as Activity).
-  const recent = useKbRecentChanges(kbId, canRead, viewerId);
+  const recent = useKbRecentChanges(kbId, canRead);
   const badges = useMemo(() => {
     const now = Date.now();
     const out = new Map<string, ReactNode>();
@@ -620,7 +620,6 @@ export function KbWorkspace({
       lang={lang}
       kbId={kbId}
       kbName={kbName}
-      viewerId={viewerId}
       tree={tree}
       activePath={activePath}
       outlineMarkdown={outlineMarkdown}
@@ -855,7 +854,6 @@ function WorkspaceSidebarPane({
   lang,
   kbId,
   kbName,
-  viewerId,
   tree,
   activePath,
   outlineMarkdown,
@@ -871,7 +869,6 @@ function WorkspaceSidebarPane({
   lang: string;
   kbId: string;
   kbName: string;
-  viewerId: string | null;
   tree: ReturnType<typeof useKbTree>;
   activePath: string | null;
   /** The open document's text (null while it loads); undefined: no document open. */
@@ -965,14 +962,7 @@ function WorkspaceSidebarPane({
         onViewChange={setView}
         files={files}
         search={<SidebarSearch lang={lang} kbId={kbId} onOpen={onOpenHit} />}
-        activity={
-          <RecentChangesPanel
-            lang={lang}
-            kbId={kbId}
-            viewerId={viewerId}
-            onOpen={(path) => onOpen(path)}
-          />
-        }
+        activity={<RecentChangesPanel lang={lang} kbId={kbId} onOpen={(path) => onOpen(path)} />}
         outline={
           outlineMarkdown === undefined || activePath === null ? null : (
             <OutlinePanel

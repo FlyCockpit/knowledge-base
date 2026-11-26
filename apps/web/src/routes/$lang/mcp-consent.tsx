@@ -17,10 +17,11 @@ import { AclPicker } from "@/components/kb/acl-picker";
 import { buildSignedOAuthQuery, useMcpConsent } from "@/hooks/use-mcp-consent";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
 import { useMountEffect } from "@/hooks/use-mount-effect";
+import { useReloadOnIdentityChange } from "@/hooks/use-reload-on-identity-change";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { pageHead } from "@/lib/page-title";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
-import { getRouteSession } from "@/server/auth-session";
 
 /**
  * MCP OAuth consent (Better Auth `consentPage`). Everything rendered about the
@@ -33,7 +34,7 @@ export const Route = createFileRoute("/$lang/mcp-consent")({
   validateSearch: (search: Record<string, unknown>) => search,
   ssr: false,
   beforeLoad: async ({ params }) => {
-    const decision = decideProtectedRouteAccess(await getRouteSession());
+    const decision = decideProtectedRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
       throw redirect({
@@ -47,6 +48,9 @@ export const Route = createFileRoute("/$lang/mcp-consent")({
 });
 
 function McpConsentPage() {
+  // Outside the app shell, so this page watches the identity itself: its
+  // KB list belongs to one account (docs/ui.md § Query cache follows identity).
+  useReloadOnIdentityChange();
   useMobileKeyboard();
   // Router searchStr is reserialized and collapses repeated ba_param keys.
   // History already owns the raw destination when the browser URL flush is

@@ -6,6 +6,7 @@ import {
   type PendingUpload,
   type StagedImage,
 } from "@/hooks/use-kb-editor";
+import { isDocumentQuarantined } from "@/lib/document-identity";
 
 /**
  * Unsaved document drafts survive a reload, a crash or leaving the page
@@ -280,6 +281,21 @@ export class DraftKeeper {
  * save in flight (the browser's own `beforeunload` prompt). `key` null:
  * nothing is kept (a read-only view).
  */
+/**
+ * Leaving the page with an unsaved draft: keep it, and ask the browser to
+ * confirm. Not while the document is being replaced for another identity or
+ * an explicit sign-out (lib/document-identity.ts): the draft is kept (keyed by
+ * its user), and "Stay" would strand a hidden page with a sealed cache.
+ */
+export function guardDraftUnload(
+  keeper: Pick<DraftKeeper, "flush">,
+  event: Pick<BeforeUnloadEvent, "preventDefault">,
+): void {
+  keeper.flush();
+  if (isDocumentQuarantined()) return;
+  event.preventDefault();
+}
+
 export function useDocumentDraft(state: DraftState): {
   /**
    * Store the unsaved draft now and say whether it really was kept (read back):
@@ -322,10 +338,7 @@ export function useDocumentDraft(state: DraftState): {
     // Registered only while needed: a beforeunload listener can keep the
     // page out of the browser's back/forward cache.
     if (!guard) return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      keeper.flush();
-      event.preventDefault();
-    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => guardDraftUnload(keeper, event);
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [keeper, guard]);

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   type PendingInvitation,
@@ -12,15 +12,7 @@ import {
   PendingInvitations,
   pendingInvitationLabel,
 } from "@/components/kb/pending-invitations";
-import { viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { orpc } from "@/utils/orpc";
-
-const VIEWER = "viewer-1";
-vi.mock("@/hooks/use-auth-session", () => ({
-  useAuthSession: () => ({
-    state: { status: "authenticated", session: { user: { id: VIEWER } } },
-  }),
-}));
 
 const KB = "k".repeat(24);
 const i18n = createInstance();
@@ -160,13 +152,10 @@ describe("pending invitations", () => {
   it("lists the KB's pending page under its heading", () => {
     const client = new QueryClient();
     client.setQueryData(
-      viewerScopedKey(
-        orpc.kbs.sharePendingList.infiniteKey({
-          input: (cursor: string | null) => ({ kbId: KB, limit: 20, cursor }),
-          initialPageParam: null,
-        }),
-        VIEWER,
-      ),
+      orpc.kbs.sharePendingList.infiniteKey({
+        input: (cursor: string | null) => ({ kbId: KB, limit: 20, cursor }),
+        initialPageParam: null,
+      }),
       { pages: [{ items: [mine], nextCursor: null }], pageParams: [null] },
     );
     const html = wrap(
@@ -178,5 +167,8 @@ describe("pending invitations", () => {
     expect(html).toContain("ada@example.test");
     // Cancelling is a plain confirmation: nothing to type.
     expect(html).not.toContain("Type ");
+    // Accepted or cancelled elsewhere meanwhile: the next visit reads it anew.
+    const [query] = client.getQueryCache().findAll({ queryKey: orpc.kbs.sharePendingList.key() });
+    expect(query?.options.gcTime).toBe(0);
   });
 });

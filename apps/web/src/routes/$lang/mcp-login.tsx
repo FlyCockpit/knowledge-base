@@ -4,8 +4,8 @@ import { AuthScreen } from "@/components/auth/auth-screen";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { pageHead } from "@/lib/page-title";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
-import { getRouteSession } from "@/server/auth-session";
 
 /**
  * Better Auth `loginPage` for the MCP OAuth provider. It owns no credentials
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/$lang/mcp-login")({
   ssr: false,
   beforeLoad: async ({ params }) => {
     const consent = `/${params.lang}/mcp-consent${window.location.search}`;
-    const decision = decideProtectedRouteAccess(await getRouteSession());
+    const decision = decideProtectedRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "allow") throw redirect({ href: consent, reloadDocument: true });
     throw redirect({

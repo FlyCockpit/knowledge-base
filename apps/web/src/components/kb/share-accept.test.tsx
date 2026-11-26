@@ -4,7 +4,7 @@ import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { KbSettingsView } from "@/components/kb/members-panel";
 import {
@@ -13,16 +13,8 @@ import {
   type ShareInvitePreview,
   sharePreviewState,
 } from "@/components/kb/share-accept";
-import { viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { renderWithTestRouter } from "@/lib/router-test-utils";
 import { orpc } from "@/utils/orpc";
-
-const VIEWER = "viewer-1";
-vi.mock("@/hooks/use-auth-session", () => ({
-  useAuthSession: () => ({
-    state: { status: "authenticated", session: { user: { id: VIEWER } } },
-  }),
-}));
 
 const KB = "k".repeat(24);
 const REQUEST = "11111111-1111-4111-8111-111111111111";
@@ -148,10 +140,7 @@ describe("share invitation acceptance", () => {
   it("reads the preview for the request id", () => {
     const client = new QueryClient();
     client.setQueryData(
-      viewerScopedKey(
-        orpc.kbs.shareInvitePreview.queryKey({ input: { requestId: REQUEST } }),
-        VIEWER,
-      ),
+      orpc.kbs.shareInvitePreview.queryKey({ input: { requestId: REQUEST } }),
       preview,
     );
     const html = wrap(
@@ -159,15 +148,17 @@ describe("share invitation acceptance", () => {
       client,
     );
     expect(html).toContain("Ana invited you to Team notes");
+    // Cancelled or accepted meanwhile: the next visit reads it anew.
+    const query = client
+      .getQueryCache()
+      .find({ queryKey: orpc.kbs.shareInvitePreview.queryKey({ input: { requestId: REQUEST } }) });
+    expect(query?.options.gcTime).toBe(0);
   });
 
   it("settings opened from an invitation is the invitation card alone", () => {
     const client = new QueryClient();
     client.setQueryData(
-      viewerScopedKey(
-        orpc.kbs.shareInvitePreview.queryKey({ input: { requestId: REQUEST } }),
-        VIEWER,
-      ),
+      orpc.kbs.shareInvitePreview.queryKey({ input: { requestId: REQUEST } }),
       preview,
     );
     const html = wrap(<KbSettingsView lang="en-US" kbId={KB} accept={REQUEST} />, client);

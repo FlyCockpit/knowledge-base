@@ -9,15 +9,14 @@ import {
   DropdownMenuTrigger,
 } from "@knowledge-base/ui/components/dropdown-menu";
 import { toast } from "@knowledge-base/ui/components/sileo";
-import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { LogOut, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { signOutAndLeave } from "@/lib/explicit-sign-out";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
-import { setSessionHint } from "@/lib/session-hint";
 import { friendly } from "@/utils/friendly-error";
 
 /**
@@ -34,7 +33,6 @@ export default function UserMenuContent() {
   const params = useParams({ strict: false });
   const lang = isSupportedLocale(params.lang) ? params.lang : DEFAULT_LOCALE;
   const authSession = useAuthSession();
-  const queryClient = useQueryClient();
   const { t } = useTranslation("nav");
 
   // The shell only renders this once a session exists; guard defensively so a
@@ -97,33 +95,14 @@ export default function UserMenuContent() {
           <DropdownMenuItem
             variant="destructive"
             onClick={async () => {
-              // Still signed in after a failure: say so, so the user can try
-              // again instead of believing they are out.
-              const failed = (error: unknown) =>
-                toast.error(friendly(error, t("userMenu.signOutFailed")));
-              try {
-                // Dynamic import keeps the sign-out path out of the menu
-                // chunk's critical path; the auth client is already warm once
-                // the menu is reachable for a signed-in user.
-                const { authClient } = await import("@/lib/auth-client");
-                const result = await authClient.signOut({
-                  fetchOptions: {
-                    onSuccess: () => {
-                      // The public pages' cookie hint follows at once, so
-                      // the landing page and its header agree (lib/session-hint.ts).
-                      setSessionHint(queryClient, false);
-                      navigate({
-                        to: "/$lang/login",
-                        params: { lang },
-                        search: { redirectTo: undefined },
-                      });
-                    },
-                  },
-                });
-                if (result.error) failed(result.error);
-              } catch (error) {
-                failed(error);
-              }
+              // A full page load, not a client-side navigate: it is the one
+              // reset that drops every byte of the old user's cached data
+              // without leaving mounted queries refetching (and 401-toasting)
+              // or stuck pending on a cleared cache. The new document reads
+              // the public pages' session hint afresh. Still signed in after a
+              // failure: say so. docs/ui.md § Query cache follows identity.
+              const result = await signOutAndLeave(`/${lang}/login`);
+              if (!result.ok) toast.error(friendly(result.error, t("userMenu.signOutFailed")));
             }}
           >
             <LogOut className="size-4" />

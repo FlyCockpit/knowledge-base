@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  observeDocumentIdentity,
+  replaceDocument,
+  resetDocumentIdentityForTests,
+} from "@/lib/document-identity";
+
+import {
   clearDraft,
   DraftKeeper,
   draftKey,
   forgetKbDrafts,
+  guardDraftUnload,
   readDraft,
   storableDraft,
   writeDraft,
@@ -246,5 +253,31 @@ describe("DraftKeeper", () => {
     expect(storage.length).toBe(0);
     keeper.update(state({ key: null, dirty: false, pending: true }));
     expect(keeper.guard).toBe(true);
+  });
+});
+
+describe("guardDraftUnload", () => {
+  beforeEach(() => resetDocumentIdentityForTests(() => undefined));
+
+  it("keeps the draft and asks to confirm leaving", () => {
+    const keeper = { flush: vi.fn() };
+    const event = { preventDefault: vi.fn() };
+    guardDraftUnload(keeper, event);
+    expect(keeper.flush).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the draft but never holds back the load that replaces the document", () => {
+    // Another account was confirmed: the page is hidden and its cache sealed
+    // before the reload, so a "Stay" would strand a blank page.
+    vi.stubGlobal("window", { sessionStorage: storage, location: { reload: vi.fn() } });
+    observeDocumentIdentity("a");
+    expect(observeDocumentIdentity("b")).toBe(true);
+    replaceDocument();
+    const keeper = { flush: vi.fn() };
+    const event = { preventDefault: vi.fn() };
+    guardDraftUnload(keeper, event);
+    expect(keeper.flush).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 });

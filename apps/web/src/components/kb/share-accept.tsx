@@ -8,7 +8,6 @@ import { InlineRetry } from "@/components/inline-retry";
 import { PermissionSummary } from "@/components/kb/permission-descriptions";
 import { ControlError, controlErrorCode } from "@/components/kb/profile-panel";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
-import { useViewerId, VIEWER_SCOPED_CACHE, viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
 
@@ -149,20 +148,15 @@ export function ShareAcceptCard({
   onAccepted: (kbId: string) => void;
 }) {
   const session = useKbMutationSession();
-  const viewerId = useViewerId();
   const { data, error, isPending, refetch } = useQuery(
     orpc.kbs.shareInvitePreview.queryOptions({
       input: { requestId },
-      // Only the invited account may see it: scoped to the viewer.
-      queryKey: viewerScopedKey(
-        orpc.kbs.shareInvitePreview.queryKey({ input: { requestId } }),
-        viewerId,
-      ),
-      enabled: viewerId !== null,
+      // The sender may cancel it, or it may be accepted elsewhere, at any
+      // time: read it anew on every visit, never a cached answer.
+      gcTime: 0,
       retry: false,
       // Every failure renders in the card (gone, or Try again): no toast too.
       meta: { skipGlobalErrorToast: true },
-      ...VIEWER_SCOPED_CACHE,
     }),
   );
   const accept = useMutation(

@@ -17,15 +17,15 @@ import { InlineRetry } from "@/components/inline-retry";
 import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { useTwoFactorEnrollment } from "@/hooks/use-two-factor-enrollment";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
 import { setSessionHint } from "@/lib/session-hint";
-import { getRouteSession } from "@/server/auth-session";
 import { orpc } from "@/utils/orpc";
 import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
 
 export const Route = createFileRoute("/$lang/_app/_auth")({
   beforeLoad: async ({ location, params, context }) => {
-    const decision = decideProtectedRouteAccess(await getRouteSession());
+    const decision = decideProtectedRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
       // Keep the public pages' cookie hint in step with what this gate just

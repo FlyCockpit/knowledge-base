@@ -37,6 +37,9 @@ vi.mock("@/components/language-switcher", () => ({ LanguageSwitcher: () => null 
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => null }));
 vi.mock("@/hooks/use-document-lang", () => ({ useDocumentLang: () => {} }));
 vi.mock("@/hooks/use-user-locale-sync", () => ({ useUserLocaleSync: () => {} }));
+vi.mock("@/hooks/use-reload-on-identity-change", () => ({
+  useReloadOnIdentityChange: () => {},
+}));
 vi.mock("@/hooks/use-mobile-keyboard", () => ({ useMobileKeyboard: () => false }));
 
 const { Route: AppRoute } = await import("@/routes/$lang/_app/route");

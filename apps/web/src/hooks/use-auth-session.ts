@@ -1,5 +1,6 @@
 import { authClient } from "@/lib/auth-client";
 import { type AuthSessionState, getAuthSessionState } from "@/lib/auth-session-state";
+import { useSessionUnconfirmed } from "@/lib/session-unconfirmed";
 
 import { useNetworkStatus } from "./use-network-status";
 
@@ -13,12 +14,14 @@ export function getAuthActorKey(): string | null {
 export function useAuthSession(): AuthSessionState {
   const session = authClient.useSession();
   const isOnline = useNetworkStatus();
+  // Under `SessionUnconfirmed` (the app shell's pending state): nobody yet.
+  const unconfirmed = useSessionUnconfirmed();
 
   return getAuthSessionState({
-    data: session.data,
-    isPending: session.isPending,
+    data: unconfirmed ? null : session.data,
+    isPending: unconfirmed || session.isPending,
     isRefetching: session.isRefetching,
-    error: session.error,
+    error: unconfirmed ? null : session.error,
     isOnline,
     refetch: session.refetch,
   });

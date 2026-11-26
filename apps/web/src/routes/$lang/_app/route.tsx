@@ -12,8 +12,10 @@ import { OfflineBand } from "@/components/offline-band";
 import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { useDocumentLang } from "@/hooks/use-document-lang";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
+import { useReloadOnIdentityChange } from "@/hooks/use-reload-on-identity-change";
 import { useUserLocaleSync } from "@/hooks/use-user-locale-sync";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
+import { SessionUnconfirmed } from "@/lib/session-unconfirmed";
 
 export const Route = createFileRoute("/$lang/_app")({
   // App/auth/admin surfaces depend on browser-only auth, PWA, viewport, and
@@ -34,6 +36,9 @@ export const Route = createFileRoute("/$lang/_app")({
 function AppShellLayout() {
   // Service-worker registration (useAppUpdate) lives in __root so public
   // pages get it too — don't re-add it here.
+  // Whose cached data this document holds: a different confirmed identity
+  // replaces the document (docs/ui.md § Query cache follows identity).
+  useReloadOnIdentityChange();
   useDocumentLang();
   useUserLocaleSync();
 
@@ -54,10 +59,14 @@ function AppShellLayout() {
 
 /** The shell around the loading page: same frame, content skeleton only. */
 function AppShellPending() {
+  // Painted before the session guards admit anyone: the chrome names no
+  // account yet (docs/ui.md § Query cache follows identity).
   return (
-    <AppShellFrame>
-      <RouteContentSkeleton />
-    </AppShellFrame>
+    <SessionUnconfirmed>
+      <AppShellFrame>
+        <RouteContentSkeleton />
+      </AppShellFrame>
+    </SessionUnconfirmed>
   );
 }
 

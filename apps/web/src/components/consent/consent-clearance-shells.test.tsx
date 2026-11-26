@@ -50,6 +50,9 @@ vi.mock("@/components/consent/consent-preferences-button", () => ({
 }));
 vi.mock("@/hooks/use-document-lang", () => ({ useDocumentLang: () => {} }));
 vi.mock("@/hooks/use-user-locale-sync", () => ({ useUserLocaleSync: () => {} }));
+vi.mock("@/hooks/use-reload-on-identity-change", () => ({
+  useReloadOnIdentityChange: () => {},
+}));
 vi.mock("@/hooks/use-mobile-keyboard", () => ({ useMobileKeyboard: () => keyboard.open }));
 
 const { Route: AppRoute } = await import("@/routes/$lang/_app/route");

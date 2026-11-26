@@ -20,19 +20,16 @@ import { formatRelativeTime } from "@/utils/relative-time";
 export function RecentChangesPanel({
   lang,
   kbId,
-  viewerId,
   onOpen,
 }: {
   lang: string;
   kbId: string;
-  /** The signed-in viewer: the feed is cached as theirs only. */
-  viewerId: string | null;
   onOpen: (path: string) => void;
 }) {
   const { t } = useTranslation("kb");
   const id = useId();
   const [agentsOnly, setAgentsOnly] = useState(false);
-  const recent = useKbRecentChanges(kbId, true, viewerId);
+  const recent = useKbRecentChanges(kbId, true);
   if (recent.lost) return null;
   const shown = agentsOnly
     ? recent.items.filter((item) => item.actor.kind === "agent")

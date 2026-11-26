@@ -15,7 +15,6 @@ import { LoadMore } from "@/components/load-more";
 import { QueryBoundary } from "@/components/query-boundary";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { useRenewableAttemptKey } from "@/hooks/use-renewable-attempt-key";
-import { useViewerId, VIEWER_SCOPED_CACHE, viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { orpc } from "@/utils/orpc";
 
 export type PendingInvitation = Awaited<
@@ -187,21 +186,16 @@ export function PendingInvitations({
   const [cancelling, setCancelling] = useState<PendingInvitation | null>(null);
   const [resendState, setResendState] = useState<ResendState>();
   const { data: appConfig } = useQuery(orpc.appConfig.queryOptions());
-  const viewerId = useViewerId();
   const pendingInput = (cursor: string | null) => ({ kbId, limit: 20, cursor });
   const pending = useInfiniteQuery(
     orpc.kbs.sharePendingList.infiniteOptions({
       input: pendingInput,
       initialPageParam: null,
-      // Addresses and links depend on who asks: scoped to the viewer.
-      queryKey: viewerScopedKey(
-        orpc.kbs.sharePendingList.infiniteKey({ input: pendingInput, initialPageParam: null }),
-        viewerId,
-      ),
-      enabled: viewerId !== null,
       getNextPageParam: (last) => last?.nextCursor ?? null,
+      // Others change it (an invitee accepts, a member leaves) while this
+      // account stays signed in: read it anew on every visit.
+      gcTime: 0,
       retry: false,
-      ...VIEWER_SCOPED_CACHE,
     }),
   );
   const refresh = () =>

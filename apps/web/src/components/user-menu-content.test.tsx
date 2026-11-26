@@ -17,7 +17,8 @@ const fixture = vi.hoisted(() => ({
   items: [] as { text: string; onClick?: () => unknown }[],
   signOut: vi.fn(),
   navigate: vi.fn(),
-  setHint: vi.fn(),
+  undo: vi.fn(),
+  leave: vi.fn(),
   toastError: vi.fn(),
 }));
 
@@ -56,8 +57,6 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => fixture.navigate,
   useParams: () => ({ lang: "en-US" }),
 }));
-vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));
-vi.mock("@/lib/session-hint", () => ({ setSessionHint: fixture.setHint }));
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
     state: {
@@ -68,6 +67,10 @@ vi.mock("@/hooks/use-auth-session", () => ({
       },
     },
   }),
+}));
+vi.mock("@/lib/document-identity", () => ({
+  markExplicitSignOut: () => fixture.undo,
+  leaveDocument: fixture.leave,
 }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { signOut: fixture.signOut } }));
 vi.mock("@knowledge-base/ui/components/sileo", () => ({ toast: { error: fixture.toastError } }));
@@ -91,7 +94,8 @@ beforeEach(() => {
   fixture.items = [];
   fixture.signOut.mockReset();
   fixture.navigate.mockReset();
-  fixture.setHint.mockReset();
+  fixture.undo.mockReset();
+  fixture.leave.mockReset();
   fixture.toastError.mockReset();
 });
 
@@ -135,24 +139,26 @@ describe("account menu", () => {
     expect(html).toContain('class="hidden truncate md:block">Ada Lovelace<');
   });
 
-  it("says so when sign-out fails, and stays", async () => {
+  it("undoes the sign-out mark and says so when sign-out fails, and stays", async () => {
     fixture.signOut.mockResolvedValue({ error: { status: 500 } });
     render();
     await fixture.items.at(-1)?.onClick?.();
+    expect(fixture.undo).toHaveBeenCalledTimes(1);
     expect(fixture.toastError).toHaveBeenCalledWith(enNav.userMenu.signOutFailed);
+    expect(fixture.leave).not.toHaveBeenCalled();
     expect(fixture.navigate).not.toHaveBeenCalled();
-    expect(fixture.setHint).not.toHaveBeenCalled();
   });
 
   it("does the same when the request throws", async () => {
     fixture.signOut.mockRejectedValue(new Error("offline"));
     render();
     await fixture.items.at(-1)?.onClick?.();
+    expect(fixture.undo).toHaveBeenCalledTimes(1);
     expect(fixture.toastError).toHaveBeenCalledTimes(1);
-    expect(fixture.navigate).not.toHaveBeenCalled();
+    expect(fixture.leave).not.toHaveBeenCalled();
   });
 
-  it("on success: the public pages' hint says signed out, then the sign-in page", async () => {
+  it("on success: keeps the mark and leaves for the sign-in page with a full load", async () => {
     fixture.signOut.mockImplementation(
       async ({ fetchOptions }: { fetchOptions: { onSuccess: () => void } }) => {
         fetchOptions.onSuccess();
@@ -161,10 +167,11 @@ describe("account menu", () => {
     );
     render();
     await fixture.items.at(-1)?.onClick?.();
+    expect(fixture.undo).not.toHaveBeenCalled();
     expect(fixture.toastError).not.toHaveBeenCalled();
-    expect(fixture.setHint).toHaveBeenCalledWith({}, false);
-    expect(fixture.navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/$lang/login", params: { lang: "en-US" } }),
-    );
+    // A quarantined full load (lib/document-identity.ts), never a client
+    // navigate that would keep the signed-out user's query cache.
+    expect(fixture.leave).toHaveBeenCalledWith("/en-US/login");
+    expect(fixture.navigate).not.toHaveBeenCalled();
   });
 });

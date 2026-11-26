@@ -59,7 +59,6 @@ import {
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { useRenewableAttemptKey } from "@/hooks/use-renewable-attempt-key";
-import { VIEWER_SCOPED_CACHE, viewerScopedKey } from "@/hooks/use-viewer-scope";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
 
@@ -563,15 +562,12 @@ function MembersPanel({
     orpc.kbs.shareList.infiniteOptions({
       input: memberInput,
       initialPageParam: null,
-      // Invited addresses depend on who asks: scoped to the viewer.
-      queryKey: viewerScopedKey(
-        orpc.kbs.shareList.infiniteKey({ input: memberInput, initialPageParam: null }),
-        selfUserId,
-      ),
       getNextPageParam: (last) => last?.nextCursor ?? null,
-      enabled: canManage && selfUserId !== null,
+      enabled: canManage,
+      // Others change it (an invitee accepts, a member leaves) while this
+      // account stays signed in: read it anew on every visit.
+      gcTime: 0,
       retry: false,
-      ...VIEWER_SCOPED_CACHE,
     }),
   );
   const denied = (error: unknown) => {

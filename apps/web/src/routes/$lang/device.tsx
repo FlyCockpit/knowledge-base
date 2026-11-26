@@ -7,10 +7,11 @@ import { DeviceApproval, DeviceCodeForm } from "@/components/kb/device-approval"
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { normalizeUserCode, useDeviceApproval } from "@/hooks/use-device-approval";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
+import { useReloadOnIdentityChange } from "@/hooks/use-reload-on-identity-change";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { pageHead } from "@/lib/page-title";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
-import { getRouteSession } from "@/server/auth-session";
 
 /**
  * Device (CLI) approval — the Better Auth `verificationUri`. Any signed-in user
@@ -29,7 +30,7 @@ export const Route = createFileRoute("/$lang/device")({
   }),
   ssr: false,
   beforeLoad: async ({ params }) => {
-    const decision = decideProtectedRouteAccess(await getRouteSession());
+    const decision = decideProtectedRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
       const back = `/${params.lang}/device${window.location.search}`;
@@ -44,6 +45,9 @@ export const Route = createFileRoute("/$lang/device")({
 });
 
 function DevicePage() {
+  // Outside the app shell, so this page watches the identity itself: its
+  // KB list belongs to one account (docs/ui.md § Query cache follows identity).
+  useReloadOnIdentityChange();
   useMobileKeyboard();
   const { user_code } = Route.useSearch();
   const navigate = Route.useNavigate();
