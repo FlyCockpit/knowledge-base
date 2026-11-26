@@ -181,7 +181,34 @@
       "SEMANTIC_INDEX_BUILDING": "Por ahora solo búsqueda por palabras clave: el índice semántico del modelo de embeddings seleccionado todavía se está creando. Los resultados se ordenarán por significado cuando termine."
     },
     "lexicalSettingsLink": "Elige un modelo de embeddings en la configuración",
-    "lexicalAdminLink": "Modelo integrado (administración)"
+    "lexicalAdminLink": "Modelo integrado (administración)",
+    "relevance": {
+      "meterLabel": "Qué tan cercana es esta coincidencia",
+      "detailsLabel": "{{band}}: ¿qué tan cercana es esta coincidencia?",
+      "band": {
+        "strong": "Coincidencia fuerte",
+        "related": "Relacionado",
+        "weak": "Coincidencia débil",
+        "keyword": "Coincidencia de palabras"
+      },
+      "semantic": "Similitud de significado",
+      "semanticNotRanked": "No está entre las más cercanas en significado",
+      "semanticUnavailable": "No disponible (solo búsqueda por palabras)",
+      "keyword": "Coincidencia de palabras",
+      "keywordYes": "Sí, contiene la mayoría de tus palabras",
+      "keywordNo": "No",
+      "explain": "La similitud de significado compara de qué tratan tu búsqueda y este pasaje (similitud coseno: 1 es el mismo significado, 0 o menos es sin relación; más alto es más cercano). El orden de los resultados la combina con la coincidencia de palabras clave.",
+      "explainLexical": "Esta base de conocimiento se buscó solo por palabras, así que los resultados no se comparan por significado. El fragmento contiene palabras de tu búsqueda.",
+      "weaker_one": "{{count}} coincidencia más débil",
+      "weaker_other": "{{count}} coincidencias más débiles",
+      "noClose": "No hay coincidencias cercanas",
+      "noCloseHint": "Prueba con otras palabras o una búsqueda más corta. Si los documentos cambiaron hace poco, revisa que el índice de búsqueda esté al día.",
+      "versionLatest": "De la versión más reciente",
+      "versionEarlier": "De una versión anterior",
+      "versionLatestAt": "De la versión más reciente, guardada {{when}}",
+      "versionAt": "De la versión guardada {{when}}",
+      "keywordYesLexical": "Sí, contiene palabras de tu búsqueda"
+    }
   },
   "viewer": {
     "citations": "Citas",

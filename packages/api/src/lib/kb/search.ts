@@ -3,15 +3,17 @@ import { logEvent, logInternalError } from "@knowledge-base/env/log";
 import { Client } from "pg";
 import type { z } from "zod";
 import type { IndexStatus } from "./attachment";
+import { BUILTIN_MODELS } from "./builtin-model";
 import { type CitationHit, type CitationSourceRow, projectCitationHit } from "./citation";
 import { IndexFileMissingError, KbDomainError } from "./errors";
 import type { IndexActor } from "./generations";
+import { gitReadOptions, kbBareRepoPath, runGitAsync } from "./git-read";
 import { getIndexReader } from "./index-file/pool";
 import type { HybridTaskResult, IndexCitationRow } from "./index-file/reader";
 import { servedFreshness } from "./index-status";
 import type { RatePort } from "./limits";
 import type { LockQuery } from "./lock";
-import type { IndexNotice } from "./protocol/common";
+import { BUILTIN_PROVIDER_REF, type IndexNotice } from "./protocol/common";
 import { kbReadToolSchemas } from "./protocol/reads";
 import {
   type LeasedQueryVector,
@@ -69,8 +71,29 @@ export type HybridStructured = {
   raw: StructuredFilters;
   after: FusedChunk | null;
 };
+/**
+ * Browser-only: how close one hit is, in the arms' own honest units (never the fused RRF score).
+ * `semantic` is the cosine similarity (1 − cosine distance of the int8-quantized vectors) of the
+ * hit's chunk to the query, when the vector arm ranked it among its candidates; `keyword` says
+ * the keyword arm matched it (in hybrid search that needs most of the query's words), with its
+ * rank there. Not part of the kb/1 reply on any transport.
+ */
+export type HitRelevance = {
+  semantic: number | null;
+  semanticRank: number | null;
+  keyword: boolean;
+  keywordRank: number | null;
+};
+/**
+ * Which threshold table the browser's relevance bands use: the built-in model id, "external"
+ * for an OpenAI-compatible provider (the model name is never sent), or "lexical" for a
+ * keyword-only generation.
+ */
+export type RelevanceCalibration = string;
 export type HybridRead = {
   hits: CitationHit[];
+  relevance: HitRelevance[];
+  calibration: RelevanceCalibration;
   hasMore: boolean;
   last: FusedChunk | null;
   commitSha: string;
@@ -101,6 +124,8 @@ type LeasedGeneration = {
   documentCount: number;
   state: "COMPLETE" | "SUPERSEDED";
   active: boolean;
+  providerId?: string | null;
+  providerModel?: string | null;
 };
 
 /**
@@ -117,7 +142,58 @@ export type ArmSource = LeasedQueryVector | LexicalGeneration;
 export const READER_ACK_SLACK_MS = 5000;
 
 const GENERATION_COLUMNS = `g.dimensions,g."commitSha",k.name,g.fingerprint,g."chunkCount",g."documentCount",g.state,
-  (k."activeGenerationId" IS NOT DISTINCT FROM g.id) AS active`;
+  (k."activeGenerationId" IS NOT DISTINCT FROM g.id) AS active, g."providerId" AS "providerId",
+  (SELECT r.model FROM provider_revision r WHERE r."providerId"=g."providerId" AND r.version=g."providerVersion") AS "providerModel"`;
+
+/** The relevance calibration of a generation (see `RelevanceCalibration`). */
+export function relevanceCalibration(
+  generation: Pick<LeasedGeneration, "providerId" | "providerModel">,
+  lexical: boolean,
+): RelevanceCalibration {
+  if (lexical) return "lexical";
+  if (
+    generation.providerId === BUILTIN_PROVIDER_REF.id &&
+    typeof generation.providerModel === "string" &&
+    Object.hasOwn(BUILTIN_MODELS, generation.providerModel)
+  )
+    return generation.providerModel;
+  return "external";
+}
+
+/**
+ * Each fused hit's relevance from the arms that found it. Vector arm scores are cosine
+ * distances (vec0 `distance_metric=cosine`, or `vec_distance_cosine` in the int8 rescore), so
+ * similarity is 1 − distance, clamped to [-1, 1]. A rank is 1-based within its arm.
+ */
+export function hitRelevance(
+  arms: { vector: readonly ArmHitLike[]; fts: readonly ArmHitLike[] },
+  hit: { path: string; chunkIndex: number },
+): HitRelevance {
+  const find = (arm: readonly ArmHitLike[]) => {
+    const seen = new Set<string>();
+    let rank = 0;
+    for (const candidate of arm) {
+      const key = `${candidate.chunkIndex}\0${candidate.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rank += 1;
+      if (candidate.path === hit.path && candidate.chunkIndex === hit.chunkIndex)
+        return { rank, score: candidate.score };
+    }
+    return null;
+  };
+  const vector = find(arms.vector);
+  const fts = find(arms.fts);
+  const semantic =
+    vector && Number.isFinite(vector.score) ? Math.max(-1, Math.min(1, 1 - vector.score)) : null;
+  return {
+    semantic,
+    semanticRank: vector?.rank ?? null,
+    keyword: fts !== null,
+    keywordRank: fts?.rank ?? null,
+  };
+}
+type ArmHitLike = { path: string; chunkIndex: number; score: number };
 
 /** Opens the read transaction every index file read runs in. */
 export async function beginIndexRead(q: LockQuery, deadlineAt: number): Promise<void> {
@@ -296,7 +372,15 @@ async function readHybrid(
   });
   // Row predicates admitted the chunk inside both arms; its projection must still carry the row.
   if (rowFiltered && hits.some((hit) => hit.matchedRow === null)) throw unavailable();
-  return { hits, hasMore, last: fused.at(-1) ?? null, commitSha: generation.commitSha };
+  const relevance = fused.map((hit) => hitRelevance(result, hit));
+  return {
+    hits,
+    relevance,
+    calibration: relevanceCalibration(generation, lexical),
+    hasMore,
+    last: fused.at(-1) ?? null,
+    commitSha: generation.commitSha,
+  };
 }
 
 export async function hybridArms(
@@ -410,6 +494,99 @@ export async function searchKnowledgeBaseServed(
   raw: SearchInput,
   signal?: AbortSignal,
 ): Promise<{ result: SearchResult; lexical: boolean }> {
+  const { result, lexical } = await searchKnowledgeBaseRanked(options, actor, raw, signal);
+  return { result, lexical };
+}
+
+const SHA1 = /^[0-9a-f]{40}$/;
+
+/**
+ * When the indexed commit was made (its committer time, ISO 8601), so the browser can say "from
+ * the version saved 5 min ago". Best effort: an unreadable commit or a time outside JavaScript's
+ * date range is null. Only called for a commit the reply was already authorized to cite.
+ */
+export async function indexedCommitTime(
+  reposDir: string,
+  kbId: string,
+  commitSha: string | null,
+  signal?: AbortSignal,
+  deadlineAt?: number,
+): Promise<string | null> {
+  if (!commitSha || !SHA1.test(commitSha)) return null;
+  try {
+    const { stdout } = await runGitAsync(
+      kbBareRepoPath(reposDir, kbId),
+      ["show", "-s", "--format=%ct", commitSha],
+      gitReadOptions({ signal, deadlineAt: Math.min(deadlineAt ?? Infinity, Date.now() + 5000) }),
+    );
+    const seconds = String(stdout).trim();
+    if (!/^\d+$/.test(seconds)) return null;
+    const at = new Date(Number(seconds) * 1000);
+    return Number.isNaN(at.getTime()) ? null : at.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+/** A browser search reply: the kb/1 result, each hit with its `relevance` (browser-only). */
+export type BrowserSearchResult = Omit<SearchResult, "results"> & {
+  results: Array<SearchResult["results"][number] & { relevance: HitRelevance }>;
+  calibration: RelevanceCalibration;
+  /** Committer time of `indexedCommitSha` (ISO 8601), when known. */
+  indexedCommittedAt: string | null;
+};
+
+/**
+ * searchKnowledgeBase for the browser: the same reply, every hit extended with its
+ * `relevance` and the reply with its `calibration`. MCP and REST keep the kb/1 reply.
+ */
+export async function searchKnowledgeBaseForBrowser(
+  options: SearchOptions & { reposDir?: string },
+  actor: IndexActor,
+  raw: SearchInput,
+  signal?: AbortSignal,
+): Promise<BrowserSearchResult> {
+  const { result, relevance, calibration, indexedCommittedAt } = await searchKnowledgeBaseRanked(
+    options,
+    actor,
+    raw,
+    signal,
+    options.reposDir,
+  );
+  return {
+    ...result,
+    results: result.results.map((hit, at) => ({
+      ...hit,
+      relevance: relevance[at] ?? {
+        semantic: null,
+        semanticRank: null,
+        keyword: false,
+        keywordRank: null,
+      },
+    })),
+    calibration,
+    indexedCommittedAt,
+  };
+}
+
+/**
+ * `commitTimeRepos`: also read the indexed commit's time (browser replies). It is read inside the
+ * consumer, so the final authorization that gates the reply runs after it: access revoked while
+ * the time is read still returns nothing.
+ */
+async function searchKnowledgeBaseRanked(
+  options: SearchOptions,
+  actor: IndexActor,
+  raw: SearchInput,
+  signal?: AbortSignal,
+  commitTimeRepos?: string,
+): Promise<{
+  result: SearchResult;
+  lexical: boolean;
+  relevance: HitRelevance[];
+  calibration: RelevanceCalibration;
+  indexedCommittedAt: string | null;
+}> {
   options = {
     ...options,
     deadlineAt: Math.min(options.deadlineAt ?? Infinity, Date.now() + QUERY_DEADLINE_MS),
@@ -419,7 +596,12 @@ export async function searchKnowledgeBaseServed(
   const input = parsed.data;
   const text = prepareEmbeddingQuery(input.query);
   const consume = async (leased: ArmSource, stop: AbortSignal, drainRead?: SearchReadDrain) => {
-    const { hits: results, commitSha } = await hybridArms(
+    const {
+      hits: results,
+      commitSha,
+      relevance,
+      calibration,
+    } = await hybridArms(
       options,
       leased,
       {
@@ -442,7 +624,10 @@ export async function searchKnowledgeBaseServed(
       headSha: leased.index.headSha,
       indexNotices: indexNoticesFor(input.kbId, leased.index, leased),
     });
-    return { result, lexical: "lexical" in leased };
+    const indexedCommittedAt = commitTimeRepos
+      ? await indexedCommitTime(commitTimeRepos, input.kbId, commitSha, stop, options.deadlineAt)
+      : null;
+    return { result, lexical: "lexical" in leased, relevance, calibration, indexedCommittedAt };
   };
   return retryOnceOnMissingFile(() =>
     withQueryEmbedding(

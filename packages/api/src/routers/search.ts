@@ -6,7 +6,7 @@ import { mapKbDomainError } from "../lib/kb/bases";
 import { kbReadToolSchemas } from "../lib/kb/protocol/reads";
 import { SensitiveQueryError } from "../lib/kb/redact-for-embed";
 import { getKbRuntime } from "../lib/kb/runtime";
-import { searchKnowledgeBase } from "../lib/kb/search";
+import { searchKnowledgeBaseForBrowser } from "../lib/kb/search";
 import { structuredSearchKnowledgeBase } from "../lib/kb/structured-search";
 import { createProcedureBudget } from "../lib/procedure-budget";
 
@@ -58,17 +58,22 @@ async function safe<T>(work: () => Promise<T>): Promise<T> {
 }
 
 export const searchRouter = {
+  /**
+   * knowledge_search for the browser: the kb/1 reply, plus per hit a browser-only `relevance`
+   * (cosine similarity and keyword match, never the fused score) and the reply's `calibration`.
+   */
   hybrid: protectedProcedure
     .input(kbReadToolSchemas.knowledge_search.input)
     .handler(({ context, input, signal }) =>
       safe(async () => {
         await consumeSearchBudget(context.session.user.id);
         const runtime = getKbRuntime();
-        return searchKnowledgeBase(
+        return searchKnowledgeBaseForBrowser(
           {
             connectionString: runtime.connectionString,
             masterKey: env.KB_MASTER_KEY?.reveal(),
             ratePort: runtime.ratePort,
+            reposDir: runtime.reposDir,
           },
           { principal: { kind: "browser", userId: context.session.user.id } },
           input,

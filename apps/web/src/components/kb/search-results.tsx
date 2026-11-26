@@ -4,9 +4,16 @@ import { isAdminRole } from "@knowledge-base/auth/roles";
 import { Button } from "@knowledge-base/ui/components/button";
 import { Input } from "@knowledge-base/ui/components/input";
 import { Label } from "@knowledge-base/ui/components/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@knowledge-base/ui/components/popover";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ChevronDown, Info } from "lucide-react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
@@ -18,10 +25,21 @@ import { LoadMore } from "@/components/load-more";
 import { type PillTone, StatusPill } from "@/components/status-pill";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { useKbAccessLoss } from "@/hooks/use-kb-editor";
+import {
+  assessRelevance,
+  type HitRelevance,
+  highlightSnippet,
+  highlightTerms,
+  partitionByFloor,
+} from "@/lib/search-relevance";
 import { orpc } from "@/utils/orpc";
+import { formatRelativeTime } from "@/utils/relative-time";
 
 type HybridOutput = Awaited<ReturnType<AppRouterClient["search"]["hybrid"]>>;
-export type CitationHitLike = HybridOutput["results"][number];
+/** A citation hit; hybrid (browser) hits also carry their `relevance`. */
+export type CitationHitLike = Omit<HybridOutput["results"][number], "relevance"> & {
+  relevance?: HitRelevance;
+};
 type Freshness = HybridOutput["freshness"];
 type SearchMeta = {
   freshness: Freshness;
@@ -29,13 +47,17 @@ type SearchMeta = {
   headSha: string;
   /** This KB was searched using an index awaiting re-embedding. */
   indexNotices: HybridOutput["indexNotices"];
+  /** Hybrid only: which threshold table the relevance bands use. */
+  calibration?: string;
+  /** Hybrid only: when the indexed commit was saved (ISO 8601), when known. */
+  indexedCommittedAt?: string | null;
 };
 
 export type SearchView =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "error"; unavailable: boolean }
-  | ({ kind: "results"; hits: readonly CitationHitLike[] } & SearchMeta);
+  | ({ kind: "results"; hits: readonly CitationHitLike[]; query?: string } & SearchMeta);
 
 const errorKbCode = (error: unknown) => (error as { data?: { code?: unknown } } | null)?.data?.code;
 
@@ -50,6 +72,8 @@ export function searchView(state: {
   error: unknown;
   hits?: readonly CitationHitLike[];
   meta?: SearchMeta;
+  /** The submitted query, for highlighting its words in snippets. */
+  query?: string;
 }): SearchView {
   if (!state.enabled) return { kind: "idle" };
   if (state.isError) {
@@ -63,6 +87,11 @@ export function searchView(state: {
     indexedCommitSha: state.meta.indexedCommitSha,
     headSha: state.meta.headSha,
     indexNotices: state.meta.indexNotices,
+    ...(state.meta.calibration !== undefined ? { calibration: state.meta.calibration } : {}),
+    ...(state.meta.indexedCommittedAt !== undefined
+      ? { indexedCommittedAt: state.meta.indexedCommittedAt }
+      : {}),
+    ...(state.query ? { query: state.query } : {}),
   };
 }
 
@@ -233,36 +262,267 @@ export function SearchResultList({
           </p>
         ),
       )}
-      {view.hits.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("search.noResults")}</p>
+      <SearchHits lang={lang} kbId={kbId} view={view} onOpen={onOpen} />
+    </div>
+  );
+}
+
+/**
+ * The hits above the relevance floor, then the weaker ones collapsed under
+ * "Weaker matches". When none is close: "No close matches" and what to try.
+ */
+function SearchHits({
+  lang,
+  kbId,
+  view,
+  onOpen,
+}: {
+  lang: string;
+  kbId: string;
+  view: Extract<SearchView, { kind: "results" }>;
+  onOpen?: (target: { path: string; rev: string }) => void;
+}) {
+  const { t } = useTranslation("kb");
+  const [showWeaker, setShowWeaker] = useState(false);
+  const weakerId = useId();
+  const { shown, weaker } = partitionByFloor(view.hits, view.calibration);
+  const terms = highlightTerms(view.query ?? "");
+  const list = (hits: readonly CitationHitLike[], testId: string) => (
+    <ul
+      data-testid={testId}
+      className="divide-y overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10"
+    >
+      {hits.map((hit) => (
+        <SearchHitRow
+          key={`${hit.commitSha}:${hit.path}:${hit.chunkIndex}:${hit.span.startByte}`}
+          lang={lang}
+          kbId={kbId}
+          hit={hit}
+          view={view}
+          terms={terms}
+          onOpen={onOpen}
+        />
+      ))}
+    </ul>
+  );
+  if (view.hits.length === 0)
+    return (
+      <div role="status" className="space-y-1 text-sm">
+        <p className="text-muted-foreground">{t("search.noResults")}</p>
+        <p className="text-xs text-muted-foreground">{t("search.relevance.noCloseHint")}</p>
+      </div>
+    );
+  return (
+    <div className="min-w-0 space-y-3">
+      {shown.length > 0 ? (
+        list(shown, "search-hits")
       ) : (
-        <ul className="divide-y overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
-          {view.hits.map((hit) => {
-            const target = citationTarget(hit);
-            return (
-              <li key={`${hit.commitSha}:${hit.path}:${hit.chunkIndex}:${hit.span.startByte}`}>
-                <a
-                  href={kbDocumentHref(lang, kbId, target)}
-                  onClick={routerClick(onOpen && (() => onOpen(target)))}
-                  className="block min-h-[44px] space-y-1.5 px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
-                >
-                  <span className="block truncate font-mono text-sm font-medium text-primary">
-                    {hit.path}
-                  </span>
-                  <span className="line-clamp-3 block text-sm break-words">{hit.snippet}</span>
-                  <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>{t("search.chunk", { index: hit.chunkIndex + 1 })}</span>
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono">
-                      {t("search.citedAt", { sha: short(hit.commitSha) })}
-                    </span>
-                  </span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
+        <div
+          role="status"
+          data-testid="search-no-close"
+          className="space-y-1 rounded-md border p-4 text-sm"
+        >
+          <p className="font-medium">{t("search.relevance.noClose")}</p>
+          <p className="text-muted-foreground">{t("search.relevance.noCloseHint")}</p>
+        </div>
+      )}
+      {weaker.length > 0 && (
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-[44px] gap-2 px-2"
+            aria-expanded={showWeaker}
+            aria-controls={weakerId}
+            onClick={() => setShowWeaker((open) => !open)}
+          >
+            <ChevronDown
+              aria-hidden
+              className={`size-4 transition-transform motion-reduce:transition-none ${showWeaker ? "rotate-180" : ""}`}
+            />
+            {t("search.relevance.weaker", { count: weaker.length })}
+          </Button>
+          <div id={weakerId} hidden={!showWeaker}>
+            {showWeaker && list(weaker, "search-weaker-hits")}
+          </div>
+        </div>
       )}
     </div>
+  );
+}
+
+const BAND_TONE = {
+  strong: "bg-emerald-600 dark:bg-emerald-400",
+  related: "bg-sky-600 dark:bg-sky-400",
+  keyword: "bg-sky-600 dark:bg-sky-400",
+  weak: "bg-amber-600 dark:bg-amber-400",
+} as const;
+
+/** A small three-step meter, its band in words, and the honest numbers on request. */
+function RelevanceMeter({
+  relevance,
+  calibration,
+}: {
+  relevance: HitRelevance;
+  calibration: string | undefined;
+}) {
+  const { t } = useTranslation("kb");
+  const { band, level } = assessRelevance(relevance, calibration);
+  const label = t(`search.relevance.band.${band}`);
+  return (
+    <span className="inline-flex items-center gap-1.5" data-testid="search-relevance">
+      <span
+        role="meter"
+        aria-label={t("search.relevance.meterLabel")}
+        aria-valuemin={0}
+        aria-valuemax={3}
+        aria-valuenow={level}
+        aria-valuetext={label}
+        className="inline-flex items-end gap-0.5"
+      >
+        {[1, 2, 3].map((step) => (
+          <span
+            key={step}
+            aria-hidden
+            className={`w-1.5 rounded-sm ${step === 1 ? "h-1.5" : step === 2 ? "h-2.5" : "h-3.5"} ${
+              step <= level ? BAND_TONE[band] : "bg-muted-foreground/25"
+            }`}
+          />
+        ))}
+      </span>
+      <Popover>
+        <PopoverTrigger
+          className="relative inline-flex min-h-6 items-center gap-1 rounded-md px-1 font-medium pointer-coarse:min-h-11 text-foreground after:absolute after:-inset-y-3 after:-inset-x-1 after:content-[''] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={t("search.relevance.detailsLabel", { band: label })}
+        >
+          {label}
+          <Info aria-hidden className="size-3.5 text-muted-foreground" />
+        </PopoverTrigger>
+        <PopoverContent className="w-72 max-w-[calc(100vw-2rem)] text-xs leading-relaxed">
+          {/* Names the details dialog (the trigger's label does not label the popup). */}
+          <PopoverTitle className="text-xs font-semibold">
+            {t("search.relevance.meterLabel")}
+          </PopoverTitle>
+          <RelevanceDetails relevance={relevance} calibration={calibration} />
+        </PopoverContent>
+      </Popover>
+    </span>
+  );
+}
+
+/** The honest numbers behind a band (the meter's details popover). */
+export function RelevanceDetails({
+  relevance,
+  calibration,
+}: {
+  relevance: HitRelevance;
+  calibration: string | undefined;
+}) {
+  const { t } = useTranslation("kb");
+  const semantic = relevance.semantic;
+  return (
+    <>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dt className="text-muted-foreground">{t("search.relevance.semantic")}</dt>
+        <dd className="font-mono tabular-nums" data-testid="search-relevance-semantic">
+          {semantic === null
+            ? t(
+                calibration === "lexical"
+                  ? "search.relevance.semanticUnavailable"
+                  : "search.relevance.semanticNotRanked",
+              )
+            : semantic.toFixed(2)}
+        </dd>
+        <dt className="text-muted-foreground">{t("search.relevance.keyword")}</dt>
+        <dd data-testid="search-relevance-keyword">
+          {relevance.keyword
+            ? t(
+                // A keyword-only search admits a passage on any one word of
+                // the search; hybrid search needs most of them.
+                calibration === "lexical"
+                  ? "search.relevance.keywordYesLexical"
+                  : "search.relevance.keywordYes",
+              )
+            : t("search.relevance.keywordNo")}
+        </dd>
+      </dl>
+      <p className="text-muted-foreground">
+        {t(
+          calibration === "lexical"
+            ? "search.relevance.explainLexical"
+            : "search.relevance.explain",
+        )}
+      </p>
+    </>
+  );
+}
+
+function SearchHitRow({
+  lang,
+  kbId,
+  hit,
+  view,
+  terms,
+  onOpen,
+}: {
+  lang: string;
+  kbId: string;
+  hit: CitationHitLike;
+  view: Extract<SearchView, { kind: "results" }>;
+  terms: readonly string[];
+  onOpen?: (target: { path: string; rev: string }) => void;
+}) {
+  const { t, i18n } = useTranslation("kb");
+  const target = citationTarget(hit);
+  const committedAt =
+    hit.commitSha === view.indexedCommitSha && view.indexedCommittedAt
+      ? Date.parse(view.indexedCommittedAt)
+      : Number.NaN;
+  const when = Number.isNaN(committedAt)
+    ? null
+    : formatRelativeTime(committedAt, i18n.language || lang);
+  const latest = hit.commitSha === view.headSha;
+  const version = when
+    ? t(latest ? "search.relevance.versionLatestAt" : "search.relevance.versionAt", { when })
+    : t(latest ? "search.relevance.versionLatest" : "search.relevance.versionEarlier");
+  return (
+    <li className="px-4 py-3">
+      <a
+        href={kbDocumentHref(lang, kbId, target)}
+        onClick={routerClick(onOpen && (() => onOpen(target)))}
+        className="-mx-2 block min-h-[44px] space-y-1.5 rounded-md px-2 py-1 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="block truncate font-mono text-sm font-medium text-primary">
+          {hit.path}
+        </span>
+        <span className="line-clamp-3 block text-sm break-words" data-testid="search-snippet">
+          {highlightSnippet(hit.snippet, terms).map((part, at) =>
+            part.match ? (
+              <mark
+                key={at}
+                className="rounded-sm bg-amber-200/70 px-0.5 text-foreground dark:bg-amber-400/30"
+              >
+                {part.text}
+              </mark>
+            ) : (
+              <span key={at}>{part.text}</span>
+            ),
+          )}
+        </span>
+      </a>
+      <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {hit.relevance && (
+          <RelevanceMeter relevance={hit.relevance} calibration={view.calibration} />
+        )}
+        <span>{t("search.chunk", { index: hit.chunkIndex + 1 })}</span>
+        <span
+          title={t("search.citedAt", { sha: short(hit.commitSha) })}
+          data-testid="search-version"
+        >
+          {version}
+        </span>
+      </span>
+    </li>
   );
 }
 
@@ -316,6 +576,7 @@ export function SearchPanel({
         error: paged.error,
         hits: paged.data?.pages.flatMap((page) => page.items),
         meta: paged.data?.pages.at(-1),
+        query: submitted?.query.trim(),
       })
     : searchView({
         enabled: hybridInput !== skipToken,
@@ -324,6 +585,7 @@ export function SearchPanel({
         error: hybrid.error,
         hits: hybrid.data?.results,
         meta: hybrid.data,
+        query: submitted?.query.trim(),
       });
 
   if (lost) return null;

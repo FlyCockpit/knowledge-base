@@ -75,7 +75,20 @@ that ran, `rrf * 61 / arms`, so it lies in (0, 1]: 1 means first in every arm,
 and a hybrid hit found by only one arm scores at most 0.5. It measures rank
 agreement between the arms, not calibrated relevance; compare scores within one
 reply only (for `knowledge_search_all`, within one base: its merged list
-interleaves the bases by rank and never compares their scores). A hit's `snippet` is plain text on every transport (MCP, CLI and
+interleaves the bases by rank and never compares their scores). The web app's
+search (`search.hybrid`, browser only; the kb/1 reply on MCP, REST and the CLI
+is unchanged) also returns, per hit, `relevance`: `semantic`, the cosine
+similarity of the hit's chunk to the query (1 − the vector arm's cosine
+distance over the int8 vectors; null when the vector arm did not rank the
+chunk among its candidates, or for a keyword-only search), `semanticRank`,
+`keyword` (the lexical arm matched it) and `keywordRank`; the reply adds
+`calibration` (the built-in model id, `external` for an OpenAI-compatible
+provider, whose model name is never sent, or `lexical`) and
+`indexedCommittedAt` (the indexed commit's time, for "from the version saved 5
+min ago"). The page turns these into Strong / Related / Weak bands with
+per-model thresholds (`apps/web/src/lib/search-relevance.ts`) and collapses hits
+below the model's floor under "Weaker matches"; it never shows the fused
+`score` as a similarity. A hit's `snippet` is plain text on every transport (MCP, CLI and
 web): Markdown markup is reduced to its text (shared corpus
 `fixtures/plain-snippet.json`); its `span` still cites the exact source bytes.
 

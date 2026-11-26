@@ -9,11 +9,13 @@ import {
   citationTarget,
   hasStructuredFilters,
   parseTags,
+  RelevanceDetails,
   SearchResultList,
   searchDraftSchema,
   searchView,
 } from "@/components/kb/search-results";
 import { renderWithTestRouter as renderToStaticMarkup } from "@/lib/router-test-utils";
+import type { HitRelevance } from "@/lib/search-relevance";
 
 const KB = "a".repeat(24);
 const CITED = "7".repeat(40);
@@ -192,6 +194,100 @@ describe("SearchResultList", () => {
   });
 });
 
+describe("relevance meter and floor", () => {
+  const GEMMA = "embeddinggemma-2-q8_0";
+  const rel = (semantic: number | null, keyword = false) => ({
+    semantic,
+    semanticRank: semantic === null ? null : 1,
+    keyword,
+    keywordRank: keyword ? 1 : null,
+  });
+  const view = (hits: CitationHitLike[], extra: Record<string, unknown> = {}) =>
+    searchView({
+      enabled: true,
+      isPending: false,
+      isError: false,
+      error: null,
+      hits,
+      meta: { ...data, calibration: GEMMA, indexedCommittedAt: null, ...extra },
+      query: "flour and gluten",
+    });
+  const render = (v: ReturnType<typeof view>) =>
+    html(<SearchResultList lang="en-US" kbId={KB} view={v} onRetry={() => {}} />);
+  const sourdough = {
+    ...hit,
+    path: "sourdough.md",
+    snippet: "Strong flour has more gluten.",
+    relevance: rel(0.68, true),
+  };
+  const unrelated = (path: string, semantic: number) => ({
+    ...hit,
+    path,
+    snippet: "Quarterly budget review notes.",
+    relevance: rel(semantic),
+  });
+
+  it("shows a meter with the band in words, never the fused score as a percentage", () => {
+    const out = render(view([sourdough]));
+    expect(out).toContain('role="meter"');
+    expect(out).toContain('aria-valuenow="3"');
+    expect(out).toContain(`aria-valuetext="${i18n.t("search.relevance.band.strong")}"`);
+    // The hit's fused score (0.5) appears nowhere as text.
+    expect(out).not.toMatch(/>[^<]*(?:50\s?%|0\.5\b)[^<]*</);
+  });
+
+  it("highlights the query's words in the snippet", () => {
+    const out = render(view([sourdough]));
+    expect(out).toMatch(/<mark[^>]*>flour<\/mark>/);
+    expect(out).toMatch(/<mark[^>]*>gluten<\/mark>/);
+    expect(out).not.toMatch(/<mark[^>]*>and<\/mark>/);
+  });
+
+  it("collapses hits below the floor under 'Weaker matches'", () => {
+    const out = render(view([sourdough, unrelated("budget.md", 0.12), unrelated("q3.md", 0.1)]));
+    expect(out).toContain('data-testid="search-hits"');
+    expect(out).toContain("sourdough.md");
+    // The weaker list stays collapsed until asked for.
+    expect(out).not.toContain("budget.md");
+    expect(out).toContain('aria-expanded="false"');
+    expect(out).toContain(i18n.t("search.relevance.weaker", { count: 2 }));
+    expect(out).not.toContain('data-testid="search-no-close"');
+  });
+
+  it("says 'No close matches' with a hint when nothing passes the floor", () => {
+    const out = render(view([unrelated("budget.md", 0.12), unrelated("q3.md", 0.1)]));
+    expect(out).toContain('data-testid="search-no-close"');
+    expect(out).toContain(i18n.t("search.relevance.noClose"));
+    expect(out).toContain(i18n.t("search.relevance.noCloseHint"));
+    expect(out).not.toContain('data-testid="search-hits"');
+    expect(out).toContain(i18n.t("search.relevance.weaker", { count: 2 }));
+  });
+
+  it("says which version a hit is from in plain words, with the commit in the tooltip", () => {
+    const savedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const out = render(view([sourdough], { indexedCommittedAt: savedAt }));
+    expect(out).toContain(i18n.t("search.relevance.versionAt", { when: "5 minutes ago" }));
+    expect(out).toContain(`title="${i18n.t("search.citedAt", { sha: CITED.slice(0, 12) })}"`);
+    const latest = render(view([{ ...sourdough, commitSha: HEAD }], { indexedCommitSha: HEAD }));
+    expect(latest).toContain(i18n.t("search.relevance.versionLatest"));
+  });
+
+  it("shows no meter for hits without relevance (structured search) and hides none", () => {
+    const out = render(
+      searchView({
+        enabled: true,
+        isPending: false,
+        isError: false,
+        error: null,
+        hits: [hit],
+        meta: data,
+      }),
+    );
+    expect(out).not.toContain('role="meter"');
+    expect(out).toContain("guides/setup.md");
+  });
+});
+
 describe("structured filters", () => {
   it("citationTarget pins rev to the cited commit", () => {
     expect(citationTarget(hit)).toEqual({ path: "guides/setup.md", rev: CITED });
@@ -340,5 +436,33 @@ describe("LEXICAL_ONLY notice", () => {
     expect(out).toContain(enKb.search.indexNotice.SEMANTIC_INDEX_BUILDING);
     expect(out).not.toContain(enKb.search.indexNotice.EMBEDDING_PROFILE_UNAVAILABLE);
     expect(out).not.toContain("/settings");
+  });
+});
+
+describe("relevance details (the meter's popover)", () => {
+  const renderDetails = (relevance: HitRelevance, calibration: string) =>
+    html(<RelevanceDetails relevance={relevance} calibration={calibration} />);
+  const relevance = (over: Partial<HitRelevance>): HitRelevance => ({
+    semantic: null,
+    semanticRank: null,
+    keyword: false,
+    keywordRank: null,
+    ...over,
+  });
+  it("says what a keyword match means for the kind of search that found it", () => {
+    const hybridHtml = renderDetails(relevance({ semantic: 0.71, keyword: true }), "external");
+    expect(hybridHtml).toContain(enKb.search.relevance.keywordYes);
+    expect(hybridHtml).toContain("0.71");
+    expect(hybridHtml).toContain(enKb.search.relevance.explain);
+    const lexicalHtml = renderDetails(relevance({ keyword: true }), "lexical");
+    expect(lexicalHtml).toContain(enKb.search.relevance.keywordYesLexical);
+    expect(lexicalHtml).not.toContain(enKb.search.relevance.keywordYes);
+    expect(lexicalHtml).toContain(enKb.search.relevance.semanticUnavailable);
+    expect(lexicalHtml).toContain(enKb.search.relevance.explainLexical);
+  });
+  it("shows a negative similarity with an explanation that allows it", () => {
+    const html = renderDetails(relevance({ semantic: -0.12 }), "external");
+    expect(html).toContain("-0.12");
+    expect(enKb.search.relevance.explain).toMatch(/0 or less/);
   });
 });

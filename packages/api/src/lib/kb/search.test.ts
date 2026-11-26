@@ -46,9 +46,15 @@ vi.mock("./query-embedding", () => ({
   ),
 }));
 const { withQueryEmbedding } = await import("./query-embedding");
-const { searchKnowledgeBase, searchKnowledgeBaseServed, SEARCH_DEFAULT_LIMIT } = await import(
-  "./search"
-);
+const {
+  hitRelevance,
+  indexedCommitTime,
+  relevanceCalibration,
+  searchKnowledgeBase,
+  searchKnowledgeBaseForBrowser,
+  searchKnowledgeBaseServed,
+  SEARCH_DEFAULT_LIMIT,
+} = await import("./search");
 
 const kbId = "k".repeat(24);
 const commitSha = "a".repeat(40);
@@ -116,6 +122,165 @@ beforeEach(() => {
   configureIndexReader(fakePool());
 });
 afterEach(() => resetIndexReaderForTests());
+
+describe("browser relevance (never the fused score)", () => {
+  it("adds each hit's cosine similarity and keyword match, leaving the kb/1 reply unchanged", async () => {
+    const browser = await searchKnowledgeBaseForBrowser(options, actor, { kbId, query: "alpha" });
+    const plain = await searchKnowledgeBase(options, actor, { kbId, query: "alpha" });
+    expect(browser.results.map((h) => [h.path, h.relevance])).toEqual([
+      ["a.md", { semantic: null, semanticRank: null, keyword: true, keywordRank: 1 }],
+      // Cosine distance 0.1 from the vector arm: similarity 0.9.
+      ["b.md", { semantic: 0.9, semanticRank: 1, keyword: false, keywordRank: null }],
+    ]);
+    // A mocked generation row without a provider: the conservative external table.
+    expect(browser.calibration).toBe("external");
+    const { calibration: _calibration, indexedCommittedAt, ...rest } = browser;
+    // No repositories directory given: the commit time is simply unknown.
+    expect(indexedCommittedAt).toBeNull();
+    expect({
+      ...rest,
+      results: rest.results.map(({ relevance: _relevance, ...hit }) => hit),
+    }).toEqual(plain);
+    expect(plain.results.every((hit) => !("relevance" in hit))).toBe(true);
+    expect("calibration" in plain).toBe(false);
+  });
+
+  it("reads the generation's provider model in the leased-generation statement", async () => {
+    await searchKnowledgeBaseForBrowser(options, actor, { kbId, query: "alpha" });
+    const lease = statements().find((text) => text.includes("generation_lease"))!;
+    expect(lease).toContain('AS "providerModel"');
+    expect(lease).toContain("FOR KEY SHARE OF g");
+  });
+
+  it("reads the indexed commit's time from the KB repository, null when it can't", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const reposDir = mkdtempSync(join(tmpdir(), "kb-search-time-"));
+    try {
+      const repo = join(reposDir, `kb_${kbId}.git`);
+      execFileSync("git", ["init", "-q", "--bare", repo]);
+      const env = {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.test",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.test",
+        GIT_COMMITTER_DATE: "1700000000 +0000",
+        GIT_AUTHOR_DATE: "1700000000 +0000",
+      };
+      const tree = execFileSync("git", ["--git-dir", repo, "mktree"], { input: "", env })
+        .toString()
+        .trim();
+      const sha = execFileSync("git", ["--git-dir", repo, "commit-tree", tree, "-m", "x"], { env })
+        .toString()
+        .trim();
+      expect(await indexedCommitTime(reposDir, kbId, sha)).toBe("2023-11-14T22:13:20.000Z");
+      expect(await indexedCommitTime(reposDir, kbId, "0".repeat(40))).toBeNull();
+      expect(await indexedCommitTime(reposDir, kbId, null)).toBeNull();
+      expect(await indexedCommitTime(reposDir, kbId, "not-a-sha")).toBeNull();
+    } finally {
+      rmSync(reposDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the commit time before the final authorization, so a revoked reader gets nothing", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const reposDir = mkdtempSync(join(tmpdir(), "kb-search-revoke-"));
+    try {
+      const repo = join(reposDir, `kb_${kbId}.git`);
+      execFileSync("git", ["init", "-q", "--bare", repo]);
+      const env = {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.test",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.test",
+        GIT_COMMITTER_DATE: "1700000000 +0000",
+        GIT_AUTHOR_DATE: "1700000000 +0000",
+      };
+      const tree = execFileSync("git", ["--git-dir", repo, "mktree"], { input: "", env })
+        .toString()
+        .trim();
+      const sha = execFileSync("git", ["--git-dir", repo, "commit-tree", tree, "-m", "x"], { env })
+        .toString()
+        .trim();
+      database({ lease: { ...generation, commitSha: sha } });
+      read.mockResolvedValue({
+        status: "ok",
+        result: { ...hybrid, rows: hybrid.rows.map((r) => ({ ...r, commitSha: sha })) },
+      });
+      const seen: unknown[] = [];
+      // The final authorization runs once the consumer has returned: by then
+      // the time must already be read, and a revocation there wins.
+      vi.mocked(withQueryEmbedding).mockImplementationOnce(async (_o, _a, _i, consume) => {
+        const pinned = {
+          ...leased,
+          index: { ...leased.index, indexedCommitSha: sha, headSha: sha },
+        };
+        const out = (await consume(pinned as never, new AbortController().signal)) as {
+          indexedCommittedAt: string | null;
+        };
+        seen.push(out.indexedCommittedAt);
+        throw new KbDomainError("NOT_FOUND", "Knowledge base not found");
+      });
+      await expect(
+        searchKnowledgeBaseForBrowser({ ...options, reposDir }, actor, { kbId, query: "alpha" }),
+      ).rejects.toBeInstanceOf(KbDomainError);
+      expect(seen).toEqual(["2023-11-14T22:13:20.000Z"]);
+    } finally {
+      rmSync(reposDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keys calibration by built-in model id, else external; lexical generations say so", () => {
+    expect(
+      relevanceCalibration(
+        { providerId: "builtinembeddingmodel000", providerModel: "embeddinggemma-2-q8_0" },
+        false,
+      ),
+    ).toBe("embeddinggemma-2-q8_0");
+    expect(
+      relevanceCalibration(
+        { providerId: "builtinembeddingmodel000", providerModel: "not-a-model" },
+        false,
+      ),
+    ).toBe("external");
+    // An external provider's model name never reaches the browser.
+    expect(
+      relevanceCalibration({ providerId: "p".repeat(24), providerModel: "secret-model" }, false),
+    ).toBe("external");
+    expect(relevanceCalibration({ providerId: null, providerModel: null }, true)).toBe("lexical");
+  });
+
+  it("ranks within each arm like the fusion (duplicates keep their best rank) and clamps", () => {
+    const arms = {
+      vector: [
+        { path: "a.md", chunkIndex: 0, score: 0.2 },
+        { path: "a.md", chunkIndex: 0, score: 0.3 },
+        { path: "b.md", chunkIndex: 1, score: 2.5 },
+      ],
+      fts: [{ path: "b.md", chunkIndex: 1, score: -3 }],
+    };
+    expect(hitRelevance(arms, { path: "b.md", chunkIndex: 1 })).toEqual({
+      semantic: -1,
+      semanticRank: 2,
+      keyword: true,
+      keywordRank: 1,
+    });
+    expect(hitRelevance(arms, { path: "a.md", chunkIndex: 0 }).semantic).toBeCloseTo(0.8);
+    expect(hitRelevance(arms, { path: "c.md", chunkIndex: 0 })).toEqual({
+      semantic: null,
+      semanticRank: null,
+      keyword: false,
+      keywordRank: null,
+    });
+  });
+});
 
 describe("hybrid search service", () => {
   it("fuses both arms of the leased file into hybrid citations pinned to the generation", async () => {

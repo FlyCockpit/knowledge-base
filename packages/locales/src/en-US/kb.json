@@ -181,7 +181,34 @@
       "SEMANTIC_INDEX_BUILDING": "Keyword search only for now: the semantic index for the selected embedding model is still building. Results will be ranked by meaning once it completes."
     },
     "lexicalSettingsLink": "Choose an embedding model in settings",
-    "lexicalAdminLink": "Built-in model (admin)"
+    "lexicalAdminLink": "Built-in model (admin)",
+    "relevance": {
+      "meterLabel": "How close this match is",
+      "detailsLabel": "{{band}}: how close is this match?",
+      "band": {
+        "strong": "Strong match",
+        "related": "Related",
+        "weak": "Weak match",
+        "keyword": "Keyword match"
+      },
+      "semantic": "Meaning similarity",
+      "semanticNotRanked": "Not among the closest in meaning",
+      "semanticUnavailable": "Not available (keyword search only)",
+      "keyword": "Keyword match",
+      "keywordYes": "Yes, it contains most of your words",
+      "keywordNo": "No",
+      "explain": "Meaning similarity compares what your search and this passage are about (cosine similarity: 1 is identical in meaning, 0 or less is unrelated; higher is closer). The order of results combines it with the keyword match.",
+      "explainLexical": "This knowledge base was searched by keywords only, so results are not compared by meaning. The passage contains words from your search.",
+      "weaker_one": "{{count}} weaker match",
+      "weaker_other": "{{count}} weaker matches",
+      "noClose": "No close matches",
+      "noCloseHint": "Try other words, or a shorter search. If the documents changed recently, check that the search index is up to date.",
+      "versionLatest": "From the latest version",
+      "versionEarlier": "From an earlier version",
+      "versionLatestAt": "From the latest version, saved {{when}}",
+      "versionAt": "From the version saved {{when}}",
+      "keywordYesLexical": "Yes, it contains words from your search"
+    }
   },
   "viewer": {
     "citations": "Citations",

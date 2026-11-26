@@ -7,7 +7,7 @@ import { mockDeep } from "vitest-mock-extended";
 import type { Context } from "../context";
 import { KbDomainError } from "../lib/kb/errors";
 import { SensitiveQueryError } from "../lib/kb/redact-for-embed";
-import { searchKnowledgeBase } from "../lib/kb/search";
+import { searchKnowledgeBaseForBrowser } from "../lib/kb/search";
 import { structuredSearchKnowledgeBase } from "../lib/kb/structured-search";
 import { searchRouter } from "./search";
 
@@ -17,13 +17,14 @@ vi.mock("@knowledge-base/db", async () => ({
 vi.mock("@knowledge-base/env/shared", () => ({
   env: { KB_MASTER_KEY: new Secret("test-master") },
 }));
-vi.mock("../lib/kb/search", () => ({ searchKnowledgeBase: vi.fn() }));
+vi.mock("../lib/kb/search", () => ({ searchKnowledgeBaseForBrowser: vi.fn() }));
 vi.mock("../lib/kb/structured-search", () => ({ structuredSearchKnowledgeBase: vi.fn() }));
 vi.mock("../lib/kb/runtime", () => ({
   getKbRuntime: () => ({
     connectionString: "postgres://runtime",
     ratePort: "rate-port",
     cursorSigner: "cursor-signer",
+    reposDir: "/repos",
   }),
 }));
 const state = vi.hoisted(() => ({ budget: vi.fn(async () => {}) }));
@@ -45,7 +46,7 @@ describe("search router", () => {
     await expect(client(false).hybrid({ kbId, query: "q" })).rejects.toMatchObject({
       code: "UNAUTHORIZED",
     });
-    expect(searchKnowledgeBase).not.toHaveBeenCalled();
+    expect(searchKnowledgeBaseForBrowser).not.toHaveBeenCalled();
     expect(state.budget).not.toHaveBeenCalled();
   });
   it("rejects oversized query and limit by schema before the service", async () => {
@@ -55,20 +56,28 @@ describe("search router", () => {
     await expect(client().hybrid({ kbId, query: "q", limit: 21 })).rejects.toMatchObject({
       code: "BAD_REQUEST",
     });
-    expect(searchKnowledgeBase).not.toHaveBeenCalled();
+    expect(searchKnowledgeBaseForBrowser).not.toHaveBeenCalled();
   });
   it("delegates with the browser actor and shared runtime quotas", async () => {
-    vi.mocked(searchKnowledgeBase).mockResolvedValue({
+    vi.mocked(searchKnowledgeBaseForBrowser).mockResolvedValue({
       results: [],
       generationId: "g".repeat(24),
       freshness: "current",
       indexedCommitSha: "b".repeat(40),
       headSha: "b".repeat(40),
+      indexNotices: [],
+      calibration: "external",
+      indexedCommittedAt: null,
     });
     await client().hybrid({ kbId, query: "q", limit: 3 });
     expect(state.budget).toHaveBeenCalledWith("reader");
-    expect(searchKnowledgeBase).toHaveBeenCalledWith(
-      { connectionString: "postgres://runtime", masterKey: "test-master", ratePort: "rate-port" },
+    expect(searchKnowledgeBaseForBrowser).toHaveBeenCalledWith(
+      {
+        connectionString: "postgres://runtime",
+        masterKey: "test-master",
+        ratePort: "rate-port",
+        reposDir: "/repos",
+      },
       { principal: { kind: "browser", userId: "reader" } },
       { kbId, query: "q", limit: 3 },
       undefined,
@@ -94,7 +103,7 @@ describe("search router", () => {
     [new SensitiveQueryError(), "BAD_REQUEST", { code: "SENSITIVE_QUERY" }],
     [new Error("select * from secret"), "INTERNAL_SERVER_ERROR", { code: "INTERNAL" }],
   ])("maps failures to fixed messages", async (error, code, data) => {
-    vi.mocked(searchKnowledgeBase).mockRejectedValue(error);
+    vi.mocked(searchKnowledgeBaseForBrowser).mockRejectedValue(error);
     const failure = await client()
       .hybrid({ kbId, query: "q" })
       .catch((e) => e);
@@ -111,7 +120,7 @@ describe("search router", () => {
       code: "TOO_MANY_REQUESTS",
       data: { retryAfterSeconds: 3 },
     });
-    expect(searchKnowledgeBase).not.toHaveBeenCalled();
+    expect(searchKnowledgeBaseForBrowser).not.toHaveBeenCalled();
   });
 });
 

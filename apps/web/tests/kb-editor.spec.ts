@@ -1173,7 +1173,13 @@ for (const structured of [false, true])
         } else {
           queryClient.setQueryData(
             orpc.search.hybrid.queryOptions({ input: { kbId, query: "private-query" } }).queryKey,
-            { ...meta, generationId: "a".repeat(24), results: [] },
+            {
+              ...meta,
+              generationId: "a".repeat(24),
+              results: [],
+              calibration: "external",
+              indexedCommittedAt: null,
+            },
           );
         }
       },
