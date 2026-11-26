@@ -44,12 +44,12 @@ llama-cpp-2 = { version = "=0.1.161", default-features = false }
 
 # Only the pinned native backend and its required platform features.
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring-core = "=1.0.1"
+keyring-core = "=1.1.0"
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring-core = "=1.0.1"
-apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
+keyring-core = "=1.1.0"
+apple-native-keyring-store = { version = "=1.0.3", default-features = false, features = ["keychain"] }
 
 
 # OpenMP everywhere but Apple, where no system OpenMP runtime exists for the
@@ -64,7 +64,7 @@ llama-cpp-2 = { version = "=0.1.161", default-features = false, features = ["ope
 libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
-keyring-core = "=1.0.1"
+keyring-core = "=1.1.0"
 windows-native-keyring-store = { version = "=1.1.0", default-features = false }
 # Windows-only audited process/ACL boundary; no cross-platform FFI.
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
