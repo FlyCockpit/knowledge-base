@@ -56,8 +56,11 @@ jobs:
             ${{ github.event.repository.name }}-${{ matrix.name }}:latest
           build-args: |
             APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          # The only per-commit gha layer-cache writer (pr-checks.yml and kb-model-smoke.yml
+          # read these scopes): main pushes only, final-image layers only
+          # (`mode=min`), so per-commit blobs don't evict the model cache.
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=min,scope={0}', matrix.name) || '' }}
           provenance: false
 
       - name: Reclaim ephemeral Buildx cache before Trivy

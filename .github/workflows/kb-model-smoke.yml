@@ -80,59 +80,48 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Keyed by the pinned SHA only; restore never trusts the bytes.
-      - name: Restore model cache
-        id: model-cache
+      # One entry for both pinned models, shared by all nine legs (JS and Rust,
+      # every OS): the path string is the same everywhere (it resolves to
+      # runner.temp/kb-models; the acquire step checks that) and
+      # enableCrossOsArchive keeps Windows on the same cache version. Keyed by
+      # the pinned SHAs only; restore never trusts the bytes.
+      - name: Restore pinned models
+        id: models
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/qwen-model
-          key: qwen-gguf-sha256-${{ env.QWEN_SHA256 }}
+          path: ../../_temp/kb-models
+          key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+          enableCrossOsArchive: true
 
-      - name: Verify cached model (tampered cache fails)
-        if: steps.model-cache.outputs.cache-hit == 'true'
-        run: node scripts/test-qwen-image.mjs --verify-only "${{ runner.temp }}/qwen-model/${QWEN_FILE}"
-
-      - name: Download model on cache miss
-        if: steps.model-cache.outputs.cache-hit != 'true'
+      # A tampered or incomplete cache fails verification (a hit never
+      # downloads); only a miss downloads each file once.
+      - name: Acquire and verify both pinned models
+        env:
+          MODELS_CACHE_HIT: ${{ steps.models.outputs.cache-hit }}
         run: |
-          mkdir -p "${{ runner.temp }}/qwen-model"
-          curl --fail --location --proto '=https' --max-redirs 5 --retry 3 \
-            -o "${{ runner.temp }}/qwen-model/${QWEN_FILE}" "${QWEN_URL}"
-          node scripts/test-qwen-image.mjs --verify-only "${{ runner.temp }}/qwen-model/${QWEN_FILE}"
+          set -euo pipefail
+          dir="${{ runner.temp }}/kb-models"
+          [ "$(cd "$GITHUB_WORKSPACE/../../_temp" && pwd -P)" = "$(cd "$RUNNER_TEMP" && pwd -P)" ] \
+            || { echo "::error::../../_temp is not RUNNER_TEMP; fix the model cache path"; exit 1; }
+          mkdir -p "$dir"
+          for kind in GEMMA QWEN; do
+            file_var="${kind}_FILE"; url_var="${kind}_URL"
+            dest="$dir/${!file_var}"
+            if [ "$MODELS_CACHE_HIT" != true ]; then
+              curl --fail --location --proto '=https' --max-redirs 5 --retry 3 -o "$dest" "${!url_var}"
+            fi
+          done
+          node scripts/test-qwen-image.mjs --verify-only "$dir/${QWEN_FILE}"
+          node scripts/test-qwen-image.mjs --verify-gemma "$dir/${GEMMA_FILE}"
 
       # Saved only after verification succeeded on a miss.
-      - name: Save model cache
-        if: steps.model-cache.outputs.cache-hit != 'true'
+      - name: Save verified models
+        if: steps.models.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/qwen-model
-          key: qwen-gguf-sha256-${{ env.QWEN_SHA256 }}
-
-      - name: Restore Gemma cache
-        id: gemma-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/gemma-model
-          key: gemma-gguf-sha256-${{ env.GEMMA_SHA256 }}
-
-      - name: Verify cached Gemma
-        if: steps.gemma-cache.outputs.cache-hit == 'true'
-        run: node scripts/test-qwen-image.mjs --verify-gemma "${{ runner.temp }}/gemma-model/${GEMMA_FILE}"
-
-      - name: Download Gemma on cache miss
-        if: steps.gemma-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "${{ runner.temp }}/gemma-model"
-          curl --fail --location --proto '=https' --max-redirs 5 --retry 3 \
-            -o "${{ runner.temp }}/gemma-model/${GEMMA_FILE}" "${GEMMA_URL}"
-          node scripts/test-qwen-image.mjs --verify-gemma "${{ runner.temp }}/gemma-model/${GEMMA_FILE}"
-
-      - name: Save verified Gemma cache
-        if: steps.gemma-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/gemma-model
-          key: gemma-gguf-sha256-${{ env.GEMMA_SHA256 }}
+          path: ../../_temp/kb-models
+          key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+          enableCrossOsArchive: true
 
       - name: Restore pinned native build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -146,6 +135,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Same build-arg as build-image.yml, so its layer keys match.
+      - name: Compute apt cache-bust date
+        id: apt-date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # Reads the layer cache build-image.yml writes on main (x64 only); writes
+      # none of its own, so per-commit layers never crowd out the model cache.
       - name: Build cached Node26 worker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -154,15 +150,16 @@ jobs:
           target: runner
           load: true
           tags: kb-worker-embedding-smoke:ci
-          cache-from: type=gha,scope=embedding-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=embedding-${{ matrix.arch }}
+          build-args: |
+            APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          cache-from: type=gha,scope=worker
 
       - name: Real-model lane (host child + Node26-slim image)
         env:
           KB_QWEN_IMAGE: kb-worker-embedding-smoke:ci
-          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/gemma-model/${{ env.GEMMA_FILE }}
+          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.GEMMA_FILE }}
           KB_GEMMA_EVIDENCE_OUT: ${{ runner.temp }}/gemma-evidence-${{ matrix.arch }}.json
-          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/qwen-model/${{ env.QWEN_FILE }}
+          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.QWEN_FILE }}
           KB_QWEN_EVIDENCE_OUT: ${{ runner.temp }}/qwen-evidence-${{ matrix.arch }}.json
           KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}
         run: pnpm test:kb -- qwen-model
@@ -247,18 +244,25 @@ jobs:
         run: |
           brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
-      - name: Restore checksum-keyed weights
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # The shared kb-gguf entry (see the smoke job).
+      - name: Restore pinned models
+        id: models
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}/rust-models
-          key: rust-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+          path: ../../_temp/kb-models
+          key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+          enableCrossOsArchive: true
       - name: Acquire and verify both pinned models
+        env:
+          MODELS_CACHE_HIT: ${{ steps.models.outputs.cache-hit }}
         run: |
-          mkdir -p "${{ runner.temp }}/rust-models"
+          [ "$(cd "$GITHUB_WORKSPACE/../../_temp" && pwd -P)" = "$(cd "$RUNNER_TEMP" && pwd -P)" ] \
+            || { echo "::error::../../_temp is not RUNNER_TEMP; fix the model cache path"; exit 1; }
+          mkdir -p "${{ runner.temp }}/kb-models"
           for kind in GEMMA QWEN; do
             file_var="${kind}_FILE"; url_var="${kind}_URL"; hash_var="${kind}_SHA256"
-            dest="${{ runner.temp }}/rust-models/${!file_var}"
-            if [ ! -f "$dest" ]; then
+            dest="${{ runner.temp }}/kb-models/${!file_var}"
+            if [ "$MODELS_CACHE_HIT" != true ]; then
               curl --fail --location --proto '=https' --max-redirs 5 --retry 3 -o "$dest" "${!url_var}"
             fi
             # macOS runners now ship a BSD `sha256sum` without GNU's `--check`.
@@ -268,6 +272,13 @@ jobs:
               printf '%s  %s\n' "${!hash_var}" "$dest" | shasum -a 256 --check
             fi
           done
+      - name: Save verified models
+        if: steps.models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ../../_temp/kb-models
+          key: kb-gguf-${{ env.GEMMA_SHA256 }}-${{ env.QWEN_SHA256 }}
+          enableCrossOsArchive: true
       - name: Fetch every platform dependency
         run: cargo fetch --locked
       - name: Build real Rust CPU executable
@@ -329,8 +340,8 @@ jobs:
       - name: Explicit real-model selection must execute all four tests (both models, retrieval, runtime upgrade)
         env:
           TMPDIR: ${{ runner.temp }}
-          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.GEMMA_FILE }}
-          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/rust-models/${{ env.QWEN_FILE }}
+          KB_GEMMA_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.GEMMA_FILE }}
+          KB_QWEN_MODEL_PATH: ${{ runner.temp }}/kb-models/${{ env.QWEN_FILE }}
           # The executable's platform: its parity reference (the musl legs run a gnu harness).
           KB_MODEL_PLATFORM: ${{ matrix.platform }}
           KB_RECORD_EMBEDDING_PARITY: ${{ inputs.record_parity && '1' || '' }}

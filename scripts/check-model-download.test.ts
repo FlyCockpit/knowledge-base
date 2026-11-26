@@ -195,11 +195,59 @@ describe("live download placement", () => {
         .filter((s) => /_URL\b/.test(s) && /curl /.test(s)))
         assert.match(
           step,
-          /if: steps\.[\w-]+\.outputs\.cache-hit != 'true'|if \[ ! -f "\$dest" \]; then\n\s+curl /,
+          /if: steps\.[\w-]+\.outputs\.cache-hit != 'true'|MODELS_CACHE_HIT: \$\{\{ steps\.models\.outputs\.cache-hit \}\}[\s\S]*if \[ "\$MODELS_CACHE_HIT" != true \]; then\n\s+curl /,
           `${name}: ${step.split("\n")[0]}`,
         );
     }
     for (const script of ["test", "verify", "verify:fast", "gate"])
       assert.doesNotMatch(pkg.scripts[script], /live-download|qwen-model/, script);
+  });
+
+  test("every model leg restores the one shared, cross-OS model cache entry once", () => {
+    const steps = smoke.split(/\n {6}- /);
+    const cacheSteps = steps.filter((s) => /uses: actions\/cache[@/]/.test(s));
+    const modelSteps = cacheSteps.filter((s) => /gguf/.test(s));
+    // smoke and rust-smoke: one restore and one save-on-miss each.
+    assert.deepEqual(
+      modelSteps.map((s) => /actions\/cache\/(restore|save)@/.exec(s)?.[1]),
+      ["restore", "save", "restore", "save"],
+    );
+    for (const step of modelSteps) {
+      assert.match(step, /\n {10}path: \.\.\/\.\.\/_temp\/kb-models\n/);
+      assert.match(
+        step,
+        /\n {10}key: kb-gguf-\$\{\{ env\.GEMMA_SHA256 \}\}-\$\{\{ env\.QWEN_SHA256 \}\}\n/,
+      );
+      assert.match(step, /\n {10}enableCrossOsArchive: true(\n|$)/);
+      if (/cache\/save@/.test(step))
+        assert.match(step, /if: steps\.models\.outputs\.cache-hit != 'true'/);
+    }
+    // The restored path is runner.temp/kb-models, checked on the runner.
+    const acquire = steps.filter((s) => /^name: Acquire and verify both pinned models/.test(s));
+    assert.equal(acquire.length, 2);
+    for (const step of acquire) {
+      assert.match(step, /"\$GITHUB_WORKSPACE\/\.\.\/\.\.\/_temp".*"\$RUNNER_TEMP"/);
+      // A hit never downloads: a restored entry missing a file fails verification.
+      assert.equal(step.split(/\bcurl /).length - 1, 1);
+      assert.match(
+        step,
+        /\n {10}MODELS_CACHE_HIT: \$\{\{ steps\.models\.outputs\.cache-hit \}\}\n[\s\S]*\n {12}if \[ "\$MODELS_CACHE_HIT" != true \]; then\n {14}curl /,
+      );
+    }
+  });
+
+  test("only main pushes write the buildkit layer cache, and only final-image layers", () => {
+    const dir = join(ROOT, ".github/workflows");
+    const writers = readdirSync(dir).filter((name) =>
+      /cache-to:/.test(readFileSync(join(dir, name), "utf8")),
+    );
+    // release.yml writes its own release-* scopes, on a manual release only.
+    assert.deepEqual(writers.sort(), ["build-image.yml", "release.yml"]);
+    const build = readFileSync(join(dir, "build-image.yml"), "utf8");
+    assert.match(
+      build,
+      /cache-to: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' && format\('type=gha,mode=min,scope=\{0\}', matrix\.name\) \|\| '' \}\}\n/,
+    );
+    assert.match(smoke, /cache-from: type=gha,scope=worker\n/);
   });
 });

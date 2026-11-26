@@ -711,8 +711,10 @@ jobs:
         include:
           - image: app
             dockerfile: ./Dockerfile
+            cache-scope: server
           - image: worker
             dockerfile: ./Dockerfile.worker
+            cache-scope: worker
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -738,8 +740,9 @@ jobs:
           tags: ${{ github.event.repository.name }}-${{ matrix.image }}-pr:${{ github.sha }}
           build-args: |
             APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # Reads the main-branch layer cache build-image.yml writes; a PR
+          # writes none (its per-commit blobs would evict the model cache).
+          cache-from: type=gha,scope=${{ matrix.cache-scope }}
           provenance: false
 
       - name: Reclaim ephemeral Buildx cache before Trivy
