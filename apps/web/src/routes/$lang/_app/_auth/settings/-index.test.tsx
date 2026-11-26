@@ -30,8 +30,8 @@ vi.mock("@tanstack/react-query", async (original) => ({
   ...(await original<typeof import("@tanstack/react-query")>()),
   useQuery: () => fixture.preferences,
 }));
-vi.mock("@/components/consent/consent-preferences-button", () => ({
-  ConsentPreferencesButton: () => null,
+vi.mock("@/components/consent/consent-preferences-section", () => ({
+  ConsentPreferencesSection: () => null,
 }));
 function render() {
   const client = new QueryClient();

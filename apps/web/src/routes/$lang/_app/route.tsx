@@ -39,14 +39,11 @@ function AppShellLayout() {
       </a>
       <div
         className={cn(
-          "grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-(--consent-clearance)",
-          // The bottom reserve: the cookie banner's clearance (index.css; 0
-          // without a banner) and, on phones with no keyboard up, at least the
-          // BottomNav's. The banner reaches down behind the BottomNav, so it
-          // is the larger while it shows.
-          mobileKeyboardOpen
-            ? "pb-(--consent-clearance)"
-            : "pb-[max(calc(3.5rem_+_var(--safe-area-bottom)),var(--consent-clearance))]",
+          "grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr]",
+          // The frame reserves the BottomNav (phones, no keyboard up) and
+          // nothing else: the header and the sidebar always reach the bottom
+          // of the viewport. The cookie banner's reserve is `<main>`'s, below.
+          !mobileKeyboardOpen && "pb-[calc(3.5rem_+_var(--safe-area-bottom))] md:pb-0",
         )}
         style={{
           paddingTop: "var(--safe-area-top)",
@@ -62,13 +59,24 @@ function AppShellLayout() {
           <AppSidebar />
           {/* No `scrollbar-gutter: stable`: the banners and sticky sub-navs
               inside the scroller are full-bleed. This shell has no footer:
-              phones get the BottomNav, and Cookie preferences sits in Settings.
+              phones get the BottomNav, and Cookie preferences (with analytics) sits in Settings.
               See docs/ui.md § Shell rules. */}
           <main
             id="main-content"
             tabIndex={-1}
             data-scroll-restoration-id={MAIN_SCROLLER_ID}
-            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain outline-none"
+            className={cn(
+              "relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain outline-none",
+              // While a cookie banner shows (only in an app with analytics),
+              // the scroller's bottom padding is the part of it the banner
+              // covers (`--consent-clearance`, index.css; 0 without a banner),
+              // so every line of the page scrolls into view above it. On
+              // phones the frame already reserves the BottomNav, which the
+              // banner reaches down behind, so only the rest is padded here.
+              mobileKeyboardOpen
+                ? "pb-(--consent-clearance)"
+                : "pb-[max(0px,calc(var(--consent-clearance)_-_3.5rem_-_var(--safe-area-bottom)))] md:pb-(--consent-clearance)",
+            )}
           >
             <Outlet />
           </main>

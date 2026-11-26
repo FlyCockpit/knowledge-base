@@ -2,19 +2,26 @@ import { Button } from "@knowledge-base/ui/components/button";
 import { useTranslation } from "react-i18next";
 
 import { useConsent } from "@/hooks/use-consent";
+import { analyticsConfigured } from "@/lib/analytics";
 
 import { reserveConsentInset } from "./consent-inset";
 
 /**
- * First-visit cookie banner. Mounted once from `__root.tsx` inside
+ * First-visit cookie banner, only in an app that has analytics
+ * (`analyticsConfigured`, lib/analytics.ts). Without it there is nothing to
+ * ask: strictly necessary cookies need no consent, so it renders nothing and
+ * reserves no space. Mounted once from `__root.tsx` inside
  * `<ClientOnly>` so it is never server-rendered (no hydration mismatch, and
  * nothing in the SSR HTML depends on a per-visitor decision).
  *
  * Non-modal on purpose: it does not trap focus or block the page. Nor does it
- * cover it: it publishes its height (`reserveConsentInset`) and the shells
- * reserve that much at the bottom, so `<main>` ends where the banner starts and
- * nothing on the page (the auth pages' links above all) sits behind it. What
- * actually stops analytics from loading is the gate — `useAnalyticsConsent()`
+ * cover it: it publishes its height (`reserveConsentInset`) and the shells'
+ * `<main>` scrollers pad their bottom by that much, so every line of the page
+ * (the auth pages' links above all) scrolls into view above it. The shell
+ * frames are not padded: the header, a sidebar and the BottomNav still span
+ * the viewport. See docs/ui.md § Shell rules
+ *
+ * What actually stops analytics from loading is the gate — `useAnalyticsConsent()`
  * calls `loadAnalytics()` only after a positive decision — not this UI.
  *
  * Both choices are one tap, the same size, and the same variant: under GDPR,
@@ -25,7 +32,7 @@ export function ConsentBanner() {
   const { t } = useTranslation("consent");
   const { decided, accept, reject } = useConsent();
 
-  if (decided) return null;
+  if (!analyticsConfigured || decided) return null;
 
   return (
     <section

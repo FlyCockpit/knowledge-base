@@ -6,9 +6,11 @@ import { ConsentPreferencesButton } from "@/components/consent/consent-preferenc
  * column, so on a short page this sits at the bottom of the viewport and on a
  * long one it follows the content (docs/ui.md § Shell rules).
  *
- * Anonymous visitors must be able to withdraw consent as easily as they gave
- * it, and every public page, the 404 included, renders this footer. Public
- * links (privacy, terms, source) go here too. The shell's frame already pads
+ * Public links (privacy, terms, source) go here. In an app with analytics it
+ * also carries Cookie preferences: anonymous visitors must be able to withdraw
+ * consent as easily as they gave it, and every public page, the 404 included,
+ * renders this footer. Without analytics (the default, lib/analytics.ts) that
+ * button renders nothing. The shell's frame already pads
  * its bottom by the safe-area inset, so this footer needs no inset of its own.
  */
 export function PublicFooter() {

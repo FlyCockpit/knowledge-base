@@ -1,8 +1,11 @@
 @import "@knowledge-base/ui/globals.css";
 
-/* What the first-visit cookie banner covers at the bottom of the viewport.
-   Every shell (app, public, the standalone device/OAuth pages) pads its bottom
-   by it, so the banner never lies over the page. The banner publishes
+/* What the first-visit cookie banner covers at the bottom of the viewport. It
+   shows only in an app with analytics (lib/analytics.ts), so this is 0
+   otherwise. Every page scroller (the app and public shells' <main>, the
+   standalone device/OAuth pages) pads its bottom by it, never a shell frame,
+   so the banner never lies over the page while the header and sidebar keep
+   the full viewport height. The banner publishes
    --consent-inset on <html> (components/consent/consent-inset.ts). The shells
    are `h-svh` and do not shrink for the software keyboard, so the whole banner
    height is reserved whether or not a keyboard is up. */

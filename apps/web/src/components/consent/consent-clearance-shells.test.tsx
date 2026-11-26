@@ -5,11 +5,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * While the cookie banner shows, every shell ends `<main>` (or its scroll
- * content) where the banner starts: it pads its bottom by
+ * While a cookie banner shows (only in an app with analytics), every page
+ * scroller's content ends where the banner starts: `<main>` pads its bottom by
  * `--consent-clearance` (index.css, from the `--consent-inset` the banner
- * publishes). Rendered, so a comment or a stray string cannot stand in for the
- * real class; the geometry itself is checked in a browser.
+ * publishes), minus what its frame already reserves. Rendered, so a comment or
+ * a stray string cannot stand in for the real class; the geometry itself is
+ * checked in a browser (`pnpm check:layout`'s banner-reserve probe).
  */
 const keyboard = vi.hoisted(() => ({ open: false }));
 
@@ -57,41 +58,52 @@ async function render(route: unknown): Promise<string> {
   return renderToStaticMarkup(<Component />);
 }
 
-/** The frame: the grid that holds header, main and nav. */
-async function frame(route: unknown): Promise<{ classes: string[]; style: string }> {
-  const match = (await render(route)).match(/<div class="(grid [^"]*)"(?: style="([^"]*)")?/);
-  return { classes: (match?.[1] ?? "").split(" "), style: match?.[2] ?? "" };
+/** The frame (the grid that holds header, main and nav) and the scroller, `<main>`. */
+async function shell(
+  route: unknown,
+): Promise<{ classes: string[]; style: string; main: string[] }> {
+  const html = await render(route);
+  const match = html.match(/<div class="(grid [^"]*)"(?: style="([^"]*)")?/);
+  const main = html.match(/<main\b[^>]*\bclass="([^"]*)"/)?.[1] ?? "";
+  return { classes: (match?.[1] ?? "").split(" "), style: match?.[2] ?? "", main: main.split(" ") };
 }
 
 beforeEach(() => {
   keyboard.open = false;
 });
 
-describe("the shells reserve the cookie banner's height", () => {
-  it("public shell: by the banner's clearance at every width, never below the safe area", async () => {
-    const { classes, style } = await frame(PublicRoute);
+// While a cookie banner shows (only in an app with analytics), the frames are
+// never padded for it, so the header and the sidebar always reach the bottom
+// of the viewport (the owner saw the dashboard's sidebar end ~150px short).
+// <main> pads the part of the banner's clearance its frame does not reserve.
+describe("the shell frames span the viewport; only <main> reserves the banner", () => {
+  it("public shell: the frame pads the safe area only; <main> the rest of the banner", async () => {
+    const { classes, style, main } = await shell(PublicRoute);
     expect(classes).toContain("grid");
-    // Inline, because the frame's safe-area padding is inline too and an
-    // inline padding-bottom would override a class.
-    expect(style).toContain(
-      "padding-bottom:max(var(--safe-area-bottom), var(--consent-clearance))",
+    expect(style).toContain("padding-bottom:var(--safe-area-bottom)");
+    expect(style).not.toContain("consent");
+    expect(main).toContain(
+      "pb-[max(0px,calc(var(--consent-clearance)_-_var(--safe-area-bottom)))]",
     );
   });
 
-  it("app shell, no keyboard: the larger of the BottomNav's and the banner's; from md: the banner's", async () => {
-    const { classes } = await frame(AppRoute);
-    expect(classes).toContain(
-      "pb-[max(calc(3.5rem_+_var(--safe-area-bottom)),var(--consent-clearance))]",
+  it("app shell, no keyboard: the frame reserves the BottomNav only; <main> the rest of the banner", async () => {
+    const { classes, main } = await shell(AppRoute);
+    expect(classes).toContain("pb-[calc(3.5rem_+_var(--safe-area-bottom))]");
+    expect(classes).toContain("md:pb-0");
+    expect(classes.filter((c) => c.includes("consent"))).toEqual([]);
+    expect(main).toContain(
+      "pb-[max(0px,calc(var(--consent-clearance)_-_3.5rem_-_var(--safe-area-bottom)))]",
     );
-    expect(classes).toContain("md:pb-(--consent-clearance)");
-    expect(classes).not.toContain("md:pb-0");
+    expect(main).toContain("md:pb-(--consent-clearance)");
   });
 
-  it("app shell, software keyboard up: the banner's alone", async () => {
+  it("app shell, software keyboard up: no frame padding; <main> the banner's whole clearance", async () => {
     keyboard.open = true;
-    const { classes } = await frame(AppRoute);
-    expect(classes).toContain("pb-(--consent-clearance)");
-    expect(classes.filter((c) => c.includes("3.5rem"))).toEqual([]);
+    const { classes, main } = await shell(AppRoute);
+    expect(classes.filter((c) => /^(md:)?pb-/.test(c))).toEqual([]);
+    expect(main).toContain("pb-(--consent-clearance)");
+    expect(main.filter((c) => c.includes("3.5rem"))).toEqual([]);
   });
 
   // The standalone device/OAuth pages are their own shells: <main> is the

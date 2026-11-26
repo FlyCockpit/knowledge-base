@@ -7,9 +7,16 @@ import enConsent from "@knowledge-base/locales/src/en-US/consent.json";
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ConsentBanner } from "@/components/consent/consent-banner";
+
+// The banner exists only in an app with analytics: these tests run with the
+// switch on (consent-off.test.tsx covers the shipped default, off).
+vi.mock("@/lib/analytics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/analytics")>()),
+  analyticsConfigured: true,
+}));
 
 /**
  * The cookie banner must never cover an open overlay. A row-actions menu near

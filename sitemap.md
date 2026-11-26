@@ -61,7 +61,7 @@ audience (`public`, `authenticated`, `admin`) plus placement (`desktop`, `mobile
 - **Mobile**: Bottom tab bar renders the same set as desktop.
 - **User menu**: Signed-out visitors get Sign In / Sign Up actions. Signed-in users get Settings; Admin appears only for admins.
 - **Public header**: the public pages' nav row shows from `sm:` up; below it the app name links home.
-- **Cookie banner**: global UI, not a page. Mounted once in `__root.tsx`. It never covers the page: the shells reserve its height at the bottom (see `docs/ui.md`).
+- **Cookie banner**: global UI, not a page, and off: it appears only when analytics is configured (`ANALYTICS_PROVIDER` in `apps/web/src/lib/analytics.ts`), and the app ships none; strictly necessary cookies need no consent. When on, it is mounted once in `__root.tsx` and never covers the page: the page scrollers reserve its height at the bottom (see `docs/ui.md`).
 
 ## Notes
 

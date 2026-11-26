@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { judgeLayout, type Probe } from "./check-layout.ts";
+import { judgeLayout, judgeReserve, type Probe, type ReserveProbe } from "./check-layout.ts";
 
 const good: Probe = {
   vw: 1280,
@@ -157,6 +157,56 @@ describe("judgeLayout", () => {
     assert.match(
       judgeLayout("toast light", { ...good, toast }, { footer: false, toast: "light" }).join(""),
       /stored light theme lost to the OS/,
+    );
+  });
+});
+
+describe("judgeReserve", () => {
+  // kb-like desktop shell: frame > row > [sidebar, main]; banner reserve 200px.
+  const before = [
+    { name: "<main>", bottom: 800 },
+    { name: "beside <main>: aside[data-slot=sidebar]", bottom: 800 },
+    { name: "div", bottom: 800 },
+    { name: "div", bottom: 800 },
+  ];
+  const reserve: ReserveProbe = {
+    vh: 800,
+    inset: 200,
+    before,
+    after: before,
+    contentEnd: 600,
+    footer: null,
+  };
+
+  it("passes when only <main>'s content makes room above the banner", () => {
+    assert.deepEqual(judgeReserve("dashboard", reserve), []);
+  });
+
+  it("reports a frame or sidebar that the banner's reserve shortens (the owner's cut-off sidebar)", () => {
+    const shrunk = before.map((box) => ({ ...box, bottom: box.name === "<main>" ? 800 : 600 }));
+    const bad = judgeReserve("dashboard", { ...reserve, after: shrunk });
+    assert.equal(bad.length, 3);
+    assert.match(bad[0] ?? "", /sidebar\] ends at 600px instead of 800px/);
+  });
+
+  it("reports content left under the banner and a frame short of the viewport", () => {
+    assert.match(
+      judgeReserve("landing", { ...reserve, contentEnd: 700 })[0] ?? "",
+      /under a banner starting at 600px/,
+    );
+    const short = before.map((box) => ({ ...box, bottom: 790 }));
+    assert.match(
+      judgeReserve("landing", { ...reserve, before: short, after: short })[0] ?? "",
+      /frame ends at 790px, not the viewport bottom \(800px\)/,
+    );
+    assert.deepEqual(judgeReserve("x", null), ["x: no single <main> scroller"]);
+  });
+
+  it("pins a short public page's footer to the banner's top, not anywhere above it", () => {
+    assert.deepEqual(judgeReserve("landing", { ...reserve, footer: 600 }), []);
+    assert.match(
+      judgeReserve("landing", { ...reserve, contentEnd: 500, footer: 500 })[0] ?? "",
+      /footer ends at 500px, not where the banner starts \(600px\)/,
     );
   });
 });

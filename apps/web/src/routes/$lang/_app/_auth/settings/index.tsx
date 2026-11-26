@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import z from "zod";
-import { ConsentPreferencesButton } from "@/components/consent/consent-preferences-button";
+import { ConsentPreferencesSection } from "@/components/consent/consent-preferences-section";
 import { QueryBoundary } from "@/components/query-boundary";
 import { authClient } from "@/lib/auth-client";
 import { pageHead } from "@/lib/page-title";
@@ -48,7 +48,7 @@ function hasAdminRole(role: string | null | undefined): boolean {
 
 function ProfileSettings() {
   const { session } = Route.useRouteContext();
-  const { t } = useTranslation(["settings", "auth", "common", "consent"]);
+  const { t } = useTranslation(["settings", "auth", "common"]);
   const queryClient = useQueryClient();
   const notificationPrefs = useQuery({
     ...orpc.settings.myNotificationPreferences.queryOptions(),
@@ -176,11 +176,7 @@ function ProfileSettings() {
           </div>
         ) : null}
 
-        <div className="mt-6 space-y-2 border-t pt-6">
-          <Label>{t("consent:preferences.title")}</Label>
-          <p className="text-muted-foreground text-sm">{t("consent:preferences.description")}</p>
-          <ConsentPreferencesButton />
-        </div>
+        <ConsentPreferencesSection />
       </CardContent>
     </Card>
   );

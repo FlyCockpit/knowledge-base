@@ -23,9 +23,9 @@ export function PublicShell({ children }: { children: ReactNode }) {
       className="grid h-svh min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr]"
       style={{
         paddingTop: "var(--safe-area-top)",
-        // <main> ends where the cookie banner starts (index.css; 0 without a
-        // banner), and never inside the home-indicator inset.
-        paddingBottom: "max(var(--safe-area-bottom), var(--consent-clearance))",
+        // The home-indicator inset only: the frame always reaches the bottom
+        // of the viewport. A cookie banner's reserve is <main>'s.
+        paddingBottom: "var(--safe-area-bottom)",
         paddingLeft: "var(--safe-area-left)",
         paddingRight: "var(--safe-area-right)",
       }}
@@ -34,9 +34,13 @@ export function PublicShell({ children }: { children: ReactNode }) {
       {/* No `scrollbar-gutter: stable`: a reserved gutter stops the footer's
           and every other full-bleed rule inside the scroller short of the
           viewport edge with classic scrollbars. */}
+      {/* While a cookie banner shows (only in an app with analytics), the
+          scroller's content ends where it starts: its bottom padding is the
+          banner's clearance beyond the frame's home-indicator inset
+          (index.css; 0 without a banner). */}
       <main
         data-scroll-restoration-id={MAIN_SCROLLER_ID}
-        className="relative min-h-0 min-w-0 overflow-y-auto overflow-x-clip overscroll-contain"
+        className="relative min-h-0 min-w-0 overflow-y-auto overflow-x-clip overscroll-contain pb-[max(0px,calc(var(--consent-clearance)_-_var(--safe-area-bottom)))]"
       >
         {/* At least as tall as the scroller: the page grows into the space,
             so the footer ends at the scroller's bottom on a short page and

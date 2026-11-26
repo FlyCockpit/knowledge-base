@@ -4,11 +4,12 @@
  *
  * The banner is fixed to the bottom of the viewport, so without this it would
  * lie over the page: on a phone it covered the login page's "Sign Up" link.
- * `index.css` turns it into `--consent-clearance`, and every shell pads its
- * bottom by that, so `<main>` ends where the banner starts and every link can
- * be scrolled into view above it. The app shell takes the larger of that and
- * the BottomNav's clearance (on a phone the banner already reaches down behind
- * the BottomNav); the others the larger of it and the safe-area inset.
+ * `index.css` turns it into `--consent-clearance`, and every page scroller
+ * (the shells' `<main>`) pads its bottom by the part of that its frame does
+ * not already reserve (the BottomNav on phones, the safe-area inset), so every
+ * link can be scrolled into view above it. The shell frames are never padded
+ * for it, so the header, the sidebar and the BottomNav keep the full viewport
+ * height.
  */
 export const CONSENT_INSET_VAR = "--consent-inset";
 
