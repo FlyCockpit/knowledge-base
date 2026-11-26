@@ -1,6 +1,5 @@
 import enAuth from "@knowledge-base/locales/src/en-US/auth.json";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
-import enDashboard from "@knowledge-base/locales/src/en-US/dashboard.json";
 import enNav from "@knowledge-base/locales/src/en-US/nav.json";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
@@ -10,7 +9,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The sign-up-mode states of the three pages a visitor without an account
- * lands on (sign-in, `/signup`, the landing page), plus the dashboard greeting.
+ * lands on (sign-in, `/signup`, the landing page).
  * Route files cannot hold tests (the route generator would treat them as
  * routes), so the routes are rendered from here, like
  * components/header.test.tsx does. docs/ui.md § Sign-up modes.
@@ -52,14 +51,9 @@ vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutateAsync: vi.fn() }),
   useQueryClient: () => ({}),
 }));
-vi.mock("@/components/pull-to-refresh", () => ({
-  default: ({ children }: { children: ReactNode }) => children,
-}));
 vi.mock("@/utils/orpc", () => ({
   orpc: {
     appConfig: { queryOptions: () => ({}), queryKey: () => ["appConfig"], call: async () => ({}) },
-    kbs: { list: { queryOptions: () => ({}) } },
-    mcpGrants: { countActiveMine: { queryOptions: () => ({}) } },
     setup: { claimFirstAdmin: { mutationOptions: () => ({}) } },
   },
 }));
@@ -76,14 +70,13 @@ vi.mock("@/server/auth-session", () => ({
 const { Route: LoginRoute } = await import("@/routes/$lang/_app/login");
 const { Route: SignupRoute } = await import("@/routes/$lang/_app/signup");
 const { Route: LandingRoute } = await import("@/routes/$lang/_public/index");
-const { Route: DashboardRoute } = await import("@/routes/$lang/_app/_auth/dashboard");
 
 const i18n = createInstance();
 beforeAll(async () => {
   await i18n.init({
     lng: "en-US",
     resources: {
-      "en-US": { auth: enAuth, common: enCommon, nav: enNav, dashboard: enDashboard },
+      "en-US": { auth: enAuth, common: enCommon, nav: enNav },
     },
     interpolation: { escapeValue: false },
     react: { useSuspense: false },
@@ -240,12 +233,12 @@ describe("landing page", () => {
     expect(loginLinks(html)).toHaveLength(1);
   });
 
-  it("bootstrap: Sign in first, the invite-only line and a small set-up link", async () => {
+  it("bootstrap: Set up this server first, then Sign in; no invite-only line", async () => {
     fixture.config = BOOTSTRAP;
     const html = await render(LandingRoute);
-    expect(signupLinks(html).map((l) => l.text)).toEqual([enCommon.home.setupHint]);
+    expect(signupLinks(html).map((l) => l.text)).toEqual([enCommon.home.setUp]);
     expect(loginLinks(html)).toHaveLength(1);
-    expect(html).toContain(enCommon.home.inviteOnly);
+    expect(html).not.toContain(enCommon.home.inviteOnly);
   });
 
   it("closed: Sign in with the invite-only line", async () => {
@@ -262,14 +255,5 @@ describe("landing page", () => {
     expect(signupLinks(html)).toEqual([]);
     expect(loginLinks(html)).toHaveLength(1);
     expect(html).not.toContain(enCommon.home.inviteOnly);
-  });
-});
-
-describe("dashboard greeting", () => {
-  it('greets with "Welcome, {name}", never "Welcome back"', async () => {
-    fixture.routeContext = { session: { user: { name: "Ada" } } };
-    const html = await render(DashboardRoute);
-    expect(html).toContain("Welcome, Ada");
-    expect(html).not.toMatch(/welcome back/i);
   });
 });

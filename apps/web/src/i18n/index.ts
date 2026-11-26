@@ -246,7 +246,7 @@ export function createRequestI18n(): I18nInstance {
 
 export function getInitialLocale(): Locale {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
-  // The URL wins. If the visitor lands on `/es-MX/dashboard` we want that to
+  // The URL wins. If the visitor lands on `/es-MX/kbs` we want that to
   // beat whatever localStorage or the navigator says — the URL is the most
   // explicit signal.
   const fromPath = localeFromPathname(window.location.pathname);

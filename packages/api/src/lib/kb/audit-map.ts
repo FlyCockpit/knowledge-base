@@ -115,6 +115,7 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "rpc:kbs.shareInvitePreview": read,
   "rpc:kbs.shareInviteCancel": audited("share_invite_cancel"),
   "rpc:kbs.shareInviteResend": audited("share_invite_resend"),
+  "rpc:kbs.shareStatusMine": read,
   "rpc:kbs.shareInvite": audited("share_invite"),
   "rpc:kbs.shareAccept": audited("share_accept"),
   "rpc:kbs.shareRevoke": audited("share_revoke"),

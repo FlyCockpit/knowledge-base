@@ -8,12 +8,32 @@
     "create": "Nueva base de conocimiento",
     "owned": "Propias",
     "shared": "Compartidas conmigo",
+    "count": "{{count}}",
+    "countMore": "{{count}}+",
     "ownedEmptyTitle": "Aún no eres propietario de ninguna base de conocimiento",
     "ownedEmptyDescription": "Crea una para empezar a escribir documentos.",
     "sharedEmptyTitle": "Aún no se ha compartido nada contigo",
     "sharedEmptyDescription": "Las bases de conocimiento que otras personas compartan contigo aparecen aquí después de aceptar la invitación.",
     "searchable": "Índice de búsqueda",
     "notSearchable": "Sin índice de búsqueda"
+  },
+  "gettingStarted": {
+    "createKb": {
+      "title": "Crea una base de conocimiento",
+      "description": "Un lugar para documentos Markdown, con cada cambio guardado en Git.",
+      "action": "Crear base de conocimiento"
+    },
+    "connectClient": {
+      "title": "Conecta un cliente de IA",
+      "description": "Deja que Claude, Cursor u otro cliente MCP busque y edite tus bases de conocimiento.",
+      "action": "Conectar un cliente"
+    },
+    "shareKb": {
+      "title": "Comparte una base de conocimiento",
+      "description": "Invita a personas por correo para leer, proponer o editar, cada una con su propio acceso.",
+      "descriptionNoKb": "Primero crea una base de conocimiento y luego invita a personas por correo para leer, proponer o editar.",
+      "action": "Compartir"
+    }
   },
   "writeMode": {
     "direct": "Puedes editar",

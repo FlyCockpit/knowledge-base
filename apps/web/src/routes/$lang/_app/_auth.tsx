@@ -18,21 +18,26 @@ import { InlineRetry } from "@/components/inline-retry";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { useTwoFactorEnrollment } from "@/hooks/use-two-factor-enrollment";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
+import { setSessionHint } from "@/lib/session-hint";
 import { getRouteSession } from "@/server/auth-session";
 import { orpc } from "@/utils/orpc";
 import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
 
 export const Route = createFileRoute("/$lang/_app/_auth")({
-  beforeLoad: async ({ location, params }) => {
+  beforeLoad: async ({ location, params, context }) => {
     const decision = decideProtectedRouteAccess(await getRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
+      // Keep the public pages' cookie hint in step with what this gate just
+      // learned (lib/session-hint.ts), both ways.
+      setSessionHint(context.queryClient, false);
       throw redirect({
         to: "/$lang/login",
         params: { lang: params.lang },
         search: { redirectTo: location.href },
       });
     }
+    setSessionHint(context.queryClient, true);
     return { session: decision.session };
   },
   component: AuthLayout,
@@ -46,7 +51,7 @@ function AuthLayout() {
     isError,
     refetch,
   } = useQuery(orpc.settings.getAll.queryOptions());
-  const { t } = useTranslation(["common", "dashboard"]);
+  const { t } = useTranslation(["common"]);
 
   if (isPending) {
     return (
@@ -66,7 +71,7 @@ function AuthLayout() {
       <div className="container mx-auto max-w-4xl px-4">
         <InlineRetry
           className="py-12"
-          message={t("dashboard:appSettingsLoadFailed")}
+          message={t("common:appSettingsLoadFailed")}
           onRetry={() => refetch()}
         />
       </div>

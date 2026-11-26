@@ -63,7 +63,7 @@ export type GrantRow = Awaited<ReturnType<Client["mcpGrants"]["listMine"]>>["ite
 
 /** Query-key root for the user's PAT list; invalidated (never written) after a mint. */
 export const PAT_LIST_QUERY_ROOT: readonly unknown[] = orpc.mcpTokens.key();
-/** The live-credential counts (password-reset review, dashboard); every mint changes them. */
+/** The live-credential counts (password-reset review, the home's checklist); every mint changes them. */
 export const ACTIVE_COUNTS_QUERY_KEY: readonly unknown[] = orpc.mcpGrants.countActiveMine.key();
 
 const DAY_MS = 86_400_000;

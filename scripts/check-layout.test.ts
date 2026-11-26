@@ -179,12 +179,12 @@ describe("judgeReserve", () => {
   };
 
   it("passes when only <main>'s content makes room above the banner", () => {
-    assert.deepEqual(judgeReserve("dashboard", reserve), []);
+    assert.deepEqual(judgeReserve("home", reserve), []);
   });
 
   it("reports a frame or sidebar that the banner's reserve shortens (the owner's cut-off sidebar)", () => {
     const shrunk = before.map((box) => ({ ...box, bottom: box.name === "<main>" ? 800 : 600 }));
-    const bad = judgeReserve("dashboard", { ...reserve, after: shrunk });
+    const bad = judgeReserve("home", { ...reserve, after: shrunk });
     assert.equal(bad.length, 3);
     assert.match(bad[0] ?? "", /sidebar\] ends at 600px instead of 800px/);
   });

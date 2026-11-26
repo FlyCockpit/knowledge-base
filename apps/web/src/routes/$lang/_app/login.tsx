@@ -14,6 +14,7 @@ import z from "zod";
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
+import { APP_HOME, appHomeHref } from "@/lib/app-home";
 import { authClient } from "@/lib/auth-client";
 import { clearServerFieldError, setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
@@ -467,8 +468,8 @@ function SignInForm({
         return;
       }
       toast.success(t("auth:signedInSuccess"));
-      if (redirectTo === `/${lang}/dashboard`) {
-        navigate({ to: "/$lang/dashboard", params: { lang } });
+      if (redirectTo === appHomeHref(lang)) {
+        navigate({ to: APP_HOME, params: { lang } });
       } else {
         window.location.assign(redirectTo);
       }

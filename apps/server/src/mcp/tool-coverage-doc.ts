@@ -70,6 +70,7 @@ const humanOnly = {
   "kbs.shareInvitePreview": "human sharing",
   "kbs.shareInviteCancel": "human sharing",
   "kbs.shareInviteResend": "human sharing",
+  "kbs.shareStatusMine": "human sharing",
   "kbs.shareRevoke": "human sharing",
   "kbs.shareUpdate": "human sharing",
   "kbs.shareSetSealedValues": "human sharing",

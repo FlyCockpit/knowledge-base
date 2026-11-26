@@ -339,7 +339,7 @@ describe("API key secret hygiene", () => {
       const minted = await observer.mutate(undefined);
       expect(minted.secret).toBe(SECRET);
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [...API_KEY_LIST_QUERY_ROOT] });
-      // The password-reset review and the dashboard count what is live.
+      // The password-reset review and the home's checklist count what is live.
       expect(invalidate).toHaveBeenCalledWith({ queryKey: [...ACTIVE_COUNTS_QUERY_KEY] });
       expect(
         JSON.stringify(

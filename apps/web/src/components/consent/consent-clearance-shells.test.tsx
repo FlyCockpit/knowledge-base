@@ -30,6 +30,11 @@ vi.mock("@tanstack/react-router", () => ({
   Outlet: () => null,
   useParams: () => ({ lang: "en-US" }),
 }));
+// The public header reads the session-cookie hint (lib/session-hint.ts).
+vi.mock("@tanstack/react-query", () => ({
+  queryOptions: (options: unknown) => options,
+  useQuery: () => ({ data: undefined }),
+}));
 vi.mock("@tanstack/react-query-devtools", () => ({ ReactQueryDevtools: () => null }));
 vi.mock("@tanstack/react-router-devtools", () => ({ TanStackRouterDevtools: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -74,7 +79,7 @@ beforeEach(() => {
 
 // While a cookie banner shows (only in an app with analytics), the frames are
 // never padded for it, so the header and the sidebar always reach the bottom
-// of the viewport (the owner saw the dashboard's sidebar end ~150px short).
+// of the viewport (the owner saw the signed-in home's sidebar end ~150px short).
 // <main> pads the part of the banner's clearance its frame does not reserve.
 describe("the shell frames span the viewport; only <main> reserves the banner", () => {
   it("public shell: the frame pads the safe area only; <main> the rest of the banner", async () => {

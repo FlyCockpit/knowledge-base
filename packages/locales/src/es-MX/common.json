@@ -1,10 +1,28 @@
 {
   "home": {
-    "description": "Bases de conocimiento autoalojadas para personas y agentes.",
+    "description": "Bases de conocimiento autoalojadas para personas y agentes: documentos Markdown guardados en Git, que tú y tus clientes de IA buscan y editan por MCP.",
     "createAccount": "Crear cuenta",
     "inviteOnly": "Este servidor funciona solo por invitación. Pide una invitación a un administrador.",
-    "setupHint": "¿Estás configurando este servidor? Crea la cuenta de administrador",
+    "setUp": "Configurar este servidor",
     "signIn": "Iniciar sesión"
+  },
+  "appSettingsLoadFailed": "No se pudieron cargar las configuraciones de la aplicación.",
+  "gettingStarted": {
+    "title": "Primeros pasos",
+    "progress": "{{done}} de {{total}} completados",
+    "stepDone": "Completado",
+    "stepToDo": "Pendiente",
+    "hide": "Ocultar",
+    "hideAriaLabel": "Ocultar la lista de primeros pasos",
+    "hidden": "Primeros pasos está oculto.",
+    "undo": "Deshacer",
+    "steps": {
+      "invite": {
+        "title": "Invita a alguien",
+        "description": "Crea una cuenta para alguien de tu equipo y luego comparte una base de conocimiento con esa persona.",
+        "action": "Invitar a un usuario"
+      }
+    }
   },
   "actions": {
     "back": "Atrás",

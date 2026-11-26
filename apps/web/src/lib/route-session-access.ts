@@ -53,7 +53,7 @@ export function failedRouteSessionResolution(): RouteSessionResolution {
 }
 
 /**
- * Gate for the ordinary authenticated app (`_auth`: dashboard, settings).
+ * Gate for the ordinary authenticated app (`_auth`: knowledge bases, settings).
  *
  * Deliberately checks only "is there a session" — NOT `emailVerified`, which
  * the admin guard below does check. That asymmetry is the template's

@@ -24,6 +24,7 @@ vi.mock("../lib/kb/shares", () => ({
   shareInvite: vi.fn(async () => ({ accepted: true, requestId: "req" })),
   shareAccept: vi.fn(),
   shareList: vi.fn(async () => ({ items: [], nextCursor: null })),
+  hasSharedKnowledgeBase: vi.fn(async () => true),
   sharePendingList: vi.fn(async () => ({ items: [], nextCursor: null })),
   shareInviteCancel: vi.fn(async () => ({ cancelled: true })),
   shareInviteResend: vi.fn(async () => ({ resent: true })),
@@ -56,6 +57,7 @@ import type { Context } from "../context";
 import { KbDomainError } from "../lib/kb/errors";
 import { configureKbRuntime, resetKbRuntimeForTests } from "../lib/kb/runtime";
 import {
+  hasSharedKnowledgeBase,
   shareInvite,
   shareInviteCancel,
   shareInvitePreview,
@@ -133,6 +135,16 @@ describe("kb-members router", () => {
         idempotencyKey: "k1",
       }),
     ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it("shareStatusMine answers for the caller only and needs a session", async () => {
+    const client = createRouterClient(kbMembersProcedures, { context: sessionContext });
+    await expect(client.shareStatusMine()).resolves.toEqual({ shared: true });
+    expect(vi.mocked(hasSharedKnowledgeBase).mock.calls.at(-1)?.[1]).toBe("user-1");
+    const anonymous = createRouterClient(kbMembersProcedures, {
+      context: () => ({ session: null }),
+    });
+    await expect(anonymous.shareStatusMine()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("returns neutral invite output", async () => {

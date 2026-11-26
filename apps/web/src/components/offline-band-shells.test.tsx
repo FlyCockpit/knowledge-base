@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -46,7 +47,12 @@ type SplitComponent = { importer: () => Promise<Record<string, unknown>>; name: 
 async function render(route: unknown): Promise<string> {
   const { component } = (route as { options: { component: SplitComponent } }).options;
   const Component = (await component.importer())[component.name] as () => ReactNode;
-  return renderToStaticMarkup(<Component />);
+  // The public header reads the session hint from the query cache.
+  return renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}>
+      <Component />
+    </QueryClientProvider>,
+  );
 }
 
 describe("the offline band", () => {

@@ -27,6 +27,7 @@ import { KbAdmissionError } from "./principal";
 import { assertKbShareCapacityForNewActiveShare } from "./quota";
 import type { KbRuntimeConfig } from "./runtime";
 import {
+  hasSharedKnowledgeBase,
   shareInvite,
   shareInviteCancel,
   shareInvitePreview,
@@ -39,7 +40,7 @@ const MASTER_KEY = Buffer.from("a".repeat(32)).toString("base64");
 
 const prisma = {
   shareInvitation: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-  kbShare: { findMany: vi.fn() },
+  kbShare: { findMany: vi.fn(), findFirst: vi.fn() },
   user: { findUnique: vi.fn() },
   operationIntent: { findUnique: vi.fn() },
 };
@@ -907,5 +908,43 @@ describe("shareInvitePreview", () => {
     });
     expect(loadIdentity).toHaveBeenCalledTimes(2);
     expect(prisma.shareInvitation.findFirst).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("hasSharedKnowledgeBase", () => {
+  const runtime = () => ({ prisma }) as unknown as KbRuntimeConfig;
+
+  beforeEach(() => {
+    prisma.shareInvitation.findFirst.mockReset();
+    prisma.kbShare.findFirst.mockReset();
+  });
+
+  it("is true once the user sent an unrevoked invitation, without reading shares", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValue({ id: "inv" });
+    await expect(hasSharedKnowledgeBase(runtime(), "owner")).resolves.toBe(true);
+    expect(prisma.shareInvitation.findFirst).toHaveBeenCalledWith({
+      where: { inviterUserId: "owner", revokedAt: null },
+      select: { id: true },
+    });
+    expect(prisma.kbShare.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("is true for a live member on a KB the user owns", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValue(null);
+    prisma.kbShare.findFirst.mockResolvedValue({ id: "share" });
+    await expect(hasSharedKnowledgeBase(runtime(), "owner")).resolves.toBe(true);
+    expect(prisma.kbShare.findFirst).toHaveBeenCalledWith({
+      where: {
+        revokedAt: null,
+        knowledgeBase: { ownerId: "owner", state: { not: "TOMBSTONED" } },
+      },
+      select: { id: true },
+    });
+  });
+
+  it("is false with neither", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValue(null);
+    prisma.kbShare.findFirst.mockResolvedValue(null);
+    await expect(hasSharedKnowledgeBase(runtime(), "owner")).resolves.toBe(false);
   });
 });

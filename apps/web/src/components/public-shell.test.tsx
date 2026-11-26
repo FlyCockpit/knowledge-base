@@ -22,6 +22,11 @@ vi.mock("@tanstack/react-router", () => ({
   redirect: () => undefined,
   useParams: () => ({ lang: "en-US" }),
 }));
+// The public header reads the session-cookie hint (lib/session-hint.ts).
+vi.mock("@tanstack/react-query", () => ({
+  queryOptions: (options: unknown) => options,
+  useQuery: () => ({ data: undefined }),
+}));
 vi.mock("@tanstack/react-query-devtools", () => ({ ReactQueryDevtools: () => null }));
 vi.mock("@tanstack/react-router-devtools", () => ({ TanStackRouterDevtools: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));

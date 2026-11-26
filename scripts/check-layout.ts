@@ -26,7 +26,7 @@
  *   the shell frame, `<main>`'s box and anything beside it (the app sidebar)
  *   keep their full height to the bottom of the viewport, and the page's
  *   content, scrolled to its end, ends above where the banner starts.
- * With `--state` it also opens the dashboard with every `/rpc` call failing, so
+ * With `--state` it also opens the signed-in home (`/kbs`) with every `/rpc` call failing, so
  * the global query-error toast (with its "Try again" action) shows, stored theme
  * light then dark with the OS set to the other one, and checks the toast renders
  * in the stored theme, is filled with its popover colour (not inverted) and its
@@ -361,8 +361,8 @@ const PAGES: Page[] = [
   { name: "sign-in", path: "/en-US/login", expect: { footer: false }, ready: "main form" },
   // The owner's case: the sidebar must reach the bottom with a banner up.
   {
-    name: "dashboard",
-    path: "/en-US/dashboard",
+    name: "home",
+    path: "/en-US/kbs",
     expect: { footer: false },
     ready: "main",
     signedIn: true,
@@ -442,7 +442,7 @@ async function main(): Promise<number> {
         await browser(["open", `${base}/en-US`]);
         await browser(["eval", `localStorage.setItem('vite-ui-theme', '${theme}'); true`]);
         await browser(["network", "route", `${base}/rpc/**`, "--abort"]);
-        await browser(["open", `${base}/en-US/dashboard`]);
+        await browser(["open", `${base}/en-US/kbs`]);
         // The query retries with backoff before it fails; a slow dev server can
         // take longer than one 25-second wait.
         await browser(["wait", "[data-sileo-viewport] [data-sileo-pill]"]).catch(() =>

@@ -232,7 +232,7 @@ describe("SSO second-factor after hook", () => {
   it.each([
     ["es-MX", "es-MX"],
     ["unsupported", "en-US"],
-  ])("uses locale %s and a local dashboard for a foreign callback", async (locale, lang) => {
+  ])("uses locale %s and the signed-in home for a foreign callback", async (locale, lang) => {
     const f = await fixture();
     f.data.user.locale = locale;
     f.context.responseHeaders.set("location", "https://foreign.example/es-MX/private");
@@ -244,7 +244,7 @@ describe("SSO second-factor after hook", () => {
     if (!(error instanceof Error) || !("headers" in error)) throw new Error("Expected redirect");
     const target = new URL(new Headers(error.headers as Headers).get("location")!);
     expect(target.pathname).toBe(`/${lang}/login`);
-    expect(target.searchParams.get("redirectTo")).toBe(`/${lang}/dashboard`);
+    expect(target.searchParams.get("redirectTo")).toBe(`/${lang}/kbs`);
   });
 
   it.each(["valid", "expired", "wrong-user", "forged"])(

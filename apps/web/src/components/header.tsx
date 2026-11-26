@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { APP_HOME } from "@/lib/app-home";
 
 import { AppBrand } from "./app-brand";
 import { LanguageSwitcher } from "./language-switcher";
@@ -20,8 +21,9 @@ export default function Header() {
   return (
     <div>
       <div className="flex min-w-0 flex-row items-center gap-2 px-4 py-2 sm:gap-4">
-        {/* The first thing in the row to give way (see AppBrand). */}
-        <AppBrand lang={lang} />
+        {/* The first thing in the row to give way (see AppBrand). Signed in,
+            it goes to the signed-in home rather than the landing page. */}
+        <AppBrand lang={lang} to={isAuthenticated ? APP_HOME : "/$lang"} />
         <MainNav />
         {/* Signed out (and while the session loads) nothing in the controls
             group can shrink, so it never does. Signed in, the account trigger

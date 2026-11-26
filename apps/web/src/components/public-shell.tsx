@@ -1,5 +1,8 @@
 import { buttonVariants } from "@knowledge-base/ui/components/button";
+import { cn } from "@knowledge-base/ui/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
+import { LayoutGrid, LogIn } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AppBrand } from "@/components/app-brand";
@@ -9,8 +12,10 @@ import NotFoundState from "@/components/not-found-state";
 import { OfflineBand } from "@/components/offline-band";
 import { PublicFooter } from "@/components/public-footer";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { APP_HOME } from "@/lib/app-home";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
+import { sessionHintQueryOptions } from "@/lib/session-hint";
 
 /**
  * The public shell: header, the one page scroller and the footer. The `_public`
@@ -67,13 +72,22 @@ function PublicHeader() {
   const langParam = useParams({ strict: false, select: (p) => p.lang });
   const lang = isSupportedLocale(langParam) ? langParam : DEFAULT_LOCALE;
   const { t } = useTranslation("nav");
-  // Deliberately always the logged-out nav: public pages stay fully static —
-  // no session fetch, no better-auth chunk, SSR HTML identical for everyone.
-  // The Sign In link below is the static auth entry point that comes with
-  // that choice. Known tradeoff: a signed-in user's server-side locale
-  // preference can't redirect these pages (that would need a session fetch);
-  // it applies once they enter the `_app` branch (`useUserLocaleSync`).
+  // The nav row is always the logged-out one: public pages stay static, with
+  // no session lookup and no better-auth chunk. Only the action at the end
+  // follows the session-cookie hint (lib/session-hint.ts, presence only, never
+  // an access check): "Open app" to the signed-in home when a cookie is
+  // there, Sign In otherwise. The `_public` layout seeds the hint during SSR,
+  // so a public page renders the right action from the first byte; the 404
+  // (no `_public` route around it) asks on the client. An anonymous request
+  // gets the anonymous header, identical for everyone, and ssr-cache.ts never
+  // caches a request carrying a session cookie. A signed-in user's
+  // server-side locale preference still applies only once they enter the
+  // `_app` branch (`useUserLocaleSync`). docs/ui.md § Public header session
+  // hint.
   const items = getNavItems({ placement: "desktop", isAuthenticated: false });
+  const { data: signedIn = false } = useQuery(sessionHintQueryOptions());
+  const signInLabel = t("userMenu.signIn");
+  const openAppLabel = t("userMenu.openApp");
 
   return (
     <header>
@@ -110,16 +124,36 @@ function PublicHeader() {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <LanguageSwitcher />
           <ModeToggle />
-          <Link
-            to="/$lang/login"
-            params={{ lang }}
-            search={{ redirectTo: undefined }}
-            // The app header's Sign In metrics (`touch`), filled: it is this
-            // page's entry point. Wider, it ran past the line at 320px.
-            className={buttonVariants({ size: "touch" })}
-          >
-            {t("userMenu.signIn")}
-          </Link>
+          {/* Filled: it is this page's entry point. The app header's metrics
+              (`touch`, UserMenu): below `sm:` a 44px icon named by
+              `aria-label`, so the row fits at 320px; from `sm:` the text.
+              Both labels sit in one grid cell, the other one invisible, so
+              the button is as wide as the longer of the two in either state
+              and the swap moves nothing. */}
+          {signedIn ? (
+            <Link
+              to={APP_HOME}
+              params={{ lang }}
+              aria-label={openAppLabel}
+              data-session-action="open-app"
+              className={cn(buttonVariants({ size: "touch" }), SESSION_ACTION_CLASS)}
+            >
+              <LayoutGrid aria-hidden="true" className="size-4 sm:hidden" />
+              <SwapLabel shown={openAppLabel} reserved={signInLabel} />
+            </Link>
+          ) : (
+            <Link
+              to="/$lang/login"
+              params={{ lang }}
+              search={{ redirectTo: undefined }}
+              aria-label={signInLabel}
+              data-session-action="sign-in"
+              className={cn(buttonVariants({ size: "touch" }), SESSION_ACTION_CLASS)}
+            >
+              <LogIn aria-hidden="true" className="size-4 sm:hidden" />
+              <SwapLabel shown={signInLabel} reserved={openAppLabel} />
+            </Link>
+          )}
         </div>
       </div>
       <hr />
@@ -127,11 +161,28 @@ function PublicHeader() {
   );
 }
 
+const SESSION_ACTION_CLASS = "w-11 px-0 sm:w-auto sm:px-3.5";
+
+/**
+ * `shown`, in a box as wide as the wider of `shown` and `reserved`: both share
+ * one grid cell and `reserved` is invisible (and so not announced).
+ */
+function SwapLabel({ shown, reserved }: { shown: string; reserved: string }) {
+  return (
+    <span className="hidden text-center sm:grid">
+      <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+        {reserved}
+      </span>
+      <span className="col-start-1 row-start-1">{shown}</span>
+    </span>
+  );
+}
+
 /**
  * The 404 for an unknown URL, which matches no layout: `$lang`'s
  * `notFoundComponent`, so it renders in `$lang`'s outlet with nothing around
  * it. Wrapped in the public shell, it keeps the header (language, theme, Sign
- * In), the footer and the scroller like every other public page.
+ * In or Open app), the footer and the scroller like every other public page.
  */
 export function PublicNotFoundPage() {
   return (

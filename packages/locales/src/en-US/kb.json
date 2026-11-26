@@ -8,12 +8,32 @@
     "create": "New knowledge base",
     "owned": "Owned",
     "shared": "Shared with me",
+    "count": "{{count}}",
+    "countMore": "{{count}}+",
     "ownedEmptyTitle": "You don't own any knowledge bases yet",
     "ownedEmptyDescription": "Create one to start writing documents.",
     "sharedEmptyTitle": "Nothing shared with you yet",
     "sharedEmptyDescription": "Knowledge bases other people share with you appear here after you accept the invitation.",
     "searchable": "Search index",
     "notSearchable": "No search index"
+  },
+  "gettingStarted": {
+    "createKb": {
+      "title": "Create a knowledge base",
+      "description": "A home for Markdown documents, with every change kept in Git.",
+      "action": "Create knowledge base"
+    },
+    "connectClient": {
+      "title": "Connect an AI client",
+      "description": "Let Claude, Cursor or another MCP client search and edit your knowledge bases.",
+      "action": "Connect a client"
+    },
+    "shareKb": {
+      "title": "Share a knowledge base",
+      "description": "Invite people by email to read, propose or edit, each with their own access.",
+      "descriptionNoKb": "Create a knowledge base first, then invite people by email to read, propose or edit.",
+      "action": "Share"
+    }
   },
   "writeMode": {
     "direct": "Can edit",

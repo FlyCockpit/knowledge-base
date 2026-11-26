@@ -8,12 +8,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@knowledge-base/ui/components/dropdown-menu";
+import { toast } from "@knowledge-base/ui/components/sileo";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { LogOut, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
+import { setSessionHint } from "@/lib/session-hint";
+import { friendly } from "@/utils/friendly-error";
 
 /**
  * The real Base UI account menu. Lazy-loaded by `user-menu.tsx` on first
@@ -29,6 +34,7 @@ export default function UserMenuContent() {
   const params = useParams({ strict: false });
   const lang = isSupportedLocale(params.lang) ? params.lang : DEFAULT_LOCALE;
   const authSession = useAuthSession();
+  const queryClient = useQueryClient();
   const { t } = useTranslation("nav");
 
   // The shell only renders this once a session exists; guard defensively so a
@@ -44,29 +50,40 @@ export default function UserMenuContent() {
 
   return (
     <DropdownMenu defaultOpen>
-      {/* Shrinks to 44px and truncates the name before the header controls
-          run past the trailing line (same as UserMenu's eager trigger). */}
+      {/* A 44px icon below `md:`. From `md:` the name, at most 192px, shrinking
+          (to 44px) before the header controls run past the trailing line;
+          the name truncates and the full name is the title (same as
+          UserMenu's eager trigger). */}
       <DropdownMenuTrigger
+        // The visible name starts the accessible name (WCAG 2.5.3): voice
+        // control users say what they see.
+        aria-label={t("userMenu.openFor", { name: session.user.name })}
         render={
           <Button
             variant="outline"
             size="touch"
-            className="min-w-11 max-w-48 shrink"
+            className="w-11 px-0! md:w-auto md:min-w-11 md:max-w-48 md:shrink md:px-3.5!"
             title={session.user.name}
           />
         }
       >
-        <span className="truncate">{session.user.name}</span>
+        <User className="size-4 md:hidden" aria-hidden="true" />
+        <span className="hidden truncate md:block">{session.user.name}</span>
       </DropdownMenuTrigger>
       {/* At least 224px so the email fits; `end` keeps the menu's trailing
           edge on the trigger's, the header's trailing line. */}
       <DropdownMenuContent align="end" className="min-w-56 bg-card">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>{t("userMenu.myAccount")}</DropdownMenuLabel>
+          {/* Who is signed in, as a label: not an item, so nothing in it
+              looks pressable. */}
+          <DropdownMenuLabel className="space-y-0.5">
+            <span className="block text-muted-foreground">{t("userMenu.myAccount")}</span>
+            <span className="block truncate text-foreground">{session.user.name}</span>
+            <span className="block truncate font-normal" title={session.user.email}>
+              {session.user.email}
+            </span>
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem title={session.user.email}>
-            <span className="truncate">{session.user.email}</span>
-          </DropdownMenuItem>
           {userMenuItems.map((item) => (
             <DropdownMenuItem
               key={item.id}
@@ -78,26 +95,38 @@ export default function UserMenuContent() {
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            inset
             variant="destructive"
             onClick={async () => {
-              // Dynamic import keeps the sign-out path out of the menu chunk's
-              // critical path; the auth client is already warm once the menu
-              // is reachable for a signed-in user.
-              const { authClient } = await import("@/lib/auth-client");
-              authClient.signOut({
-                fetchOptions: {
-                  onSuccess: () => {
-                    navigate({
-                      to: "/$lang/login",
-                      params: { lang },
-                      search: { redirectTo: undefined },
-                    });
+              // Still signed in after a failure: say so, so the user can try
+              // again instead of believing they are out.
+              const failed = (error: unknown) =>
+                toast.error(friendly(error, t("userMenu.signOutFailed")));
+              try {
+                // Dynamic import keeps the sign-out path out of the menu
+                // chunk's critical path; the auth client is already warm once
+                // the menu is reachable for a signed-in user.
+                const { authClient } = await import("@/lib/auth-client");
+                const result = await authClient.signOut({
+                  fetchOptions: {
+                    onSuccess: () => {
+                      // The public pages' cookie hint follows at once, so
+                      // the landing page and its header agree (lib/session-hint.ts).
+                      setSessionHint(queryClient, false);
+                      navigate({
+                        to: "/$lang/login",
+                        params: { lang },
+                        search: { redirectTo: undefined },
+                      });
+                    },
                   },
-                },
-              });
+                });
+                if (result.error) failed(result.error);
+              } catch (error) {
+                failed(error);
+              }
             }}
           >
+            <LogOut className="size-4" />
             {t("userMenu.signOut")}
           </DropdownMenuItem>
         </DropdownMenuGroup>

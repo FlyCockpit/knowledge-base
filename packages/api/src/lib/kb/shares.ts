@@ -686,6 +686,32 @@ export function visibleInvitedEmails(
 }
 
 /**
+ * Whether this user has shared a knowledge base: a live (unrevoked) member on
+ * a KB they own, or an unrevoked invitation they sent (pending or accepted).
+ * The web home's getting-started "Share a knowledge base" step reads it.
+ * Two indexed `findFirst` reads that each return at most one id; it discloses
+ * nothing about who the members are. docs/ui.md § The signed-in home.
+ */
+export async function hasSharedKnowledgeBase(
+  runtime: KbRuntimeConfig,
+  userId: string,
+): Promise<boolean> {
+  const invitation = await runtime.prisma.shareInvitation.findFirst({
+    where: { inviterUserId: userId, revokedAt: null },
+    select: { id: true },
+  });
+  if (invitation) return true;
+  const share = await runtime.prisma.kbShare.findFirst({
+    where: {
+      revokedAt: null,
+      knowledgeBase: { ownerId: userId, state: { not: "TOMBSTONED" } },
+    },
+    select: { id: true },
+  });
+  return share !== null;
+}
+
+/**
  * Change a live member's permission bits in place (no revoke and
  * re-invite). The same authority as invite and revoke: `manage` on the KB,
  * re-checked under the authority barrier. Only the bits change; the share

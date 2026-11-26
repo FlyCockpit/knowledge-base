@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveRouteSessionFromAuth, toRouteSession } from "./auth-session";
+import { hasSessionTokenCookie, resolveRouteSessionFromAuth, toRouteSession } from "./auth-session";
 
 const getSessionMock = vi.fn();
 
@@ -106,5 +106,28 @@ describe("auth route session server helpers", () => {
     await expect(resolveRouteSessionFromAuth(new Headers(), getSessionMock)).resolves.toEqual({
       status: "error",
     });
+  });
+});
+
+describe("hasSessionTokenCookie", () => {
+  it("detects the secure and plain Better-Auth session token", () => {
+    expect(hasSessionTokenCookie("__Secure-better-auth.session_token=abc.def")).toBe(true);
+    expect(hasSessionTokenCookie("theme=dark; better-auth.session_token=abc")).toBe(true);
+  });
+
+  it("is false with no cookie header or an empty token", () => {
+    expect(hasSessionTokenCookie(null)).toBe(false);
+    expect(hasSessionTokenCookie(undefined)).toBe(false);
+    expect(hasSessionTokenCookie("")).toBe(false);
+    expect(hasSessionTokenCookie("better-auth.session_token=")).toBe(false);
+  });
+
+  // A visitor mid-login holds only the 2FA challenge cookie: they are not
+  // signed in yet and must still see the landing page, not bounce to the app.
+  it("ignores other Better-Auth cookies and look-alike names", () => {
+    expect(hasSessionTokenCookie("better-auth.two_factor=abc")).toBe(false);
+    expect(hasSessionTokenCookie("better-auth.session_data=abc")).toBe(false);
+    expect(hasSessionTokenCookie("x-better-auth.session_token=abc")).toBe(false);
+    expect(hasSessionTokenCookie("note=better-auth.session_token=abc")).toBe(false);
   });
 });

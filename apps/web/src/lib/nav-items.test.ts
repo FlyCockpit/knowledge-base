@@ -25,8 +25,9 @@ describe("nav-items", () => {
     });
 
     expect(header).toEqual([]);
-    expect(sidebar.map((item) => item.path)).toEqual(["/dashboard", "/kbs", "/settings"]);
-    expect(sidebar.map((item) => item.group)).toEqual(["main", "main", "footer"]);
+    // No Dashboard: the knowledge bases list is the signed-in home (APP_HOME).
+    expect(sidebar.map((item) => item.path)).toEqual(["/kbs", "/settings"]);
+    expect(sidebar.map((item) => item.group)).toEqual(["main", "footer"]);
     expect(getNavItems({ placement: "sidebar", isAuthenticated: false })).toEqual([]);
   });
 
@@ -58,8 +59,8 @@ describe("nav-items", () => {
     }).map((item) => item.path);
 
     expect(signedOutItems).toEqual(["/"]);
-    // Signed in, the dashboard is home: no separate Home tab next to it.
-    expect(adminItems).toEqual(["/dashboard", "/kbs", "/settings", "/admin"]);
+    // Signed in, the knowledge bases list is home: no separate Home tab next to it.
+    expect(adminItems).toEqual(["/kbs", "/settings", "/admin"]);
   });
 
   it("derives user-menu destinations from the shared nav model", () => {
@@ -80,7 +81,7 @@ describe("nav-items", () => {
 
   it("builds typed locale-prefixed routes", () => {
     expect(toLangRoute("/")).toBe("/$lang");
-    expect(toLangRoute("/dashboard")).toBe("/$lang/dashboard");
+    expect(toLangRoute("/kbs")).toBe("/$lang/kbs");
     expect(toLangRoute("/settings")).toBe("/$lang/settings");
   });
 });

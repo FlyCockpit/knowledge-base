@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTokenCount, hasLiveCredentials } from "./credential-counts";
+import { hasConnectedClient, hasLiveCredentials } from "./credential-counts";
 
 describe("hasLiveCredentials", () => {
   const none = { tokens: 0, apps: 0, apiKeys: 0, childTokens: 0 };
@@ -17,8 +17,17 @@ describe("hasLiveCredentials", () => {
   });
 });
 
-describe("activeTokenCount", () => {
-  it("adds MCP tokens minted by API keys to personal access tokens", () => {
-    expect(activeTokenCount({ tokens: 2, apps: 5, apiKeys: 1, childTokens: 3 })).toBe(5);
+describe("hasConnectedClient", () => {
+  const none = { tokens: 0, apps: 0, apiKeys: 0, childTokens: 0 };
+
+  it("is true with any live MCP credential: token, key-minted token or connected app", () => {
+    expect(hasConnectedClient({ ...none, tokens: 1 })).toBe(true);
+    expect(hasConnectedClient({ ...none, childTokens: 1 })).toBe(true);
+    expect(hasConnectedClient({ ...none, apps: 1 })).toBe(true);
+  });
+
+  it("is false with nothing live, or only an API key (REST, not an MCP client)", () => {
+    expect(hasConnectedClient(none)).toBe(false);
+    expect(hasConnectedClient({ ...none, apiKeys: 2 })).toBe(false);
   });
 });

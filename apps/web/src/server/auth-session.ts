@@ -44,6 +44,50 @@ export const getRouteSession = createServerFn({ method: "GET" }).handler(
   },
 );
 
+/**
+ * Better-Auth's session cookie names: `PREFIX.session_token`, with
+ * `__Secure-` added when cookies are secure. The prefix is Better-Auth's
+ * default because this app sets no `advanced.cookiePrefix`
+ * (packages/auth/src/index.ts) — if you set one, update this list along with
+ * `apps/server/src/ssr-cache.ts` and `apps/server/src/two-factor-otp-limit.ts`.
+ */
+const SESSION_TOKEN_COOKIES = new Set([
+  "__Secure-better-auth.session_token",
+  "better-auth.session_token",
+]);
+
+/**
+ * True when the Cookie header carries a non-empty Better-Auth session token.
+ * Presence only — the token is never read for meaning or validated here.
+ */
+export function hasSessionTokenCookie(cookieHeader: string | null | undefined): boolean {
+  if (!cookieHeader) return false;
+  return cookieHeader.split(";").some((pair) => {
+    const eq = pair.indexOf("=");
+    if (eq === -1) return false;
+    return SESSION_TOKEN_COOKIES.has(pair.slice(0, eq).trim()) && pair.slice(eq + 1).trim() !== "";
+  });
+}
+
+/**
+ * Cheap "is this visitor probably signed in?" hint for public pages.
+ *
+ * It checks only whether the session cookie exists: no database lookup, and
+ * no Better-Auth import on the public render path. That makes it a hint for
+ * where to send someone, and **never** an access check. A stale or forged
+ * cookie just sends the visitor to the signed-in home, whose `_auth` gate does
+ * the real check and sends them to login. Do not use this to show or hide
+ * data; use {@link getRouteSession} or a procedure for that.
+ *
+ * Cache safety: `apps/server/src/ssr-cache.ts` never caches a request that
+ * carries a Better-Auth cookie, and only stores 200 responses without
+ * Set-Cookie, so a redirect based on this hint is never replayed to an
+ * anonymous visitor.
+ */
+export const getSessionCookieHint = createServerFn({ method: "GET" }).handler(
+  async (): Promise<boolean> => hasSessionTokenCookie(getRequestHeaders().get("cookie")),
+);
+
 export async function resolveRouteSessionFromAuth(
   headers: Headers,
   getSession: GetBetterAuthSession,

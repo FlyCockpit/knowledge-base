@@ -65,6 +65,7 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | List pending invitations | implemented | deny | allow | deny | `kbs.sharePendingList` |
 | Resend a pending invitation | implemented | deny | allow | deny | `kbs.shareInviteResend` |
 | Cancel a pending invitation | implemented | deny | allow | deny | `kbs.shareInviteCancel` |
+| Whether I have shared any knowledge base | implemented | deny | allow | deny | `kbs.shareStatusMine` |
 | Share revoke | implemented | deny | allow | deny | `kbs.shareRevoke` |
 | Change a member's permissions | implemented | deny | allow | deny | `kbs.shareUpdate` |
 | Set share "include sealed values" (owner only) | implemented | deny | allow | deny | `kbs.shareSetSealedValues` |

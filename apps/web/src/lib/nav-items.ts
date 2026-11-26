@@ -1,17 +1,8 @@
 import { isAdminRole } from "@knowledge-base/auth/roles";
 import type { LucideIcon } from "lucide-react";
-import {
-  BookOpen,
-  Boxes,
-  Home,
-  KeyRound,
-  KeySquare,
-  LayoutDashboard,
-  Settings,
-  Shield,
-} from "lucide-react";
+import { BookOpen, Boxes, Home, KeyRound, KeySquare, Settings, Shield } from "lucide-react";
 
-/** `guest`: public pages for signed-out visitors (signed-in users have the dashboard). */
+/** `guest`: public pages for signed-out visitors (signed-in users have their home, `APP_HOME`). */
 type NavAudience = "public" | "guest" | "authenticated" | "admin";
 /**
  * - `desktop`: the header's main nav (signed-out visitors; signed-in users get the sidebar).
@@ -22,7 +13,6 @@ type NavAudience = "public" | "guest" | "authenticated" | "admin";
 type NavPlacement = "desktop" | "sidebar" | "mobile" | "userMenu";
 export type AppNavPath =
   | "/"
-  | "/dashboard"
   | "/kbs"
   | "/settings"
   | "/admin"
@@ -32,7 +22,6 @@ export type AppNavPath =
   | "/settings/embedding-providers";
 export type LangNavRoute =
   | "/$lang"
-  | "/$lang/dashboard"
   | "/$lang/kbs"
   | "/$lang/settings"
   | "/$lang/admin"
@@ -53,7 +42,7 @@ export type RouteNavItem = {
 };
 
 export type AppNavItem = RouteNavItem & {
-  id: "home" | "dashboard" | "kbs" | "settings" | "admin";
+  id: "home" | "kbs" | "settings" | "admin";
   audience: NavAudience;
   placements: readonly NavPlacement[];
   /** Sidebar group: the main sections, or the footer (settings, admin). */
@@ -73,20 +62,10 @@ const appNavItems: AppNavItem[] = [
     labelKey: "items.home",
     icon: Home,
     exact: true,
-    // The landing page; a signed-in user's home is the dashboard, so the
-    // BottomNav does not show both.
+    // The landing page; a signed-in user's home is the knowledge bases list
+    // (`APP_HOME`), so the BottomNav does not show both.
     audience: "guest",
     placements: ["desktop", "mobile"],
-    group: "main",
-  },
-  {
-    id: "dashboard",
-    path: "/dashboard",
-    labelKey: "items.dashboard",
-    icon: LayoutDashboard,
-    exact: false,
-    audience: "authenticated",
-    placements: ["sidebar", "mobile"],
     group: "main",
   },
   {

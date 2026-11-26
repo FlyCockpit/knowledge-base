@@ -1,7 +1,6 @@
 {
   "items": {
     "home": "Inicio",
-    "dashboard": "Panel de control",
     "knowledgeBases": "Bases de conocimiento",
     "settings": "Configuración",
     "admin": "Administración"
@@ -18,8 +17,12 @@
   },
   "userMenu": {
     "myAccount": "Mi cuenta",
+    "open": "Abrir el menú de la cuenta",
+    "openFor": "{{name}}, menú de la cuenta",
     "signIn": "Iniciar sesión",
+    "openApp": "Abrir app",
     "signOut": "Cerrar sesión",
+    "signOutFailed": "No se pudo cerrar la sesión. Inténtalo de nuevo.",
     "signUp": "Registrarse"
   },
   "sidebar": {

@@ -72,8 +72,8 @@ describe("buildLocaleModulePreloadMap", () => {
         file: "assets/common-AbCdEf12.js",
         isDynamicEntry: true,
       },
-      "../../packages/locales/src/es-MX/dashboard.json": {
-        file: "assets/dashboard-Zz991122.js",
+      "../../packages/locales/src/es-MX/kb.json": {
+        file: "assets/kb-Zz991122.js",
         isDynamicEntry: true,
       },
     });

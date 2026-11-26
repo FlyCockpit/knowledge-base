@@ -18,7 +18,6 @@ export const NAMESPACES = [
   "validation",
   "admin",
   "consent",
-  "dashboard",
   "settings",
   "nav",
   "kb",

@@ -100,6 +100,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbs.sharePendingList | human sharing |
 | kbs.shareRevoke | human sharing |
 | kbs.shareSetSealedValues | human sharing |
+| kbs.shareStatusMine | human sharing |
 | kbs.shareUpdate | human sharing |
 | kbs.transferAccept | human ownership transfer |
 | kbs.transferRequest | human ownership transfer |

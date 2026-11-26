@@ -30,7 +30,7 @@ function isAnyAncestorScrolled(target: Element): boolean {
 }
 
 /**
- * Wraps a page (the dashboard) inside the app shell's `main`. The wrapper is
+ * Wraps a page (the knowledge bases home) inside the app shell's `main`. The wrapper is
  * `display: contents` — it adds no box, so the page is exactly as tall as its
  * content and a banner above it does not make `main` scroll — and the
  * indicator floats over content like the browser's own spinner. The nearest

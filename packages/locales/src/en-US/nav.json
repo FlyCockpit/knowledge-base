@@ -1,7 +1,6 @@
 {
   "items": {
     "home": "Home",
-    "dashboard": "Dashboard",
     "knowledgeBases": "Knowledge bases",
     "settings": "Settings",
     "admin": "Admin"
@@ -18,9 +17,13 @@
   },
   "userMenu": {
     "myAccount": "My Account",
+    "open": "Open account menu",
+    "openFor": "{{name}}, account menu",
     "signIn": "Sign In",
+    "openApp": "Open app",
     "signUp": "Sign Up",
-    "signOut": "Sign Out"
+    "signOut": "Sign Out",
+    "signOutFailed": "Couldn't sign you out. Try again."
   },
   "sidebar": {
     "collapse": "Collapse sidebar",

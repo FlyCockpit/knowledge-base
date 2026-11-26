@@ -130,7 +130,7 @@ TanStack Form v1 with native Zod — do not install `@tanstack/zod-form-adapter`
 
 ### Internationalization (i18n) — no hardcoded strings
 
-Every user-facing string goes through `t()`. Web namespaces: `common`, `auth`, `errors`, `validation`, `admin`, `consent`, `dashboard`, `settings`, `nav`, `kb`. Every URL is `/$lang/...`. New English keys in `packages/locales/src/en-US/`, then `pnpm i18n:translate`.
+Every user-facing string goes through `t()`. Web namespaces: `common`, `auth`, `errors`, `validation`, `admin`, `consent`, `settings`, `nav`, `kb`. Every URL is `/$lang/...`. New English keys in `packages/locales/src/en-US/`, then `pnpm i18n:translate`.
 
 ### Styling
 

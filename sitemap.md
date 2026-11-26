@@ -10,7 +10,7 @@ Only indexable content pages belong in `apps/server/src/seo.ts` `PUBLIC_PATHS` f
 
 | Path | Description |
 |------|-------------|
-| `/{lang}/` | Landing page. All of its copy lives in the i18n bundles (`packages/locales/src/<lang>/common.json`, `home.*`) — edit it there, not in the component. The only entry in `PUBLIC_PATHS`. Its buttons follow the sign-up mode (Create account + Sign in; Sign in with the invite-only line and a "Setting up this server?" link; Sign in with the invite-only line), with a neutral Sign in until `appConfig` loads — docs/ui.md § Sign-up modes. |
+| `/{lang}/` | Landing page. All of its copy lives in the i18n bundles (`packages/locales/src/<lang>/common.json`, `home.*`) — edit it there, not in the component. A visitor with a session cookie is forwarded to the signed-in home (`/{lang}/kbs`). The only entry in `PUBLIC_PATHS`. Its buttons follow the sign-up mode (Create account + Sign in; "Set up this server" + Sign in while no administrator exists; Sign in with the invite-only line), with a neutral Sign in until `appConfig` loads — docs/ui.md § Sign-up modes. |
 | `/{lang}/login` | Sign in page with SSO, email/password, and 2FA support. Under the form: a "Sign Up" link while sign-up is open, a "create the administrator account" link while the administrator account does not exist yet (bootstrap), or the invite-only note when sign-up is closed (docs/ui.md § Sign-up modes) |
 | `/{lang}/signup` | Create-account page (email/password); in bootstrap mode "Set up this server"; when sign-up is closed an invite-only card with a Sign In button. Redirects to `/{lang}/login` only under `FORCE_SSO` or when the visitor is already signed in |
 | `/{lang}/forgot-password` | Request a password-reset link (email/password). Always shows the same "check your email" success state (no account enumeration); deflects to `/{lang}/login` when `FORCE_SSO` or SMTP is unconfigured |
@@ -26,8 +26,8 @@ All require an active session (enforced by the `_auth` layout).
 
 | Path | Description |
 |------|-------------|
-| `/{lang}/dashboard` | Signed-in home with a link to the knowledge-base list; stat tiles show only non-zero counts, and with no knowledge base yet the empty state offers "Create a knowledge base" (the create Dialog) and "Connect an AI client" (`/{lang}/settings/mcp`). Admin users/jobs/settings stay under `/admin`. |
-| `/{lang}/kbs` | Knowledge bases in two sections, "Owned" and "Shared with me" (`kbs.list` with `relation`, each its own cursor pages + Load more; every item carries `isOwner`). Create → Dialog; when the returned capability bits lack `read` the new KB is not opened. The instance admin role grants no extra KBs. |
+| `/{lang}/dashboard` | Redirect only, to the signed-in home `/{lang}/kbs` (old bookmarks); not under the `_auth` gate itself, the home's gate does the check. |
+| `/{lang}/kbs` | The signed-in home (`APP_HOME`): a getting-started checklist until done or hidden (create a knowledge base, connect an AI client, share a knowledge base, and for admins invite someone; see `docs/ui.md` § The signed-in home), then knowledge bases in two sections, "Owned" and "Shared with me" (`kbs.list` with `relation`, each its own cursor pages + Load more; every item carries `isOwner`). Create → Dialog; when the returned capability bits lack `read` the new KB is not opened. The instance admin role grants no extra KBs. |
 | `/{lang}/kbs/{kbId}` | One KB: name/description, write mode, per-KB search (hybrid query, or the structured service when type/title/tags filters are set; freshness shown; an unavailable index shows an error and no results), and the document list. Edit details → Sheet (pinned `metadataVersion`; a conflict reloads) with `manage`; Delete → AlertDialog typing DELETE only for the owner (`isOwner`; the server enforces it). A denied action starts a fresh `kbs.get` admission after cancelling any older cached read; only a re-check that says read access is gone clears the KB's cached private data. |
 | `/{lang}/kbs/{kbId}/documents?path=&rev=&mode=new` | Raw Markdown textarea editor (bytes saved exactly as typed) with a live preview through the same safe renderer (only media the saved document already references are shown; nothing remote is fetched). `rev` pins a commit (search citations always pass the cited commit) and is read-only when it is not the branch head. Save/propose/delete send the full branch `baseRevision` and an idempotency key reused only for a retry of the identical payload; >128 KiB goes through upload staging. Shows applied (commit + index job), proposed (link to the proposal), noop, and conflict (keeps the text, shows the new head; continuing on it is an explicit choice). |
 | `/{lang}/kbs/{kbId}/prs?status=` | Pull requests of one KB (`pullRequests.list`, cursor pages + Load more), filterable by OPEN/CONFLICT/CLOSED/MERGED (CONFLICT = no longer applies to main, rechecked when main moved). Each row names its author and how they acted. Linked from the KB page. |
@@ -57,7 +57,7 @@ Navigation destinations are defined once in `apps/web/src/lib/nav-items.ts` and 
 audience (`public`, `authenticated`, `admin`) plus placement (`desktop`, `mobile`,
 `userMenu`).
 
-- **Desktop**: Header main nav shows Home to everyone. Signed-in users also see Dashboard, Knowledge bases and Settings. Admins also see Admin.
+- **Desktop**: Header main nav shows Home to signed-out visitors. Signed-in users get the sidebar: Knowledge bases (their home), then Settings and, for admins, Admin at its foot. The brand goes to the signed-in home when signed in; the public header offers Open app instead of Sign In to a visitor with a session cookie.
 - **Mobile**: Bottom tab bar renders the same set as desktop.
 - **User menu**: Signed-out visitors get Sign In / Sign Up actions. Signed-in users get Settings; Admin appears only for admins.
 - **Public header**: the public pages' nav row shows from `sm:` up; below it the app name links home.
@@ -68,7 +68,7 @@ audience (`public`, `authenticated`, `admin`) plus placement (`desktop`, `mobile
 - Keep this file updated as new pages are added.
 - The `_auth` layout also enforces mandatory 2FA setup when the role-scoped 2FA policy requires it.
 - The `admin` layout returns 404 for non-admins; do not add admin links to navigation visible to all users.
-- All client-side links should preserve the current locale segment — use `<Link to="/$lang/dashboard" params={{ lang }} />` rather than hardcoded `/dashboard` strings.
+- All client-side links should preserve the current locale segment — use `<Link to="/$lang/kbs" params={{ lang }} />` rather than hardcoded `/kbs` strings.
 
 ## Operator documentation
 

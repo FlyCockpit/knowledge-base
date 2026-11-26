@@ -8,6 +8,7 @@ import { mapKbDomainError } from "../lib/kb/bases";
 import { KbDomainError } from "../lib/kb/errors";
 import { getKbRuntime } from "../lib/kb/runtime";
 import {
+  hasSharedKnowledgeBase,
   shareAccept,
   shareInvite,
   shareInviteCancel,
@@ -183,6 +184,16 @@ export const kbMembersProcedures = {
         toOrpc(error);
       }
     }),
+
+  /** Whether the caller has shared any KB (the web home's checklist step). */
+  shareStatusMine: protectedProcedure.handler(async ({ context }) => {
+    try {
+      const runtime = getKbRuntime();
+      return { shared: await hasSharedKnowledgeBase(runtime, context.session!.user.id) };
+    } catch (error) {
+      toOrpc(error);
+    }
+  }),
 
   shareRevoke: protectedProcedure
     .input(z.object({ kbId, shareUserId: z.string().min(1) }))

@@ -1,10 +1,28 @@
 {
   "home": {
-    "description": "Self-hosted knowledge bases for people and agents.",
+    "description": "Self-hosted knowledge bases for people and agents: Markdown documents kept in Git, which you and your AI clients search and edit over MCP.",
     "createAccount": "Create account",
     "inviteOnly": "This server is invite-only. Ask an administrator for an invitation.",
-    "setupHint": "Setting up this server? Create the administrator account",
+    "setUp": "Set up this server",
     "signIn": "Sign in"
+  },
+  "appSettingsLoadFailed": "Failed to load app settings.",
+  "gettingStarted": {
+    "title": "Get started",
+    "progress": "{{done}} of {{total}} done",
+    "stepDone": "Done",
+    "stepToDo": "To do",
+    "hide": "Hide",
+    "hideAriaLabel": "Hide the getting-started checklist",
+    "hidden": "Getting started is hidden.",
+    "undo": "Undo",
+    "steps": {
+      "invite": {
+        "title": "Invite someone",
+        "description": "Add an account for a teammate, then share a knowledge base with them.",
+        "action": "Invite a user"
+      }
+    }
   },
   "actions": {
     "back": "Back",

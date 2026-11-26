@@ -155,7 +155,8 @@ export const auth = betterAuth({
         "redirectTo",
         callback.origin === new URL(webOrigin).origin
           ? `${callback.pathname}${callback.search}${callback.hash}`
-          : `/${lang}/dashboard`,
+          : // The web app's signed-in home (APP_HOME, apps/web/src/lib/app-home.ts).
+            `/${lang}/kbs`,
       );
       throw ctx.redirect(challenge.toString());
     }),
