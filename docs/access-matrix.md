@@ -55,6 +55,10 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | Force-remove user (tombstone owned KBs) | implemented | deny | deny | allow | `users.removeForce` |
 | List knowledge bases | implemented | deny | allow | deny | `kbs.list` |
 | Get knowledge base | implemented | deny | allow | deny | `kbs.get` |
+| List own pinned knowledge bases, and name up to 5 of 10 given recently opened ones (not pinned, still readable; bounded) | implemented | deny | allow | deny | `kbPins.list` |
+| Pin a readable knowledge base (own sidebar) | implemented | deny | allow | deny | `kbPins.pin` |
+| Unpin a knowledge base (own sidebar) | implemented | deny | allow | deny | `kbPins.unpin` |
+| Reorder own pins | implemented | deny | allow | deny | `kbPins.reorder` |
 | Create knowledge base | implemented | deny | allow | deny | `kbs.create` |
 | Update knowledge base | implemented | deny | allow | deny | `kbs.update` |
 | Delete knowledge base | implemented | deny | allow | deny | `kbs.delete` |

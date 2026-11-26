@@ -1231,5 +1231,12 @@
         "label": "File actions"
       }
     }
+  },
+  "pins": {
+    "pin": "Pin",
+    "pinned": "Pinned",
+    "pinNamed": "Pin {{name}}",
+    "unpinNamed": "Unpin {{name}}",
+    "failed": "The pin couldn't be changed. Try again."
   }
 }

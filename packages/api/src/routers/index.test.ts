@@ -230,6 +230,7 @@ describe("appRouter surface", () => {
         "kbIndex",
         "kbMirror",
         "kbModel",
+        "kbPins",
         "kbSealed",
         "kbs",
         "mcpConsent",

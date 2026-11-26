@@ -53,6 +53,10 @@ Git push). Renaming or moving a document in the web app is one Git rename
 commit (or proposal update) with the bytes unchanged, so its label stays. See
 [write modes and provenance](./mcp.md#write-modes-and-provenance).
 
+Each user can pin knowledge bases they can read; the pins (their order too) are
+stored per user on the server, list only bases still readable, and head the
+sidebar's knowledge base list before the recently opened ones.
+
 Nothing written to main is lost from the web app's view. Any earlier version
 of a document can be restored, after a line diff against the current one, as a
 new revision (a pull request for a writer who proposes). A deleted document

@@ -24,6 +24,7 @@ import {
   KbMetadataSheet,
   kbAccessLabelKey,
 } from "@/components/kb/kb-list";
+import { KbPinButton } from "@/components/kb/kb-pin-button";
 import { KbWorkspace, type WorkspaceSearch } from "@/components/kb/kb-workspace";
 import { FRESHNESS_TONE, SearchPanel } from "@/components/kb/search-results";
 import { LoadMore } from "@/components/load-more";
@@ -316,13 +317,16 @@ function KbHeader({
           </>
         }
         actions={
-          manage ? (
-            <KbManageActions
-              kb={kb}
-              onEdit={() => setEditing(true)}
-              onDelete={() => setDeleting(true)}
-            />
-          ) : undefined
+          <>
+            <KbPinButton kbId={kb.id} kbName={kb.name} kbSlug={kb.slug} />
+            {manage && (
+              <KbManageActions
+                kb={kb}
+                onEdit={() => setEditing(true)}
+                onDelete={() => setDeleting(true)}
+              />
+            )}
+          </>
         }
       />
       {editing && <KbMetadataSheet kb={kb} open={editing} onOpenChange={setEditing} />}

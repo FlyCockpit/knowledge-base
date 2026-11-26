@@ -36,6 +36,7 @@ model User {
   bootstrapState          BootstrapState?
   knowledgeBases          KnowledgeBase[]
   kbShares                KbShare[]
+  kbPins                  KbPin[]
   shareInvitations        ShareInvitation[]
   kbTransfersFrom         KbTransfer[]        @relation("KbTransferFrom")
   kbTransfersTo           KbTransfer[]        @relation("KbTransferTo")

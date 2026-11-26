@@ -27,7 +27,20 @@
   },
   "sidebar": {
     "collapse": "Contraer barra lateral",
-    "expand": "Expandir barra lateral"
+    "expand": "Expandir barra lateral",
+    "kbs": {
+      "toggle": "Mostrar u ocultar tus bases de conocimiento",
+      "pinned": "Fijadas",
+      "recent": "Abiertas recientemente",
+      "viewAll": "Ver todas",
+      "empty": "Fija una base de conocimiento para tenerla aquí.",
+      "pin": "Fijar {{name}}",
+      "unpin": "Desfijar {{name}}",
+      "reorderHint": "Alt+Arriba o Alt+Abajo la mueve",
+      "moved": "{{name}} se movió a la posición {{position}} de {{count}}",
+      "moveRefused": "No se pudo mover {{name}}; el orden no cambió",
+      "loadFailed": "No se pudieron cargar las bases de conocimiento fijadas."
+    }
   },
   "titles": {
     "knowledgeBase": "Base de conocimiento",

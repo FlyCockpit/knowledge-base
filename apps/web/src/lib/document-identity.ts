@@ -222,7 +222,8 @@ export function watchDocumentRestore(): void {
 }
 
 /** An API answer that says this request had no valid session (oRPC or Better Auth). */
-function isSessionRejection(error: unknown): boolean {
+/** A request refused for having no session (401 / UNAUTHORIZED). */
+export function isSessionRejection(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const e = error as { code?: unknown; status?: unknown };
   return e.code === "UNAUTHORIZED" || e.status === 401;

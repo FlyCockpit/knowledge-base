@@ -1231,5 +1231,12 @@
         "label": "Acciones de archivos"
       }
     }
+  },
+  "pins": {
+    "pin": "Fijar",
+    "pinned": "Fijada",
+    "pinNamed": "Fijar {{name}}",
+    "unpinNamed": "Desfijar {{name}}",
+    "failed": "No se pudo cambiar la fijación. Inténtalo de nuevo."
   }
 }

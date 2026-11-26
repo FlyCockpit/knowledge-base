@@ -24,13 +24,19 @@ vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
     state:
       state.status === "authenticated"
-        ? { status: "authenticated", session: { user: { role: "user" } } }
+        ? { status: "authenticated", session: { user: { id: "u1", role: "user" } } }
         : { status: state.status },
   }),
 }));
 vi.mock("@/stores/ui-preferences", () => ({
   useUiPreferences: (select: (prefs: unknown) => unknown) =>
     select({ sidebarCollapsed: state.collapsed, toggleSidebar: () => {} }),
+}));
+
+// The pinned/recent KB sublist has its own tests (kb-sidebar-list.test.tsx);
+// here only its nav link matters.
+vi.mock("@/components/kb/kb-sidebar-list", () => ({
+  KbSidebarSection: ({ link }: { link: ReactNode }) => <div data-testid="kb-section">{link}</div>,
 }));
 
 const { AppSidebar } = await import("./app-sidebar");
@@ -75,5 +81,9 @@ describe("AppSidebar", () => {
     const out = html();
     expect(out).toContain("<a ");
     expect(out).not.toContain('data-slot="skeleton"');
+    // Expanded, Knowledge bases carries the pinned/recent section; collapsed, a plain link.
+    expect(out).toContain('data-testid="kb-section"');
+    state.collapsed = true;
+    expect(html()).not.toContain('data-testid="kb-section"');
   });
 });

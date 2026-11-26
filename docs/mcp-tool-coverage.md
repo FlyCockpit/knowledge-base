@@ -91,6 +91,10 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbModel.remove | instance administration |
 | kbModel.setRuntimeConfig | instance administration |
 | kbModel.status | instance administration |
+| kbPins.list | browser sidebar pins (per-user preference) |
+| kbPins.pin | browser sidebar pins (per-user preference) |
+| kbPins.reorder | browser sidebar pins (per-user preference) |
+| kbPins.unpin | browser sidebar pins (per-user preference) |
 | kbs.shareAccept | human sharing |
 | kbs.shareInvite | human sharing |
 | kbs.shareInviteCancel | human sharing |

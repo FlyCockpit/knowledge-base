@@ -44,6 +44,7 @@ import { useLatest } from "@/hooks/use-latest";
 import { useMainScrollerHeight } from "@/hooks/use-main-scroller-height";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMountEffect } from "@/hooks/use-mount-effect";
+import { useRecordRecentKb } from "@/hooks/use-record-recent-kb";
 import { useResolvePendingClose } from "@/hooks/use-resolve-pending-close";
 import { useSaveWhenReady } from "@/hooks/use-save-when-ready";
 import { useWorkspaceShortcuts } from "@/hooks/use-workspace-shortcuts";
@@ -216,6 +217,7 @@ export function KbWorkspace({
   // The viewer the protected layout resolved (its tabs, its recent KBs, its drafts).
   const userId = viewerId;
   const draftOwner = viewerId ? `user:${viewerId}` : null;
+  useRecordRecentKb(userId, kbId);
   const editor = useKbWorkspaceStore((state) => state.editor);
   const layout = useKbWorkspaceLayout();
   const tree = useKbTree(kbId, canRead);

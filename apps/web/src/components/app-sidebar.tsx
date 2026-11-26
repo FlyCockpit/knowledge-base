@@ -5,6 +5,7 @@ import { Link, useParams, useRouterState } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { KbSidebarSection } from "@/components/kb/kb-sidebar-list";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { type AppNavItem, getNavItems, toLangRoute } from "@/lib/nav-items";
@@ -16,9 +17,14 @@ const SIGNED_IN_LAYOUTS: ReadonlySet<string> = new Set(["/$lang/_app/_auth", "/$
 const ASIDE_CLASS =
   "hidden min-h-0 shrink-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain border-e border-sidebar-border bg-sidebar text-sidebar-foreground md:flex";
 
+/** The KB section's identity: one per nav item and viewer (an account switch remounts it). */
+export function kbSectionKey(itemId: string, userId: string): string {
+  return `${itemId}:${userId}`;
+}
+
 /**
- * The signed-in desktop sidebar: main sections, then Settings
- * and Admin at the foot. It collapses to icons and remembers that choice.
+ * The signed-in desktop sidebar: main sections (Knowledge bases expands to
+ * the viewer's pinned and recently opened bases), then Settings and Admin at the foot. It collapses to icons and remembers that choice.
  * Below `md` the BottomNav is the only navigation, so this never renders there.
  */
 export function AppSidebar() {
@@ -37,6 +43,8 @@ export function AppSidebar() {
   if (authSession.state.status === "pending" && signedInPage)
     return <SidebarSkeleton collapsed={collapsed} />;
   if (authSession.state.status !== "authenticated") return null;
+  const userId = authSession.state.session.user.id;
+  const currentKbId = typeof params.kbId === "string" ? params.kbId : null;
   const items = getNavItems({
     placement: "sidebar",
     isAuthenticated: true,
@@ -84,9 +92,22 @@ export function AppSidebar() {
                 group.id === "footer" && "mt-auto border-t border-sidebar-border pt-2",
               )}
             >
-              {group.items.map((item) => (
-                <SidebarLink key={item.id} item={item} lang={lang} collapsed={collapsed} />
-              ))}
+              {group.items.map((item) =>
+                // Expanded, "Knowledge bases" lists the viewer's pinned and recent bases.
+                item.id === "kbs" && !collapsed ? (
+                  <KbSidebarSection
+                    // Per viewer: an account switch remounts it (no state of
+                    // the previous viewer, e.g. an announcement, carries over).
+                    key={kbSectionKey(item.id, userId)}
+                    lang={lang}
+                    userId={userId}
+                    currentKbId={currentKbId}
+                    link={<SidebarLink item={item} lang={lang} collapsed={false} />}
+                  />
+                ) : (
+                  <SidebarLink key={item.id} item={item} lang={lang} collapsed={collapsed} />
+                ),
+              )}
             </div>
           ),
         )}

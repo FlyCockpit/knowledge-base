@@ -9,6 +9,7 @@ import z from "zod";
 
 import { forgetKbDrafts } from "@/hooks/use-document-draft";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
+import { forgetKbPin } from "@/hooks/use-kb-pins";
 import { type DocumentPathIssue, pathIssueFromReason } from "@/lib/document-path";
 import { forgetKbTabs } from "@/lib/kb-workspace/tabs";
 import { orpc } from "@/utils/orpc";
@@ -880,6 +881,7 @@ function forgetKb(queryClient: QueryClient, kbId: string): void {
   clearKbPrivateQueries(queryClient, kbId);
   forgetKbDrafts(kbId);
   forgetKbTabs(kbId);
+  void forgetKbPin(queryClient, kbId);
   void queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
 }
 

@@ -20,6 +20,7 @@ import { kbExportsRouter } from "./kb-exports";
 import { kbIndexRouter } from "./kb-index";
 import { kbMirrorRouter } from "./kb-mirror";
 import { kbModelRouter } from "./kb-model";
+import { kbPinsRouter } from "./kb-pins";
 import { kbSealedRouter } from "./kb-sealed";
 import { kbUploadsRouter } from "./kb-uploads";
 import { kbsRouter } from "./kbs";
@@ -77,6 +78,7 @@ export const appRouter = {
   queue: queueRouter,
   users: usersRouter,
   kbs: kbsRouter,
+  kbPins: kbPinsRouter,
   documents: documentsRouter,
   pullRequests: pullRequestsRouter,
   kbUploads: kbUploadsRouter,

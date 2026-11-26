@@ -57,6 +57,7 @@ model KnowledgeBase {
   generations            IndexGeneration[]     @relation("GenerationOwner")
   nextPrNumber           Int                   @default(1)
   shares                 KbShare[]
+  pins                   KbPin[]
   invitations            ShareInvitation[]
   transfers              KbTransfer[]
   auditEvents            AuditEvent[]
@@ -102,6 +103,25 @@ model KbShare {
   @@unique([kbId, userId], map: "kb_share_kb_user_unique")
   @@index([userId])
   @@map("kb_share")
+}
+
+/// A user's pinned knowledge base in the app sidebar (browser-only preference).
+/// Lists filter by live read access, so a pin to a base the user can no longer
+/// read is simply never shown.
+model KbPin {
+  id            String        @id @default(cuid(2))
+  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kbId          String
+  knowledgeBase KnowledgeBase @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  /// Sidebar order, ascending; rewritten densely on reorder.
+  position      Int
+
+  @@unique([userId, kbId], map: "kb_pin_user_kb_unique")
+  @@index([userId, position])
+  @@index([kbId])
+  @@map("kb_pin")
 }
 
 model ShareInvitation {

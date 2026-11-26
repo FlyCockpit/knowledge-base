@@ -1,6 +1,7 @@
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
 import enKb from "@knowledge-base/locales/src/en-US/kb.json";
 import esKb from "@knowledge-base/locales/src/es-MX/kb.json";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import type { MouseEvent, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -98,7 +99,11 @@ beforeAll(async () => {
   });
 });
 const html = (node: ReactElement) =>
-  renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
+  renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nextProvider i18n={i18n}>{node}</I18nextProvider>
+    </QueryClientProvider>,
+  );
 
 describe("KbList", () => {
   it("links each KB by locale and shows a member's write mode", () => {

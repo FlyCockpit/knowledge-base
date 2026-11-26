@@ -63,6 +63,10 @@ const humanOnly = {
   "documents.tree": "browser file tree and quick open (paths only, no document bodies)",
   "documents.recentChanges":
     "browser recently changed documents feed (main's commits and their attribution)",
+  "kbPins.list": "browser sidebar pins (per-user preference)",
+  "kbPins.pin": "browser sidebar pins (per-user preference)",
+  "kbPins.unpin": "browser sidebar pins (per-user preference)",
+  "kbPins.reorder": "browser sidebar pins (per-user preference)",
   "kbs.shareInvite": "human sharing",
   "kbs.shareAccept": "human sharing",
   "kbs.shareList": "human sharing",

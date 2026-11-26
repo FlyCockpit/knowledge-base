@@ -27,7 +27,20 @@
   },
   "sidebar": {
     "collapse": "Collapse sidebar",
-    "expand": "Expand sidebar"
+    "expand": "Expand sidebar",
+    "kbs": {
+      "toggle": "Show or hide your knowledge bases",
+      "pinned": "Pinned",
+      "recent": "Recently opened",
+      "viewAll": "View all",
+      "empty": "Pin a knowledge base to keep it here.",
+      "pin": "Pin {{name}}",
+      "unpin": "Unpin {{name}}",
+      "reorderHint": "Alt+Up or Alt+Down moves it",
+      "moved": "{{name}} moved to position {{position}} of {{count}}",
+      "moveRefused": "{{name}} could not be moved; the order is unchanged",
+      "loadFailed": "Pinned knowledge bases couldn't be loaded."
+    }
   },
   "titles": {
     "knowledgeBase": "Knowledge base",

@@ -30,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import z from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { KbPinButton } from "@/components/kb/kb-pin-button";
 import { StatusPill } from "@/components/status-pill";
 import {
   clearKbPrivateQueries,
@@ -38,6 +39,7 @@ import {
   recheckKbAccess,
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
+import { forgetKbPin, refreshKbPins } from "@/hooks/use-kb-pins";
 import { usePayloadAttemptKey } from "@/hooks/use-payload-attempt-key";
 import { KB_GRID_CLASS } from "@/lib/kb-grid";
 import { networkFailureKind } from "@/lib/network-failure";
@@ -106,11 +108,11 @@ export function KbList({
   return (
     <ul className={`grid min-w-0 gap-3 ${KB_GRID_CLASS}`}>
       {items.map((kb) => (
-        <li key={kb.id} data-owner={kb.isOwner ? "true" : "false"} className="min-w-0">
+        <li key={kb.id} data-owner={kb.isOwner ? "true" : "false"} className="relative min-w-0">
           <a
             href={kbHref(lang, kb.id)}
             onClick={routerClick(onOpen && (() => onOpen(kb.id)))}
-            className="flex h-full min-h-[44px] flex-col gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-[background-color,box-shadow] hover:bg-muted/40 hover:ring-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-full min-h-[44px] flex-col gap-3 rounded-xl bg-card p-4 pr-14 ring-1 ring-foreground/10 transition-[background-color,box-shadow] hover:bg-muted/40 hover:ring-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="flex min-w-0 items-start gap-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -133,6 +135,14 @@ export function KbList({
               </StatusPill>
             </span>
           </a>
+          {/* Beside the card link, never inside it (a button in a link is invalid). */}
+          <KbPinButton
+            kbId={kb.id}
+            kbName={kb.name}
+            kbSlug={kb.slug}
+            compact
+            className="absolute top-2 right-2"
+          />
         </li>
       ))}
     </ul>
@@ -420,6 +430,8 @@ function KbMetadataSession({
     Promise.all([
       queryClient.invalidateQueries({ queryKey: orpc.kbs.get.key({ input: { kbId: kb.id } }) }),
       queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() }),
+      // The sidebar's pins name it too.
+      refreshKbPins(queryClient),
     ]);
   const update = useMutation(
     orpc.kbs.update.mutationOptions({
@@ -560,6 +572,8 @@ function KbDeleteSession({
     orpc.kbs.delete.mutationOptions({
       onSuccess: async (_result, variables) => {
         clearKbPrivateQueries(queryClient, variables.kbId);
+        // Gone for everyone: no pin may link to it any more.
+        void forgetKbPin(queryClient, variables.kbId);
         await queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
         if (!session.current) return;
         attempt.settle();
