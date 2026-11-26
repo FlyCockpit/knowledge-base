@@ -27,6 +27,7 @@ vi.mock("@tanstack/react-router", () => ({
   }),
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
   Outlet: () => null,
+  useParams: () => ({ lang: "en-US" }),
 }));
 vi.mock("@tanstack/react-query-devtools", () => ({ ReactQueryDevtools: () => null }));
 vi.mock("@tanstack/react-router-devtools", () => ({ TanStackRouterDevtools: () => null }));
@@ -38,6 +39,9 @@ vi.mock("@/components/bottom-nav", () => ({ default: () => null }));
 vi.mock("@/components/header", () => ({ default: () => null }));
 vi.mock("@/components/language-switcher", () => ({ LanguageSwitcher: () => null }));
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => null }));
+vi.mock("@/components/consent/consent-preferences-button", () => ({
+  ConsentPreferencesButton: () => null,
+}));
 vi.mock("@/hooks/use-document-lang", () => ({ useDocumentLang: () => {} }));
 vi.mock("@/hooks/use-user-locale-sync", () => ({ useUserLocaleSync: () => {} }));
 vi.mock("@/hooks/use-mobile-keyboard", () => ({ useMobileKeyboard: () => keyboard.open }));

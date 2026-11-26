@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { PublicNotFoundPage } from "@/components/public-shell";
 import { loadLocaleInto } from "@/i18n";
 import { isSupportedLocale, type Locale } from "@/i18n/config";
 import { decideLocaleRedirect } from "@/i18n/redirect-to-default";
@@ -19,6 +20,14 @@ import { decideLocaleRedirect } from "@/i18n/redirect-to-default";
  * decision-making is unit-testable without dragging in React-only modules.
  */
 export const Route = createFileRoute("/$lang")({
+  // An unknown URL matches no layout under `$lang`, so the router renders the
+  // nearest explicit notFoundComponent in this route's outlet, with no shell
+  // around it. This one brings the public shell (header, footer, scroller).
+  // A notFound() thrown by a route below (the admin gate) also lands here
+  // unless a layout between them sets its own notFoundComponent (settings,
+  // a KB), so a hidden route looks exactly like a missing one
+  // (docs/ui.md § Shell rules).
+  notFoundComponent: PublicNotFoundPage,
   beforeLoad: async ({ params, location, context }) => {
     const instruction = decideLocaleRedirect({ params, location });
     if (instruction) throw redirect(instruction);

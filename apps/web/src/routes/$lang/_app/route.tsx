@@ -60,11 +60,15 @@ function AppShellLayout() {
         </div>
         <div className="flex min-h-0 min-w-0">
           <AppSidebar />
+          {/* No `scrollbar-gutter: stable`: the banners and sticky sub-navs
+              inside the scroller are full-bleed. This shell has no footer:
+              phones get the BottomNav, and Cookie preferences sits in Settings.
+              See docs/ui.md § Shell rules. */}
           <main
             id="main-content"
             tabIndex={-1}
             data-scroll-restoration-id={MAIN_SCROLLER_ID}
-            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain outline-none [scrollbar-gutter:stable]"
+            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip overscroll-contain outline-none"
           >
             <Outlet />
           </main>

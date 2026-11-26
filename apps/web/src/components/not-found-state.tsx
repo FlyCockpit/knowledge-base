@@ -8,7 +8,8 @@ import { useTranslation } from "react-i18next";
  * a layout that renders its `<Outlet />` (e.g. `/kbs/<id>/pull-requests`).
  * Inside the app shell it keeps the surrounding navigation. A layout that
  * already shows its own `h1` (Settings) renders it as `nested`, so the page
- * keeps one `h1`.
+ * keeps one `h1`. An unknown URL outside any layout gets the public shell
+ * around it (`PublicNotFoundPage`); `flex-1` fills that shell's content column.
  */
 export default function NotFoundState({ nested = false }: { nested?: boolean }) {
   const { t } = useTranslation("errors");
@@ -16,7 +17,7 @@ export default function NotFoundState({ nested = false }: { nested?: boolean }) 
   return (
     <div
       data-testid="not-found"
-      className="flex h-full min-h-[50svh] flex-col items-center justify-center gap-3 px-6 py-8 text-center"
+      className="flex h-full min-h-[50svh] flex-1 flex-col items-center justify-center gap-3 px-6 py-8 text-center"
     >
       <FileQuestion aria-hidden className="size-8 text-muted-foreground" />
       <div className="space-y-1">

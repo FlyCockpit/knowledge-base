@@ -42,6 +42,9 @@
       "ignoreBinaries": [
         // Global local-dev CLI. Intentionally not listed in package.json.
         "portless",
+        // Global agent browser CLI, driven by scripts/check-layout.ts
+        // (docs/ui.md § Shell rules). Not an npm dependency on purpose.
+        "agent-browser",
         // Host toolchain for apps/server/native/kb-supervisor.c (not an npm package).
         "make",
         "cc",

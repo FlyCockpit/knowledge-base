@@ -26,6 +26,7 @@ export default function BottomNav({ hidden }: { hidden?: boolean }) {
   if (authSession.state.status === "pending" || authSession.state.status === "error") {
     return (
       <nav
+        data-bottom-nav
         className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/80 backdrop-blur-lg md:hidden"
         style={{ paddingBottom: "var(--safe-area-bottom)" }}
       >
@@ -40,6 +41,9 @@ export default function BottomNav({ hidden }: { hidden?: boolean }) {
 
   return (
     <nav
+      // The cookie banner reserves room for this bar only while it exists
+      // (consent-banner.tsx reads the attribute).
+      data-bottom-nav
       className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/80 backdrop-blur-lg md:hidden"
       style={{ paddingBottom: "var(--safe-area-bottom)" }}
     >

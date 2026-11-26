@@ -24,7 +24,12 @@ describe("consentInsetPx", () => {
 describe("reserveConsentInset", () => {
   const props = new Map<string, string>();
   const listeners = new Map<string, () => void>();
-  let observed: { callback: () => void; target: unknown; disconnected: boolean } | null;
+  let observed: {
+    callback: () => void;
+    target: unknown;
+    options: unknown;
+    disconnected: boolean;
+  } | null;
   const banner = { offsetHeight: 300, bottom: "0px" };
 
   beforeEach(() => {
@@ -52,10 +57,13 @@ describe("reserveConsentInset", () => {
       "ResizeObserver",
       class {
         constructor(callback: () => void) {
-          observed = { callback, target: null, disconnected: false };
+          observed = { callback, target: null, options: undefined, disconnected: false };
         }
-        observe(target: unknown) {
-          if (observed) observed.target = target;
+        observe(target: unknown, options?: unknown) {
+          if (observed) {
+            observed.target = target;
+            observed.options = options;
+          }
         }
         disconnect() {
           if (observed) observed.disconnected = true;
@@ -73,6 +81,10 @@ describe("reserveConsentInset", () => {
     mount();
     expect(props.get(CONSENT_INSET_VAR)).toBe("300px");
     expect(observed?.target).toBe(banner);
+    // The border box: the banner's bottom padding (the BottomNav's room) changes
+    // without its content box changing when a navigation mounts or unmounts the
+    // BottomNav.
+    expect(observed?.options).toEqual({ box: "border-box" });
   });
 
   it("follows the banner as it resizes or moves (a breakpoint, a rotation)", () => {

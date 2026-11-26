@@ -40,7 +40,7 @@ function McpLoginRedirect() {
   return (
     <main
       data-scroll-restoration-id={MAIN_SCROLLER_ID}
-      className="relative h-svh min-w-0 overflow-y-auto overflow-x-clip overscroll-contain pt-[var(--safe-area-top)] pr-[var(--safe-area-right)] pb-[max(var(--safe-area-bottom),var(--consent-clearance))] pl-[var(--safe-area-left)] [scrollbar-gutter:stable]"
+      className="relative h-svh min-w-0 overflow-y-auto overflow-x-clip overscroll-contain pt-[var(--safe-area-top)] pr-[var(--safe-area-right)] pb-[max(var(--safe-area-bottom),var(--consent-clearance))] pl-[var(--safe-area-left)]"
     >
       <AuthScreen>
         <p role="status" className="text-sm text-muted-foreground">

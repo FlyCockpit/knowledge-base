@@ -26,8 +26,11 @@ export function consentInsetPx(offsetHeight: number, bottom: string): number {
 /**
  * Ref callback for the banner: publishes {@link CONSENT_INSET_VAR} while the
  * banner is mounted and keeps it current as the banner resizes (wrapping text,
- * a breakpoint, a rotation); the window `resize` covers a breakpoint that only
- * moves it. Removes the variable when the banner unmounts (a choice was made).
+ * a breakpoint, a rotation, or its bottom padding, which reserves the
+ * BottomNav's room only while a BottomNav is mounted, so it changes on a
+ * client-side navigation between the public and app shells: hence the border
+ * box is observed, not the content box); the window `resize` covers a
+ * breakpoint that only moves it. Removes the variable when the banner unmounts (a choice was made).
  * Module-level so its identity is stable and React attaches it once.
  */
 export function reserveConsentInset(banner: HTMLElement | null): (() => void) | undefined {
@@ -39,7 +42,7 @@ export function reserveConsentInset(banner: HTMLElement | null): (() => void) | 
   };
   publish();
   const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publish);
-  observer?.observe(banner);
+  observer?.observe(banner, { box: "border-box" });
   window.addEventListener("resize", publish);
   return () => {
     observer?.disconnect();

@@ -29,12 +29,12 @@
   --state-success: oklch(0.52 0.17 152);
   --state-success-foreground: oklch(0.985 0 0);
   --state-success-bg: color-mix(in oklch, oklch(0.52 0.17 152) 12%, transparent);
-  --state-warning: oklch(0.75 0.18 85);
-  --state-warning-foreground: oklch(0.3 0.07 70);
-  --state-warning-bg: color-mix(in oklch, oklch(0.75 0.18 85) 12%, transparent);
-  --state-info: oklch(0.58 0.16 250);
+  --state-warning: oklch(0.555 0.14 70);
+  --state-warning-foreground: oklch(0.985 0 0);
+  --state-warning-bg: color-mix(in oklch, oklch(0.555 0.14 70) 12%, transparent);
+  --state-info: oklch(0.55 0.16 250);
   --state-info-foreground: oklch(0.985 0 0);
-  --state-info-bg: color-mix(in oklch, oklch(0.58 0.16 250) 12%, transparent);
+  --state-info-bg: color-mix(in oklch, oklch(0.55 0.16 250) 12%, transparent);
   --state-action: var(--accent);
   --state-action-foreground: var(--accent-foreground);
   --state-action-bg: color-mix(in oklch, var(--accent) 12%, transparent);
@@ -353,4 +353,50 @@
    `[data-sileo-title]`, so it wins whatever order the two sheets load in. */
 :root [data-sileo-title] {
   text-transform: none;
+}
+
+/* Toasts are a surface like a popover, so they take the theme's tokens and
+   follow `.dark` like everything else. sileo's own palette inverts the theme
+   on purpose (a #f2f2f2 pill on a dark page, ~2:1 for its green title), so the
+   Toaster gets no `theme` (components/sileo.tsx) and these rules paint it. Same
+   specificity rules as above: unlayered, and at least one attribute more
+   specific than the sileo rule each one overrides. */
+:root [data-sileo-viewport] {
+  /* State inks: every one reaches 4.5:1 on --popover in both themes
+     (lib/theme-contrast.test.ts). They colour the badge icon; the title,
+     description and action stay --popover-foreground. */
+  --sileo-state-success: var(--state-success);
+  --sileo-state-loading: var(--state-loading);
+  --sileo-state-error: var(--destructive);
+  --sileo-state-warning: var(--state-warning);
+  --sileo-state-info: var(--state-info);
+  --sileo-state-action: var(--primary);
+  color: var(--popover-foreground);
+}
+/* The pill and its expanded body are SVG rects filled through a presentation
+   attribute, which any CSS `fill` overrides. A hairline in the foreground
+   colour and the popovers' black drop shadow lift it off a page that is close
+   to --popover (dark mode). */
+:root [data-sileo-viewport] :is([data-sileo-pill], [data-sileo-body]) {
+  fill: var(--popover);
+}
+:root [data-sileo-viewport] [data-sileo-canvas] {
+  filter: drop-shadow(0 0 0.5px color-mix(in oklch, var(--foreground) 35%, transparent))
+    drop-shadow(0 4px 12px oklch(0 0 0 / 0.15));
+}
+/* The badge icon sits on the pill itself, not on sileo's 20% state tint,
+   so the ink's contrast is the one measured against --popover. */
+:root [data-sileo-viewport] [data-sileo-badge][data-state] {
+  --sileo-tone-bg: transparent;
+}
+:root [data-sileo-viewport] [data-sileo-title][data-state] {
+  color: var(--popover-foreground);
+}
+:root [data-sileo-viewport] [data-sileo-description] {
+  color: var(--popover-foreground);
+}
+:root [data-sileo-viewport] [data-sileo-button][data-state] {
+  --sileo-btn-color: var(--popover-foreground);
+  --sileo-btn-bg: color-mix(in oklch, var(--popover-foreground) 8%, transparent);
+  --sileo-btn-bg-hover: color-mix(in oklch, var(--popover-foreground) 14%, transparent);
 }

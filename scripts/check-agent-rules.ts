@@ -44,13 +44,24 @@
  *   sitemap.md's Public Routes table intentionally lists router-public pages
  *   that are excluded from SEO discovery, so extra rows there are not
  *   violations. A PUBLIC_PATHS array this cannot parse fails closed.
+ *
+ * GATE 4 — SHELL RULES G8/G9, in scripts/check-web-conventions.ts: no
+ *   scrollbar gutter on a page scroller, no site <footer> in a route file, no
+ *   literal colours or prefers-color-scheme outside
+ *   packages/ui/src/styles/globals.css (a reasoned `theme-exempt:` comment
+ *   marks a deliberate fixed colour). Fixtures:
+ *   scripts/check-web-conventions.test.ts, run by --self-test. Rules:
+ *   docs/ui.md § Shell rules
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import process from "node:process";
+
+import { checkWebConventions } from "./check-web-conventions.ts";
 
 const { parse } = createRequire(import.meta.url)("@babel/parser") as typeof import("@babel/parser");
 
@@ -478,7 +489,9 @@ function listSourceFiles(dir: string, keep: (rel: string) => boolean): string[] 
 // -- main ---------------------------------------------------------------------
 
 function main(): void {
-  const failures: string[] = [];
+  // Gate 4, shell rules G8/G9 (scroller gutter, route footers, theme colours):
+  // docs/ui.md § Shell rules
+  const failures: string[] = checkWebConventions(ROOT);
 
   // Gate 1: route files export only `Route`.
   for (const file of listSourceFiles(ROUTES_DIR, (rel) => /\.[jt]sx?$/.test(rel))) {
@@ -529,7 +542,7 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    "agent rules passed: route exports clean, JSX literal gate clean, sitemap.md in sync with PUBLIC_PATHS.",
+    "agent rules passed: shell rules clean, route exports clean, JSX literal gate clean, sitemap.md in sync with PUBLIC_PATHS.",
   );
 }
 
@@ -597,6 +610,12 @@ const FIXTURE_JSX_EXEMPT = [
 
 function runSelfTest(): void {
   console.log("== agent-rules self-test ==");
+  const webTests = spawnSync(
+    process.execPath,
+    ["--test", "scripts/check-web-conventions.test.ts"],
+    { cwd: ROOT, stdio: "inherit" },
+  );
+  check("shell-rule (G8/G9) fixtures pass", webTests.status === 0, webTests.error?.message);
 
   console.log("-- gate 1: route-export lint --");
   check(

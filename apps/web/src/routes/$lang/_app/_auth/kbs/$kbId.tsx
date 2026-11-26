@@ -25,6 +25,7 @@ import {
 } from "@/components/kb/kb-list";
 import { FRESHNESS_TONE, SearchPanel } from "@/components/kb/search-results";
 import { LoadMore } from "@/components/load-more";
+import NotFoundState from "@/components/not-found-state";
 import { PageHeader, PageShell, type SectionTab, SectionTabs } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { StatusPill } from "@/components/status-pill";
@@ -57,6 +58,10 @@ export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId")({
         ),
     ),
   component: KbLayout,
+  // An unknown KB sub-path (`/pull-requests`) renders inside this layout's
+  // Outlet, in the app shell; without this the nearest explicit boundary is
+  // `$lang`'s public 404 (docs/ui.md § Shell rules).
+  notFoundComponent: () => <NotFoundState />,
 });
 
 type IndexFreshness = keyof typeof FRESHNESS_TONE;

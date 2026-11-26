@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import postcss from "postcss";
 import { compile } from "tailwindcss";
 import { describe, expect, it } from "vitest";
 
@@ -252,6 +253,74 @@ describe("theme token contrast (WCAG AA)", () => {
 describe("toast titles", () => {
   it("override sileo's capitalize so titles keep their locale's sentence case", () => {
     expect(css).toMatch(/:root \[data-sileo-title\] \{\s*text-transform: none;/);
+  });
+});
+
+// docs/ui.md § Shell rules
+describe("state inks and toasts follow the theme", () => {
+  const scopes = [":root", ".dark"] as const;
+
+  it.each(scopes)("%s state inks reach 4.5:1 on background, card and popover", (scope) => {
+    // Badges, alerts and toasts write in these colours.
+    for (const ink of ["state-success", "state-warning", "state-info"]) {
+      for (const surface of ["background", "card", "popover"]) {
+        expect(
+          contrast(token(scope, ink), token(scope, surface)),
+          `${scope} ${ink} on ${surface}`,
+        ).toBeGreaterThanOrEqual(AA);
+      }
+    }
+  });
+
+  it.each(scopes)("%s toasts are a popover surface with 4.5:1 inks", (scope) => {
+    // sileo's own palette inverts the theme; globals.css repaints it from the
+    // tokens. Every state ink it maps and its text colour must hold up on the
+    // fill it maps.
+    const rules = postcss.parse(css).nodes.filter((node) => node.type === "rule");
+    const declarations = (selector: string) => {
+      const rule = rules.find((node) => node.type === "rule" && node.selector === selector);
+      if (rule?.type !== "rule") throw new Error(`Missing toast rule ${selector}`);
+      return new Map(
+        rule.nodes.flatMap((node) => (node.type === "decl" ? [[node.prop, node.value]] : [])),
+      );
+    };
+    const alias = (value: string | undefined) => /^var\(--([\w-]+)\)$/.exec(value ?? "")?.[1];
+    const fill = alias(
+      declarations(":root [data-sileo-viewport] :is([data-sileo-pill], [data-sileo-body])").get(
+        "fill",
+      ),
+    );
+    expect(fill).toBe("popover");
+    const surface = token(scope, "popover");
+    const viewport = declarations(":root [data-sileo-viewport]");
+    // `loading` maps to --state-loading, which is a var() alias of
+    // --muted-foreground (covered by the muted-text test), so it is checked
+    // through that token.
+    const resolveInk = (name: string): string => {
+      const value = new RegExp(`--${name}:\\s*var\\(--([\\w-]+)\\)`).exec(block(scope));
+      return value?.[1] ?? name;
+    };
+    for (const state of ["success", "loading", "error", "warning", "info", "action"]) {
+      const ink = alias(viewport.get(`--sileo-state-${state}`));
+      expect(ink, `--sileo-state-${state} maps to a token`).toBeDefined();
+      expect(
+        contrast(token(scope, resolveInk(ink ?? "")), surface),
+        `${scope} toast ${state} (${ink}) on popover`,
+      ).toBeGreaterThanOrEqual(AA);
+    }
+    // The badge ink sits on the pill itself (contrast above), not on a tint.
+    expect(
+      declarations(":root [data-sileo-viewport] [data-sileo-badge][data-state]").get(
+        "--sileo-tone-bg",
+      ),
+    ).toBe("transparent");
+    for (const selector of [
+      ":root [data-sileo-viewport] [data-sileo-title][data-state]",
+      ":root [data-sileo-viewport] [data-sileo-description]",
+    ]) {
+      expect(alias(declarations(selector).get("color")), selector).toBe("popover-foreground");
+    }
+    expect(contrast(token(scope, "popover-foreground"), surface)).toBeGreaterThanOrEqual(AA);
   });
 });
 
