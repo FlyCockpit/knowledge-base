@@ -23,7 +23,6 @@ import type * as React from "react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
-
 import { InlineRetry } from "@/components/inline-retry";
 import { ApiKeyNextSteps } from "@/components/kb/api-key-next-steps";
 import { AuthoringModePicker } from "@/components/kb/authoring-mode-picker";
@@ -50,6 +49,7 @@ import {
   useLiveKbOptions,
 } from "@/hooks/use-mcp-consent";
 import { groupsWrite } from "@/lib/mcp-connect";
+import { isBrowserOffline } from "@/lib/network-failure";
 import { orpc } from "@/utils/orpc";
 
 type ApiKeyMintInput = Parameters<AppRouterClient["apiKeys"]["create"]>[0];
@@ -224,7 +224,7 @@ function ApiKeyCreateForm({
   onOpenChange: (open: boolean) => void;
   serverUrl: string;
 }) {
-  const { t } = useTranslation(["settings", "common"]);
+  const { t } = useTranslation(["settings", "common", "errors"]);
   const queryClient = useQueryClient();
   const { query: kbQuery, live } = useLiveKbOptions();
   const [draft, setDraft] = useState<ApiKeyDraft>(emptyApiKeyDraft);
@@ -237,6 +237,9 @@ function ApiKeyCreateForm({
     ),
   );
   const blocked = mint.isError && !isPatMintRejection(mint.error);
+  // Offline the request is never sent, so nothing can have been created: say so
+  // and send nothing, instead of the "could not confirm" state a failed send gets.
+  const [offlineRefused, setOfflineRefused] = useState(false);
   const form = useForm({
     defaultValues: { name: "", expiry: API_KEY_DEFAULT_EXPIRY, customDate: "" },
     validators: {
@@ -255,6 +258,8 @@ function ApiKeyCreateForm({
       if (issues.length > 0 || mint.isPending || blocked) return;
       const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
       if (!expiry.ok) return;
+      setOfflineRefused(isBrowserOffline());
+      if (isBrowserOffline()) return;
       mint.mutate(toApiKeyMintInput(value.name, draft, live, expiry.expiresAt));
     },
   });
@@ -262,6 +267,7 @@ function ApiKeyCreateForm({
   const close = (next: boolean) => {
     if (next) return onOpenChange(true);
     mint.reset();
+    setOfflineRefused(false);
     form.reset();
     setDraft(emptyApiKeyDraft());
     onOpenChange(false);
@@ -402,6 +408,11 @@ function ApiKeyCreateForm({
                 ) : null
               }
             />
+            {offlineRefused && (
+              <p role="alert" className="text-sm text-destructive">
+                {t("errors:offline")}
+              </p>
+            )}
             {mint.isError && (
               <p role="alert" className="text-sm text-destructive">
                 {mintErrorCode === "CONFLICT"

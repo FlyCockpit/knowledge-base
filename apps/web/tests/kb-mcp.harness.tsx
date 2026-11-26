@@ -1,5 +1,6 @@
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
 import enConsent from "@knowledge-base/locales/src/en-US/consent.json";
+import enErrors from "@knowledge-base/locales/src/en-US/errors.json";
 import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -22,8 +23,10 @@ const i18n = createInstance();
 await i18n.init({
   lng: "en-US",
   fallbackLng: "en-US",
-  ns: ["consent", "settings", "common"],
-  resources: { "en-US": { consent: enConsent, settings: enSettings, common: enCommon } },
+  ns: ["consent", "settings", "common", "errors"],
+  resources: {
+    "en-US": { consent: enConsent, settings: enSettings, common: enCommon, errors: enErrors },
+  },
   interpolation: { escapeValue: false },
 });
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -323,6 +323,34 @@ test("reply-lost PAT mint refreshes the list and requires unrecoverable-token re
   expect(await caches(page)).not.toContain("kbp_");
 });
 
+test("offline, Create token sends nothing and says so instead of the could-not-confirm state", async ({
+  page,
+}) => {
+  const name = `Offline ${randomUUID()}`;
+  await openMint(page, name);
+  let sent = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/rpc/mcpTokens/create")) sent += 1;
+  });
+  await page.context().setOffline(true);
+  try {
+    const create = page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Create token", exact: true });
+    await create.click();
+    await expect(page.getByRole("alert")).toContainText("You're offline");
+    await expect(page.getByText("We could not confirm whether", { exact: false })).toHaveCount(0);
+    await expect(create).toBeEnabled();
+    expect(sent).toBe(0);
+  } finally {
+    await page.context().setOffline(false);
+  }
+  // Back online, the same draft creates the token.
+  await page.getByRole("dialog").getByRole("button", { name: "Create token", exact: true }).click();
+  await expect.poll(async () => (await state(page)).tokens.some((t) => t.name === name)).toBe(true);
+  expect(sent).toBe(1);
+});
+
 test("pending close/reopen does not reveal the old secret or replace a newer draft", async ({
   page,
 }) => {

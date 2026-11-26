@@ -6,7 +6,6 @@ import type { MouseEvent, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-
 import {
   createdKbDestination,
   createErrorText,
@@ -21,6 +20,8 @@ import {
   routerClick,
   slugFromName,
 } from "@/components/kb/kb-list";
+import appI18n from "@/i18n";
+import { friendly } from "@/utils/friendly-error";
 
 describe("KB metadata form scalar bounds", () => {
   it("accepts maximum astral lengths in create and edit", () => {
@@ -274,6 +275,30 @@ describe("create refusal text", () => {
     expect(createErrorText({ code: "TOO_MANY_REQUESTS", data: {} }, t)).toBe(
       "Couldn't create the knowledge base.",
     );
+  });
+  it("says offline or unreachable for a network failure, not the generic create error", async () => {
+    const local = createInstance();
+    await local.init({
+      lng: "en-US",
+      ns: ["kb", "common"],
+      defaultNS: "kb",
+      resources: { "en-US": { kb: enKb, common: enCommon } },
+      interpolation: { escapeValue: false },
+    });
+    const t = local.getFixedT("en-US", ["kb", "common"]);
+    const failed = new TypeError("Failed to fetch");
+    try {
+      vi.stubGlobal("navigator", { onLine: false });
+      expect(createErrorText(failed, t)).toBe(friendly(failed));
+      expect(createErrorText(failed, t)).toBe(appI18n.t("errors:offline"));
+      expect(createErrorText(failed, t)).toMatch(/^You're offline/);
+      expect(createErrorText(failed, t)).toMatch(/^You're offline/);
+      vi.stubGlobal("navigator", { onLine: true });
+      expect(createErrorText(failed, t)).toBe(appI18n.t("errors:unreachable"));
+      expect(createErrorText({ code: "CONFLICT" }, t)).toBe("Couldn't create the knowledge base.");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it("says a failure once: inline while the dialog is open, as a toast once it was closed", async () => {
     const local = createInstance();

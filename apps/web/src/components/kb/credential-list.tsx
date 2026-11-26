@@ -54,6 +54,7 @@ import {
   useLiveKbOptions,
 } from "@/hooks/use-mcp-consent";
 import { scopeForGroups } from "@/lib/mcp-connect";
+import { isBrowserOffline } from "@/lib/network-failure";
 import { orpc } from "@/utils/orpc";
 
 type Client = AppRouterClient;
@@ -622,7 +623,7 @@ function PatCreateForm({
   onOpenChange: (open: boolean) => void;
   serverUrl: string;
 }) {
-  const { t } = useTranslation(["settings", "common"]);
+  const { t } = useTranslation(["settings", "common", "errors"]);
   const queryClient = useQueryClient();
   const { query: kbQuery, live } = useLiveKbOptions();
   const [selection, dispatch] = useReducer(selectionReducer, undefined, emptySelection);
@@ -635,6 +636,9 @@ function PatCreateForm({
     withPatSecretHygiene(queryClient, orpc.mcpTokens.create.mutationOptions()),
   );
   const blocked = mint.isError && !isPatMintRejection(mint.error);
+  // Offline the request is never sent, so nothing can have been created: say so
+  // and send nothing, instead of the "could not confirm" state a failed send gets.
+  const [offlineRefused, setOfflineRefused] = useState(false);
   const form = useForm({
     defaultValues: { name: "", expiry: DEFAULT_EXPIRY as PatExpiryChoice, customDate: "" },
     validators: {
@@ -653,6 +657,8 @@ function PatCreateForm({
       if (issues.length > 0 || mint.isPending || blocked) return;
       const expiry = patExpiresAtFromChoice(value.expiry, value.customDate, new Date());
       if (!expiry.ok) return;
+      setOfflineRefused(isBrowserOffline());
+      if (isBrowserOffline()) return;
       mint.mutate({
         name: value.name.trim(),
         scopes: grant.scopes.filter((s) => s !== "offline_access"),
@@ -669,6 +675,7 @@ function PatCreateForm({
   const close = (next: boolean) => {
     if (next) return onOpenChange(true);
     mint.reset();
+    setOfflineRefused(false);
     form.reset();
     dispatch({ type: "reset" });
     setPurposeChosen(false);
@@ -869,6 +876,11 @@ function PatCreateForm({
                 disabled={disabled}
               />
             </AdvancedSection>
+            {offlineRefused && (
+              <p role="alert" className="text-sm text-destructive">
+                {t("errors:offline")}
+              </p>
+            )}
             {mint.isError && (
               <p role="alert" className="text-sm text-destructive">
                 {isPatMintRejection(mint.error)

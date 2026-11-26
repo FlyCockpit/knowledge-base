@@ -38,6 +38,8 @@ import {
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { usePayloadAttemptKey } from "@/hooks/use-payload-attempt-key";
+import { networkFailureKind } from "@/lib/network-failure";
+import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export type KbItem = Awaited<ReturnType<AppRouterClient["kbs"]["list"]>>["items"][number];
@@ -235,8 +237,12 @@ export function kbCreateMutationOptions<T extends object>(
   };
 }
 
-/** The create budget's refusal names its limit and when it resets; anything else is generic. */
+/**
+ * The create budget's refusal names its limit and when it resets; offline or an
+ * unreachable server says so (`friendly`); anything else is generic.
+ */
 export function createErrorText(error: unknown, t: TFunction<["kb", "common"]>): string {
+  if (networkFailureKind(error)) return friendly(error);
   const data = (error as { code?: unknown; data?: Record<string, unknown> } | null)?.data;
   if (
     (error as { code?: unknown } | null)?.code === "TOO_MANY_REQUESTS" &&
