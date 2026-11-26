@@ -31,10 +31,15 @@ vi.mock("@tanstack/react-query-devtools", () => ({ ReactQueryDevtools: () => nul
 vi.mock("@tanstack/react-router-devtools", () => ({ TanStackRouterDevtools: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@knowledge-base/env/web", () => ({ env: { VITE_APP_NAME: "Northwind" } }));
-vi.mock("@/components/admin-setup-banner", () => ({ AdminSetupBanner: () => null }));
-vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => null }));
-vi.mock("@/components/bottom-nav", () => ({ default: () => null }));
-vi.mock("@/components/header", () => ({ default: () => null }));
+vi.mock("@/components/admin-setup-banner", () => ({
+  AdminSetupBanner: () => <div data-admin-setup-banner="" />,
+}));
+vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => <aside data-sidebar="" /> }));
+vi.mock("@/components/bottom-nav", () => ({ default: () => <nav data-bottom-nav="" /> }));
+vi.mock("@/components/route-content-skeleton", () => ({
+  RouteContentSkeleton: () => <p data-route-skeleton="">skeleton</p>,
+}));
+vi.mock("@/components/header", () => ({ default: () => <div data-shell-header="" /> }));
 vi.mock("@/components/language-switcher", () => ({ LanguageSwitcher: () => null }));
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => null }));
 vi.mock("@/components/consent/consent-preferences-button", () => ({
@@ -120,5 +125,36 @@ describe("full-bleed rules inside the scroller", () => {
 
   it("the app shell has no footer (BottomNav on phones, Cookie preferences in Settings)", async () => {
     expect(await render(AppRoute)).not.toContain("<footer");
+  });
+});
+
+describe("the app shell while a page loads", () => {
+  // With `ssr: false` the server renders `_app`'s pending component, and the
+  // client keeps it until the layout mounts, so it is the first frame of every
+  // hard refresh. It must be the real shell with only the content waiting.
+  // docs/ui.md § Route pending states
+  const pending = async () => {
+    const option = (AppRoute as unknown as { options: { pendingComponent: unknown } }).options
+      .pendingComponent;
+    const Pending = (
+      typeof option === "function" ? option : await load(AppRoute, "pendingComponent")
+    ) as () => ReactNode;
+    return renderToStaticMarkup(<Pending />);
+  };
+  /** Everything outside `<main>`: the shell's own chrome. */
+  const chrome = (html: string) => html.replace(/<main\b[\s\S]*<\/main>/, "<main/>");
+
+  it("renders the header, the sidebar, the scroller and the bottom nav around a content skeleton", async () => {
+    const html = await pending();
+    expect(html).toContain("data-shell-header");
+    expect(html).toContain("data-admin-setup-banner");
+    expect(html).toContain("data-sidebar");
+    expect(html).toContain("data-bottom-nav");
+    expect(mainTag(html)).toContain('id="main-content"');
+    expect(html).toMatch(/<main\b[^>]*><p data-route-skeleton="">/);
+  });
+
+  it("is the same frame as the loaded layout, so nothing outside the content moves", async () => {
+    expect(chrome(await pending())).toBe(chrome(await render(AppRoute)));
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "@knowledge-base/ui/components/dropdown-menu";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -486,13 +487,13 @@ function MemberBitsSheet({
           send();
         }}
       />
-      <SheetContent data-testid="member-edit-sheet" className="overflow-y-auto overflow-x-hidden">
+      <SheetContent data-testid="member-edit-sheet">
         <SheetHeader>
           <SheetTitle>{t("settings.members.editTitle", { name })}</SheetTitle>
           <SheetDescription>{t("settings.members.editDescription")}</SheetDescription>
         </SheetHeader>
         <form
-          className="min-w-0 space-y-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -504,17 +505,19 @@ function MemberBitsSheet({
             send();
           }}
         >
-          <fieldset className="space-y-1">
-            <legend className="text-sm font-medium">{t("settings.members.permissions")}</legend>
-            <PermissionChoices value={bits} onChange={setBits} disabled={update.isPending} />
-            {bits.length === 0 && (
-              <p id={requiredId} className="text-sm text-destructive">
-                {t("settings.members.permissionsRequired")}
-              </p>
-            )}
-          </fieldset>
-          <ControlError error={update.error} />
-          <SheetFooter className="px-0">
+          <SheetBody className="space-y-4">
+            <fieldset className="space-y-1">
+              <legend className="text-sm font-medium">{t("settings.members.permissions")}</legend>
+              <PermissionChoices value={bits} onChange={setBits} disabled={update.isPending} />
+              {bits.length === 0 && (
+                <p id={requiredId} className="text-sm text-destructive">
+                  {t("settings.members.permissionsRequired")}
+                </p>
+              )}
+            </fieldset>
+            <ControlError error={update.error} />
+          </SheetBody>
+          <SheetFooter>
             <Button
               type="submit"
               data-testid="member-edit-save"

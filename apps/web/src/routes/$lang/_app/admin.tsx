@@ -1,14 +1,18 @@
 import { SelectorRow } from "@knowledge-base/ui/components/selector-row";
 import { cn } from "@knowledge-base/ui/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound, Outlet } from "@tanstack/react-router";
 import { Gauge, LayoutDashboard, ListX, Settings, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
+import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { decideAdminRouteAccess } from "@/lib/route-session-access";
 import { getRouteSession } from "@/server/auth-session";
+import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/admin")({
+  staticData: { pendingFrame: "admin" },
   beforeLoad: async () => {
     const decision = decideAdminRouteAccess(await getRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
@@ -23,8 +27,16 @@ export const Route = createFileRoute("/$lang/_app/admin")({
 });
 
 function AdminLayout() {
+  // The 2FA nudge under the sub-nav depends on the app settings. Wait for them
+  // (as the `_auth` layout does) so the banner arrives with the page instead of
+  // pushing it down afterwards; a failed load renders the page without it.
+  const { isPending } = useQuery(orpc.settings.getAll.queryOptions());
+  if (isPending) return <RouteContentSkeleton />;
   return (
-    <div className="min-h-full">
+    // `--page-sticky-top`: the sticky sub-nav's height (44px links + py-2), so
+    // a page's own sticky title row (FormPage) pins below it, not under it.
+    // A flex column, so a FormPage can grow into the remaining height.
+    <div className="flex min-h-full flex-col [--page-sticky-top:calc(2.75rem+1rem)]">
       <AdminNav />
       <TwoFactorNudge />
       <Outlet />
@@ -81,7 +93,7 @@ function AdminNav() {
               params={{ lang }}
               activeOptions={{ exact: item.exact }}
               className={cn(
-                "inline-flex min-h-[44px] shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                "inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
               )}
               activeProps={{
                 className: "bg-muted text-foreground",

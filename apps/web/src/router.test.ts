@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-start", () => ({
 }));
 vi.mock("@tanstack/react-start/server", () => ({ getRequestHeader: vi.fn() }));
 vi.mock("./components/error-state", () => ({ default: () => null }));
-vi.mock("./components/loader", () => ({ default: () => null }));
+vi.mock("./components/route-content-skeleton", () => ({ RouteContentSkeleton: () => null }));
 vi.mock("./components/not-found-state", () => ({ default: () => null }));
 vi.mock("./i18n", () => ({
   default: { t: (key: string) => key },

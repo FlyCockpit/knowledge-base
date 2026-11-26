@@ -2,12 +2,14 @@ import { cn } from "@knowledge-base/ui/lib/utils";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AdminSetupBanner } from "@/components/admin-setup-banner";
 import { AppSidebar } from "@/components/app-sidebar";
 import BottomNav from "@/components/bottom-nav";
 import Header from "@/components/header";
 import { OfflineBand } from "@/components/offline-band";
+import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { useDocumentLang } from "@/hooks/use-document-lang";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
 import { useUserLocaleSync } from "@/hooks/use-user-locale-sync";
@@ -18,6 +20,14 @@ export const Route = createFileRoute("/$lang/_app")({
   // navigation side effects. Keep this branch client-rendered while public
   // pages remain SSR-capable under `/$lang/_public`.
   ssr: false,
+  // What a hard refresh paints first. With `ssr: false` the server renders
+  // this route's pending component in place of the layout, and the client
+  // shows it again until the layout can mount (hydration, the auth check).
+  // So it is the real shell (header, sidebar, bottom nav) around a skeleton
+  // of the page's content area only: no frame without the sidebar/nav, and
+  // no layout jump when the page arrives; `pnpm check:shell-loading`
+  // measures it. See docs/ui.md § Route pending states
+  pendingComponent: AppShellPending,
   component: AppShellLayout,
 });
 
@@ -26,9 +36,39 @@ function AppShellLayout() {
   // pages get it too — don't re-add it here.
   useDocumentLang();
   useUserLocaleSync();
+
+  return (
+    <>
+      <AppShellFrame>
+        <Outlet />
+      </AppShellFrame>
+      {import.meta.env.DEV && (
+        <>
+          <TanStackRouterDevtools position="bottom-left" />
+          <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />
+        </>
+      )}
+    </>
+  );
+}
+
+/** The shell around the loading page: same frame, content skeleton only. */
+function AppShellPending() {
+  return (
+    <AppShellFrame>
+      <RouteContentSkeleton />
+    </AppShellFrame>
+  );
+}
+
+/**
+ * The app frame, shared by the layout and its pending state so the two are
+ * the same boxes: the header, the sidebar and the bottom nav never move when
+ * the page replaces its skeleton.
+ */
+function AppShellFrame({ children }: { children: ReactNode }) {
   const mobileKeyboardOpen = useMobileKeyboard();
   const { t } = useTranslation("nav");
-
   return (
     <>
       {/* First tab stop: past the header and sidebar to the page (WCAG 2.4.1). */}
@@ -82,17 +122,11 @@ function AppShellLayout() {
                 : "pb-[max(0px,calc(var(--consent-clearance)_-_3.5rem_-_var(--safe-area-bottom)))] md:pb-(--consent-clearance)",
             )}
           >
-            <Outlet />
+            {children}
           </main>
         </div>
         <BottomNav hidden={mobileKeyboardOpen} />
       </div>
-      {import.meta.env.DEV && (
-        <>
-          <TanStackRouterDevtools position="bottom-left" />
-          <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />
-        </>
-      )}
     </>
   );
 }

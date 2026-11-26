@@ -33,9 +33,16 @@ import { QueryBoundary } from "@/components/query-boundary";
 import { StatusPill } from "@/components/status-pill";
 import { isAccessLoss, kbControls, useKbAccessLoss } from "@/hooks/use-kb-editor";
 import { cachedKbName, routeHead } from "@/lib/page-title";
+import { kbPendingFrame } from "@/lib/pending-layout";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId")({
+  staticData: {
+    // The workspace for the KB home and its documents, the page column for
+    // the rest, as KbLayout below draws them.
+    pendingFrame: kbPendingFrame,
+    pendingShape: "detail",
+  },
   // Every KB page's title names the KB. `head()` runs after the
   // loaders, so priming `kbs.get` here names it on a cold load too. A KB the
   // viewer can't read resolves to nothing: the layout (or Settings, for an

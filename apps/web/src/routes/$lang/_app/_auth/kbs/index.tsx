@@ -11,18 +11,14 @@ import {
   type GettingStartedStep,
   useGettingStartedHidden,
 } from "@/components/home/getting-started";
-import {
-  createdKbDestination,
-  KB_GRID_CLASS,
-  KbCreateDialog,
-  KbList,
-} from "@/components/kb/kb-list";
+import { createdKbDestination, KbCreateDialog, KbList } from "@/components/kb/kb-list";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
 import { QueryBoundary } from "@/components/query-boundary";
 import { useAccountSetupSteps } from "@/hooks/use-account-setup-steps";
 import { hasConnectedClient } from "@/lib/credential-counts";
+import { KB_GRID_CLASS } from "@/lib/kb-grid";
 import { pageHead } from "@/lib/page-title";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
@@ -40,6 +36,7 @@ import { orpc } from "@/utils/orpc";
  * Pull to refresh (phones) reloads the lists and the checklist's reads.
  */
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/")({
+  staticData: { pendingShape: "cards" },
   head: ({ match }) => pageHead(match.context.i18n.t("nav:items.knowledgeBases")),
   component: KbIndexPage,
 });

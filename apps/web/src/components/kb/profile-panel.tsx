@@ -349,7 +349,7 @@ function ProviderSecretDialog({
   const error = create.error ?? probe.error;
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {target?.mode === "probe"

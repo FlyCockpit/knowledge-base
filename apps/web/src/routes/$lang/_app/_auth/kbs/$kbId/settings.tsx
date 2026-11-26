@@ -11,6 +11,7 @@ import { cachedKbName, pageHead } from "@/lib/page-title";
 type SettingsSearch = { accept?: string; transfer?: string; tab?: KbSettingsTab };
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/settings")({
+  staticData: { pendingShape: "form" },
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
     accept: acceptRequestId(search.accept),
     transfer: acceptRequestId(search.transfer),

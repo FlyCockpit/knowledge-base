@@ -25,6 +25,7 @@ import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/")({
+  staticData: { pendingShape: "form" },
   head: ({ match }) =>
     pageHead(
       match.context.i18n.t("settings:navProfile"),

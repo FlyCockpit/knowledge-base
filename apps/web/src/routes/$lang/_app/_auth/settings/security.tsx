@@ -31,6 +31,7 @@ import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/security")({
+  staticData: { pendingShape: "form" },
   head: ({ match }) =>
     pageHead(
       match.context.i18n.t("settings:navSecurity"),

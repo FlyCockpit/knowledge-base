@@ -11,6 +11,7 @@ import { pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/admin/")({
+  staticData: { pendingShape: "overview", pendingWidth: "wide" },
   head: ({ match }) => pageHead(match.context.i18n.t("nav:items.admin")),
   component: AdminOverview,
 });

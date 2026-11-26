@@ -27,6 +27,7 @@ import { pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/admin/settings")({
+  staticData: { pendingShape: "form", pendingWidth: "narrow" },
   head: ({ match }) =>
     pageHead(match.context.i18n.t("admin:nav.settings"), match.context.i18n.t("nav:items.admin")),
   component: AdminSettings,

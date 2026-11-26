@@ -201,7 +201,7 @@ export function ApiKeyDetailsDialog({
   const { t } = useTranslation(["settings", "common"]);
   return (
     <Dialog open={apiKey !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
+      <DialogContent className="max-h-[90svh] sm:max-w-2xl">
         {apiKey && (
           <>
             <DialogHeader>

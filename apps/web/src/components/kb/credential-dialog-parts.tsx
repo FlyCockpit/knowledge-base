@@ -73,10 +73,11 @@ export function CreateFooter({
   const reasonId = useId();
   const reason = pending ? undefined : reasons[0];
   return (
-    // Sticky to the dialog's bottom edge: `-bottom-4` cancels the dialog's p-4, which sticky
-    // positioning keeps clear, so nothing scrolls past underneath. One row of buttons, also
-    // on a phone, so the footer stays short.
-    <DialogFooter className="sticky -bottom-4 z-10 -mx-4 -mb-4 flex-row flex-wrap items-center justify-end border-t bg-background p-4">
+    // DialogFooter is sticky to the bottom of the dialog's scrolling body and carries its
+    // bottom padding; this one also spans the body's full width (`-mx-4 px-4`) above a rule,
+    // so nothing scrolls past underneath. One row of buttons, also on a phone, so the footer
+    // stays short.
+    <DialogFooter className="-mx-4 mt-0 flex-row flex-wrap items-center justify-end border-t px-4 pt-4">
       {reason ? (
         // Its own line above the buttons on a phone, left of them otherwise.
         <p

@@ -33,6 +33,7 @@ import { orpc } from "@/utils/orpc";
 import { safeRedirectTo } from "@/utils/safe-redirect";
 
 export const Route = createFileRoute("/$lang/_app/login")({
+  staticData: { pendingShape: "auth" },
   validateSearch: (
     search: Record<string, unknown>,
   ): { redirectTo: string | undefined; twoFactor?: "true" } => ({

@@ -10,7 +10,6 @@ import {
 import { Checkbox } from "@knowledge-base/ui/components/checkbox";
 import { CopyField } from "@knowledge-base/ui/components/copy-field";
 import { Label } from "@knowledge-base/ui/components/label";
-import { SelectItem } from "@knowledge-base/ui/components/select";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { SelectField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
@@ -403,19 +402,11 @@ function RuntimeConfigForm({
               <SelectField
                 field={field}
                 label={t("settings.model.modelLabel")}
-                valueLabel={t(
-                  field.state.value === "embeddinggemma-2-q8_0"
-                    ? "settings.model.models.gemma"
-                    : "settings.model.models.qwen",
-                )}
-              >
-                <SelectItem value="embeddinggemma-2-q8_0" className="min-h-[44px]">
-                  {t("settings.model.models.gemma")}
-                </SelectItem>
-                <SelectItem value="qwen3-embedding-0.6b-q8_0" className="min-h-[44px]">
-                  {t("settings.model.models.qwen")}
-                </SelectItem>
-              </SelectField>
+                options={[
+                  { value: "embeddinggemma-2-q8_0", label: t("settings.model.models.gemma") },
+                  { value: "qwen3-embedding-0.6b-q8_0", label: t("settings.model.models.qwen") },
+                ]}
+              />
             )}
           </form.Field>
           <form.Subscribe selector={(state) => state.values}>
@@ -423,51 +414,49 @@ function RuntimeConfigForm({
               <>
                 <form.Field name="contextTokens">
                   {(field) => (
-                    <SelectField field={field} label={t("settings.model.runtime.contextLabel")}>
-                      {CONTEXT_OPTIONS.map((value) => (
-                        <SelectItem
-                          key={value}
-                          value={String(value)}
-                          className="min-h-[44px]"
-                          disabled={
-                            runtimeSelection(status, {
-                              modelId: values.modelId,
-                              contextTokens: value,
-                              kvKeyType: values.kvKeyType as KvType,
-                              kvValueType: values.kvValueType as KvType,
-                            }).level === "block"
-                          }
-                        >
-                          {value}
-                        </SelectItem>
-                      ))}
-                    </SelectField>
+                    <SelectField
+                      field={field}
+                      label={t("settings.model.runtime.contextLabel")}
+                      options={CONTEXT_OPTIONS.map((value) => ({
+                        value: String(value),
+                        label: String(value),
+                        disabled:
+                          runtimeSelection(status, {
+                            modelId: values.modelId,
+                            contextTokens: value,
+                            kvKeyType: values.kvKeyType as KvType,
+                            kvValueType: values.kvValueType as KvType,
+                          }).level === "block",
+                      }))}
+                    />
                   )}
                 </form.Field>
                 <form.Field name="kvKeyType">
                   {(field) => (
-                    <SelectField field={field} label={t("settings.model.runtime.kvKeyLabel")}>
-                      {KV_TYPES.filter(
+                    <SelectField
+                      field={field}
+                      label={t("settings.model.runtime.kvKeyLabel")}
+                      options={KV_TYPES.filter(
                         (value) => values.modelId !== "embeddinggemma-2-q8_0" || value === "f16",
-                      ).map((value) => (
-                        <SelectItem key={value} value={value} className="min-h-[44px]">
-                          {t(`settings.model.runtime.kvTypes.${value}`)}
-                        </SelectItem>
-                      ))}
-                    </SelectField>
+                      ).map((value) => ({
+                        value,
+                        label: t(`settings.model.runtime.kvTypes.${value}`),
+                      }))}
+                    />
                   )}
                 </form.Field>
                 <form.Field name="kvValueType">
                   {(field) => (
-                    <SelectField field={field} label={t("settings.model.runtime.kvValueLabel")}>
-                      {KV_TYPES.filter(
+                    <SelectField
+                      field={field}
+                      label={t("settings.model.runtime.kvValueLabel")}
+                      options={KV_TYPES.filter(
                         (value) => values.modelId !== "embeddinggemma-2-q8_0" || value === "f16",
-                      ).map((value) => (
-                        <SelectItem key={value} value={value} className="min-h-[44px]">
-                          {t(`settings.model.runtime.kvTypes.${value}`)}
-                        </SelectItem>
-                      ))}
-                    </SelectField>
+                      ).map((value) => ({
+                        value,
+                        label: t(`settings.model.runtime.kvTypes.${value}`),
+                      }))}
+                    />
                   )}
                 </form.Field>{" "}
               </>

@@ -82,6 +82,15 @@ describe("installZodErrorMap", () => {
     }
   });
 
+  it("reads an empty string under .min(1) as required, not 'at least 1 characters'", async () => {
+    const result = z.string().trim().min(1).safeParse("   ");
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toBe(enValidation.required);
+    await i18n.changeLanguage("es-MX");
+    const es = z.string().min(1).safeParse("");
+    if (!es.success) expect(es.error.issues[0]?.message).toBe(esValidation.required);
+  });
+
   it("treats undefined input as required", () => {
     const result = z.object({ name: z.string() }).safeParse({});
     expect(result.success).toBe(false);

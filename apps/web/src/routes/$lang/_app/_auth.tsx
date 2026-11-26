@@ -6,7 +6,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@knowledge-base/ui/components/card";
-import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -15,6 +14,7 @@ import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
 import { OneTimeCodeField } from "@/components/auth/plain-field";
 import { TwoFactorPasswordConfirm } from "@/components/auth/two-factor-password-confirm";
 import { InlineRetry } from "@/components/inline-retry";
+import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { useTwoFactorEnrollment } from "@/hooks/use-two-factor-enrollment";
 import { decideProtectedRouteAccess } from "@/lib/route-session-access";
@@ -54,16 +54,9 @@ function AuthLayout() {
   const { t } = useTranslation(["common"]);
 
   if (isPending) {
-    return (
-      <div className="container mx-auto max-w-4xl px-4 py-8 space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-5 w-64" />
-        <div className="mt-8 space-y-3">
-          <Skeleton className="h-32 w-full rounded-lg" />
-          <Skeleton className="h-32 w-full rounded-lg" />
-        </div>
-      </div>
-    );
+    // Inside the app shell already: only the content area waits, in the
+    // shape of the page being opened.
+    return <RouteContentSkeleton />;
   }
 
   if (isError) {

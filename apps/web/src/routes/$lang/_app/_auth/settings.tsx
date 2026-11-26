@@ -7,6 +7,7 @@ import NotFoundState from "@/components/not-found-state";
 import { settingsNavItems } from "@/lib/nav-items";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings")({
+  staticData: { pendingFrame: "settings" },
   component: SettingsLayout,
   // An unknown settings page renders inside this layout, under its "Settings" h1.
   notFoundComponent: () => <NotFoundState nested />,

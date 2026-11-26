@@ -54,7 +54,7 @@ The app follows the template's viewport scale (FlyCockpit/template, `patterns/de
 4. **Pages use the width tiers.** `PageShell`'s `narrow`, `default` and `wide` (`apps/web/src/components/page-shell.tsx`) are rem, so they scale with rule 1. The `full` tier (`max-w-none`, same `px-4` edge line) is the full-width container for a page that should use the whole screen: the KB document editor (Markdown and preview side by side, `kbs/$kbId.tsx`). Reading a document keeps `default`.
 5. **Full-bleed banners keep their content in the page column.** The background and border span the window; the content goes in `PAGE_COLUMN_CLASS` (`page-shell.tsx`, the `wide` tier), so the message and its action sit together instead of 3000px apart at 4K.
 6. **Long copy gets `max-w-prose`**: descriptions, help text, policy explanations. `PageHeader`'s description carries it already.
-7. **Card grids follow their column.** The KB list (`KB_GRID_CLASS` in `components/kb/kb-list.tsx`) fits as many 15rem columns as the list's width holds (three in the default page column), so the sidebar counts and a 4K screen gets the same grid, scaled.
+7. **Card grids follow their column.** The KB list (`KB_GRID_CLASS` in `lib/kb-grid.ts`, shared with its skeletons) fits as many 15rem columns as the list's width holds (three in the default page column), so the sidebar counts and a 4K screen gets the same grid, scaled.
 
 ## Cookie banner clearance
 
@@ -158,3 +158,63 @@ Public pages stay static and cacheable: no session lookup and no Better-Auth cli
 ## Logo slot
 
 The brand (`AppBrand`, `apps/web/src/components/app-brand.tsx`) starts with the app logo: an `<img>` with its 32px box declared (`width`/`height` 32, `size-8 shrink-0`), sources `pwa-32x32.png 32w, pwa-64x64.png 64w, pwa-128x128.png 128w` with `sizes="48px"` (`APP_LOGO` in `apps/web/src/lib/app-logo.ts`), and `alt` = the app name; the visible names are `aria-hidden`, so the link is announced once. The files are generated from `apps/web/assets/logo.png`, the same source as the favicon and the install icons (`apps/web/pwa-assets.config.ts`; `pnpm --filter web generate-pwa-assets`, then copy new outputs to `apps/web/public/`). The artwork is transparent, so it needs no plate: its blue outline reads on the light header and its pale pages on the dark one.
+
+## Form surfaces
+
+The template's form-surface rule (FlyCockpit/template, `patterns/design-system.md` § Form surfaces), as this app applies it. Where a create or edit form lives is decided by its length: a tall dialog that scrolls inside itself hides the action button and the errors below the fold.
+
+- **A dialog is for confirmations and short forms only:** about six controls or fewer, and it fits **without inner scrolling** at 1280×800 and 390×844. `pnpm check:dialogs` fails one that scrolls (§ Dialog fit check).
+- **Anything longer becomes a page or a wide side sheet,** using the whole width: sections with headings, two columns of fields from 1024px (`lg:`), one column on phones. A page (`FormPage`, its own route) is the default for creating something; a wide sheet (`<SheetContent size="wide">`) is for editing without leaving the page behind.
+- **The quick path first:** the few fields most people need, safe defaults pre-filled, presets where there are many switches; expert fields under collapsed `AdvancedSection`s with a one-line summary of their values.
+- **No raw configuration:** key-value pairs use `KeyValueEditor` (rows plus a `.env` text mode), never a JSON textarea; every enum, scope and option has a human label; pickers replace free text.
+- **Sticky header and action bar** on every dialog, sheet and long page; **errors inline, focus on the first invalid field.**
+
+The components, all in `packages/ui` and identical to the template's:
+
+| Surface | Component |
+|---|---|
+| Short form, confirmation | `Dialog` (`dialog.tsx`): the popup is capped at the visible viewport and does not scroll; its inner body (`data-slot="dialog-body"`, styled through `bodyClassName`, not `className`) does, with `DialogHeader` stuck to its top, `DialogFooter` stuck to its bottom and the close button pinned to the popup. `AlertDialog` (`alert-dialog.tsx`): the popup is the scroller, with the same sticky header and footer. |
+| Edit in context | `Sheet` (`sheet.tsx`): `SheetHeader`, `SheetBody` (the one scroller), `SheetFooter` (pinned, outside the body, so the primary action is always on screen); `size="wide"` for a long form (full width on phones, 48rem, 64rem from `xl:`). |
+| Long create form | `FormPage`, `FormSection`, `AdvancedSection`, `FormActionBar` (`form-page.tsx`). A layout with a sticky sub-nav sets `--page-sticky-top` to its height, as the admin layout does, so the page's sticky title row pins below it. |
+| Numbers in a range | `RangeField` (`range-field.tsx`, `lib/range-scale.ts`): a slider with a typed input, snap stops, units, a marked default and a dynamic limit. |
+| Key-value pairs | `KeyValueEditor` (`key-value-editor.tsx`, `lib/dotenv.ts`). |
+| Choices | `SelectField` (`text-field.tsx`) |
+
+Their labels come from `useRangeFieldLabels()` / `useKeyValueEditorLabels()` (`apps/web/src/hooks/use-form-field-labels.ts`, strings under `common:forms`); `packages/ui` ships no strings. Sticky header and footer carry the edge padding themselves: never give them negative margins (a sticky box cannot leave its container, so it would be pushed over the content).
+
+**Select fields.** `SelectField` takes its choices as data, `options: { value, label }[]`, never `<SelectItem>` children. Base UI's closed select prints the chosen option's label only when the root gets an `items` map; without it the trigger shows the raw value (`user`, `f16`). `SelectField` passes `options` as that map and renders the items from the same list (`packages/ui/src/components/text-field.test.tsx` pins it). Every `label` is translated; a raw id developers need goes in `description`. A raw `<Select>` outside `SelectField` passes `items` to its root, or renders its own `SelectValue` children (the language switcher does).
+
+**Errors next to the field.** Validation errors appear under the field they belong to, never only in a toast or at the bottom. A failed submit moves focus to the first invalid field: give the `<form>` a ref and `noValidate`, set `onSubmitInvalid: () => focusFirstInvalidField(formRef.current)` in `useForm` (`packages/ui/src/lib/focus-first-invalid.ts`; it opens a collapsed `AdvancedSection` around the field), and leave the submit button enabled while the form is invalid (disabled only while submitting). A `.min(1)` string reads "This field is required." (`apps/web/src/i18n/zod.ts`).
+
+## Route pending states
+
+On a hard refresh of a signed-in page, what paints first is already the app: the same header, sidebar and bottom nav as the loaded page, in the stored theme, with only the content area as a skeleton shaped like that page. Nothing outside the content moves when the page arrives.
+
+The signed-in layout `$lang/_app` is `ssr: false`, so the router renders that route's pending component on the server, and the client keeps it until the layout can mount (hydration, the auth check). So:
+
+- `_app`'s `pendingComponent` renders the shell's own frame (`AppShellFrame` in `apps/web/src/routes/$lang/_app/route.tsx`, the same function the layout renders: skip link, header, `AdminSetupBanner`, `AppSidebar`, `<main>`, BottomNav) around `RouteContentSkeleton`. Only `<main>`'s content waits. `apps/web/src/components/public-shell.test.tsx` pins that the pending frame and the loaded frame are the same markup outside `<main>`. While the session loads, `AppSidebar` draws a skeleton of its own width on signed-in pages (under `_auth` or `admin`), as the BottomNav does, so the content does not narrow when the session arrives; the sign-in pages have no sidebar. (The collapsed rail's width comes from local storage, so a collapsed sidebar can still change width once on a hard refresh.)
+- Every pending boundary below it (the router's `defaultPendingComponent`, the forced-2FA gate's settings load in `_auth.tsx`, and the admin layout's, which waits for the same settings so its 2FA nudge arrives with the page instead of pushing it down) renders `RouteContentSkeleton` alone, inside the shell already on screen. There is no route-level spinner.
+- Each route declares its shape in `staticData` (`apps/web/src/lib/pending-layout.ts`): `pendingShape` (`"list"`, `"cards"` (the knowledge bases page, the signed-in home: its Owned and Shared sections of KB cards, `lib/kb-grid.ts`), `"detail"`, `"document"` (a KB document's own loading state: title, path, the body at the long-read measure), `"form"`, `"overview"` (the admin overview: a status card, then section cards), or `"auth"` for the sign-in pages' centred card), `pendingWidth` (the `PageShell` width) and, on a layout route that draws chrome around its children, `pendingFrame`: `"admin"` (the admin sub-nav), `"settings"` (the settings title and side nav), `"kb"` (a KB's page shell and breadcrumbs), `"workspace"` (a KB's workspace: from 1024px the file tree at its default width, then the toolbar and the padded pane with the breadcrumbs). A layout whose chrome depends on the page below passes a function of the leaf route's id: the KB layout's `kbPendingFrame` draws the workspace for the KB home and its documents and the page column for its settings and pull requests, as the layout itself does. (The tree's width and whether it is open come from local storage, so a resized or hidden tree can still move the pane once on a hard refresh.) The skeleton draws the frames at or below the loading boundary and the leaf's shape; inside a settings or KB layout, or the workspace, that is already on screen it adds no page container of its own.
+
+A new route sets its `staticData`; a new layout with its own chrome adds a `PendingFrame` and draws it in `apps/web/src/components/route-content-skeleton.tsx`. The header carries `data-app-header` and the BottomNav `data-bottom-nav` for the check below.
+
+## Browser checks
+
+Two real-browser checks enforce the two sections above. They need the global `agent-browser` CLI and a running stack, so they stay out of CI; run them after touching a dialog, the shell, a layout route or a pending state. `scripts/check-dialogs.ts`, `scripts/check-shell-loading.ts` and `scripts/browser-check-lib.ts` are the template's, unchanged; `scripts/browser-checks.config.ts` is this app's: how to sign in, the dialogs and the pages.
+
+This app has no mock mode (`MOCK_SERVER = false`). Start a stack (`pnpm dev:docker <port>`), sign up two accounts on it (the first becomes the instance admin; verify through the stack's mailpit), create a KB as the admin, and write their credentials and the KB id to a JSON file outside the repo (the format is in the config's header). Then:
+
+```bash
+BROWSER_CHECKS_ACCOUNTS=/path/outside/repo.json pnpm check:dialogs --url http://127.0.0.1:<port> --no-sandbox
+BROWSER_CHECKS_ACCOUNTS=/path/outside/repo.json pnpm check:shell-loading --url http://127.0.0.1:<port> --no-sandbox
+```
+
+`--no-sandbox` is for Ubuntu 23.10+ (AppArmor) Chromium. Each run uses its own agent-browser session (`check-dialogs-<pid>`, `check-shell-loading-<pid>`) and closes it. The judging logic has unit tests (`pnpm check:dialogs:test`, `pnpm check:shell-loading:test`, both in `pnpm verify:tooling`).
+
+### Dialog fit check
+
+`pnpm check:dialogs` opens every dialog in `DIALOGS` at 1280×800 and 390×844 and fails when the popup or anything inside it scrolls vertically, when the sticky header or action bar covers content, when the popup reaches outside the viewport, or when the dialog does not open (`--only "<name>"` runs one). List every dialog the app ships, confirmations included; a dialog that cannot fit becomes a page or a wide side sheet and leaves the list. There is no exemption field.
+
+### Shell loading check
+
+`pnpm check:shell-loading` records, on every animation frame from the start of the document, the boxes of the header, the BottomNav and `<main>`, the theme class and whether the content skeleton shows, plus layout shifts. It hard-reloads the pages in `SHELL_PAGES` at 1280×800 and 390×844 with the stored theme dark and the OS light, on a throttled network (150ms, 4 Mbit/s) and CPU (4×), and fails when the first painted frame has no header, `<main>` or BottomNav or is not the content skeleton, when a later frame loses the header, when the header, the BottomNav or the top of `<main>` moves by more than 1px before the page has loaded, when a frame is in the other theme, or when cumulative layout shift exceeds 0.05.

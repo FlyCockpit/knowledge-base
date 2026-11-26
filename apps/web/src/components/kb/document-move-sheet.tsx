@@ -6,6 +6,7 @@ import {
 import { Button } from "@knowledge-base/ui/components/button";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -201,7 +202,7 @@ export function DocumentMoveSheet({
           : null;
   return (
     <Sheet open onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto overflow-x-hidden">
+      <SheetContent>
         <SheetHeader>
           <SheetTitle>{t("kb:move.title")}</SheetTitle>
           <SheetDescription className="break-all">
@@ -209,7 +210,7 @@ export function DocumentMoveSheet({
           </SheetDescription>
         </SheetHeader>
         <form
-          className="min-w-0 space-y-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           noValidate
           onSubmit={(e) => {
             e.preventDefault();
@@ -217,52 +218,54 @@ export function DocumentMoveSheet({
             void form.handleSubmit();
           }}
         >
-          <form.Field
-            name="toPath"
-            validators={{
-              onSubmit: ({ value }) => {
-                const error = moveTargetError(from, value);
-                return error ? t(`kb:move.error.${error}`) : undefined;
-              },
-            }}
-            listeners={{ onChange: () => setServerError(null) }}
-          >
-            {(field) => (
-              <TextField
-                field={{
-                  ...field,
-                  state: {
-                    ...field.state,
-                    meta: {
-                      errors: [
-                        ...field.state.meta.errors,
-                        ...(serverError ? [t(`kb:move.error.${serverError}`)] : []),
-                      ],
+          <SheetBody className="space-y-4">
+            <form.Field
+              name="toPath"
+              validators={{
+                onSubmit: ({ value }) => {
+                  const error = moveTargetError(from, value);
+                  return error ? t(`kb:move.error.${error}`) : undefined;
+                },
+              }}
+              listeners={{ onChange: () => setServerError(null) }}
+            >
+              {(field) => (
+                <TextField
+                  field={{
+                    ...field,
+                    state: {
+                      ...field.state,
+                      meta: {
+                        errors: [
+                          ...field.state.meta.errors,
+                          ...(serverError ? [t(`kb:move.error.${serverError}`)] : []),
+                        ],
+                      },
                     },
-                  },
-                }}
-                label={t("kb:move.pathLabel")}
-                description={t(proposing ? "kb:move.hintProposal" : "kb:move.hint")}
-                autoComplete="off"
-                inputMode="text"
-                autoCapitalize="none"
-                spellCheck={false}
-                maxLength={512}
-                inputClassName="font-mono"
-              />
+                  }}
+                  label={t("kb:move.pathLabel")}
+                  description={t(proposing ? "kb:move.hintProposal" : "kb:move.hint")}
+                  autoComplete="off"
+                  inputMode="text"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  maxLength={512}
+                  inputClassName="font-mono"
+                />
+              )}
+            </form.Field>
+            {editor.paused && (
+              <p role="status" className="text-sm">
+                {t("kb:editor.offline")}
+              </p>
             )}
-          </form.Field>
-          {editor.paused && (
-            <p role="status" className="text-sm">
-              {t("kb:editor.offline")}
-            </p>
-          )}
-          {noticeText && (
-            <p role="alert" className="text-sm text-destructive">
-              {noticeText}
-            </p>
-          )}
-          <SheetFooter className="px-0">
+            {noticeText && (
+              <p role="alert" className="text-sm text-destructive">
+                {noticeText}
+              </p>
+            )}
+          </SheetBody>
+          <SheetFooter>
             <Button type="submit" className="min-h-[44px]" disabled={editor.pending}>
               {editor.pending ? t("kb:editor.saving") : t("kb:move.submit")}
             </Button>

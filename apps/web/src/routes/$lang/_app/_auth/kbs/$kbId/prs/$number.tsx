@@ -13,6 +13,7 @@ import { cachedKbName, pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/prs/$number")({
+  staticData: { pendingShape: "detail" },
   head: ({ match, params }) =>
     pageHead(
       match.context.i18n.t("kb:pr.pageTitle", { number: params.number }),

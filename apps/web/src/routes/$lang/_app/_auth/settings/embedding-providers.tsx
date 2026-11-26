@@ -4,6 +4,7 @@ import { ProvidersPanel } from "@/components/kb/profile-panel";
 import { pageHead } from "@/lib/page-title";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/embedding-providers")({
+  staticData: { pendingShape: "list" },
   head: ({ match }) =>
     pageHead(
       match.context.i18n.t("settings:navProviders"),

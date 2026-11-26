@@ -32,8 +32,14 @@ describe("CreateFooter", () => {
     expect(html).toMatch(
       new RegExp(`<button type="submit"[^>]* disabled=""[^>]*aria-describedby="${reasonId}"`),
     );
-    // The footer stays in view while the form scrolls.
-    expect(html).toContain("sticky -bottom-4");
+    // The footer stays in view while the form scrolls: DialogFooter is sticky to the
+    // bottom of the dialog's body and carries its padding, so no offsets that would push it
+    // below the body's clipped edge.
+    const classes = /data-slot="dialog-footer" class="([^"]*)"/.exec(html)?.[1]?.split(" ") ?? [];
+    expect(classes).toContain("sticky");
+    expect(classes).toContain("bottom-0");
+    expect(classes).toContain("pb-4");
+    expect(classes.filter((c) => /^-(bottom|mb)-/.test(c))).toEqual([]);
   });
 
   it("enables Create with no reason, and shows no reason while creating", () => {

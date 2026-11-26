@@ -45,6 +45,7 @@ import { orpc } from "@/utils/orpc";
  * and an anonymous-only redirect would break the second case.
  */
 export const Route = createFileRoute("/$lang/_app/verify-email")({
+  staticData: { pendingShape: "auth" },
   validateSearch: parseVerifyEmailSearch,
   head: ({ match }) => pageHead(match.context.i18n.t("nav:titles.verifyEmail")),
   // Defined in `lib/verify-email-search.ts` so it can be tested against the

@@ -118,6 +118,9 @@ const validateDocumentSearch = (search: Record<string, unknown>): DocumentSearch
 });
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/documents")({
+  // The workspace pane at full width, and the page's own loading state
+  // (DocumentPage below) in every mode.
+  staticData: { pendingShape: "document", pendingWidth: "full" },
   validateSearch: validateDocumentSearch,
   head: ({ match, params }) =>
     pageHead(
@@ -1187,7 +1190,7 @@ function DownloadDialog({ kbId, rev }: { kbId: string; rev: string }) {
         {t("document.download")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+        <DialogContent className="max-h-[90svh] sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("document.downloadTitle")}</DialogTitle>
             <DialogDescription>{t("document.downloadDescription")}</DialogDescription>

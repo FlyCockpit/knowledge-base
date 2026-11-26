@@ -296,10 +296,7 @@ export function SealedAddSecretDialog({
   const { t } = useTranslation("kb");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        data-testid="sealed-add-dialog"
-        className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg"
-      >
+      <DialogContent data-testid="sealed-add-dialog" className="max-h-[90svh] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("settings.sealed.addDialog.title")}</DialogTitle>
           <DialogDescription>{t("settings.sealed.addDialog.description")}</DialogDescription>

@@ -65,6 +65,57 @@
   "breadcrumbs": {
     "ariaLabel": "Breadcrumb"
   },
+  "forms": {
+    "range": {
+      "inputLabel": "Exact value",
+      "reset": "Reset to default",
+      "adjusted": "{{reason}}. Set to {{value}}.",
+      "default": "Default",
+      "defaultFrom": "Default (from {{source}})",
+      "limit": "At most {{limit}} is available here",
+      "errors": {
+        "notANumber": "Enter a number",
+        "belowMin": "Must be at least {{min}}",
+        "aboveMax": "Must be at most {{max}}",
+        "offStep": "Must be a multiple of {{step}}"
+      }
+    },
+    "keyValue": {
+      "key": "Key",
+      "value": "Value",
+      "keyInput": "Key, row {{row}}",
+      "valueInput": "Value for {{key}}",
+      "valueInputRow": "Value, row {{row}}",
+      "unparsedLine": "Unparsed line, row {{row}}",
+      "maskedLines_one": "{{count}} line, hidden",
+      "maskedLines_other": "{{count}} lines, hidden",
+      "add": "Add variable",
+      "remove": "Remove {{key}}",
+      "removeRow": "Remove row {{row}}",
+      "reveal": "Show value of {{key}}",
+      "revealRow": "Show value, row {{row}}",
+      "importFile": "Import .env file",
+      "mode": "Editing mode",
+      "rowsMode": "Rows",
+      "textMode": ".env text",
+      "textHint": "One KEY=value per line. Lines starting with # are ignored. You can paste a whole .env file.",
+      "secretTextHint": "Secret values are shown unmasked in this view.",
+      "errors": {
+        "emptyKey": "Enter a key for this value",
+        "invalidKey": "{{key}} is not a valid key. Use letters, digits and underscores, not starting with a digit.",
+        "duplicateKey": "{{key}} is defined more than once",
+        "reservedKey": "{{key}} is set by the platform and can't be changed here",
+        "line": "Line {{line}}: {{reason}}",
+        "lineReasons": {
+          "missing-equals": "expected KEY=value",
+          "invalid-key": "the key is empty or contains spaces or quotes",
+          "unterminated-quote": "the quoted value is never closed",
+          "trailing-characters": "unexpected text after the closing quote",
+          "duplicate-key": "this key was already defined; the last value wins"
+        }
+      }
+    }
+  },
   "offline": {
     "backOnline": "Back online.",
     "band": "You're offline. Changes you make won't be saved until you reconnect.",

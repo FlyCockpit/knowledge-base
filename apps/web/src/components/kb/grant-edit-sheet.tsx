@@ -1,6 +1,7 @@
 import { Button } from "@knowledge-base/ui/components/button";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -105,36 +106,38 @@ function GrantEditSession({
     setSnapshot(selectionFromGrant({ ...target, acl: data.pages.flatMap((page) => page.items) }));
   return (
     <Sheet open onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto overflow-x-hidden">
+      <SheetContent>
         <SheetHeader>
           <SheetTitle>{t("settings:credentials.edit.title", { name: target.name })}</SheetTitle>
           <SheetDescription>{t("settings:credentials.edit.description")}</SheetDescription>
         </SheetHeader>
-        <div className="min-w-0 space-y-4 px-4 pb-4">
-          {snapshot ? (
-            <GrantEditForm target={target} snapshot={snapshot} onDone={() => onOpenChange(false)} />
-          ) : isPending ? (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-40" />
-              <Skeleton className="h-24 w-full rounded-md" />
-              <Skeleton className="h-24 w-full rounded-md" />
-            </div>
-          ) : isError ? (
-            <InlineRetry
-              message={t("settings:credentials.edit.loadError")}
-              onRetry={() => acl.refetch()}
-            />
-          ) : (
-            <>
-              <p className="text-sm">{t("settings:credentials.edit.loadAll")}</p>
-              <LoadMore
-                onLoadMore={() => acl.fetchNextPage()}
-                hasNextPage={hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
+        {snapshot ? (
+          <GrantEditForm target={target} snapshot={snapshot} onDone={() => onOpenChange(false)} />
+        ) : (
+          <SheetBody className="min-w-0 space-y-4">
+            {isPending ? (
+              <div className="space-y-3">
+                <Skeleton className="h-6 w-40" />
+                <Skeleton className="h-24 w-full rounded-md" />
+                <Skeleton className="h-24 w-full rounded-md" />
+              </div>
+            ) : isError ? (
+              <InlineRetry
+                message={t("settings:credentials.edit.loadError")}
+                onRetry={() => acl.refetch()}
               />
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <p className="text-sm">{t("settings:credentials.edit.loadAll")}</p>
+                <LoadMore
+                  onLoadMore={() => acl.fetchNextPage()}
+                  hasNextPage={hasNextPage}
+                  isFetchingNextPage={isFetchingNextPage}
+                />
+              </>
+            )}
+          </SheetBody>
+        )}
       </SheetContent>
     </Sheet>
   );
@@ -239,52 +242,54 @@ function GrantEditForm({
 
   if (confirming) {
     return (
-      <div className="min-w-0 space-y-4">
-        <ConfirmStepHeading
-          step={t("settings:credentials.edit.confirmStep")}
-          title={t(
-            confirming.plan.widens
-              ? "settings:credentials.edit.confirmTitle"
-              : "settings:credentials.edit.confirmChangesTitle",
-          )}
-        />
-        {confirming.plan.widens && (
-          <p className="text-sm text-muted-foreground">
-            {t("settings:credentials.edit.confirmDescription")}
-          </p>
-        )}
-        <ChangeList direction="added" changes={confirming.plan.added} names={names} />
-        <ChangeList direction="removed" changes={confirming.plan.removed} names={names} />
-        {confirming.duration === "permanent" ? (
-          <>
-            {planNarrows(confirming.plan) && target.activeElevations > 0 && (
-              <p role="status" className="text-sm text-destructive">
-                {t("settings:credentials.edit.endsTemporary")}
-              </p>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <SheetBody className="space-y-4">
+          <ConfirmStepHeading
+            step={t("settings:credentials.edit.confirmStep")}
+            title={t(
+              confirming.plan.widens
+                ? "settings:credentials.edit.confirmTitle"
+                : "settings:credentials.edit.confirmChangesTitle",
             )}
-            {confirming.plan.widens && target.neverExpires && (
-              <p role="status" className="text-sm text-destructive">
-                {t("settings:credentials.edit.noExpiryWarning")}
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            <p role="status" className="text-sm">
-              {t("settings:credentials.edit.temporaryConfirm", {
-                duration: t(`settings:credentials.edit.durations.${confirming.duration}`),
-              })}
+          />
+          {confirming.plan.widens && (
+            <p className="text-sm text-muted-foreground">
+              {t("settings:credentials.edit.confirmDescription")}
             </p>
-            {(confirming.plan.added.allowCreate ||
-              confirming.plan.added.createdKbBits.length > 0) && (
-              <p className="text-sm text-muted-foreground">
-                {t("settings:credentials.edit.temporaryCreatedKbs")}
+          )}
+          <ChangeList direction="added" changes={confirming.plan.added} names={names} />
+          <ChangeList direction="removed" changes={confirming.plan.removed} names={names} />
+          {confirming.duration === "permanent" ? (
+            <>
+              {planNarrows(confirming.plan) && target.activeElevations > 0 && (
+                <p role="status" className="text-sm text-destructive">
+                  {t("settings:credentials.edit.endsTemporary")}
+                </p>
+              )}
+              {confirming.plan.widens && target.neverExpires && (
+                <p role="status" className="text-sm text-destructive">
+                  {t("settings:credentials.edit.noExpiryWarning")}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p role="status" className="text-sm">
+                {t("settings:credentials.edit.temporaryConfirm", {
+                  duration: t(`settings:credentials.edit.durations.${confirming.duration}`),
+                })}
               </p>
-            )}
-          </>
-        )}
-        <UpdateError error={update.error} />
-        <SheetFooter className="px-0">
+              {(confirming.plan.added.allowCreate ||
+                confirming.plan.added.createdKbBits.length > 0) && (
+                <p className="text-sm text-muted-foreground">
+                  {t("settings:credentials.edit.temporaryCreatedKbs")}
+                </p>
+              )}
+            </>
+          )}
+          <UpdateError error={update.error} />
+        </SheetBody>
+        <SheetFooter>
           <Button
             type="button"
             variant="outline"
@@ -313,107 +318,109 @@ function GrantEditForm({
 
   return (
     <form
-      className="min-w-0 space-y-6"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();
         form.handleSubmit();
       }}
     >
-      <fieldset className="min-w-0 space-y-2">
-        <legend className="text-sm font-medium">
-          {t("settings:credentials.edit.durationLegend")}
-        </legend>
-        {limitReached ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("settings:credentials.edit.temporaryLimit", { max: MAX_ACTIVE_ELEVATIONS })}
-          </p>
-        ) : (
-          <>
-            <SegmentedControl<EditDuration>
-              value={duration}
-              ariaLabel={t("settings:credentials.edit.durationLegend")}
-              items={(["permanent", ...ELEVATION_DURATIONS] as const).map((value) => ({
-                value,
-                label: t(`settings:credentials.edit.durations.${value}`),
-              }))}
-              onChange={(next) => {
-                if (update.isPending) return;
-                setUnchanged(false);
-                setDuration(next);
-              }}
-            />
-            <p className="text-sm text-muted-foreground">
-              {t(
-                temporary
-                  ? "settings:credentials.edit.temporaryHint"
-                  : "settings:credentials.edit.permanentHint",
-              )}
+      <SheetBody className="space-y-6">
+        <fieldset className="min-w-0 space-y-2">
+          <legend className="text-sm font-medium">
+            {t("settings:credentials.edit.durationLegend")}
+          </legend>
+          {limitReached ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t("settings:credentials.edit.temporaryLimit", { max: MAX_ACTIVE_ELEVATIONS })}
             </p>
-          </>
+          ) : (
+            <>
+              <SegmentedControl<EditDuration>
+                value={duration}
+                ariaLabel={t("settings:credentials.edit.durationLegend")}
+                items={(["permanent", ...ELEVATION_DURATIONS] as const).map((value) => ({
+                  value,
+                  label: t(`settings:credentials.edit.durations.${value}`),
+                }))}
+                onChange={(next) => {
+                  if (update.isPending) return;
+                  setUnchanged(false);
+                  setDuration(next);
+                }}
+              />
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  temporary
+                    ? "settings:credentials.edit.temporaryHint"
+                    : "settings:credentials.edit.permanentHint",
+                )}
+              </p>
+            </>
+          )}
+        </fieldset>
+        {oauth && (
+          <p className="text-sm text-muted-foreground">
+            {t("settings:credentials.edit.oauthScopes")}
+          </p>
         )}
-      </fieldset>
-      {oauth && (
-        <p className="text-sm text-muted-foreground">
-          {t("settings:credentials.edit.oauthScopes")}
-        </p>
-      )}
-      {kbQuery.isError ? (
-        <InlineRetry
-          message={t("settings:credentials.kbsLoadError")}
-          onRetry={() => kbQuery.refetch()}
-        />
-      ) : (
-        <AclPicker
-          live={options}
-          selection={selection}
-          removalOnly={removalOnly}
-          onChange={(action) => {
-            setUnchanged(false);
-            if (action.type === "toggleBit")
-              setTouched((previous) => new Set(previous).add(action.kbId));
-            dispatch(action);
-          }}
-          scopeMode={fixedScopes ? "fixed" : "select"}
-          fixedScopes={oauth ? target.scopes : snapshot.scopes}
-          writeScopeSelected={scopes.includes("mcp:write")}
-          offerSealed={!oauth}
-          disabled={update.isPending || kbQuery.isPending}
-          authoringModeLockedReason={
-            temporary ? t("settings:credentials.edit.temporaryWriteMode") : undefined
-          }
-        />
-      )}
-      {kbQuery.hasNextPage && (
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-[44px]"
-          disabled={kbQuery.isFetchingNextPage}
-          onClick={() => kbQuery.fetchNextPage()}
-        >
-          {t("common:actions.loadMore")}
-        </Button>
-      )}
-      {issues.map((issue) => (
-        <p key={issue} className="text-sm text-muted-foreground">
-          {t(`settings:credentials.picker.issues.${issue}`)}
-        </p>
-      ))}
-      {temporaryProblem && (
-        <p role="status" className="text-sm text-destructive">
-          {t(`settings:credentials.edit.temporaryIssues.${temporaryProblem}`, {
-            max: MAX_ACTIVE_ELEVATIONS,
-          })}
-        </p>
-      )}
-      {unchanged && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {t("settings:credentials.edit.unchanged")}
-        </p>
-      )}
-      <UpdateError error={update.error} />
-      <SheetFooter className="px-0">
+        {kbQuery.isError ? (
+          <InlineRetry
+            message={t("settings:credentials.kbsLoadError")}
+            onRetry={() => kbQuery.refetch()}
+          />
+        ) : (
+          <AclPicker
+            live={options}
+            selection={selection}
+            removalOnly={removalOnly}
+            onChange={(action) => {
+              setUnchanged(false);
+              if (action.type === "toggleBit")
+                setTouched((previous) => new Set(previous).add(action.kbId));
+              dispatch(action);
+            }}
+            scopeMode={fixedScopes ? "fixed" : "select"}
+            fixedScopes={oauth ? target.scopes : snapshot.scopes}
+            writeScopeSelected={scopes.includes("mcp:write")}
+            offerSealed={!oauth}
+            disabled={update.isPending || kbQuery.isPending}
+            authoringModeLockedReason={
+              temporary ? t("settings:credentials.edit.temporaryWriteMode") : undefined
+            }
+          />
+        )}
+        {kbQuery.hasNextPage && (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-[44px]"
+            disabled={kbQuery.isFetchingNextPage}
+            onClick={() => kbQuery.fetchNextPage()}
+          >
+            {t("common:actions.loadMore")}
+          </Button>
+        )}
+        {issues.map((issue) => (
+          <p key={issue} className="text-sm text-muted-foreground">
+            {t(`settings:credentials.picker.issues.${issue}`)}
+          </p>
+        ))}
+        {temporaryProblem && (
+          <p role="status" className="text-sm text-destructive">
+            {t(`settings:credentials.edit.temporaryIssues.${temporaryProblem}`, {
+              max: MAX_ACTIVE_ELEVATIONS,
+            })}
+          </p>
+        )}
+        {unchanged && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("settings:credentials.edit.unchanged")}
+          </p>
+        )}
+        <UpdateError error={update.error} />
+      </SheetBody>
+      <SheetFooter>
         <Button
           type="submit"
           className="min-h-[44px]"

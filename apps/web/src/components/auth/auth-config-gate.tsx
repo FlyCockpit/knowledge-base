@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { AuthCard, AuthScreen } from "@/components/auth/auth-screen";
 
-function AuthScreenSkeleton({ fields = 3 }: { fields?: number }) {
+export function AuthScreenSkeleton({ fields = 3 }: { fields?: number }) {
   return (
     <div className="w-full max-w-md space-y-6">
       <div className="space-y-2 text-center">

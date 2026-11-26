@@ -19,7 +19,9 @@ export default function Header() {
   const isAuthenticated = useAuthSession().state.status === "authenticated";
 
   return (
-    <div>
+    // `data-app-header`: what `pnpm check:shell-loading` measures, frame by
+    // frame, from the first paint of a hard refresh to the loaded page.
+    <div data-app-header="">
       <div className="flex min-w-0 flex-row items-center gap-2 px-4 py-2 sm:gap-4">
         {/* The first thing in the row to give way (see AppBrand). Signed in,
             it goes to the signed-in home rather than the landing page. */}

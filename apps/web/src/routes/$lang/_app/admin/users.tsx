@@ -24,7 +24,6 @@ import {
 } from "@knowledge-base/ui/components/dropdown-menu";
 import { Input } from "@knowledge-base/ui/components/input";
 import { Label } from "@knowledge-base/ui/components/label";
-import { SelectItem } from "@knowledge-base/ui/components/select";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { SelectField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useDebounce } from "@knowledge-base/ui/hooks/use-async-search";
@@ -76,6 +75,7 @@ function buildInviteSchema() {
 type InviteReveal = { email: string; emailSent: boolean; setPasswordUrl?: string };
 
 export const Route = createFileRoute("/$lang/_app/admin/users")({
+  staticData: { pendingShape: "list", pendingWidth: "wide" },
   head: ({ match }) =>
     pageHead(match.context.i18n.t("admin:nav.users"), match.context.i18n.t("nav:items.admin")),
   component: AdminUsers,
@@ -541,10 +541,15 @@ function InviteUserDialog({
 
           <form.Field name="role">
             {(field) => (
-              <SelectField field={field} label={t("admin:users.roleLabel")} className="space-y-1.5">
-                <SelectItem value="user">{t("admin:users.roleUser")}</SelectItem>
-                <SelectItem value="admin">{t("admin:users.roleAdmin")}</SelectItem>
-              </SelectField>
+              <SelectField
+                field={field}
+                label={t("admin:users.roleLabel")}
+                className="space-y-1.5"
+                options={[
+                  { value: "user", label: t("admin:users.roleUser") },
+                  { value: "admin", label: t("admin:users.roleAdmin") },
+                ]}
+              />
             )}
           </form.Field>
 

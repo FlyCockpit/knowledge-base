@@ -3,6 +3,7 @@ import { Button } from "@knowledge-base/ui/components/button";
 import { Label } from "@knowledge-base/ui/components/label";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -189,33 +190,35 @@ function ChunkLimitSheet({
   };
   return (
     <Sheet open={open} onOpenChange={close}>
-      <SheetContent className="overflow-y-auto overflow-x-hidden">
+      <SheetContent>
         <SheetHeader>
           <SheetTitle>{t("kb:settings.index.limitSheetTitle")}</SheetTitle>
           <SheetDescription>{t("kb:settings.index.limitSheetDescription")}</SheetDescription>
         </SheetHeader>
         <form
-          className="min-w-0 space-y-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             form.handleSubmit();
           }}
         >
-          <form.Field name="amount">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("kb:settings.index.limitLabel")}
-                description={t("kb:settings.index.limitHelp", { max })}
-                autoComplete="off"
-                inputMode="numeric"
-                maxLength={9}
-              />
-            )}
-          </form.Field>
-          <SettingsError error={update.error} max={max} />
-          <SheetFooter className="flex-wrap gap-2 px-0">
+          <SheetBody className="space-y-4">
+            <form.Field name="amount">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("kb:settings.index.limitLabel")}
+                  description={t("kb:settings.index.limitHelp", { max })}
+                  autoComplete="off"
+                  inputMode="numeric"
+                  maxLength={9}
+                />
+              )}
+            </form.Field>
+            <SettingsError error={update.error} max={max} />
+          </SheetBody>
+          <SheetFooter className="flex-wrap">
             <Button
               type="button"
               variant="outline"

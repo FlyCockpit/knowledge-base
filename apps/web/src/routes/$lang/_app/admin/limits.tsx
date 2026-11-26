@@ -6,6 +6,7 @@ import { PageHeader, PageShell } from "@/components/page-shell";
 import { pageHead } from "@/lib/page-title";
 
 export const Route = createFileRoute("/$lang/_app/admin/limits")({
+  staticData: { pendingShape: "form", pendingWidth: "narrow" },
   head: ({ match }) =>
     pageHead(match.context.i18n.t("admin:nav.limits"), match.context.i18n.t("nav:items.admin")),
   component: AdminLimits,

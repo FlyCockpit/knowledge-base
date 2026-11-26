@@ -8,12 +8,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@knowledge-base/ui/components/dialog";
-import { SelectItem } from "@knowledge-base/ui/components/select";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { SelectField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import { CheckCircle2 } from "lucide-react";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -209,8 +209,7 @@ export function SealedKeySteps() {
   );
 }
 
-function ExpiryLabel({ choice }: { choice: SealedExpiryChoice }) {
-  const { t } = useTranslation("kb");
+function expiryLabel(t: TFunction<"kb">, choice: SealedExpiryChoice): string {
   return choice === "custom"
     ? t("settings.sealed.grantDialog.expiry.custom")
     : choice === "365"
@@ -456,14 +455,11 @@ function GrantBody({
           <SelectField
             field={field}
             label={t("settings.sealed.grantDialog.expiry.label")}
-            valueLabel={<ExpiryLabel choice={field.state.value} />}
-          >
-            {SEALED_EXPIRY_CHOICES.map((choice) => (
-              <SelectItem key={choice} value={choice} className="min-h-[44px]">
-                <ExpiryLabel choice={choice} />
-              </SelectItem>
-            ))}
-          </SelectField>
+            options={SEALED_EXPIRY_CHOICES.map((choice) => ({
+              value: choice,
+              label: expiryLabel(t, choice),
+            }))}
+          />
         )}
       </form.Field>
       <form.Subscribe selector={(state) => state.values.expiry}>
@@ -559,10 +555,7 @@ export function SealedGrantDialog({
   const { t } = useTranslation("kb");
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent
-        data-testid="sealed-grant-dialog"
-        className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg"
-      >
+      <DialogContent data-testid="sealed-grant-dialog" className="max-h-[90svh] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="break-words">
             {t("settings.sealed.grantDialog.title", {

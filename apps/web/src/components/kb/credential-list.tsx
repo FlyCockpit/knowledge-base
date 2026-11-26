@@ -13,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@knowledge-base/ui/components/dialog";
-import { SelectItem } from "@knowledge-base/ui/components/select";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { SelectField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
@@ -692,7 +691,7 @@ function PatCreateForm({
   const minted = mint.data;
   return (
     <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
+      <DialogContent className="max-h-[90svh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {minted
@@ -804,28 +803,15 @@ function PatCreateForm({
                   label={t("settings:credentials.expiryLabel")}
                   description={t("settings:credentials.expiryHelp", { max: MAX_TTL_DAYS })}
                   // The value is a day count ("90"); show it with its unit.
-                  valueLabel={
-                    field.state.value === "custom"
-                      ? t("settings:credentials.expiryCustom")
-                      : field.state.value === "none"
-                        ? t("settings:credentials.expiryNone")
-                        : t("settings:credentials.expiryDays", {
-                            count: Number(field.state.value),
-                          })
-                  }
-                >
-                  {EXPIRY_PRESETS.map((days) => (
-                    <SelectItem key={days} value={days} className="min-h-[44px]">
-                      {t("settings:credentials.expiryDays", { count: Number(days) })}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="custom" className="min-h-[44px]">
-                    {t("settings:credentials.expiryCustom")}
-                  </SelectItem>
-                  <SelectItem value="none" className="min-h-[44px]">
-                    {t("settings:credentials.expiryNone")}
-                  </SelectItem>
-                </SelectField>
+                  options={[
+                    ...EXPIRY_PRESETS.map((days) => ({
+                      value: days,
+                      label: t("settings:credentials.expiryDays", { count: Number(days) }),
+                    })),
+                    { value: "custom", label: t("settings:credentials.expiryCustom") },
+                    { value: "none", label: t("settings:credentials.expiryNone") },
+                  ]}
+                />
               )}
             </form.Field>
             <form.Subscribe selector={(state) => state.values.expiry}>

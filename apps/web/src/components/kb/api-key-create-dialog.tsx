@@ -15,7 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@knowledge-base/ui/components/dialog";
-import { SelectItem } from "@knowledge-base/ui/components/select";
 import { SelectField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -277,7 +276,7 @@ function ApiKeyCreateForm({
   const mintErrorCode = (mint.error as { code?: unknown } | null)?.code;
   return (
     <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
+      <DialogContent className="max-h-[90svh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {minted ? t("settings:apiKeys.createdTitle") : t("settings:apiKeys.createTitle")}
@@ -341,28 +340,15 @@ function ApiKeyCreateForm({
                   field={field}
                   label={t("settings:credentials.expiryLabel")}
                   description={t("settings:apiKeys.expiryHelp", { max: MAX_TTL_DAYS })}
-                  valueLabel={
-                    field.state.value === "custom"
-                      ? t("settings:credentials.expiryCustom")
-                      : field.state.value === "none"
-                        ? t("settings:apiKeys.expiryNone")
-                        : t("settings:credentials.expiryDays", {
-                            count: Number(field.state.value),
-                          })
-                  }
-                >
-                  {EXPIRY_PRESETS.map((days) => (
-                    <SelectItem key={days} value={days} className="min-h-[44px]">
-                      {t("settings:credentials.expiryDays", { count: Number(days) })}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="custom" className="min-h-[44px]">
-                    {t("settings:credentials.expiryCustom")}
-                  </SelectItem>
-                  <SelectItem value="none" className="min-h-[44px]">
-                    {t("settings:apiKeys.expiryNone")}
-                  </SelectItem>
-                </SelectField>
+                  options={[
+                    ...EXPIRY_PRESETS.map((days) => ({
+                      value: days,
+                      label: t("settings:credentials.expiryDays", { count: Number(days) }),
+                    })),
+                    { value: "custom", label: t("settings:credentials.expiryCustom") },
+                    { value: "none", label: t("settings:apiKeys.expiryNone") },
+                  ]}
+                />
               )}
             </form.Field>
             <form.Subscribe selector={(state) => state.values.expiry}>

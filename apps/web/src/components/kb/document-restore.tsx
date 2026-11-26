@@ -184,10 +184,7 @@ export function RestoreVersionDialog({
 
   return (
     <Dialog open={open && !lost} onOpenChange={close}>
-      <DialogContent
-        data-testid="restore-dialog"
-        className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-2xl"
-      >
+      <DialogContent data-testid="restore-dialog" className="max-h-[90svh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("restore.title")}</DialogTitle>
           <DialogDescription>

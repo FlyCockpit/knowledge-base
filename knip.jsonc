@@ -1,5 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema-jsonc.json",
+  "ignoreIssues": {
+    // Shared with the template unchanged: `mockSession` serves apps with a
+    // mock mode, and this app signs in for real (scripts/browser-checks.config.ts).
+    "scripts/browser-check-lib.ts": ["exports"]
+  },
   "workspaces": {
     ".": {
       "entry": [
@@ -42,8 +47,9 @@
       "ignoreBinaries": [
         // Global local-dev CLI. Intentionally not listed in package.json.
         "portless",
-        // Global agent browser CLI, driven by scripts/check-layout.ts
-        // (docs/ui.md § Shell rules). Not an npm dependency on purpose.
+        // Global agent browser CLI (docs/ui.md § Shell rules, § Browser checks),
+        // driven by scripts/check-layout.ts and scripts/browser-check-lib.ts
+        // (check:dialogs, check:shell-loading). Not an npm dependency on purpose.
         "agent-browser",
         // Host toolchain for apps/server/native/kb-supervisor.c (not an npm package).
         "make",

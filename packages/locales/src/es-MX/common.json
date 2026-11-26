@@ -65,6 +65,57 @@
   "breadcrumbs": {
     "ariaLabel": "Ruta de navegación"
   },
+  "forms": {
+    "range": {
+      "inputLabel": "Valor exacto",
+      "reset": "Restablecer al valor predeterminado",
+      "adjusted": "{{reason}}. Se ajustó a {{value}}.",
+      "default": "Predeterminado",
+      "defaultFrom": "Predeterminado (de {{source}})",
+      "limit": "Aquí hay como máximo {{limit}} disponible",
+      "errors": {
+        "notANumber": "Escribe un número",
+        "belowMin": "Debe ser al menos {{min}}",
+        "aboveMax": "Debe ser como máximo {{max}}",
+        "offStep": "Debe ser múltiplo de {{step}}"
+      }
+    },
+    "keyValue": {
+      "key": "Clave",
+      "value": "Valor",
+      "keyInput": "Clave, fila {{row}}",
+      "valueInput": "Valor de {{key}}",
+      "valueInputRow": "Valor, fila {{row}}",
+      "unparsedLine": "Línea sin interpretar, fila {{row}}",
+      "maskedLines_one": "{{count}} línea, oculta",
+      "maskedLines_other": "{{count}} líneas, ocultas",
+      "add": "Agregar variable",
+      "remove": "Quitar {{key}}",
+      "removeRow": "Quitar fila {{row}}",
+      "reveal": "Mostrar el valor de {{key}}",
+      "revealRow": "Mostrar el valor, fila {{row}}",
+      "importFile": "Importar archivo .env",
+      "mode": "Modo de edición",
+      "rowsMode": "Filas",
+      "textMode": "Texto .env",
+      "textHint": "Una línea CLAVE=valor por variable. Las líneas que empiezan con # se ignoran. Puedes pegar un archivo .env completo.",
+      "secretTextHint": "En esta vista los valores secretos se muestran sin ocultar.",
+      "errors": {
+        "emptyKey": "Escribe una clave para este valor",
+        "invalidKey": "{{key}} no es una clave válida. Usa letras, dígitos y guiones bajos, sin empezar con un dígito.",
+        "duplicateKey": "{{key}} está definida más de una vez",
+        "reservedKey": "{{key}} la define la plataforma y no se puede cambiar aquí",
+        "line": "Línea {{line}}: {{reason}}",
+        "lineReasons": {
+          "missing-equals": "se esperaba CLAVE=valor",
+          "invalid-key": "la clave está vacía o contiene espacios o comillas",
+          "unterminated-quote": "el valor entre comillas nunca se cierra",
+          "trailing-characters": "hay texto inesperado después de la comilla de cierre",
+          "duplicate-key": "esta clave ya estaba definida; gana el último valor"
+        }
+      }
+    }
+  },
   "offline": {
     "backOnline": "Conexión restablecida.",
     "band": "No tienes conexión. Los cambios que hagas no se guardarán hasta que te vuelvas a conectar.",

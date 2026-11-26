@@ -11,6 +11,7 @@ import {
 } from "@knowledge-base/ui/components/dialog";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -38,20 +39,12 @@ import {
 } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { usePayloadAttemptKey } from "@/hooks/use-payload-attempt-key";
+import { KB_GRID_CLASS } from "@/lib/kb-grid";
 import { networkFailureKind } from "@/lib/network-failure";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export type KbItem = Awaited<ReturnType<AppRouterClient["kbs"]["list"]>>["items"][number];
-
-/**
- * As many 15rem-or-wider columns as the list's width holds: one on phones,
- * two on most tablets, three in the default page column. It follows the
- * column, not the viewport, so the sidebar's width counts, and it is rem, so
- * a 4K screen gets the same three columns, scaled (docs/ui.md § Viewport
- * scale), instead of two cards stretched across the screen.
- */
-export const KB_GRID_CLASS = "grid-cols-[repeat(auto-fill,minmax(min(100%,15rem),1fr))]";
 
 export const kbHref = (lang: string, kbId: string) =>
   `/${encodeURIComponent(lang)}/kbs/${encodeURIComponent(kbId)}`;
@@ -315,7 +308,7 @@ function KbCreateSession({
   }
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90svh] overflow-y-auto overflow-x-hidden sm:max-w-lg">
+      <DialogContent className="max-h-[90svh] sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("kb:create.title")}</DialogTitle>
           <DialogDescription>{t("kb:create.description")}</DialogDescription>
@@ -486,51 +479,53 @@ function KbMetadataSession({
         onOpenChange(next);
       }}
     >
-      <SheetContent className="overflow-y-auto overflow-x-hidden">
+      <SheetContent>
         <SheetHeader>
           <SheetTitle>{t("kb:manage.editTitle")}</SheetTitle>
           <SheetDescription>{t("kb:manage.editDescription")}</SheetDescription>
         </SheetHeader>
         <form
-          className="min-w-0 space-y-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(e) => {
             e.preventDefault();
             e.stopPropagation();
             form.handleSubmit();
           }}
         >
-          <form.Field name="name">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("kb:create.name")}
-                autoComplete="off"
-                inputMode="text"
-                maxLength={240}
-              />
+          <SheetBody className="space-y-4">
+            <form.Field name="name">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("kb:create.name")}
+                  autoComplete="off"
+                  inputMode="text"
+                  maxLength={240}
+                />
+              )}
+            </form.Field>
+            <form.Field name="description">
+              {(field) => (
+                <TextareaField
+                  field={field}
+                  label={t("kb:create.descriptionLabel")}
+                  autoComplete="off"
+                  maxLength={4000}
+                />
+              )}
+            </form.Field>
+            {conflict && (
+              <p role="alert" className="text-sm text-destructive">
+                {t("kb:manage.conflict")}
+              </p>
             )}
-          </form.Field>
-          <form.Field name="description">
-            {(field) => (
-              <TextareaField
-                field={field}
-                label={t("kb:create.descriptionLabel")}
-                autoComplete="off"
-                maxLength={4000}
-              />
+            {update.isError && !conflict && (
+              <p role="alert" className="text-sm text-destructive">
+                {t("kb:manage.error")}
+              </p>
             )}
-          </form.Field>
-          {conflict && (
-            <p role="alert" className="text-sm text-destructive">
-              {t("kb:manage.conflict")}
-            </p>
-          )}
-          {update.isError && !conflict && (
-            <p role="alert" className="text-sm text-destructive">
-              {t("kb:manage.error")}
-            </p>
-          )}
-          <SheetFooter className="px-0">
+          </SheetBody>
+          <SheetFooter>
             <Button type="submit" className="min-h-[44px]" disabled={update.isPending || conflict}>
               {update.isPending ? t("kb:manage.saving") : t("kb:manage.save")}
             </Button>

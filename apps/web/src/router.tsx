@@ -7,8 +7,8 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import { getRequestHeader } from "@tanstack/react-start/server";
 
 import ErrorState from "./components/error-state";
-import Loader from "./components/loader";
 import NotFoundState from "./components/not-found-state";
+import { RouteContentSkeleton } from "./components/route-content-skeleton";
 import i18n, { createRequestI18n } from "./i18n";
 import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
 import { networkFailureKind } from "./lib/network-failure";
@@ -134,7 +134,11 @@ export function getRouter() {
     routeTree,
     defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
-    defaultPendingComponent: () => <Loader />,
+    // A loading route shows a skeleton of its own content area, shaped by its
+    // `staticData` (lib/pending-layout.ts), inside the shell that is already
+    // on screen: never a bare spinner, never a frame without the nav.
+    // See docs/ui.md § Route pending states
+    defaultPendingComponent: RouteContentSkeleton,
     defaultErrorComponent: ErrorState,
     defaultNotFoundComponent: () => <NotFoundState />,
     context: {

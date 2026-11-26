@@ -22,6 +22,7 @@ import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/api-keys")({
+  staticData: { pendingShape: "list" },
   head: ({ match }) =>
     pageHead(
       match.context.i18n.t("settings:navApiKeys"),

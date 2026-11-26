@@ -18,6 +18,7 @@ type Filter = Status | "ALL";
 const STATUSES: readonly Status[] = ["OPEN", "CONFLICT", "CLOSED", "MERGED"];
 
 export const Route = createFileRoute("/$lang/_app/_auth/kbs/$kbId/prs/")({
+  staticData: { pendingShape: "list" },
   validateSearch: (search: Record<string, unknown>): { status?: Status } => ({
     status: STATUSES.includes(search.status as Status) ? (search.status as Status) : undefined,
   }),

@@ -93,7 +93,7 @@ Treat it like a native app.
 - Touch targets ≥ 44px on mobile. Don't override global `touch-action: manipulation` / tap-highlight / overscroll in `globals.css`.
 - Don't add a second nav bar. BottomNav hides only when `useMobileKeyboard()` reports a software keyboard.
 - Never use `transition: all` or the `transition-all` utility — list only the properties you animate. Respect `prefers-reduced-motion`.
-- Loading: `<Skeleton>` mirroring the final layout. Spinners only inside a pending button or the router's `defaultPendingComponent`.
+- Loading: `<Skeleton>` mirroring the final layout. Spinners only inside a pending button, never as a placeholder. Route loading keeps the shell.
 - Any user-copyable value goes through `CopyField` (single-line) / `CodeSnippet` (multi-line block) from `packages/ui`.
 - Never set `overflow-y: auto` without an explicit `overflow-x`. Intentional horizontal scroll: `SelectorRow` or `WideContent`.
 
@@ -108,7 +108,7 @@ Treat it like a native app.
 
 ### UI overlays
 
-Create → Dialog · Edit → Sheet · View Details → Dialog/Drawer · Delete → AlertDialog with type-to-confirm.
+Create → Dialog · Edit → Sheet · View Details → Dialog/Drawer · Delete → AlertDialog with type-to-confirm. Long forms: [Form surfaces](./docs/ui.md#form-surfaces).
 
 ### React
 

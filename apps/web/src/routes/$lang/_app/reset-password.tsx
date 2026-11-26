@@ -21,6 +21,7 @@ import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/reset-password")({
+  staticData: { pendingShape: "auth" },
   validateSearch: (search: Record<string, unknown>) => ({
     token: typeof search.token === "string" ? search.token : undefined,
     error: typeof search.error === "string" ? search.error : undefined,

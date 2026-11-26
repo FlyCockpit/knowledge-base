@@ -21,6 +21,7 @@ vi.mock("@knowledge-base/ui/components/sheet", () => {
   const pass = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   return {
     Sheet: pass,
+    SheetBody: pass,
     SheetContent: pass,
     SheetHeader: pass,
     SheetFooter: pass,
