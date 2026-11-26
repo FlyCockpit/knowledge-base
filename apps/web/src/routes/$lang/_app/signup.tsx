@@ -17,6 +17,7 @@ import { authClient } from "@/lib/auth-client";
 import { setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import { ensureRouteQuery } from "@/lib/route-query";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { signupMode } from "@/lib/signup-mode";
 import { getRouteSession } from "@/server/auth-session";
@@ -34,7 +35,9 @@ export const Route = createFileRoute("/$lang/_app/signup")({
     if (decision.kind === "redirect-authenticated") {
       throw redirect({ href: safeRedirectTo(search.redirectTo, params.lang) });
     }
-    const cfg = await context.queryClient.ensureQueryData(orpc.appConfig.queryOptions());
+    const cfg = await ensureRouteQuery(context.queryClient, orpc.appConfig.queryKey(), () =>
+      orpc.appConfig.call(),
+    );
     // SSO-only servers have no password sign-up at all: their sign-in page
     // explains it. A closed (invite-only) server renders its own state below
     // instead of a silent bounce, so the visitor learns why there is no form.

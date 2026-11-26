@@ -14,6 +14,7 @@ import { AuthCard } from "@/components/auth/auth-screen";
 import { authClient } from "@/lib/auth-client";
 import { pageHead } from "@/lib/page-title";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import { ensureRouteQuery } from "@/lib/route-query";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
@@ -38,7 +39,9 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
       throw redirect({ to: "/$lang/settings/security", params: { lang: params.lang } });
     }
     // Same SSO deflection as signup: an SSO-only org has no password flow.
-    const cfg = await context.queryClient.ensureQueryData(orpc.appConfig.queryOptions());
+    const cfg = await ensureRouteQuery(context.queryClient, orpc.appConfig.queryKey(), () =>
+      orpc.appConfig.call(),
+    );
     if (cfg.forceSso) {
       throw redirect({
         to: "/$lang/login",

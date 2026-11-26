@@ -57,7 +57,7 @@ vi.mock("@/components/pull-to-refresh", () => ({
 }));
 vi.mock("@/utils/orpc", () => ({
   orpc: {
-    appConfig: { queryOptions: () => ({}) },
+    appConfig: { queryOptions: () => ({}), queryKey: () => ["appConfig"], call: async () => ({}) },
     kbs: { list: { queryOptions: () => ({}) } },
     mcpGrants: { countActiveMine: { queryOptions: () => ({}) } },
     setup: { claimFirstAdmin: { mutationOptions: () => ({}) } },
