@@ -41,7 +41,7 @@ services:
       retries: 60
 
   redis:
-    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    image: valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882
     command: ["valkey-server", "--maxmemory-policy", "noeviction"]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
@@ -50,7 +50,7 @@ services:
       retries: 60
 
   mailpit:
-    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "true"
       MP_SMTP_AUTH_ALLOW_INSECURE: "true"
@@ -89,7 +89,7 @@ services:
         condition: service_healthy
 
   caddy:
-    image: caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     environment:
       SMOKE_PORT: ${SMOKE_PORT}
     command:
