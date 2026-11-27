@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Toaster as SileoToaster, sileo } from "sileo";
 import "sileo/styles.css";
 
@@ -14,9 +15,43 @@ interface ToasterProps {
 // No `theme`: sileo's themes invert the page (a light pill on a dark app).
 // The toast takes the app's popover tokens from globals.css instead, so it
 // follows `.dark` like every other surface, with no JS theme state.
-const Toaster = ({ position = "bottom-center", ...props }: ToasterProps) => (
-  <SileoToaster position={position} {...props} />
-);
+const Toaster = ({ position = "bottom-center", ...props }: ToasterProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={containerRef}
+      style={{ display: "contents" }}
+      onFocusCapture={(event) => {
+        const toast = (event.target as Element).closest("[data-sileo-toast]");
+        if (toast && !containerRef.current?.contains(event.relatedTarget as Node | null)) {
+          toast.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        }
+      }}
+      onBlurCapture={(event) => {
+        const toast = (event.target as Element).closest("[data-sileo-toast]");
+        if (
+          toast &&
+          !containerRef.current?.contains(event.relatedTarget as Node | null) &&
+          !containerRef.current?.querySelector("[data-sileo-toast]:hover")
+        ) {
+          toast.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+        }
+      }}
+      onMouseOutCapture={(event) => {
+        const toast = (event.target as Element).closest("[data-sileo-toast]");
+        if (
+          event.isTrusted &&
+          toast &&
+          containerRef.current?.contains(document.activeElement) &&
+          !toast.contains(event.relatedTarget as Node | null)
+        )
+          event.stopPropagation();
+      }}
+    >
+      <SileoToaster position={position} {...props} />
+    </div>
+  );
+};
 
 type ToastOptions = {
   duration?: number;
@@ -84,7 +119,10 @@ function createToastMethod(method: "success" | "error" | "info" | "warning" | "s
       ...(titleOverflowsPill(message) ? { description: message } : {}),
       ...(options?.duration != null ? { duration: options.duration } : {}),
       ...(options?.action
-        ? { button: { title: options.action.label, onClick: options.action.onClick } }
+        ? {
+            autopilot: { expand: 0, collapse: 0 },
+            button: { title: options.action.label, onClick: options.action.onClick },
+          }
         : {}),
     } as Parameters<typeof sileo.show>[0]);
   };

@@ -194,6 +194,7 @@ describe("stateless SDK endpoint", () => {
       });
       if (method === "tools/list")
         expect(body.result.tools.map((tool) => tool.name)).toEqual([
+          "knowledge_bases_list",
           "knowledge_documents_list",
           "knowledge_documents_get",
           "knowledge_search",
@@ -537,13 +538,17 @@ describe("stateless legacy 2025-06-18 compatibility and security parity", () => 
         };
       };
       expect(listBody.result.tools.map((t) => t.name)).toEqual([
+        "knowledge_bases_list",
         "knowledge_documents_list",
         "knowledge_documents_get",
         "knowledge_search",
         "knowledge_search_all",
         "knowledge_structured_search",
       ]);
-      expect(listBody.result.tools[0]?.inputSchema.properties?.kbId?.enum).toEqual([kbId]);
+      expect(
+        listBody.result.tools.find((tool) => tool.name === "knowledge_documents_list")?.inputSchema
+          .properties?.kbId?.enum,
+      ).toEqual([kbId]);
 
       // Discovery ran for initialize and tools/list, not notifications/initialized.
       expect(localInputs).toHaveBeenCalledTimes(2);

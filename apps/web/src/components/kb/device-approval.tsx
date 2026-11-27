@@ -95,7 +95,9 @@ export function DeviceApproval(props: DeviceApprovalProps) {
     <AuthScreen>
       <Card className="my-8 w-full max-w-xl">
         <CardHeader>
-          <CardTitle className="text-2xl">{t("consent:device.title")}</CardTitle>
+          <CardTitle className="text-2xl">
+            <h1>{t("consent:device.title")}</h1>
+          </CardTitle>
           <CardDescription>{t("consent:device.description")}</CardDescription>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pt-2 text-sm">
             <dt className="text-muted-foreground">{t("consent:device.codeLabel")}</dt>
@@ -449,7 +451,9 @@ export function DeviceCodeForm({
     <AuthScreen>
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">{t("device.enterTitle")}</CardTitle>
+          <CardTitle className="text-2xl">
+            <h1>{t("device.enterTitle")}</h1>
+          </CardTitle>
           <CardDescription>{t("device.enterDescription")}</CardDescription>
         </CardHeader>
         <CardContent>

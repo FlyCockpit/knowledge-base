@@ -15,9 +15,8 @@ const NATIVE_HTTP_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
  */
 export function isStrictLoopbackHttpRedirect(uri: string): boolean {
   if (/[\\\s]/.test(uri)) return false;
-  const literal = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d{1,5}))?(?:[/?][^#]*)?$/i.exec(
-    uri,
-  );
+  const literal =
+    /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::([1-9]\d{0,4}))?(?:[/?][^#]*)?$/i.exec(uri);
   if (!literal) return false;
   const host = literal[1]!.toLowerCase();
   const port = literal[2];
@@ -35,7 +34,7 @@ export function isStrictLoopbackHttpRedirect(uri: string): boolean {
     parsed.hostname.toLowerCase() === host &&
     NATIVE_HTTP_LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase()) &&
     // WHATWG drops a default/explicit port identically; any other rewrite is a disagreement.
-    (port === undefined || parsed.port === "" || parsed.port === String(Number(port)))
+    (port === undefined || parsed.port === "" || parsed.port === port)
   );
 }
 
@@ -59,7 +58,7 @@ function loopbackWithoutPort(uri: string): string | null {
 export function isRegisteredRedirectUri(registered: readonly string[], requested: string): boolean {
   // Refused before any comparison, as Better Auth does: a fragment (even an
   // empty one), userinfo, or a URI that doesn't parse.
-  if (requested.includes("#")) return false;
+  if (requested.includes("#") || /[\\\s]/.test(requested)) return false;
   let url: URL;
   try {
     url = new URL(requested);
@@ -67,6 +66,7 @@ export function isRegisteredRedirectUri(registered: readonly string[], requested
     return false;
   }
   if (url.username !== "" || url.password !== "") return false;
+  if (url.protocol === "http:" && !isStrictLoopbackHttpRedirect(requested)) return false;
   if (registered.includes(requested)) return true;
   const portless = loopbackWithoutPort(requested);
   return portless !== null && registered.some((uri) => loopbackWithoutPort(uri) === portless);

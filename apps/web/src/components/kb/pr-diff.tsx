@@ -24,7 +24,7 @@ const AUTO_RENDER = 10;
 export type DiffLine = { kind: "same" | "added" | "removed"; text: string };
 
 /**
- * Supplementary line diff (common prefix/suffix, changed middle). The rendered
+ * Supplementary bounded line diff. The rendered
  * before/after pair is the review surface; this is never a substitute for it.
  */
 export function lineDiff(before: string | null, after: string | null): DiffLine[] {
@@ -38,12 +38,68 @@ export function lineDiff(before: string | null, after: string | null): DiffLine[
     endA--;
     endB--;
   }
-  return [
-    ...a.slice(0, start).map((text) => ({ kind: "same" as const, text })),
-    ...a.slice(start, endA).map((text) => ({ kind: "removed" as const, text })),
-    ...b.slice(start, endB).map((text) => ({ kind: "added" as const, text })),
-    ...a.slice(endA).map((text) => ({ kind: "same" as const, text })),
-  ];
+  const m = endA - start;
+  const n = endB - start;
+  const maxD = 2000;
+  const offset = maxD + 1;
+  const frontier = new Int32Array(2 * maxD + 3);
+  const trace: Int32Array[] = [];
+  let distance = -1;
+  if (Math.abs(m - n) <= maxD && m > 0 && n > 0) {
+    for (let d = 0; d <= maxD && distance < 0; d++) {
+      trace.push(frontier.slice());
+      for (let k = -d; k <= d; k += 2) {
+        let x =
+          k === -d || (k !== d && frontier[offset + k - 1]! < frontier[offset + k + 1]!)
+            ? frontier[offset + k + 1]!
+            : frontier[offset + k - 1]! + 1;
+        let y = x - k;
+        while (x < m && y < n && a[start + x] === b[start + y]) {
+          x++;
+          y++;
+        }
+        frontier[offset + k] = x;
+        if (x >= m && y >= n) {
+          distance = d;
+          break;
+        }
+      }
+    }
+  }
+  const middle: DiffLine[] = [];
+  if (distance >= 0) {
+    let x = m;
+    let y = n;
+    for (let d = distance; d > 0; d--) {
+      const previous = trace[d]!;
+      const k = x - y;
+      const previousK =
+        k === -d || (k !== d && previous[offset + k - 1]! < previous[offset + k + 1]!)
+          ? k + 1
+          : k - 1;
+      const previousX = previous[offset + previousK]!;
+      const previousY = previousX - previousK;
+      while (x > previousX && y > previousY) {
+        middle.push({ kind: "same", text: a[start + --x]! });
+        y--;
+      }
+      if (x === previousX) middle.push({ kind: "added", text: b[start + --y]! });
+      else middle.push({ kind: "removed", text: a[start + --x]! });
+    }
+    while (x > 0 && y > 0) {
+      middle.push({ kind: "same", text: a[start + --x]! });
+      y--;
+    }
+    middle.reverse();
+  } else {
+    for (let i = start; i < endA; i++) middle.push({ kind: "removed", text: a[i]! });
+    for (let i = start; i < endB; i++) middle.push({ kind: "added", text: b[i]! });
+  }
+  const result: DiffLine[] = [];
+  for (let i = 0; i < start; i++) result.push({ kind: "same", text: a[i]! });
+  for (const line of middle) result.push(line);
+  for (let i = endA; i < a.length; i++) result.push({ kind: "same", text: a[i]! });
+  return result;
 }
 
 export function PrDiffProgress({

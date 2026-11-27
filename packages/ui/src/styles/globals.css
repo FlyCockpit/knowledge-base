@@ -8,6 +8,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --toast-bottom-clearance: 0px;
   --background: oklch(1 0 0);
   --foreground: oklch(0.148 0.004 228.8);
   --card: oklch(1 0 0);
@@ -459,8 +460,15 @@
    the bottom nav instead of covering it (--bottom-nav-height), or above the
    home indicator where there is no nav. One more attribute than sileo's
    `[data-sileo-viewport][data-position^="bottom"] { bottom: 0 }`. */
+:root:has([data-testid="editor-save-bar"]) {
+  --toast-bottom-clearance: 5rem;
+}
+
 :root [data-sileo-viewport][data-position^="bottom"] {
-  bottom: max(var(--bottom-nav-height), var(--safe-area-bottom));
+  bottom: calc(
+    max(var(--bottom-nav-height), var(--safe-area-bottom)) +
+    var(--toast-bottom-clearance)
+  );
 }
 /* sileo draws the action ("Undo", "Try again") 28px tall. On a touch screen
    it is at least 44px (AGENTS.md § PWA touch targets); the expanded body
@@ -489,4 +497,24 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Action content remains in the toast's hit area even after a pointer leave. */
+:root [data-sileo-toast]:has([data-sileo-button]) {
+  height: auto;
+  padding-top: var(--sileo-height);
+  pointer-events: auto;
+}
+:root [data-sileo-toast]:has([data-sileo-content][data-edge="top"] [data-sileo-button]) {
+  padding-top: 0;
+  padding-bottom: var(--sileo-height);
+}
+:root [data-sileo-toast]:has([data-sileo-button]) [data-sileo-content] {
+  position: relative;
+  top: auto;
+  opacity: 1;
+  pointer-events: auto;
+  content-visibility: visible;
+  background: var(--popover);
+  border-radius: 0.75rem;
 }

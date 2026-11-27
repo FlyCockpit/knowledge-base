@@ -12,6 +12,7 @@ import z from "zod";
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
+import { useRedirectWhenAuthenticated } from "@/hooks/use-redirect-when-authenticated";
 import { authClient } from "@/lib/auth-client";
 import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { pageHead } from "@/lib/page-title";
@@ -54,6 +55,11 @@ function ForgotPasswordPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   const authSession = useAuthSession();
+  useRedirectWhenAuthenticated({
+    status: authSession.state.status,
+    href: safeRedirectTo(redirectTo, lang),
+    enabled: true,
+  });
   const {
     isPending: configPending,
     // Only a first load that failed: a failed background refetch (refocus,
@@ -145,6 +151,7 @@ function ForgotPasswordForm({ lang, onSubmitted }: { lang: string; onSubmitted: 
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();

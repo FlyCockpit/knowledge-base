@@ -27,6 +27,7 @@ import { kbsRouter } from "./kbs";
 import { mcpConsentRouter } from "./mcp-consent";
 import { mcpGrantsRouter } from "./mcp-grants";
 import { mcpTokensRouter } from "./mcp-tokens";
+import { oauthClientsRouter } from "./oauth-clients";
 import { pullRequestsRouter } from "./pull-requests";
 import { pushRouter } from "./push";
 import { queueRouter } from "./queue";
@@ -77,6 +78,7 @@ export const appRouter = {
   push: pushRouter,
   queue: queueRouter,
   users: usersRouter,
+  oauthClients: oauthClientsRouter,
   kbs: kbsRouter,
   kbPins: kbPinsRouter,
   documents: documentsRouter,

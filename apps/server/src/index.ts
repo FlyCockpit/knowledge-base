@@ -81,10 +81,12 @@ import {
   credentialLimiter,
   mcpConsentLimiter,
   mcpRegistrationLimiter,
+  passwordResetLimiter,
   readyLimiter,
   resolveKey,
   rpcLimiter,
   signinRecipientLimiter,
+  signOutLimiter,
   signupLimiter,
   signupRecipientLimiter,
   ssrLimiter,
@@ -522,11 +524,32 @@ for (const path of ["/api/auth/sign-in/*", "/api/auth/two-factor/*"]) {
 // why the key is the challenge rather than the recipient.
 app.use(TWO_FACTOR_OTP_PATH, twoFactorOtpLimit());
 
-// Rate limit the remaining auth endpoints, EXCEPT get-session (handled above).
+// Recovery and sign-out use independent fail-closed IP buckets.
+const resetPaths = [
+  "/api/auth/reset-password",
+  "/api/auth/request-password-reset",
+  "/api/auth/forget-password",
+];
+const isResetPath = (path: string) =>
+  resetPaths.includes(path) || path.startsWith("/api/auth/reset-password/");
+const signOutRateLimit = createRateLimiterMiddleware(signOutLimiter, { failClosed: true });
+const resetRateLimit = createRateLimiterMiddleware(passwordResetLimiter, { failClosed: true });
+app.use("/api/auth/*", async (c, next) => {
+  if (c.req.path === "/api/auth/sign-out") return signOutRateLimit(c, next);
+  if (isResetPath(c.req.path)) return resetRateLimit(c, next);
+  return next();
+});
+
+// Rate limit the remaining auth endpoints, except the independent surfaces above.
 // Must be mounted BEFORE the auth handler so every auth request is throttled.
 const authRateLimit = createRateLimiterMiddleware(authLimiter, { failClosed: true });
 app.use("/api/auth/*", async (c, next) => {
-  if (c.req.path.endsWith("/get-session")) return next();
+  if (
+    c.req.path === "/api/auth/get-session" ||
+    c.req.path === "/api/auth/sign-out" ||
+    isResetPath(c.req.path)
+  )
+    return next();
   return authRateLimit(c, next);
 });
 

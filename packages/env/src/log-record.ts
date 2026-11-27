@@ -281,6 +281,7 @@ export type PasswordPepperEvent =
   | {
       event: "key-refused";
       unknownFingerprint: string;
+      unknownFingerprints?: string;
       fingerprint: string;
       previousFingerprint?: string;
       count: number;
@@ -477,15 +478,21 @@ function validatePasswordPepperRecord(input: Record<string, unknown>): LogRecord
   const keys = [...shapes[input.event]!];
   if (input.event === "key-refused" && Object.hasOwn(input, "previousFingerprint"))
     keys.push("previousFingerprint");
+  if (input.event === "key-refused" && Object.hasOwn(input, "unknownFingerprints"))
+    keys.push("unknownFingerprints");
   if (Object.keys(input).length !== keys.length + 4) return;
   for (const key of keys) {
     const value = input[key];
     if (
-      key === "count"
-        ? typeof value !== "number" || !Number.isSafeInteger(value) || value < 0
-        : key === "docs"
-          ? value !== PASSWORD_PEPPER_DOCS
-          : typeof value !== "string" || !/^[0-9a-f]{16}$/.test(value)
+      key === "unknownFingerprints"
+        ? typeof value !== "string" ||
+          !/^[0-9a-f]{16}(?:, [0-9a-f]{16})+$/.test(value) ||
+          !value.startsWith(`${input.unknownFingerprint}, `)
+        : key === "count"
+          ? typeof value !== "number" || !Number.isSafeInteger(value) || value < 0
+          : key === "docs"
+            ? value !== PASSWORD_PEPPER_DOCS
+            : typeof value !== "string" || !/^[0-9a-f]{16}$/.test(value)
     )
       return;
   }

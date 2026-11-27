@@ -31,6 +31,7 @@ import { useAnalyticsConsent } from "@/hooks/use-analytics-consent";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import { useHashTargetScroll } from "@/hooks/use-hash-target-scroll";
 import { useStaleBuildRecovery } from "@/hooks/use-stale-build-recovery";
+import { useSyncDocumentTitle } from "@/hooks/use-sync-document-title";
 import { DEFAULT_LOCALE, localeFromPathname } from "@/i18n/config";
 import { I18nReady } from "@/i18n/I18nReady";
 import { isNotFoundHead, pageTitle } from "@/lib/page-title";
@@ -181,6 +182,7 @@ function RootComponent() {
   // an installed PWA's default start_url is the public home, and without
   // registration there it would neither precache nor ever pick up new builds.
   // Effect-only — it never runs during SSR.
+  useSyncDocumentTitle();
   useAppUpdate();
   useHashTargetScroll();
   useStaleBuildRecovery();

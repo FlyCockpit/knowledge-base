@@ -235,6 +235,27 @@ export const authLimiter = new RateLimiterRedis({
   inMemoryBlockDuration: authBudget.blockSeconds,
 });
 
+// Separate fail-closed buckets keep unrelated auth traffic from blocking recovery.
+export const signOutLimiter = new RateLimiterRedis({
+  storeClient: redisConnection,
+  keyPrefix: "rl:sign-out",
+  points: authBudget.points,
+  duration: authBudget.durationSeconds,
+  blockDuration: authBudget.blockSeconds,
+  inMemoryBlockOnConsumed: authBudget.points + 1,
+  inMemoryBlockDuration: authBudget.blockSeconds,
+});
+
+export const passwordResetLimiter = new RateLimiterRedis({
+  storeClient: redisConnection,
+  keyPrefix: "rl:password-reset",
+  points: authBudget.points,
+  duration: authBudget.durationSeconds,
+  blockDuration: authBudget.blockSeconds,
+  inMemoryBlockOnConsumed: authBudget.points + 1,
+  inMemoryBlockDuration: authBudget.blockSeconds,
+});
+
 /**
  * Signup limiter — applied to /api/auth/sign-up/* to prevent account-creation
  * spam. 10 requests / 3600 s per key with a 15-minute block.

@@ -99,6 +99,8 @@ const humanOnly = {
   "apiKeys.listChildrenMine": "human credential management",
   "apiKeys.revokeChildMine": "human credential management",
   "apiKeys.revokeChildrenMine": "human credential management",
+  "oauthClients.list": "instance administration",
+  "oauthClients.delete": "instance administration",
   "push.subscribe": "browser notifications",
   "push.unsubscribe": "browser notifications",
   "push.send": "instance administration",

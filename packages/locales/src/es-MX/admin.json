@@ -1,4 +1,23 @@
 {
+  "oauthClients": {
+    "title": "Clientes OAuth",
+    "description": "Los clientes registrados dinámicamente sin uso caducan automáticamente después de 30 días.",
+    "dynamic": "Dinámico",
+    "registered": "Registrado",
+    "copyId": "Copiar ID del cliente",
+    "created": "Creado: {{date}}",
+    "unknownDate": "Desconocida",
+    "counts": "Permisos activos: {{grants}} · Tokens: {{tokens}}",
+    "delete": "Eliminar",
+    "empty": "No hay clientes OAuth.",
+    "loadFailed": "No se pudieron cargar los clientes OAuth.",
+    "deleted": "Cliente OAuth eliminado.",
+    "deleteTitle": "Eliminar cliente OAuth",
+    "deleteDescription": "¿Eliminar {{name}} y revocar sus permisos y tokens activos?",
+    "deletePrompt": "Escribe DELETE para confirmar.",
+    "copyConfirmation": "Copiar texto de confirmación",
+    "deleteFailed": "No se pudo eliminar el cliente OAuth."
+  },
   "backups": {
     "title": "Respaldos de la base de datos",
     "state": {
@@ -341,7 +360,7 @@
     "roleUser": "Usuario",
     "roleAdmin": "Administrador",
     "localeLabel": "Idioma de los correos",
-    "localeDescription": "La invitación y todos los correos posteriores usan este idioma. La persona puede cambiarlo en su configuración.",
+    "localeDescription": "La invitación y todos los correos posteriores usan este idioma. La persona puede cambiarlo en cualquier momento desde el selector de idioma en el encabezado.",
     "sendInvite": "Enviar invitación",
     "inviting": "Invitando…",
     "revealTitle": "Invitación enviada",

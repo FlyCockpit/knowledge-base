@@ -21,7 +21,13 @@ export default function NotFoundState({ nested = false }: { nested?: boolean }) 
     >
       <FileQuestion aria-hidden className="size-8 text-muted-foreground" />
       <div className="space-y-1">
-        <Heading className="text-lg font-semibold">{t("pageNotFound.title")}</Heading>
+        <Heading
+          className={
+            nested ? "text-lg font-semibold" : "font-heading text-2xl font-semibold tracking-tight"
+          }
+        >
+          {t("pageNotFound.title")}
+        </Heading>
         <p className="text-sm text-muted-foreground">{t("pageNotFound.description")}</p>
       </div>
       <Link to="/" className={buttonVariants({ size: "touch" })}>

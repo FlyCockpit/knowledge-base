@@ -151,6 +151,8 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   "rpc:apiKeys.listChildrenMine": read,
   "rpc:apiKeys.revokeChildMine": audited("api_key_child_revoke"),
   "rpc:apiKeys.revokeChildrenMine": audited("api_key_child_revoke"),
+  "rpc:oauthClients.list": read,
+  "rpc:oauthClients.delete": audited("grant_revoke"),
   "rpc:pullRequests.list": read,
   "rpc:pullRequests.get": read,
   "rpc:pullRequests.conflicts": read,

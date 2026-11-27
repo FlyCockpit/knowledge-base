@@ -42,6 +42,33 @@ describe("lineDiff", () => {
       { kind: "same", text: "end" },
     ]);
   });
+  it("preserves unchanged lines between distant edits", () => {
+    const middle = Array.from({ length: 30 }, (_, i) => `line ${i}`);
+    const result = lineDiff(
+      ["old top", ...middle, "old bottom"].join("\n"),
+      ["new top", ...middle, "new bottom"].join("\n"),
+    );
+    expect(result.filter((line) => line.kind === "same").map((line) => line.text)).toEqual(middle);
+    expect(result.filter((line) => line.kind !== "same")).toHaveLength(4);
+  });
+  it("preserves 998 lines between edits at both ends", () => {
+    const middle = Array.from({ length: 998 }, (_, i) => `line ${i}`);
+    const result = lineDiff(
+      ["old", ...middle, "old end"].join("\n"),
+      ["new", ...middle, "new end"].join("\n"),
+    );
+    expect(result.filter((line) => line.kind === "same").map((line) => line.text)).toEqual(middle);
+  });
+  it("handles very large files without spreading into function arguments", () => {
+    const text = Array(150_000).fill("line").join("\n");
+    expect(lineDiff(null, text)).toHaveLength(150_000);
+    expect(lineDiff(text, text)).toHaveLength(150_000);
+    expect(lineDiff(`${text}\nold`, `${text}\nnew`)).toHaveLength(150_002);
+  });
+  it("bounds work on large unrelated files", () => {
+    const result = lineDiff(Array(501).fill("old").join("\n"), Array(501).fill("new").join("\n"));
+    expect(result).toHaveLength(1002);
+  });
   it("added and deleted files are all-added / all-removed", () => {
     expect(lineDiff(null, "x\ny").map((l) => l.kind)).toEqual(["added", "added"]);
     expect(lineDiff("x", null).map((l) => l.kind)).toEqual(["removed"]);

@@ -14,6 +14,7 @@ import z from "zod";
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
+import { useRedirectWhenAuthenticated } from "@/hooks/use-redirect-when-authenticated";
 import { APP_HOME, appHomeHref } from "@/lib/app-home";
 import { authClient } from "@/lib/auth-client";
 import { markAnonymousOnlyRoute } from "@/lib/document-identity";
@@ -99,6 +100,11 @@ function LoginPage() {
   const accountMode = signupMode(configData ?? {});
   const emailEnabled = configData?.emailEnabled ?? false;
   const postAuthRedirect = safeRedirectTo(redirectTo, lang);
+  useRedirectWhenAuthenticated({
+    status: authSession.state.status,
+    href: postAuthRedirect,
+    enabled: !twoFactor.verifying,
+  });
   const sessionPending =
     authSession.state.status === "pending" || authSession.state.status === "error";
 
@@ -495,6 +501,7 @@ function SignInForm({
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();

@@ -84,7 +84,12 @@ function DeviceFlow({ userCode }: { userCode: string }) {
   if (claim.isError) {
     return (
       <AuthScreen>
-        <InlineRetry message={t("device.errorBody")} onRetry={() => claim.refetch()} />
+        <div>
+          <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            {t("device.title")}
+          </h1>
+          <InlineRetry message={t("device.errorBody")} onRetry={() => claim.refetch()} />
+        </div>
       </AuthScreen>
     );
   }
@@ -122,10 +127,11 @@ function DeviceFlow({ userCode }: { userCode: string }) {
 }
 
 function DeviceSkeleton() {
+  const { t } = useTranslation("consent");
   return (
     <AuthScreen>
       <div className="w-full max-w-xl space-y-4">
-        <Skeleton className="h-8 w-2/3" />
+        <h1 className="text-2xl font-semibold tracking-tight">{t("device.title")}</h1>
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-6 w-40" />
         <Skeleton className="h-24 w-full rounded-md" />

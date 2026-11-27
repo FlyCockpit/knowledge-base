@@ -273,7 +273,10 @@ describe("DocumentEditorView path rule and save state", () => {
     expect(bar).toContain('data-testid="document-more"');
     expect(bar).toMatch(/role="menuitem" data-testid="editor-discard"[^>]*>Discard changes</);
     const save = /<button[^>]*data-testid="editor-save"[^>]*>/.exec(out)?.[0] ?? "";
-    const status = /<span id="([^"]+)" role="status" data-testid="editor-save-status"/.exec(out);
+    const status =
+      /<span id="([^"]+)" role="status" aria-label="Unsaved changes" data-testid="editor-save-status"/.exec(
+        out,
+      );
     expect(save).toContain(`aria-describedby="${status?.[1]}"`);
   });
   it("keeps Save focusable while a save is pending", () => {

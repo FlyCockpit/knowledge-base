@@ -26,5 +26,14 @@ describe("password pepper records", () => {
     ])
       expect(validateLogRecord({ ...record, ...change })).toBeUndefined();
     expect(validateLogRecord({ ...record, event: "ok" })).toBeUndefined();
+    expect(
+      validateLogRecord({ ...record, unknownFingerprints: `${fingerprint}, 1111111111111111` }),
+    ).toBeDefined();
+    for (const unknownFingerprints of [
+      [fingerprint],
+      [fingerprint, "invalid"],
+      ["1111111111111111", fingerprint],
+    ])
+      expect(validateLogRecord({ ...record, unknownFingerprints })).toBeUndefined();
   });
 });

@@ -26,7 +26,6 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
@@ -54,6 +53,7 @@ import {
   previewAfterSaves,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { useToastClearance } from "@/hooks/use-toast-clearance";
 import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
 import { useWorkspaceFileRequest } from "@/hooks/use-workspace-file-request";
 import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
@@ -324,6 +324,8 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   const saveStatusId = useId();
   const imageHintId = useId();
   const contentErrorId = useId();
+  const [saveBar, setSaveBar] = useState<HTMLDivElement | null>(null);
+  useToastClearance(saveBar);
   const pathRef = useRef<HTMLInputElement>(null);
   // The path rule is shown once the field was left or a save was tried.
   const [pathChecked, setPathChecked] = useState(false);
@@ -337,6 +339,15 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
   const { controls, viewingRevision, outcome } = props;
   const editable = controls.editMode !== "none" && viewingRevision === null && !props.closed;
   const saveLabel = controls.editMode === "direct" ? t("kb:editor.save") : t("kb:editor.propose");
+  const saveStatusText = props.pending
+    ? t("kb:editor.saving")
+    : props.dirty
+      ? t("kb:editor.unsaved")
+      : outcome?.kind === "applied" || outcome?.kind === "noop"
+        ? t("kb:editor.saved")
+        : outcome?.kind === "proposed"
+          ? t("kb:editor.proposedStatus", { number: outcome.proposalNumber })
+          : t("kb:editor.noChanges");
   const image = editable ? props.image : undefined;
   // The caret means something only once the user put it there: an untouched
   // textarea reports 0, which would glue an image onto the first line.
@@ -581,6 +592,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
       {editable && (
         // Save and its state stay in view while a long draft scrolls.
         <div
+          ref={setSaveBar}
           data-testid="editor-save-bar"
           className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-background/95 px-1 py-3 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur"
         >
@@ -597,6 +609,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
           <span
             id={saveStatusId}
             role="status"
+            aria-label={saveStatusText}
             data-testid="editor-save-status"
             data-dirty={props.dirty ? "true" : "false"}
             data-base-revision={props.baseRevision}
@@ -609,15 +622,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
                 : "text-muted-foreground",
             )}
           >
-            {props.pending
-              ? t("kb:editor.saving")
-              : props.dirty
-                ? t("kb:editor.unsaved")
-                : outcome?.kind === "applied" || outcome?.kind === "noop"
-                  ? t("kb:editor.saved")
-                  : outcome?.kind === "proposed"
-                    ? t("kb:editor.proposedStatus", { number: outcome.proposalNumber })
-                    : t("kb:editor.noChanges")}
+            {saveStatusText}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {props.doneAction}

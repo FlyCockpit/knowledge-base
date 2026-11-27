@@ -19,6 +19,8 @@ const fixture = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   routeContext: {} as Record<string, unknown>,
   search: {} as Record<string, unknown>,
+  status: "anonymous" as "anonymous" | "authenticated",
+  redirectArgs: undefined as unknown,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -59,8 +61,13 @@ vi.mock("@/utils/orpc", () => ({
     setup: { claimFirstAdmin: { mutationOptions: () => ({}) } },
   },
 }));
+vi.mock("@/hooks/use-redirect-when-authenticated", () => ({
+  useRedirectWhenAuthenticated: (args: unknown) => {
+    fixture.redirectArgs = args;
+  },
+}));
 vi.mock("@/hooks/use-auth-session", () => ({
-  useAuthSession: () => ({ state: { status: "anonymous" }, actions: { retry: vi.fn() } }),
+  useAuthSession: () => ({ state: { status: fixture.status }, actions: { retry: vi.fn() } }),
 }));
 vi.mock("@knowledge-base/env/web", () => ({ env: { VITE_APP_NAME: "Northwind" } }));
 vi.mock("@/lib/auth-client", () => ({ authClient: {} }));
@@ -92,7 +99,16 @@ beforeEach(() => {
   fixture.config = undefined;
   fixture.routeContext = {};
   fixture.search = {};
+  fixture.status = "anonymous";
+  fixture.redirectArgs = undefined;
 });
+
+it("uses application validation on all email forms", async () => {
+  fixture.config = { signupEnabled: true, emailEnabled: true };
+  for (const route of [LoginRoute, SignupRoute, ForgotPasswordRoute]) {
+    expect(await render(route)).toMatch(/<form[^>]*novalidate=""/i);
+  }
+}, 15_000);
 
 const OPEN = { signupEnabled: true, adminBootstrapSignupEnabled: false };
 const BOOTSTRAP = { signupEnabled: false, adminBootstrapSignupEnabled: true };
@@ -128,6 +144,13 @@ const signupLinks = (html: string) => links(html).filter((l) => l.to === "/$lang
 const loginLinks = (html: string) => links(html).filter((l) => l.to === "/$lang/login");
 
 describe("sign-in page", () => {
+  it("enables session redirect during an active two-factor challenge", async () => {
+    fixture.config = OPEN;
+    fixture.search = { twoFactor: "true" };
+    fixture.status = "authenticated";
+    await render(LoginRoute);
+    expect(fixture.redirectArgs).toMatchObject({ status: "authenticated", enabled: true });
+  });
   it("is titled Sign In, not Welcome Back", async () => {
     fixture.config = OPEN;
     const html = await render(LoginRoute);

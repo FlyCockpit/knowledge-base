@@ -47,6 +47,19 @@ describe("toast facade", () => {
     });
   });
 
+  it("keeps action toasts expanded without changing plain toast autopilot", () => {
+    const onClick = vi.fn();
+    toast.success("Deleted", { action: { label: "Undo", onClick } });
+    expect(backend.success).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autopilot: { expand: 0, collapse: 0 },
+        button: { title: "Undo", onClick },
+      }),
+    );
+    toast.success("Saved");
+    expect(backend.success.mock.calls[1]?.[0]).not.toHaveProperty("autopilot");
+  });
+
   it("decides by the measured width, not the character count", () => {
     // ~8px per glyph at a 16px root: 36 characters fit, 30 wide glyphs don't.
     const at16 = (perChar: number) => (m: string) => ({

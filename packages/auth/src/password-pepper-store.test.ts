@@ -240,11 +240,22 @@ describe("syncPasswordPepper", () => {
       { id: "c", password: oldHash },
       { id: "d", password: foreignHash },
     ]);
-    const error = await syncPasswordPepper(db, current, log).catch((error: unknown) => error);
+    const events = vi.fn();
+    const error = await syncPasswordPepper(db, current, log, events).catch(
+      (error: unknown) => error,
+    );
     expect(error).toBeInstanceOf(PasswordPepperKeyError);
     if (!(error instanceof PasswordPepperKeyError)) throw new Error("expected key error");
     expect(error.count).toBe(3);
     expect(error.fingerprints).toEqual([old.fingerprint, foreign.fingerprint].sort());
+    expect(events).toHaveBeenCalledOnce();
+    expect(events).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "key-refused",
+        count: 3,
+        unknownFingerprints: error.fingerprints.join(", "),
+      }),
+    );
     expect(error.message).toContain(current.fingerprint);
     expect(error.message).toContain(old.fingerprint);
     expect(error.message).toContain(foreign.fingerprint);

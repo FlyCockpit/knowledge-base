@@ -17,6 +17,7 @@ import type { TFunction } from "i18next";
 import { Shield } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { OAuthClientsPanel } from "@/components/admin/oauth-clients-panel";
 import { SecurityPolicyCard } from "@/components/admin/security-policy-card";
 import { InlineRetry } from "@/components/inline-retry";
 import { IndexCeilingAdminPanel } from "@/components/kb/index-ceiling-admin-panel";
@@ -113,6 +114,7 @@ function AdminSettings() {
       <ModelAdminPanel />
       <IndexCeilingAdminPanel />
       <SearchAllLimitAdminPanel />
+      <OAuthClientsPanel />
     </PageShell>
   );
 }

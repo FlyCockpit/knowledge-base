@@ -43,6 +43,7 @@ type Schema = {
 const schemaOf = (input: DiscoveryInputs, name: KbToolName) =>
   buildDiscovery(input).tools.find((tool) => tool.name === name)?.inputSchema as unknown as Schema;
 const READ_TOOLS = [
+  "knowledge_bases_list",
   "knowledge_documents_list",
   "knowledge_documents_get",
   "knowledge_search",
@@ -50,14 +51,16 @@ const READ_TOOLS = [
   "knowledge_structured_search",
 ];
 /** What a harness sends to the model: name, description and input schema. */
-const modelVisibleBytes = (input: DiscoveryInputs) =>
+const modelVisibleBytes = (input: DiscoveryInputs, omitList = false) =>
   Buffer.byteLength(
     JSON.stringify(
-      buildDiscovery(input).tools.map(({ name, description, inputSchema }) => ({
-        name,
-        description,
-        inputSchema,
-      })),
+      buildDiscovery(input)
+        .tools.filter((tool) => !omitList || tool.name !== "knowledge_bases_list")
+        .map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
     ),
   );
 
@@ -66,7 +69,7 @@ describe("scoped tools/list", () => {
     const discovery = buildDiscovery(inputs());
     expect(discovery.tools.map((tool) => tool.name)).toEqual(READ_TOOLS);
     for (const tool of discovery.tools)
-      if (tool.name !== "knowledge_search_all")
+      if (tool.name !== "knowledge_search_all" && tool.name !== "knowledge_bases_list")
         expect((tool.inputSchema as unknown as Schema).properties.kbId?.enum).toEqual([id(1)]);
     expect(discovery.instructions).toBe(`${PREFIX}${id(1)} = "KB 1"`);
   });
@@ -79,6 +82,7 @@ describe("scoped tools/list", () => {
       const tool = buildDiscovery(inputs({ kbs })).tools.find(
         (entry) => entry.name === "knowledge_search_all",
       );
+      expect(names(inputs({ kbs }))).toContain("knowledge_bases_list");
       expect(tool?.inputSchema).toEqual(protocol.tools.knowledge_search_all.input);
       expect(JSON.stringify(tool?.inputSchema)).not.toContain('"enum"');
     }
@@ -258,8 +262,8 @@ describe("scoped tools/list", () => {
   });
 
   it("advertises the supporting tools only when the connection needs them", () => {
-    // Names in the instructions: no discovery tool; writes need the base revision.
-    expect(names(inputs())).not.toContain("knowledge_bases_list");
+    // Cross-base search needs discovery; writes also need the base revision.
+    expect(names(inputs())).toContain("knowledge_bases_list");
     const editor = names(
       inputs({
         toolGroups: [...MCP_TOOL_PRESETS.direct],
@@ -267,7 +271,12 @@ describe("scoped tools/list", () => {
         aclBits: ["write"],
       }),
     );
-    expect(editor.slice(0, 1)).toEqual(["knowledge_bases_get"]);
+    expect(editor.slice(0, 2)).toEqual(["knowledge_bases_list", "knowledge_bases_get"]);
+    const writeOnly = names(
+      inputs({ toolGroups: ["edit"], scopes: ["mcp:write"], aclBits: ["write"] }),
+    );
+    expect(writeOnly).not.toContain("knowledge_search_all");
+    expect(writeOnly).not.toContain("knowledge_bases_list");
     // A list is never empty.
     expect(names(inputs({ toolGroups: ["kb_admin"], aclBits: ["read"] }))).toEqual([
       "knowledge_bases_list",
@@ -278,7 +287,7 @@ describe("scoped tools/list", () => {
     const six = Array.from({ length: 6 }, (_, n) => kb(n + 1, ["read"]));
     const many = buildDiscovery(inputs({ kbs: six }));
     expect(many.instructions).toBeUndefined();
-    expect(many.tools.map((tool) => tool.name)).toEqual(["knowledge_bases_list", ...READ_TOOLS]);
+    expect(many.tools.map((tool) => tool.name)).toEqual(READ_TOOLS);
     expect(schemaOf(inputs({ kbs: six }), "knowledge_search").properties.kbId?.enum).toHaveLength(
       6,
     );
@@ -290,10 +299,7 @@ describe("scoped tools/list", () => {
 
     const overflow = buildDiscovery(inputs({ kbs: null }));
     expect(overflow.instructions).toBeUndefined();
-    expect(overflow.tools.map((tool) => tool.name)).toEqual([
-      "knowledge_bases_list",
-      ...READ_TOOLS,
-    ]);
+    expect(overflow.tools.map((tool) => tool.name)).toEqual([...READ_TOOLS]);
     for (const tool of overflow.tools.slice(1))
       expect((tool.inputSchema as unknown as Schema).properties.kbId?.enum).toBeUndefined();
   });
@@ -312,10 +318,12 @@ describe("scoped tools/list", () => {
     expect(instructions).toBe(`${PREFIX}${id(1)} = ${quoted}`);
   });
 
-  it("keeps a typical scoped list's model-visible part under 6 KB", () => {
+  it("bounds a typical scoped list and preserves the original tools size budget", () => {
     const five = Array.from({ length: 5 }, (_, n) => kb(n + 1, ["read"]));
-    expect(modelVisibleBytes(inputs({ kbs: five }))).toBeLessThan(6 * 1024);
-    expect(modelVisibleBytes(inputs({ kbs: [kb(1, ["read"])] }))).toBeLessThan(6 * 1024);
+    expect(modelVisibleBytes(inputs({ kbs: five }), true)).toBeLessThan(6 * 1024);
+    expect(modelVisibleBytes(inputs({ kbs: five }))).toBeLessThan(7 * 1024);
+    expect(modelVisibleBytes(inputs({ kbs: [kb(1, ["read"])] }), true)).toBeLessThan(6 * 1024);
+    expect(modelVisibleBytes(inputs({ kbs: [kb(1, ["read"])] }))).toBeLessThan(7 * 1024);
   });
 });
 

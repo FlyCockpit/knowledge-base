@@ -236,6 +236,7 @@ describe("appRouter surface", () => {
         "mcpConsent",
         "mcpGrants",
         "mcpTokens",
+        "oauthClients",
         "pullRequests",
         "push",
         "queue",

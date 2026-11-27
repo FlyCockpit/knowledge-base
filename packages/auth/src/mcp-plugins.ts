@@ -10,7 +10,7 @@ import { jwt } from "better-auth/plugins";
 import { fetchClientMetadataResource } from "./mcp-cimd";
 import { canonicalMcpResource } from "./mcp-config";
 import { createMcpConsentService, McpConsentError, verifyOAuthQuery } from "./mcp-consent";
-import { isStrictLoopbackHttpRedirect } from "./mcp-redirect";
+import { isRegisteredRedirectUri, isStrictLoopbackHttpRedirect } from "./mcp-redirect";
 import {
   issueMcpGenerationClaims,
   MCP_ACCESS_TOKEN_LIFETIME_SECONDS,
@@ -203,6 +203,7 @@ export function resolveMcpPlugins(options: { baseUrl: string; secret: string; db
     jwt({ disableSettingJwtHeader: true }),
     mcp({
       resource,
+      validateRedirectUri: (uri, registered) => isRegisteredRedirectUri(registered, uri),
       loginPage: `/${DEFAULT_LOCALE}/mcp-login`,
       consentPage,
       postLogin: {

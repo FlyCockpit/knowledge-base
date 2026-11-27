@@ -47,6 +47,7 @@ KB bits (not instance roles): `manage => write, review`; `write => propose`; `pr
 | Get job | implemented | deny | deny | allow | `queue.getJob` |
 | Export audit events (90-day retained trail) | implemented | deny | deny | allow | `queue.auditExport` |
 | List failed jobs | implemented | deny | deny | allow | `queue.listFailed` |
+| List and delete OAuth clients | implemented | deny | deny | allow | `oauthClients.list`, `oauthClients.delete` |
 | List users | implemented | deny | deny | allow | `users.list` |
 | Invite user | implemented | deny | deny | allow | `users.invite` |
 | Set user role | implemented | deny | deny | allow | `users.setRole` |

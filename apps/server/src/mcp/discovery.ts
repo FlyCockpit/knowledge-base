@@ -195,7 +195,7 @@ function toolDefinition(
  * dispatch requires, and the stored ceiling could ever satisfy the minimum
  * access. Supporting tools are listed when the connection needs them:
  * `knowledge_bases_list` when the names are not in the instructions or the
- * connection can create KBs, `knowledge_bases_get` when a listed tool writes
+ * connection can create KBs or search across them, `knowledge_bases_get` when a listed tool writes
  * (it returns the base revision). Both stay callable either way: supporting
  * tools need no group. Output is in catalog order.
  */
@@ -225,7 +225,8 @@ export function buildDiscovery(input: DiscoveryInputs): Discovery {
   );
   const mapping = nameMapping(input.kbs);
   // Names fixed at connect cannot cover KBs the agent creates later.
-  if (mapping === null || creatable) listed.add("knowledge_bases_list");
+  if (mapping === null || creatable || listed.has("knowledge_search_all"))
+    listed.add("knowledge_bases_list");
   if ([...listed].some((name) => !KB_TOOL_CATALOG[name].readOnly))
     listed.add("knowledge_bases_get");
   // A list is never empty (clients reject one); discovery is always callable.

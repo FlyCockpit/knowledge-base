@@ -147,18 +147,18 @@ export async function syncPasswordPepper(
     )
     .catch((error: unknown) => {
       if (error instanceof PasswordPepperKeyError && structured) {
-        for (const unknownFingerprint of error.fingerprints) {
-          structured({
-            event: "key-refused",
-            unknownFingerprint,
-            fingerprint: pepper.fingerprint,
-            ...(pepper.previousFingerprint
-              ? { previousFingerprint: pepper.previousFingerprint }
-              : {}),
-            count: error.count,
-            docs: PASSWORD_PEPPER_DOCS,
-          });
-        }
+        const listed = error.fingerprints.slice(0, 16);
+        structured({
+          event: "key-refused",
+          unknownFingerprint: listed[0]!,
+          ...(listed.length > 1 ? { unknownFingerprints: listed.join(", ") } : {}),
+          fingerprint: pepper.fingerprint,
+          ...(pepper.previousFingerprint
+            ? { previousFingerprint: pepper.previousFingerprint }
+            : {}),
+          count: error.count,
+          docs: PASSWORD_PEPPER_DOCS,
+        });
       }
       throw error;
     });

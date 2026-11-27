@@ -1434,4 +1434,76 @@ describe("credential artifact retention", () => {
     expect(await prisma.consentIntent.count({ where: { id: tombstone.id } })).toBe(1);
     expect(await prisma.consentIntent.count({ where: { id: abandoned.id } })).toBe(0);
   });
+
+  it("reaps unused dynamic OAuth clients past 30 days while keeping active, recent, owned, and tombstones", async () => {
+    const u = await user();
+    const day = 24 * 3_600_000;
+    const stale = new Date(Date.now() - 31 * day);
+    const fresh = new Date(Date.now() - 5 * day);
+    await prisma.oauthClient.createMany({
+      data: [
+        { clientId: "dcr-stale-unused", createdAt: stale, updatedAt: stale },
+        { clientId: "dcr-stale-revoked-only", createdAt: stale, updatedAt: stale },
+        { clientId: "dcr-stale-active-grant", createdAt: stale, updatedAt: stale },
+        { clientId: "dcr-fresh-unused", createdAt: fresh, updatedAt: fresh },
+        { clientId: "owned-stale", userId: u.id, createdAt: stale, updatedAt: stale },
+        { clientId: "kb-cli", createdAt: stale, updatedAt: stale },
+      ],
+    });
+    const revokedGrant = await prisma.mcpGrant.create({
+      data: {
+        id: randomUUID(),
+        actorUserIdSnapshot: u.id,
+        userId: u.id,
+        kind: "OAUTH",
+        clientId: "dcr-stale-revoked-only",
+        referenceId: `ref-${randomUUID()}`,
+        scopes: ["mcp:read"],
+        toolGroups: ["read"],
+        createdKbBits: [],
+        revokedAt: stale,
+      },
+    });
+    await prisma.mcpGrant.create({
+      data: {
+        id: randomUUID(),
+        actorUserIdSnapshot: u.id,
+        userId: u.id,
+        kind: "OAUTH",
+        clientId: "dcr-stale-active-grant",
+        referenceId: `ref-${randomUUID()}`,
+        scopes: ["mcp:read"],
+        toolGroups: ["read"],
+        createdKbBits: [],
+        revokedAt: null,
+      },
+    });
+
+    const { deleted } = await reapExpiredAuthTokens(new Date(), prisma);
+
+    expect(deleted.oauthClients).toBeGreaterThanOrEqual(2);
+    const remaining = await prisma.oauthClient.findMany({
+      where: {
+        clientId: {
+          in: [
+            "dcr-stale-unused",
+            "dcr-stale-revoked-only",
+            "dcr-stale-active-grant",
+            "dcr-fresh-unused",
+            "owned-stale",
+            "kb-cli",
+          ],
+        },
+      },
+      select: { clientId: true },
+    });
+    expect(remaining.map((c) => c.clientId).sort()).toEqual([
+      "dcr-fresh-unused",
+      "dcr-stale-active-grant",
+      "kb-cli",
+      "owned-stale",
+    ]);
+    // Revoked grant tombstone stays intact after its unused DCR client expires.
+    expect(await prisma.mcpGrant.count({ where: { id: revokedGrant.id } })).toBe(1);
+  });
 });

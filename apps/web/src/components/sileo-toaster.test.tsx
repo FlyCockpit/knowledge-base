@@ -2,7 +2,14 @@ import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
 import esSettings from "@knowledge-base/locales/src/es-MX/settings.json";
 import { Toaster, toast } from "@knowledge-base/ui/components/sileo";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const refs = vi.hoisted(() => ({ current: null as null | { current: unknown } }));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  const originalRef = actual.useRef;
+  return { ...actual, useRef: (initial: unknown) => refs.current ?? originalRef(initial) };
+});
 
 /**
  * The text a screen reader derives for each toast button: its content minus
@@ -48,5 +55,55 @@ describe("Toaster accessible names", () => {
     }
     expect(esSettings.credentials.revokeSuccess).not.toBe(enSettings.credentials.revokeSuccess);
     toast.clear();
+  });
+});
+
+describe("keyboard focus on toasts", () => {
+  it("sends mouse events on entering and leaving, but not between descendants or while hovered", () => {
+    const previous = globalThis.MouseEvent;
+    class FakeMouseEvent {
+      constructor(
+        public type: string,
+        public options: { bubbles: boolean },
+      ) {}
+    }
+    globalThis.MouseEvent = FakeMouseEvent as unknown as typeof MouseEvent;
+    const sent: string[] = [];
+    const focused = {};
+    const toastA = {
+      contains: (target: unknown) => target === focused,
+      dispatchEvent: (event: FakeMouseEvent) => sent.push(event.type),
+    };
+    const toastB = { contains: () => false };
+    let hovered = false;
+    const container = {
+      contains: (target: unknown) => target === focused,
+      querySelector: () => (hovered ? toastB : null),
+    };
+    refs.current = { current: container };
+    vi.stubGlobal("document", { activeElement: focused });
+    try {
+      const wrapper = Toaster({});
+      const eventA = { target: { closest: () => toastA }, relatedTarget: null };
+      wrapper.props.onFocusCapture(eventA);
+      const stopPropagation = vi.fn();
+      wrapper.props.onMouseOutCapture({
+        target: { closest: () => toastB },
+        relatedTarget: null,
+        isTrusted: true,
+        stopPropagation,
+      });
+      expect(stopPropagation).toHaveBeenCalledOnce();
+      wrapper.props.onBlurCapture({ ...eventA, relatedTarget: focused });
+      hovered = true;
+      wrapper.props.onBlurCapture(eventA);
+      hovered = false;
+      wrapper.props.onBlurCapture(eventA);
+      expect(sent).toEqual(["mouseover", "mouseout"]);
+    } finally {
+      refs.current = null;
+      globalThis.MouseEvent = previous;
+      vi.unstubAllGlobals();
+    }
   });
 });

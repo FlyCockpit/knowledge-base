@@ -1,8 +1,10 @@
 import { settleLapsedTwoFactorMcpGrants } from "@knowledge-base/auth/ban";
 import prisma from "@knowledge-base/db";
+import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { PrismaClient } from "@knowledge-base/db/client";
 
 const AUTH_TOKEN_SWEEP_PAGE = 1000;
+export const UNUSED_DCR_CLIENT_TTL_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** DPoP replay reservations (Better Auth verification rows) already store verifier expiry + 1s. */
 const DPOP_PROOF_PREFIX = "dpop-proof:";
@@ -16,6 +18,7 @@ export type ReapedAuthTokens = {
   oauthRefreshTokens: number;
   clientAssertions: number;
   consentIntents: number;
+  oauthClients: number;
 };
 
 type RetentionDb = Pick<
@@ -28,6 +31,7 @@ type RetentionDb = Pick<
   | "oauthRefreshToken"
   | "oauthClientAssertion"
   | "consentIntent"
+  | "oauthClient"
   | "$queryRaw"
   | "$transaction"
 >;
@@ -80,6 +84,43 @@ async function sweepRefreshFamilies(db: RetentionDb, cutoff: Date): Promise<numb
     if (result.count === 0) break;
     deleted += result.count;
     if (rows.length < AUTH_TOKEN_SWEEP_PAGE) break;
+  }
+  return deleted;
+}
+
+async function sweepUnusedOAuthClients(db: RetentionDb, cutoff: Date, now: Date): Promise<number> {
+  let deleted = 0;
+  for (;;) {
+    const result = await db.$transaction(async (tx) => {
+      await lockIdentityAuthority(tx);
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        SELECT c.id FROM oauth_client c
+        WHERE c."userId" IS NULL AND c."clientId" <> 'kb-cli'
+          AND COALESCE(c."updatedAt", c."createdAt") < ${cutoff}
+          AND NOT EXISTS (SELECT 1 FROM oauth_access_token t WHERE t."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM oauth_refresh_token r WHERE r."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM oauth_consent oc WHERE oc."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM mcp_grant g WHERE g."clientId" = c."clientId" AND g."revokedAt" IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM consent_intent ci WHERE ci."clientId" = c."clientId" AND ci."expiresAt" > ${now})
+        ORDER BY c.id LIMIT ${AUTH_TOKEN_SWEEP_PAGE} FOR UPDATE`;
+      if (!rows.length) return { selected: 0, count: 0 };
+      // Recheck after row-lock waits: an FK-backed token could have committed while
+      // the first statement waited. The authority lock fences grants and intents.
+      const eligible = await tx.$queryRaw<{ id: string }[]>`
+        SELECT c.id FROM oauth_client c
+        WHERE c.id = ANY(${rows.map((row) => row.id)}::text[])
+          AND c."userId" IS NULL AND c."clientId" <> 'kb-cli'
+          AND COALESCE(c."updatedAt", c."createdAt") < ${cutoff}
+          AND NOT EXISTS (SELECT 1 FROM oauth_access_token t WHERE t."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM oauth_refresh_token r WHERE r."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM oauth_consent oc WHERE oc."clientId" = c."clientId")
+          AND NOT EXISTS (SELECT 1 FROM mcp_grant g WHERE g."clientId" = c."clientId" AND g."revokedAt" IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM consent_intent ci WHERE ci."clientId" = c."clientId" AND ci."expiresAt" > ${now})`;
+      const removed = await tx.oauthClient.deleteMany(ids(eligible.map((row) => row.id)));
+      return { selected: rows.length, count: removed.count };
+    });
+    deleted += result.count;
+    if (result.count === 0 || result.selected < AUTH_TOKEN_SWEEP_PAGE) break;
   }
   return deleted;
 }
@@ -144,6 +185,11 @@ export async function reapExpiredAuthTokens(
       }),
     (list) => db.consentIntent.deleteMany(ids(list)),
   );
+  const oauthClients = await sweepUnusedOAuthClients(
+    db,
+    new Date(now.getTime() - UNUSED_DCR_CLIENT_TTL_DAYS * DAY_MS),
+    now,
+  );
   return {
     deleted: {
       sessions,
@@ -154,6 +200,7 @@ export async function reapExpiredAuthTokens(
       oauthRefreshTokens,
       clientAssertions,
       consentIntents,
+      oauthClients,
     },
   };
 }

@@ -30,6 +30,7 @@ const MODELS = [
 ] as const;
 const db = prisma as unknown as Record<(typeof MODELS)[number], Delegate> & {
   oauthRefreshToken: Delegate;
+  oauthClient: Delegate;
   $queryRaw: MockInstance;
 };
 const DAY = 24 * 60 * 60 * 1000;
@@ -42,6 +43,7 @@ const ZERO = {
   oauthRefreshTokens: 0,
   clientAssertions: 0,
   consentIntents: 0,
+  oauthClients: 0,
 };
 
 const job = () =>
@@ -53,6 +55,12 @@ describe("handleReapExpiredAuthTokensJob", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     for (const model of MODELS) db[model].findMany.mockResolvedValue([]);
     db.$queryRaw.mockResolvedValue([]);
+    (prisma.$transaction as unknown as MockInstance).mockImplementation(
+      async (fn: (db: typeof prisma) => Promise<unknown>) => {
+        if (typeof fn !== "function") throw new Error("expected callback");
+        return fn(prisma);
+      },
+    );
   });
 
   it("applies each window and deletes by bounded id pages", async () => {
@@ -61,12 +69,16 @@ describe("handleReapExpiredAuthTokensJob", () => {
     db.session.deleteMany.mockResolvedValueOnce({ count: 2 });
     db.deviceCode.findMany.mockResolvedValueOnce([{ id: "d1" }]);
     db.deviceCode.deleteMany.mockResolvedValueOnce({ count: 1 });
-    db.$queryRaw.mockResolvedValueOnce([{ id: "r1" }]);
+    db.$queryRaw
+      .mockResolvedValueOnce([{ id: "r1" }])
+      .mockResolvedValueOnce([{ id: "client1" }])
+      .mockResolvedValueOnce([{ id: "client1" }]);
+    db.oauthClient.deleteMany.mockResolvedValueOnce({ count: 1 });
     db.oauthRefreshToken.deleteMany.mockResolvedValueOnce({ count: 1 });
 
     await expect(handleReapExpiredAuthTokensJob(job())).resolves.toEqual({
       reason: "cron",
-      deleted: { ...ZERO, sessions: 2, deviceCodes: 1, oauthRefreshTokens: 1 },
+      deleted: { ...ZERO, sessions: 2, deviceCodes: 1, oauthRefreshTokens: 1, oauthClients: 1 },
     });
     const where = (model: (typeof MODELS)[number]) => db[model].findMany.mock.calls[0]?.[0]?.where;
     // Sessions die at expiry.

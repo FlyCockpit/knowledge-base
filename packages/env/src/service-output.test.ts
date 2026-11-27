@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { logRecord } from "./log";
-import { PASSWORD_PEPPER_DOCS } from "./log-record";
+import { PASSWORD_PEPPER_DOCS, validateLogRecord } from "./log-record";
 import { recordReader, renderServiceRecord } from "./service-output";
 
 describe("dedicated record channel", () => {
@@ -119,4 +119,20 @@ it("renders every validated pepper diagnostic with fixed operator guidance", () 
     expect(reader.finish()).toBe(0);
     expect(accepted[0]).toMatchObject({ level, message: expect.stringContaining(expected) });
   }
+});
+
+it("renders a multi-key refusal once with every fingerprint", () => {
+  const record = logRecord("password-pepper", {
+    event: "key-refused",
+    fingerprint: "aaaaaaaaaaaaaaaa",
+    unknownFingerprint: "1111111111111111",
+    unknownFingerprints: "1111111111111111, 2222222222222222",
+    count: 3,
+    docs: PASSWORD_PEPPER_DOCS,
+  });
+  const accepted = validateLogRecord(record);
+  expect(accepted).toBeDefined();
+  const message = renderServiceRecord(accepted!).message;
+  expect(message).toContain("3 stored password hash(es)");
+  expect(message).toContain("1111111111111111, 2222222222222222");
 });

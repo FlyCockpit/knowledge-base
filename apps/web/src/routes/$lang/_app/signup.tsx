@@ -13,6 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { SignupCreatedCard } from "@/components/auth/signup-created-card";
 import { useAuthSession } from "@/hooks/use-auth-session";
+import { useRedirectWhenAuthenticated } from "@/hooks/use-redirect-when-authenticated";
 import { authClient } from "@/lib/auth-client";
 import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { setServerFieldError } from "@/lib/form-server-error";
@@ -58,6 +59,11 @@ function SignupPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   const authSession = useAuthSession();
+  useRedirectWhenAuthenticated({
+    status: authSession.state.status,
+    href: safeRedirectTo(redirectTo, lang),
+    enabled: true,
+  });
   const {
     data: configData,
     isPending: configPending,
@@ -244,6 +250,7 @@ function SignUpForm({
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();

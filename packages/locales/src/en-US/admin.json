@@ -1,4 +1,23 @@
 {
+  "oauthClients": {
+    "title": "OAuth clients",
+    "description": "Unused dynamically registered clients expire automatically after 30 days.",
+    "dynamic": "Dynamic",
+    "registered": "Registered",
+    "copyId": "Copy client ID",
+    "created": "Created: {{date}}",
+    "unknownDate": "Unknown",
+    "counts": "Active grants: {{grants}} · Tokens: {{tokens}}",
+    "delete": "Delete",
+    "empty": "No OAuth clients.",
+    "loadFailed": "Could not load OAuth clients.",
+    "deleted": "OAuth client deleted.",
+    "deleteTitle": "Delete OAuth client",
+    "deleteDescription": "Delete {{name}} and revoke its active grants and tokens?",
+    "deletePrompt": "Type DELETE to confirm.",
+    "copyConfirmation": "Copy confirmation text",
+    "deleteFailed": "Could not delete the OAuth client."
+  },
   "backups": {
     "title": "Database backups",
     "state": {
@@ -341,7 +360,7 @@
     "roleUser": "User",
     "roleAdmin": "Admin",
     "localeLabel": "Email language",
-    "localeDescription": "The invite and every later email use this language. They can change it in their settings.",
+    "localeDescription": "The invite and every later email use this language. They can change it anytime from the language switcher in the header.",
     "sendInvite": "Send invite",
     "inviting": "Inviting…",
     "revealTitle": "Invite sent",

@@ -72,6 +72,19 @@ function renderNotice(rows: DeletedRow[], canRestore = true) {
 }
 
 describe("compactDiff", () => {
+  it("collapses the unchanged middle between distant changes", () => {
+    const middle = Array.from({ length: 998 }, (_, i) => `line ${i}`);
+    const rows = compactDiff(
+      lineDiff(
+        ["old top", ...middle, "old bottom"].join("\n"),
+        ["new top", ...middle, "new bottom"].join("\n"),
+      ),
+    );
+    expect(rows).toContainEqual({ kind: "gap", count: 994 });
+    expect(rows).toContainEqual({ kind: "same", text: "line 0" });
+    expect(rows).toContainEqual({ kind: "same", text: "line 997" });
+    expect(rows.filter((row) => row.kind === "added" || row.kind === "removed")).toHaveLength(4);
+  });
   it("keeps changes with two lines of context and collapses the rest", () => {
     const before = ["a", "b", "c", "d", "e", "f", "g", "h"].join("\n");
     const after = ["a", "b", "c", "d", "E", "f", "g", "h"].join("\n");

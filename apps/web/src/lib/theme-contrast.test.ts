@@ -632,8 +632,23 @@ describe("toast placement and touch targets", () => {
   }
 
   it("bottom toasts sit above the phone bottom nav, and above the safe area without one", () => {
-    expect(find(':root [data-sileo-viewport][data-position^="bottom"]', "bottom")).toEqual([
-      { value: "max(var(--bottom-nav-height), var(--safe-area-bottom))", media: "" },
+    expect(
+      find(':root [data-sileo-viewport][data-position^="bottom"]', "bottom").map(
+        ({ value, media }) => ({
+          value: value.replace(/\s+/g, " ").replace(/\( /g, "(").replace(/ \)/g, ")"),
+          media,
+        }),
+      ),
+    ).toEqual([
+      {
+        value:
+          "calc(max(var(--bottom-nav-height), var(--safe-area-bottom)) + var(--toast-bottom-clearance))",
+        media: "",
+      },
+    ]);
+    expect(find(":root", "--toast-bottom-clearance")).toEqual([{ value: "0px", media: "" }]);
+    expect(find(':root:has([data-testid="editor-save-bar"])', "--toast-bottom-clearance")).toEqual([
+      { value: "5rem", media: "" },
     ]);
     // 0 unless a bottom nav is on screen, which is only below md (48rem).
     expect(find(":root", "--bottom-nav-height")).toEqual([{ value: "0px", media: "" }]);
@@ -650,6 +665,15 @@ describe("toast placement and touch targets", () => {
     expect(nav.match(/data-bottom-nav\b/g)?.length).toBe(2);
     expect(nav.match(/md:hidden/g)?.length).toBe(2);
     expect(nav.match(/paddingBottom: "var\(--safe-area-bottom\)"/g)?.length).toBe(2);
+  });
+
+  it("keeps the action content visible and in the toast hit area after pointer leave", () => {
+    const toast = ":root [data-sileo-toast]:has([data-sileo-button])";
+    const content = `${toast} [data-sileo-content]`;
+    expect(find(toast, "height")).toEqual([{ value: "auto", media: "" }]);
+    expect(find(content, "content-visibility")).toEqual([{ value: "visible", media: "" }]);
+    expect(find(content, "pointer-events")).toEqual([{ value: "auto", media: "" }]);
+    expect(find(content, "opacity")).toEqual([{ value: "1", media: "" }]);
   });
 
   it("a toast's action button is at least 44px tall on a touch screen", () => {

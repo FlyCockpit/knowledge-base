@@ -101,6 +101,10 @@ describe("DCR loopback redirect policy (RFC 8252)", () => {
 describe("strict loopback redirect parsing (fails closed on parser disagreement)", () => {
   it.each([
     "http://127.0.0.1:53682/callback",
+    "http://127.0.0.1:80/cb",
+    "http://127.0.0.1:1/cb",
+    "http://127.0.0.1:65535/cb",
+    "http://127.0.0.1:54321/cb",
     "http://[::1]:8080/cb",
     "http://localhost:3000/oauth/callback",
     "http://LOCALHOST/cb",
@@ -122,6 +126,12 @@ describe("strict loopback redirect parsing (fails closed on parser disagreement)
     "http://127.0.0.2/cb",
     "http://0x7f.0.0.1/cb",
     "http://127.0.0.1:0/cb",
+    "http://127.0.0.1:080/cb",
+    "http://127.0.0.1:08080/cb",
+    "http://127.0.0.1:054321/cb",
+    "http://localhost:080/cb",
+    "http://[::1]:01234/cb",
+    "http://127.0.0.1:65536/cb",
     "http://127.0.0.1:99999/cb",
     "http://127.0.0.1/cb#frag",
     "http:// 127.0.0.1/cb",
@@ -180,4 +190,32 @@ describe("registered redirect matching (RFC 8252 §7.3, as Better Auth's authori
     ).toBe(false);
     expect(isRegisteredRedirectUri([], "http://127.0.0.1:45853/callback")).toBe(false);
   });
+});
+
+it("uses the strict registered redirect matcher in the provider validator", () => {
+  resolveMcpPlugins({ db: prisma, baseUrl: "https://kb.invalid", secret: "fixture" });
+  const options = captured.mcp.mock.lastCall?.[0] as {
+    validateRedirectUri: (uri: string, registered: string[], defaultResult: boolean) => boolean;
+  };
+  const registered = [
+    "http://127.0.0.1/callback",
+    "http://localhost/callback",
+    "http://[::1]/callback",
+  ];
+  for (const uri of [
+    "http://127.0.0.1:054321/callback",
+    "http://127.0.0.1:08080/callback",
+    "http://localhost:080/callback",
+    "http://[::1]:01234/callback",
+  ]) {
+    expect(isStrictLoopbackHttpRedirect(uri)).toBe(false);
+    expect(isRegisteredRedirectUri([...registered, uri], uri)).toBe(false);
+    expect(options.validateRedirectUri(uri, registered, true)).toBe(false);
+  }
+  for (const uri of [
+    "http://127.0.0.1:80/callback",
+    "http://127.0.0.1:54321/callback",
+    "http://127.0.0.1/callback",
+  ])
+    expect(options.validateRedirectUri(uri, registered, false)).toBe(true);
 });

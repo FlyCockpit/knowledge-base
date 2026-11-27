@@ -51,7 +51,15 @@ vi.mock("rate-limiter-flexible", async (importOriginal) => {
     ...original,
     // Replace RateLimiterRedis with RateLimiterMemory so module-level
     // constructors don't need a live Redis client.
-    RateLimiterRedis: original.RateLimiterMemory,
+    RateLimiterRedis: class extends original.RateLimiterMemory {
+      inMemoryBlockOnConsumed: number | undefined;
+      inMemoryBlockDuration: number | undefined;
+      constructor(options: ConstructorParameters<typeof original.RateLimiterRedis>[0]) {
+        super(options);
+        this.inMemoryBlockOnConsumed = options.inMemoryBlockOnConsumed;
+        this.inMemoryBlockDuration = options.inMemoryBlockDuration;
+      }
+    },
   };
 });
 
@@ -332,6 +340,12 @@ describe("rate-limit budget families", () => {
     const l = await importLimiters();
     // AUTH family (reference: general auth 30/60s, 5-min block).
     expect(l.authLimiter.points).toBe(30);
+    expect(l.signOutLimiter.points).toBe(30);
+    expect(l.passwordResetLimiter.points).toBe(30);
+    for (const limiter of [l.signOutLimiter, l.passwordResetLimiter]) {
+      expect(limiter).toHaveProperty("inMemoryBlockOnConsumed", 31);
+      expect(limiter).toHaveProperty("inMemoryBlockDuration", 300);
+    }
     expect(l.credentialLimiter.points).toBe(10);
     expect(l.credentialBurstLimiter.points).toBe(3);
     expect(l.signupLimiter.points).toBe(10);
@@ -353,6 +367,12 @@ describe("rate-limit budget families", () => {
     const l = await importLimiters();
     // Reference member and every relative member scale by the same 2x.
     expect(l.authLimiter.points).toBe(60);
+    expect(l.signOutLimiter.points).toBe(60);
+    expect(l.passwordResetLimiter.points).toBe(60);
+    for (const limiter of [l.signOutLimiter, l.passwordResetLimiter]) {
+      expect(limiter).toHaveProperty("inMemoryBlockOnConsumed", 61);
+      expect(limiter).toHaveProperty("inMemoryBlockDuration", 300);
+    }
     expect(l.credentialLimiter.points).toBe(20);
     expect(l.credentialBurstLimiter.points).toBe(6);
     expect(l.signupLimiter.points).toBe(20);
@@ -370,6 +390,12 @@ describe("rate-limit budget families", () => {
   it("doubling RATE_LIMIT_AUTH_WINDOW_SECONDS doubles every auth-family window and block", async () => {
     envMock.RATE_LIMIT_AUTH_WINDOW_SECONDS = 120; // 2x the 60s reference
     const l = await importLimiters();
+    expect(l.signOutLimiter).toHaveProperty("duration", 120);
+    expect(l.passwordResetLimiter).toHaveProperty("blockDuration", 600);
+    for (const limiter of [l.signOutLimiter, l.passwordResetLimiter]) {
+      expect(limiter).toHaveProperty("inMemoryBlockOnConsumed", 31);
+      expect(limiter).toHaveProperty("inMemoryBlockDuration", 600);
+    }
     expect(l.authLimiter).toHaveProperty("duration", 120);
     expect(l.authLimiter).toHaveProperty("blockDuration", 600);
     expect(l.credentialBurstLimiter).toHaveProperty("duration", 20);
@@ -429,4 +455,14 @@ describe("createRpcRateLimiterMiddleware", () => {
     const anonymous = rpcApp(false);
     expect((await anonymous.send(KB_UPLOAD_WRITE_PATH)).headers.get("X-RateLimit-Limit")).toBe("2");
   });
+});
+
+it("isolates sign-out and password-reset from the general auth bucket", async () => {
+  const { authLimiter, signOutLimiter, passwordResetLimiter } = await import("./rate-limit.js");
+  const limiters = [authLimiter, signOutLimiter, passwordResetLimiter];
+  expect(new Set(limiters.map((limiter) => limiter.keyPrefix)).size).toBe(3);
+  for (let i = 0; i < authLimiter.points; i++) await authLimiter.consume("isolation-test");
+  await expect(authLimiter.consume("isolation-test")).rejects.toBeDefined();
+  await expect(signOutLimiter.consume("isolation-test")).resolves.toBeDefined();
+  await expect(passwordResetLimiter.consume("isolation-test")).resolves.toBeDefined();
 });

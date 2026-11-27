@@ -279,7 +279,9 @@ servers.
 - **Failures.** A server that drops fails only its own calls
   (`STORAGE_UNAVAILABLE`); a lost mutation reply is an unknown outcome on that
   server only (retry there with the same idempotency key). Each server has at
-  most 3 calls in flight, so a hung server cannot block the others. After
+  most 3 calls in flight, so a hung server cannot block the others. A single
+  `kb mcp` stdio connection also caps total concurrent in-flight JSON-RPC
+  requests at 4; excess requests receive `-32000 Too many in-flight requests`. After
   `kb logout --server <name>` that server's calls fail with `FORBIDDEN` and a
   stderr hint; the other servers keep their own credentials.
 - **Read-only.** `--read-only` applies to every server; a configured server with

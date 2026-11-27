@@ -142,7 +142,15 @@ export function superviseService(service: "server" | "worker", entry: URL): void
 /** Called only after validation; all interpolated values have closed formats. */
 export function renderServiceRecord(record: LogRecord): LogRecord {
   if (record.site !== "password-pepper") return record;
-  const { event, fingerprint, previousFingerprint, unknownFingerprint, count, docs } = record;
+  const {
+    event,
+    fingerprint,
+    previousFingerprint,
+    unknownFingerprint,
+    unknownFingerprints,
+    count,
+    docs,
+  } = record;
   let message: string;
   let level = "info";
   switch (event) {
@@ -165,7 +173,7 @@ export function renderServiceRecord(record: LogRecord): LogRecord {
       break;
     case "key-refused":
       level = "error";
-      message = `password pepper: ${count} stored password hash(es) are sealed under unconfigured keys including ${unknownFingerprint}; configured BETTER_AUTH_SECRET key is ${fingerprint}${previousFingerprint ? ` (previous: ${previousFingerprint})` : ""}. Refusing to start. Restore the original BETTER_AUTH_SECRET as the current or previous secret; if lost, reset those passwords with \`pnpm auth:pepper:reset-unusable\` while the server is stopped; see ${docs}.`;
+      message = `password pepper: ${count} stored password hash(es) are sealed under unconfigured keys including ${unknownFingerprints ?? unknownFingerprint}; configured BETTER_AUTH_SECRET key is ${fingerprint}${previousFingerprint ? ` (previous: ${previousFingerprint})` : ""}. Refusing to start. Restore the original BETTER_AUTH_SECRET as the current or previous secret; if lost, reset those passwords with \`pnpm auth:pepper:reset-unusable\` while the server is stopped; see ${docs}.`;
       break;
     default:
       return record;

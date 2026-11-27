@@ -3,7 +3,7 @@ import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
 import esConsent from "@knowledge-base/locales/src/es-MX/consent.json";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   DeviceApproval,
   type DeviceApprovalProps,
@@ -12,6 +12,24 @@ import {
 import type { DevicePhase } from "@/hooks/use-device-approval";
 import { emptySelection, type LiveKbOption, selectionReducer } from "@/hooks/use-mcp-consent";
 import { renderWithTestRouter as renderToStaticMarkup } from "@/lib/router-test-utils";
+
+const routeState = vi.hoisted(() => ({ error: false }));
+vi.mock("@/hooks/use-device-approval", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-device-approval")>()),
+  useDeviceApproval: () => ({
+    claim: { isError: routeState.error, isPending: !routeState.error, refetch: vi.fn() },
+    claimed: null,
+    kbs: { query: {} },
+  }),
+}));
+vi.mock("@/hooks/use-auth-session", () => ({
+  readSessionIdentityGeneration: () => 0,
+  useAuthSession: () => ({
+    state: { status: "anonymous" },
+    actions: { refetch: vi.fn() },
+    meta: { isDegraded: false, isRefetching: false },
+  }),
+}));
 
 const KB_A = "a".repeat(24);
 const live: LiveKbOption[] = [{ kbId: KB_A, name: "Alpha notes", bits: ["read", "write"] }];
@@ -36,6 +54,28 @@ describe("DeviceApproval", () => {
       interpolation: { escapeValue: false },
       react: { useSuspense: false },
     });
+  });
+
+  it("provides a heading while the device claim loads or fails", async () => {
+    const { Route } = await import("@/routes/$lang/device");
+    vi.spyOn(Route, "useSearch").mockReturnValue({ user_code: "ABCD2345" });
+    vi.spyOn(Route, "useParams").mockReturnValue({ lang: "en-US" });
+    vi.spyOn(Route, "useNavigate").mockReturnValue(vi.fn());
+    const Page = Route.options.component as (() => React.ReactNode) & {
+      preload: () => Promise<void>;
+    };
+    await Page.preload();
+    for (const error of [false, true]) {
+      routeState.error = error;
+      const markup = renderToStaticMarkup(
+        <I18nextProvider i18n={i18n}>
+          <Page />
+        </I18nextProvider>,
+      );
+      expect(markup).toContain(`<h1`);
+      expect(markup).toContain(device.title);
+    }
+    vi.restoreAllMocks();
   });
 
   function html(phase: DevicePhase, extra: Partial<DeviceApprovalProps> = {}): string {
@@ -164,12 +204,17 @@ describe("DeviceApproval", () => {
     }
   });
 
+  it("the approval screen has exactly one page heading", () => {
+    expect(html({ kind: "review" }).match(/<h1[\s>]/g)).toHaveLength(1);
+  });
+
   it("the code entry form never autocompletes and names its field", () => {
     const markup = renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
         <DeviceCodeForm onSubmit={() => undefined} invalid />
       </I18nextProvider>,
     );
+    expect(markup.match(/<h1[\s>]/g)).toHaveLength(1);
     expect(markup).toMatch(/<input[^>]*autocomplete="off"/i);
     expect(markup).toContain(device.codeLabel);
     expect(markup).toContain(device.codeInvalid);

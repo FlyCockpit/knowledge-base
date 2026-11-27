@@ -128,6 +128,8 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | mcpTokens.create | human credential mint |
 | mcpTokens.listMine | human credential management |
 | mcpTokens.revokeMine | human credential management |
+| oauthClients.delete | instance administration |
+| oauthClients.list | instance administration |
 | pullRequests.conflicts | browser PR conflict list (conflict details travel in PROPOSAL_CONFLICT over MCP) |
 | pullRequests.forDocument | browser editor lookup of the viewer's own PR |
 | push.send | instance administration |
