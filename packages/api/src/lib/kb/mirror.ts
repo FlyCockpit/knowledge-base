@@ -6,6 +6,7 @@ import {
   encryptDeployKey,
   generateDeployKey,
   MAX_APPROVED_HOST_KEYS,
+  normalizeHostKeyEntries,
   parseApprovedHostKeys,
 } from "./deploy-key";
 import type { DnsLookupFn } from "./egress";
@@ -52,7 +53,7 @@ export const mirrorStatusInput = z.strictObject({ kbId: kbIdSchema });
 export const mirrorConfigureInput = z.strictObject({
   kbId: kbIdSchema,
   url: z.string().min(1).max(1024),
-  hostKeys: z.array(z.string().min(1).max(8300)).min(1).max(MAX_APPROVED_HOST_KEYS),
+  hostKeys: z.array(z.string().max(8300)).min(1).max(MAX_APPROVED_HOST_KEYS),
   /** PUBLISHED: matched a provider's published fingerprints (re-checked here).
    * CONFIRMED: the user compared the fingerprints or pasted the keys themselves. */
   hostKeyCheck: z.enum(["PUBLISHED", "CONFIRMED"]),
@@ -459,7 +460,7 @@ export async function configureMirror(
 ): Promise<MirrorResult> {
   const input = mirrorConfigureInput.parse(raw);
   const parsed = normalizeMirrorRemote(input.url);
-  const approved = parseApprovedHostKeys(input.hostKeys);
+  const approved = parseApprovedHostKeys(normalizeHostKeyEntries(input.hostKeys, parsed));
   assertHostKeysTrusted(parsed, approved, input.hostKeyCheck);
   const hostKeys = approved.map((k) => k.key);
   await assertMirrorHostEgress(parsed, options.lookup);

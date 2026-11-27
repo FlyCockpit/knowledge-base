@@ -67,6 +67,7 @@ const humanOnly = {
   "kbPins.pin": "browser sidebar pins (per-user preference)",
   "kbPins.unpin": "browser sidebar pins (per-user preference)",
   "kbPins.reorder": "browser sidebar pins (per-user preference)",
+  "kbs.shareInbox": "human sharing",
   "kbs.shareInvite": "human sharing",
   "kbs.shareAccept": "human sharing",
   "kbs.shareList": "human sharing",

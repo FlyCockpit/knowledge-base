@@ -11,6 +11,7 @@ import {
   DocumentEditorView,
   imageInsertAt,
   insertImagesIntoDraft,
+  KbDocumentDelete,
   KbProposalDocumentEditor,
   KbSessionEditor,
   submitPath,
@@ -23,14 +24,17 @@ import {
   kbControls,
   type PendingUpload,
   previewAfterSaves,
+  type SaveRun,
 } from "@/hooks/use-kb-editor";
 import { renderWithTestRouter as renderToStaticMarkup } from "@/lib/router-test-utils";
+import { useKbWorkspaceStore } from "@/stores/kb-workspace";
 import { orpc } from "@/utils/orpc";
 
 /**
  * The type-to-confirm dialog renders in a portal (nothing in static markup):
  * a stand-in shows the props each render passes, so the wiring is visible.
  */
+const deleteConfirmation = vi.hoisted(() => ({ confirm: () => {} }));
 vi.mock("@/components/confirm-delete-dialog", () => ({
   ConfirmDeleteDialog: (props: {
     open: boolean;
@@ -38,15 +42,19 @@ vi.mock("@/components/confirm-delete-dialog", () => ({
     description: string;
     confirmToken: string;
     confirmLabel?: string;
-  }) => (
-    <div
-      data-testid="confirm-delete-dialog"
-      data-open={String(props.open)}
-      data-token={props.confirmToken}
-    >
-      {props.title} | {props.description} | {props.confirmLabel}
-    </div>
-  ),
+    onConfirm?: () => void;
+  }) => {
+    if (props.onConfirm) deleteConfirmation.confirm = props.onConfirm;
+    return (
+      <div
+        data-testid="confirm-delete-dialog"
+        data-open={String(props.open)}
+        data-token={props.confirmToken}
+      >
+        {props.title} | {props.description} | {props.confirmLabel}
+      </div>
+    );
+  },
 }));
 
 /**
@@ -905,4 +913,99 @@ describe("PR mode deletion-only resolution", () => {
     expect(out).toContain('data-testid="pr-mode" data-state="missing"');
     expect(out).not.toContain('data-testid="pr-mode-delete"');
   });
+});
+
+describe("delete callback ownership", () => {
+  it.each(["noop", "retired", "error"] as const)(
+    "holds the attempt until completion and releases on %s",
+    async (kind) => {
+      let respond: (value: SaveRun | undefined) => void = () => {};
+      const delayed = new Promise<SaveRun | undefined>((resolve) => {
+        respond = resolve;
+      });
+      const editor: ComponentProps<typeof KbDocumentDelete>["editor"] = {
+        markdown: "",
+        setMarkdown: () => {},
+        dirty: false,
+        discard: () => {},
+        baseRevision: HEAD,
+        path: "a.md",
+        setPath: () => {},
+        pathEditable: false,
+        exists: true,
+        outcome: null,
+        pending: false,
+        paused: false,
+        proposal: false,
+        proposalHead: null,
+        pendingUpload: null,
+        setPendingUpload: () => {},
+        submit: async () => undefined,
+        deleteDocument: () => delayed,
+        adoptHead: () => {},
+        insertImage: async () => undefined,
+        stagedImages: [],
+        committed: null,
+      };
+      let released = () => {};
+      const done = new Promise<void>((resolve) => {
+        released = resolve;
+      });
+      const onDeleted = vi.fn(() => {
+        expect(useKbWorkspaceStore.getState().pendingDelete).toEqual({
+          owner: "user:a",
+          kbId: KB,
+          path: "a.md",
+        });
+      });
+      renderToStaticMarkup(
+        <QueryClientProvider client={new QueryClient()}>
+          <I18nextProvider i18n={i18n}>
+            <KbDocumentDelete
+              lang="en-US"
+              kbId={KB}
+              editor={editor}
+              open
+              onOpenChange={() => {}}
+              onDeleted={onDeleted}
+              onDeleteStart={() => {
+                const release = useKbWorkspaceStore
+                  .getState()
+                  .beginPathDelete("user:a", KB, "a.md");
+                return () => {
+                  release();
+                  released();
+                };
+              }}
+            />
+          </I18nextProvider>
+        </QueryClientProvider>,
+      );
+      deleteConfirmation.confirm();
+      expect(useKbWorkspaceStore.getState().pendingDelete?.path).toBe("a.md");
+      // The editor may clear pending before resolving its result; attempt ownership persists.
+      respond(
+        kind === "retired"
+          ? undefined
+          : {
+              document: { exists: false, head: NEW_HEAD, path: "a.md" },
+              proposal: null,
+              memory: { fingerprint: null, key: null },
+              images: [],
+              retired: [],
+              savedRev: null,
+              receipt: null,
+              savedMarkdown: null,
+              deletedFrom: null,
+              outcome:
+                kind === "noop"
+                  ? { kind: "noop", commitSha: NEW_HEAD }
+                  : { kind: "error", reason: "gone" },
+            },
+      );
+      await done;
+      expect(onDeleted).toHaveBeenCalledTimes(kind === "noop" ? 1 : 0);
+      expect(useKbWorkspaceStore.getState().pendingDelete).toBeNull();
+    },
+  );
 });

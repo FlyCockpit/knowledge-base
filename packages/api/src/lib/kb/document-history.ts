@@ -289,9 +289,9 @@ export function followedLogMaxBytes(rows: number): number {
 export function parseFollowedLog(
   stdout: string,
   path: string,
-): { sha: string; committedAt: string | null; path: string }[] {
+): { sha: string; committedAt: string | null; path: string; followedFrom?: string }[] {
   const tokens = stdout.split("\0");
-  const rows: { sha: string; committedAt: string | null; path: string }[] = [];
+  const rows: ReturnType<typeof parseFollowedLog> = [];
   let current = path;
   let i = 0;
   while (i < tokens.length) {
@@ -303,6 +303,7 @@ export function parseFollowedLog(
     // date range is shown as unknown rather than failing the page.
     const at = new Date(Number(time) * 1000);
     let rowPath = current;
+    let followedFrom: string | undefined;
     const status = (tokens[i] ?? "").replace(/^\n/, "");
     if (/^[ACDMRTUX]\d*$/.test(status) && status !== "") {
       i += 1;
@@ -311,6 +312,7 @@ export function parseFollowedLog(
         const to = tokens[i++] ?? "";
         if (!from || !to) throw new Error("invalid log line");
         rowPath = to;
+        followedFrom = from;
         current = from;
       } else {
         const named = tokens[i++] ?? "";
@@ -323,6 +325,7 @@ export function parseFollowedLog(
       sha,
       committedAt: Number.isNaN(at.getTime()) ? null : at.toISOString(),
       path: rowPath,
+      ...(followedFrom ? { followedFrom } : {}),
     });
   }
   return rows;
@@ -375,6 +378,9 @@ export async function readDocumentHistory(
       // Across renames (a web move keeps the bytes, so it is always found),
       // with each commit's path: NUL-separated, never quoted.
       "--follow",
+      // Tiny documents often share most of their front matter. Only identical
+      // bytes establish a move; similarity alone is not document identity.
+      "--find-renames=100%",
       "--name-status",
       "--diff-merges=first-parent",
       "-z",
@@ -391,7 +397,23 @@ export async function readDocumentHistory(
     // worst-case rows rather than the default (deep pages of renames).
     { ...options, maxBuffer: followedLogMaxBytes(offset + take) },
   );
-  const commits = parseFollowedLog(String(stdout), path).slice(offset);
+  let followed = parseFollowedLog(String(stdout), path);
+  const moves = followed.filter((commit) => commit.followedFrom !== undefined);
+  if (moves.length) {
+    // --follow can report even an exact copy as a rename. A move must remove
+    // its source in this commit; otherwise this row is the new document's
+    // creation and older source history belongs to a different document.
+    // Check any object type: a retained source directory also is not a move.
+    const { stdout: sources } = await runGitAsync(
+      input.repoPath,
+      ["cat-file", "--batch-check=%(objectname)"],
+      { ...options, input: `${moves.map((row) => `${row.sha}:${row.followedFrom}`).join("\n")}\n` },
+    );
+    const objects = String(sources).split("\n");
+    const copy = moves.find((_, index) => SHA1.test(objects[index] ?? ""));
+    if (copy) followed = followed.slice(0, followed.indexOf(copy) + 1);
+  }
+  const commits = followed.slice(offset);
   const page = commits.slice(0, limit);
   const messages = await readCommitMessagesAsync(
     input.repoPath,

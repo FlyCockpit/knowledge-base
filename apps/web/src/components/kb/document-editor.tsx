@@ -1278,6 +1278,7 @@ export function KbDocumentDelete({
   open,
   onOpenChange: setOpen,
   onDeleted,
+  onDeleteStart,
 }: {
   lang: string;
   kbId: string;
@@ -1291,6 +1292,8 @@ export function KbDocumentDelete({
    * head the delete wrote; null when it was already gone (noop).
    */
   onDeleted: (undo: { revision: string; head: string } | null) => void;
+  /** Hold local callback ownership through invalidation and onDeleted (Undo). */
+  onDeleteStart?: () => () => void;
 }) {
   const { t } = useTranslation(["kb", "common"]);
   // The session's own document: the one its delete record names.
@@ -1300,50 +1303,55 @@ export function KbDocumentDelete({
   const head = useRevisionRead(kbId, path, stale?.headSha ?? null);
   const send = async (rebase?: StaleDelete) => {
     setOpen(false);
-    const run = await editor.deleteDocument(rebase);
-    // A retired page (another KB opened meanwhile) gets no outcome.
-    if (!run) return;
-    const { outcome, deletedFrom } = run;
-    setStale(null);
-    switch (outcome.kind) {
-      case "applied":
-        onDeleted(deletedFrom ? { revision: deletedFrom, head: outcome.commitSha } : null);
-        return;
-      case "noop":
-        onDeleted(null);
-        return;
-      case "proposed":
-        toast.success(
-          t(outcome.created ? "kb:outcome.proposalCreatedTitle" : "kb:outcome.proposedTitle", {
-            number: outcome.proposalNumber,
-          }),
-        );
-        return;
-      case "conflict": {
-        const confirmable = confirmableConflict(outcome, { kind: "document", path });
-        if (!confirmable) {
-          toast.error(
-            outcome.proposalConflict && outcome.proposalNumber !== null
-              ? t("kb:outcome.proposalConflictTitle", { number: outcome.proposalNumber })
-              : t("kb:outcome.conflictUnknown"),
+    const release = onDeleteStart?.();
+    try {
+      const run = await editor.deleteDocument(rebase);
+      // A retired page (another KB opened meanwhile) gets no outcome.
+      if (!run) return;
+      const { outcome, deletedFrom } = run;
+      setStale(null);
+      switch (outcome.kind) {
+        case "applied":
+          onDeleted(deletedFrom ? { revision: deletedFrom, head: outcome.commitSha } : null);
+          return;
+        case "noop":
+          onDeleted(null);
+          return;
+        case "proposed":
+          toast.success(
+            t(outcome.created ? "kb:outcome.proposalCreatedTitle" : "kb:outcome.proposedTitle", {
+              number: outcome.proposalNumber,
+            }),
           );
           return;
+        case "conflict": {
+          const confirmable = confirmableConflict(outcome, { kind: "document", path });
+          if (!confirmable) {
+            toast.error(
+              outcome.proposalConflict && outcome.proposalNumber !== null
+                ? t("kb:outcome.proposalConflictTitle", { number: outcome.proposalNumber })
+                : t("kb:outcome.conflictUnknown"),
+            );
+            return;
+          }
+          // Ask again about the exact reported head (a moved document, or the
+          // caller's open proposal that changed it), shown in the dialog once
+          // it has been read. The page's own view refreshes in the background.
+          void queryClient.invalidateQueries({ queryKey: orpc.documents.key() });
+          setStale(confirmable);
+          setOpen(true);
+          return;
         }
-        // Ask again about the exact reported head (a moved document, or the
-        // caller's open proposal that changed it), shown in the dialog once
-        // it has been read. The page's own view refreshes in the background.
-        void queryClient.invalidateQueries({ queryKey: orpc.documents.key() });
-        setStale(confirmable);
-        setOpen(true);
-        return;
+        case "retryable":
+          toast.error(t("kb:editor.retryable"));
+          return;
+        case "error":
+          toast.error(
+            t(outcome.reason === "unknown" ? "kb:editor.error" : `kb:editor.${outcome.reason}`),
+          );
       }
-      case "retryable":
-        toast.error(t("kb:editor.retryable"));
-        return;
-      case "error":
-        toast.error(
-          t(outcome.reason === "unknown" ? "kb:editor.error" : `kb:editor.${outcome.reason}`),
-        );
+    } finally {
+      release?.();
     }
   };
   return (

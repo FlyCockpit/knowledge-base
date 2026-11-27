@@ -6,6 +6,7 @@
   "forbidden": "You don't have access to this.",
   "generic": "Something didn't work. Try again.",
   "notFound": "That wasn't found.",
+  "ownsKnowledgeBases": "This user owns knowledge bases. Transfer or delete their knowledge bases before deleting the account, or archive the user instead.",
   "pageDescription": "{{appName}} is a web application",
   "rateLimited": "Too many attempts. Please wait a few minutes and try again.",
   "rateLimitedWithSeconds": "Too many attempts. Try again in {{seconds}} seconds.",

@@ -67,3 +67,29 @@ describe("isCodeRejection: only a wrong or expired code is a code-field error", 
     expect(isCodeRejection(new TypeError("Failed to fetch"))).toBe(false);
   });
 });
+
+describe("friendly: account ownership conflict", () => {
+  it("uses the stable wire reason without exposing the server message", () => {
+    expect(
+      friendly({
+        code: "CONFLICT",
+        data: { reason: "owns_knowledge_bases" },
+        message: "raw private detail",
+      }),
+    ).toBe("errors:ownsKnowledgeBases");
+    expect(friendly({ status: 409, data: { reason: "owns_knowledge_bases" } })).toBe(
+      "errors:ownsKnowledgeBases",
+    );
+  });
+
+  it("keeps unrelated conflicts generic and ignores ownership text in messages", () => {
+    for (const data of [undefined, null, "owns_knowledge_bases", { reason: "other" }]) {
+      expect(friendly({ code: "CONFLICT", data, message: "owns_knowledge_bases" })).toBe(
+        "errors:conflict",
+      );
+    }
+    expect(friendly({ code: "BAD_REQUEST", data: { reason: "owns_knowledge_bases" } })).toBe(
+      "errors:badRequest",
+    );
+  });
+});

@@ -15,7 +15,14 @@
     "sharedEmptyTitle": "Nothing shared with you yet",
     "sharedEmptyDescription": "Knowledge bases other people share with you appear here after you accept the invitation.",
     "searchable": "Search index",
-    "notSearchable": "No search index"
+    "notSearchable": "No search index",
+    "inbox": {
+      "title": "Pending invitations",
+      "empty": "No pending invitations.",
+      "from": "Invited by {{name}}",
+      "review": "Review invitation",
+      "failed": "Couldn't load invitations. Try again."
+    }
   },
   "gettingStarted": {
     "createKb": {
@@ -746,6 +753,8 @@
       "description": "Keep a copy of this knowledge base's main branch in an external Git repository, over SSH.",
       "behaviour": "Pushes main to this repository's main branch only when you press Push now. It never pulls, never force-pushes and never pushes on its own.",
       "setupIntro": "Next step: enter the repository to mirror to. We'll check its host and guide you through adding a deploy key and testing the connection before anything is enabled.",
+      "retryAfter": "Too many checks. Wait {{seconds}} seconds and try again.",
+      "dryRunLimit": "This dry run checks authentication and write negotiation. Receive hooks or branch protections can still reject a real push.",
       "addKeyIntro": "Next step: add the deploy key below to the repository with write access, then test the connection. Nothing is pushed until the test passes.",
       "rotationIntro": "A new key is waiting. Add it to the repository and test it; the current key ({{fingerprint}}) keeps working until the new one passes. After that, delete the old key from your Git host.",
       "steps": {
@@ -1070,7 +1079,8 @@
       "switcher": "Recent files",
       "switcherButton": "Recent files ({{count}})",
       "switcherDescription": "Files you opened in this knowledge base.",
-      "switcherEmpty": "No open files yet."
+      "switcherEmpty": "No open files yet.",
+      "closedDeleted": "Closed {{name}} because it was deleted."
     },
     "dirtyClose": {
       "title": "Save changes to {{name}}?",

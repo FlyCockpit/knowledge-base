@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { listAccountTeardownHandlersForTests } from "./account-removal";
 import {
+  configureMirror,
   mirrorConfigureInput,
   mirrorStatusSchema,
   registerMirrorExecutor,
@@ -29,6 +30,24 @@ describe("mirror lifecycle wiring", () => {
 });
 
 describe("mirror wire schemas", () => {
+  it("rejects a host-prefixed key for a different remote before any I/O", async () => {
+    await expect(
+      configureMirror(
+        {} as Parameters<typeof configureMirror>[0],
+        {} as Parameters<typeof configureMirror>[1],
+        {
+          kbId: "a".repeat(24),
+          url: "ssh://git@git.example.com/o/r.git",
+          hostKeys: [
+            "evil.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+          ],
+          hostKeyCheck: "CONFIRMED",
+          idempotencyKey: "k".repeat(16),
+        },
+        undefined,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
   it("configure input is closed and bounded", () => {
     const base = {
       kbId: "a".repeat(24),

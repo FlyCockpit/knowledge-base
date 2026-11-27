@@ -284,6 +284,65 @@ describe("document history and PR attribution", () => {
   });
 });
 
+describe("document identity in deleted history", () => {
+  it.each([
+    ["similar retained source", "# E5E two\n\nSecond doc.\n", "# gone\n\nto delete\n", true],
+    ["identical retained source", "# Same\n\nDocument.\n", "# Same\n\nDocument.\n", true],
+    ["similar removed source", "# Shared\n\nold\n", "# Shared\n\nnew\n", false],
+    ["exact rename", "# Same\n\nDocument.\n", "# Same\n\nDocument.\n", false],
+  ])("keeps %s lineage correct across pages", async (_, source, target, retained) => {
+    const repo = mkdtempSync(join(tmpdir(), "kb-doc-history-identity-"));
+    try {
+      execFileSync("git", ["init", "--bare", repo], { env: hardenedGitEnv(), stdio: "ignore" });
+      const base = initialMainTreeFiles("Identity fixture");
+      const file = (name: string, body: string): TreeFileInput => ({
+        segments: ["notes", name],
+        content: Buffer.from(`---\nprovenance: human\n---\n${body}`),
+      });
+      let time = 1_800_200_000;
+      const commit = (parentSha: string, message: string, files: TreeFileInput[]) =>
+        writeGitFixtureCommit(repo, {
+          parentSha,
+          message,
+          files: [...base, ...files],
+          timestampSeconds: time++,
+        });
+      const original = commit("0".repeat(40), "Create source", [file("source.md", source)]);
+      const created = commit(original, "Create target", [
+        ...(retained ? [file("source.md", source)] : []),
+        file("target.md", target),
+      ]);
+      const deleted = commit(created, "Delete target", retained ? [file("source.md", source)] : []);
+      const expected = [
+        [deleted, "notes/target.md", true],
+        [created, "notes/target.md", false],
+        ...(!retained && source === target ? [[original, "notes/source.md", false]] : []),
+      ];
+      for (const limit of [1, 2, 10]) {
+        let cursor: string | null = null;
+        const seen: unknown[] = [];
+        for (let pages = 0; pages < 5; pages += 1) {
+          const page = await readDocumentHistory({
+            repoPath: repo,
+            headSha: deleted,
+            path: "notes/target.md",
+            cursor,
+            limit,
+            query: actorsQuery(),
+          });
+          seen.push(...page.items.map((row) => [row.sha, row.path, row.deleted]));
+          cursor = page.nextCursor;
+          if (!cursor) break;
+        }
+        expect(cursor).toBeNull();
+        expect(seen, `limit ${limit}`).toEqual(expected);
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("history across a rename", () => {
   let repo: string;
   const c: Record<string, string> = {};

@@ -10,6 +10,7 @@ import { getKbRuntime } from "../lib/kb/runtime";
 import {
   hasSharedKnowledgeBase,
   shareAccept,
+  shareInbox,
   shareInvite,
   shareInviteCancel,
   shareInvitePreview,
@@ -22,6 +23,7 @@ import {
   shareUpdate,
 } from "../lib/kb/shares";
 import { transferAccept, transferRequest } from "../lib/kb/transfer";
+import { cursorPageInput } from "../lib/pagination";
 import { createProcedureBudget } from "../lib/procedure-budget";
 
 const idempotencyKey = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
@@ -83,6 +85,15 @@ function toOrpc(error: unknown): never {
 }
 
 export const kbMembersProcedures = {
+  /** Pending invitations addressed to the current verified recipient only. */
+  shareInbox: protectedProcedure.input(cursorPageInput).handler(async ({ context, input }) => {
+    try {
+      return await shareInbox(getKbRuntime(), context.session!.user.id, input);
+    } catch (error) {
+      toOrpc(error);
+    }
+  }),
+
   shareInvite: protectedProcedure
     .input(
       z.object({

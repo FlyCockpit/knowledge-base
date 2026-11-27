@@ -17,7 +17,42 @@ import {
   tabKey,
   type WorkspaceTab,
 } from "@/lib/kb-workspace/tabs";
-import { useKbWorkspaceStore } from "@/stores/kb-workspace";
+import { useKbWorkspaceStore, type WorkspacePathEvent } from "@/stores/kb-workspace";
+
+/** Apply path changes only to clean main tabs; pinned views and drafts retain their identity. */
+export function applyWorkspacePathEvent(
+  state: TabsState,
+  event: WorkspacePathEvent,
+  isDirtyTab?: (tab: WorkspaceTab) => boolean,
+): TabsState {
+  let active = state.active;
+  const tabs: WorkspaceTab[] = [];
+  const seen = new Set<string>();
+  for (const tab of state.tabs) {
+    const key = tabKey(tab);
+    const protectedTab =
+      tab.path === "" ||
+      tab.rev !== undefined ||
+      tab.pr !== undefined ||
+      tab.proposal !== undefined ||
+      isDirtyTab?.(tab);
+    const single = { tabs: [tab], active: state.active === key ? key : null };
+    const result = protectedTab
+      ? single
+      : event.kind === "rename"
+        ? renameTabPath(single, event.from, event.to)
+        : dropTabPath(single, event.path);
+    if (state.active === key) active = result.active;
+    for (const next of result.tabs) {
+      const nextKey = tabKey(next);
+      if (!seen.has(nextKey)) {
+        seen.add(nextKey);
+        tabs.push(next);
+      }
+    }
+  }
+  return { tabs, active };
+}
 
 /**
  * The open-file tabs of one viewer in one KB, kept in step with the URL:
@@ -88,6 +123,24 @@ export function useKbWorkspaceTabs(input: {
           : prev,
       );
   }
+  const pathEvent = useKbWorkspaceStore((store) => store.pathEvent);
+  const [appliedPath, setAppliedPath] = useState(
+    () => useKbWorkspaceStore.getState().pathEvent?.id ?? 0,
+  );
+  if (pathEvent && pathEvent.id > appliedPath) {
+    setAppliedPath(pathEvent.id);
+    // Completed local deletes belong to the pruning lifecycle: it calculates
+    // the adjacent tab before removal, after the document installed Undo.
+    if (
+      !(pathEvent.kind === "delete" && pathEvent.completedLocally) &&
+      retargetApplies(pathEvent, appliedPath, kbId, userId ? `user:${userId}` : null)
+    )
+      setStore((prev) =>
+        prev.owner === owner
+          ? { ...prev, state: applyWorkspacePathEvent(prev.state, pathEvent, isDirtyTab) }
+          : prev,
+      );
+  }
 
   const update = (next: (state: TabsState) => TabsState) =>
     setStore((prev) => (prev.owner === owner ? { ...prev, state: next(prev.state) } : prev));
@@ -111,6 +164,18 @@ export function useKbWorkspaceTabs(input: {
     move: (from: number, to: number) => update((prev) => moveTab(prev, from, to)),
     renamePath: (from: string, to: string) => update((prev) => renameTabPath(prev, from, to)),
     dropPath: (path: string) => update((prev) => dropTabPath(prev, path)),
+    dropCleanMainPaths: (paths: readonly string[]) =>
+      update((prev) =>
+        paths.reduce(
+          (state, path) =>
+            applyWorkspacePathEvent(
+              state,
+              { kind: "delete", owner: null, kbId, id: 0, path },
+              isDirtyTab,
+            ),
+          prev,
+        ),
+      ),
   };
 }
 

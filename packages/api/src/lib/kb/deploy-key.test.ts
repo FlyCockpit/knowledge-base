@@ -9,6 +9,7 @@ import {
   decryptDeployKey,
   encryptDeployKey,
   generateDeployKey,
+  normalizeHostKeyEntries,
   parseApprovedHostKeys,
   renderOpenSshPrivateKey,
   sshFingerprint,
@@ -124,6 +125,39 @@ describe("versioned deploy-key encryption", () => {
 });
 
 describe("approved SSH host public keys", () => {
+  it("accepts only known_hosts records bound to the exact host and port", () => {
+    const line = ed25519Line();
+    const remote = { host: "git.example.com", port: 2222 };
+    expect(
+      parseApprovedHostKeys(
+        normalizeHostKeyEntries([`# scan\n\n[git.example.com]:2222 ${line}`], remote),
+      )[0]!.key,
+    ).toBe(line);
+    for (const prefix of [
+      "git.example.com",
+      "[git.example.com]:22",
+      "[evil.example.com]:2222",
+      "*.example.com",
+      "|1|hash",
+      "@cert-authority git.example.com",
+    ]) {
+      expect(() =>
+        parseApprovedHostKeys(normalizeHostKeyEntries([`${prefix} ${line}`], remote)),
+      ).toThrow();
+    }
+    expect(() => parseApprovedHostKeys(normalizeHostKeyEntries(["# only"], remote))).toThrow();
+    expect(() =>
+      parseApprovedHostKeys(normalizeHostKeyEntries(["[git.example.com]:2222 SHA256:abc"], remote)),
+    ).toThrow();
+    expect(() =>
+      parseApprovedHostKeys(
+        normalizeHostKeyEntries(
+          [Array(9).fill(`[git.example.com]:2222 ${line}`).join("\n")],
+          remote,
+        ),
+      ),
+    ).toThrow();
+  });
   it("stores the full key and an independently computed SHA256 fingerprint", () => {
     const line = ed25519Line();
     const [parsed] = parseApprovedHostKeys([line]);

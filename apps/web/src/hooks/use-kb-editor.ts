@@ -791,6 +791,21 @@ const KB_PRIVATE_ROOTS = [
   "kbSealed",
 ];
 
+/** Stop this KB's outstanding private reads before leaving a deleted KB.
+ * Cancellation prevents a late access denial from reaching the global toast. */
+export function cancelKbPrivateQueries(queryClient: QueryClient, kbId: string): Promise<void> {
+  return queryClient.cancelQueries({
+    predicate: (query) => {
+      const [path, options] = query.queryKey as [unknown, { input?: { kbId?: unknown } }?];
+      return (
+        Array.isArray(path) &&
+        KB_PRIVATE_ROOTS.includes(String(path[0])) &&
+        options?.input?.kbId === kbId
+      );
+    },
+  });
+}
+
 /**
  * Drops every cached query holding this KB's private data (share loss,
  * tombstone). A `kbs.get` that failed keeps its error (so the page can say the

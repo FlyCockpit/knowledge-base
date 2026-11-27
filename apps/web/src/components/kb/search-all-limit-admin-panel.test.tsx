@@ -6,7 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { SearchAllLimitForm } from "@/components/kb/search-all-limit-admin-panel";
+import {
+  SearchAllLimitForm,
+  validSearchAllLimit,
+} from "@/components/kb/search-all-limit-admin-panel";
 
 const i18n = createInstance();
 beforeAll(async () => {
@@ -22,6 +25,11 @@ beforeAll(async () => {
 });
 
 describe("knowledge_search_all limit admin form", () => {
+  it("validates integer boundaries and rejects non-numeric input", () => {
+    for (const value of ["abc", "0", "65", "1.5", "01"])
+      expect(validSearchAllLimit(value, 64)).toBe(false);
+    for (const value of ["1", "64"]) expect(validSearchAllLimit(value, 64)).toBe(true);
+  });
   it("renders one numeric field with the stored limit, its range and default", () => {
     const html = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>

@@ -459,7 +459,10 @@ export const usersRouter = {
       mapUserChangeConflict(err);
       const mapped = mapAccountDeletionError(err);
       if (mapped) {
-        throw new ORPCError("CONFLICT", { message: mapped.message });
+        throw new ORPCError("CONFLICT", {
+          message: mapped.message,
+          data: { reason: "owns_knowledge_bases" },
+        });
       }
       const message = err instanceof Error ? err.message : "Failed to delete user";
       if (/foreign key|constraint|restrict/i.test(message)) {
@@ -499,7 +502,10 @@ export const usersRouter = {
       mapUserChangeConflict(err);
       const mapped = mapAccountDeletionError(err);
       if (mapped) {
-        throw new ORPCError("CONFLICT", { message: mapped.message });
+        throw new ORPCError("CONFLICT", {
+          message: mapped.message,
+          data: { reason: "owns_knowledge_bases" },
+        });
       }
       const message = err instanceof Error ? err.message : "Failed to delete user";
       if (/foreign key|constraint|restrict/i.test(message)) {

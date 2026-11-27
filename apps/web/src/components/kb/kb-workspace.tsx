@@ -6,6 +6,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@knowledge-base/ui/components/sheet";
+import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { skipToken, useQuery } from "@tanstack/react-query";
@@ -44,6 +45,7 @@ import { useLatest } from "@/hooks/use-latest";
 import { useMainScrollerHeight } from "@/hooks/use-main-scroller-height";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMountEffect } from "@/hooks/use-mount-effect";
+import { usePruneDeletedTabs } from "@/hooks/use-prune-deleted-tabs";
 import { useRecordRecentKb } from "@/hooks/use-record-recent-kb";
 import { useResolvePendingClose } from "@/hooks/use-resolve-pending-close";
 import { useSaveWhenReady } from "@/hooks/use-save-when-ready";
@@ -62,6 +64,28 @@ import { formatRelativeTime } from "@/utils/relative-time";
 
 /** The workspace's tree + tabs layout needs this much width; below it, one pane at a time. */
 const WORKSPACE_WIDE_QUERY = "(min-width: 1024px)";
+
+export function completeWorkspaceTree(
+  canRead: boolean,
+  head: string | null,
+  tree: {
+    commitSha: string | null;
+    isPending: boolean;
+    isError: boolean;
+    loadingMore: boolean;
+    truncated: boolean;
+  },
+): boolean {
+  return (
+    canRead &&
+    head !== null &&
+    tree.commitSha === head &&
+    !tree.isPending &&
+    !tree.isError &&
+    !tree.loadingMore &&
+    !tree.truncated
+  );
+}
 
 /** The document route's search, as far as the workspace names files by it. */
 export type WorkspaceSearch = {
@@ -220,6 +244,7 @@ export function KbWorkspace({
   const draftOwner = viewerId ? `user:${viewerId}` : null;
   useRecordRecentKb(userId, kbId);
   const editor = useKbWorkspaceStore((state) => state.editor);
+  const pendingDelete = useKbWorkspaceStore((state) => state.pendingDelete);
   const layout = useKbWorkspaceLayout();
   const tree = useKbTree(kbId, canRead);
   const head = useKbHeadSha(kbId);
@@ -288,6 +313,29 @@ export function KbWorkspace({
       search: searchOfTab(tab),
     });
   };
+  usePruneDeletedTabs({
+    owner: draftOwner,
+    kbId,
+    paths: completeWorkspaceTree(canRead, head, tree) ? tree.paths : null,
+    state: tabs.state,
+    current: currentTab,
+    isDirtyTab,
+    isPendingTab: (tab) =>
+      (editor?.key === tabKey(tab) && editor.pending) ||
+      (pendingDelete?.owner === draftOwner &&
+        pendingDelete?.kbId === kbId &&
+        pendingDelete.path === tab.path),
+    onPrune: ({ paths, activeDeleted, next, completedLocally }) => {
+      tabs.dropCleanMainPaths(paths);
+      if (activeDeleted) {
+        if (!completedLocally)
+          toast.message(
+            t("workspace.tabs.closedDeleted", { name: activeDeleted.path.split("/").at(-1) }),
+          );
+        go(next);
+      }
+    },
+  });
   const tabOf = (key: string) => tabs.state.tabs.find((tab) => tabKey(tab) === key) ?? null;
   // A Save from the question that didn't go through, while that question is
   // still the one asked: focus goes to the editor's Save (where it says why) as

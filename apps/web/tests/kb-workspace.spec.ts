@@ -616,6 +616,8 @@ test("desktop: the tree's New file, F2 rename, drag-to-move and Delete use the d
   expect(await serverText(page, kb.id, ALPHA)).toContain("First guide.");
   await moveSheet().getByRole("button", { name: enKb.move.submit }).click();
   await expect(page).toHaveURL(/path=guides%2Ffirst\.md/);
+  await expect(tabs(page).getByRole("tab", { name: "alpha.md" })).toHaveCount(0);
+  await expect(tabs(page).getByRole("tab", { name: "first.md" })).toHaveCount(1);
   expect(await serverText(page, kb.id, "guides/first.md")).toContain("First guide.");
   await expect(tree(page).getByRole("treeitem", { name: "first.md" })).toBeVisible();
   await expect(tree(page).getByRole("treeitem", { name: "alpha.md" })).toHaveCount(0);
@@ -666,6 +668,93 @@ test("desktop: the tree's New file, F2 rename, drag-to-move and Delete use the d
   await markdown(page).press(`${mod}+s`);
   await expect(page).toHaveURL(/path=notes\.md/);
   expect(await serverText(page, kb.id, "notes.md")).toContain("Made from the tree.");
+});
+
+test("phone: deleting an open main document removes it from Recent and offers Undo", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Start here.");
+  await page.getByTestId("document-more").click();
+  await page.getByRole("menuitem", { name: enKb.editor.delete, exact: true }).click();
+  const confirm = page.getByRole("alertdialog");
+  await confirm.getByPlaceholder("DELETE").fill("DELETE");
+  await confirm.getByRole("button", { name: enCommon.actions.delete, exact: true }).click();
+  await expect(
+    page.getByText(enKb.document.deletedToast.replace("{{path}}", README)),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: enKb.document.undo, exact: true })).toBeVisible();
+  await expect(page).not.toHaveURL(/path=readme\.md/);
+  await page.getByTestId("kb-tab-switcher").click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: /^readme\.md/ })).toHaveCount(
+    0,
+  );
+});
+
+test("desktop: external deletion closes a clean active tab, but a direct visit stays on recovery", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}`);
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Start here.");
+  await tree(page).getByRole("treeitem", { name: "guides" }).click();
+  await tree(page).getByRole("treeitem", { name: "alpha.md" }).click();
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("First guide.");
+  await page.evaluate(
+    async ({ kbId, path }) => {
+      const { orpc, kbAttachmentSchema, queryClient } = window.__kbEditor;
+      const current = kbAttachmentSchema.parse((await orpc.kbs.get.call({ kbId }))?.kb);
+      await orpc.documents.delete.call({
+        kbId,
+        path,
+        baseRevision: current.headSha,
+        confirm: "DELETE",
+        idempotencyKey: crypto.randomUUID(),
+      });
+      await queryClient.invalidateQueries();
+    },
+    { kbId: kb.id, path: ALPHA },
+  );
+  await expect(tabs(page).getByRole("tab", { name: "alpha.md" })).toHaveCount(0);
+  await expect(page).toHaveURL(/path=readme\.md/);
+  const notice = page.getByText(enKb.workspace.tabs.closedDeleted.replace("{{name}}", "alpha.md"), {
+    exact: true,
+  });
+  await expect(notice).toHaveCount(1);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(ALPHA)}`);
+  const recovery = page.getByTestId("document-deleted");
+  await expect(recovery).toBeVisible();
+  // Real deletion records carry dates, so the recovery card uses deletedOn
+  // rather than the undated fallback document.deleted.
+  await expect(recovery).toContainText(enKb.document.deletedOn.split("{{date}}")[0]!);
+  await expect(recovery).toContainText(enKb.document.deletedRecoverable);
+  await expect(recovery.getByTestId("document-restore-last")).toBeVisible();
+  await expect(page).toHaveURL(/path=guides%2Falpha\.md/);
+  await expect(tabs(page).getByRole("tab", { name: "alpha.md" })).toHaveCount(1);
+});
+
+test("desktop: moving a dirty document from its menu retains its draft under the new tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(README)}&mode=edit`);
+  await markdown(page).fill("# Read me\n\nUnsaved through rename.\n");
+  await page.getByTestId("document-more").click();
+  await page.getByRole("menuitem", { name: enKb.move.action }).click();
+  const sheet = page.getByRole("dialog", { name: enKb.move.title });
+  await sheet.getByLabel(enKb.move.pathLabel).fill("renamed.md");
+  await sheet.getByRole("button", { name: enKb.move.submit }).click();
+  await expect(page).toHaveURL(/path=renamed\.md/);
+  await expect(markdown(page)).toHaveValue(/Unsaved through rename\./);
+  await expect(tabs(page).getByRole("tab", { name: /readme\.md/ })).toHaveCount(0);
+  await expect(tabs(page).getByRole("tab", { name: /renamed\.md/ })).toHaveCount(1);
 });
 
 test("desktop: a reader's tree has no file operations", async ({ page }) => {
@@ -791,3 +880,134 @@ test("desktop: files dropped on a tree folder open as one New document draft", a
   await expect(page).toHaveURL(/path=guides%2Fbread\.md/);
   expect(await serverText(page, kb.id, "guides/bread.md")).toContain("Dropped in.");
 });
+
+for (const delayed of ["get", "tree"] as const) {
+  test(`desktop: own delete keeps Undo and selects the adjacent tab with documents.${delayed} delayed`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await boot(page);
+    const kb = await createKb(page);
+    await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(BETA)}`);
+    await expect(page.getByTestId("kb-rendered-document")).toContainText("Second guide.");
+    await go(page, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(ALPHA)}`);
+    await expect(page.getByTestId("kb-rendered-document")).toContainText("First guide.");
+    await expect(tabs(page).getByRole("tab")).toHaveCount(2);
+    // Delay this query's refetch promise independently of the shared RPC batch:
+    // kbs.get and the other document queries must be free to finish meanwhile.
+    await page.evaluate(
+      ({ kbId, delayed, oldHead }) => {
+        const { queryClient, orpc } = window.__kbEditor;
+        const sample = queryClient
+          .getQueryCache()
+          .find({ queryKey: orpc.kbs.get.queryKey({ input: { kbId } }) });
+        if (!sample) throw new Error("KB query not mounted");
+        const prototype = Object.getPrototypeOf(sample) as typeof sample;
+        const fetch = prototype.fetch;
+        let held = false;
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        window.addEventListener(
+          "kb-test-release-delete-read",
+          () => {
+            prototype.fetch = fetch;
+            release();
+          },
+          { once: true },
+        );
+        prototype.fetch = async function (...args) {
+          const [path, options] = this.queryKey as [
+            unknown,
+            { input?: { kbId?: string; path?: string; rev?: string } }?,
+          ];
+          if (
+            held ||
+            !Array.isArray(path) ||
+            path[0] !== "documents" ||
+            path[1] !== delayed ||
+            options?.input?.kbId !== kbId ||
+            (delayed === "get" && options.input.path !== "guides/alpha.md") ||
+            (delayed === "tree" && options.input.rev === oldHead)
+          )
+            return fetch.apply(this, args);
+          held = true;
+          if (delayed === "tree") {
+            document.documentElement.setAttribute("data-kb-delete-held", "true");
+            await gate;
+            return fetch.apply(this, args);
+          }
+          try {
+            return await fetch.apply(this, args);
+          } finally {
+            document.documentElement.setAttribute("data-kb-delete-held", "true");
+            await gate;
+          }
+        };
+      },
+      { kbId: kb.id, delayed, oldHead: kb.headSha },
+    );
+    try {
+      await page.getByTestId("document-more").click();
+      await page.getByRole("menuitem", { name: enKb.editor.delete, exact: true }).click();
+      const confirm = page.getByRole("alertdialog");
+      await confirm.getByPlaceholder("DELETE").fill("DELETE");
+      await confirm.getByRole("button", { name: enCommon.actions.delete, exact: true }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-kb-delete-held", "true");
+      if (delayed === "get") {
+        await expect
+          .poll(() =>
+            page.evaluate(
+              ({ kbId, oldHead }) => {
+                const { queryClient, orpc, kbAttachmentSchema } = window.__kbEditor;
+                const data = queryClient.getQueryData(orpc.kbs.get.queryKey({ input: { kbId } }));
+                if (!data) return false;
+                const kb = kbAttachmentSchema.parse(data.kb);
+                if (!kb.headSha || kb.headSha === oldHead) return false;
+                const options = orpc.documents.tree.infiniteOptions({
+                  input: (_cursor: string | null) => ({ kbId, rev: kb.headSha!, limit: 2000 }),
+                  initialPageParam: null as string | null,
+                  getNextPageParam: (last) => last?.nextCursor ?? null,
+                });
+                const tree = queryClient.getQueryData(options.queryKey);
+                return (
+                  tree?.pages[0]?.commitSha === kb.headSha &&
+                  !tree.pages.flatMap((page) => page?.paths ?? []).includes("guides/alpha.md")
+                );
+              },
+              { kbId: kb.id, oldHead: kb.headSha },
+            ),
+          )
+          .toBe(true);
+        // The refreshed tree cannot steal the local completion/Undo callback.
+        await expect(page).toHaveURL(/path=guides%2Falpha\.md/);
+        await page.evaluate(() => window.dispatchEvent(new Event("kb-test-release-delete-read")));
+      }
+      const toast = page.getByText(enKb.document.deletedToast.replace("{{path}}", ALPHA), {
+        exact: true,
+      });
+      await expect(toast).toBeVisible();
+      await expect(page).toHaveURL(/path=guides%2Fbeta\.md/);
+      await expect(tabs(page).getByRole("tab", { name: "alpha.md" })).toHaveCount(0);
+      await expect(tabs(page).getByRole("tab", { name: "beta.md" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(
+        page.getByText(enKb.workspace.tabs.closedDeleted.replace("{{name}}", "alpha.md"), {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      if (delayed === "tree")
+        await page.evaluate(() => window.dispatchEvent(new Event("kb-test-release-delete-read")));
+      await toast.hover();
+      await page.getByRole("link", { name: enKb.document.undo, exact: true }).click();
+      await expect
+        .poll(() => serverText(page, kb.id, ALPHA).catch(() => null))
+        .toContain("First guide.");
+    } finally {
+      await page.evaluate(() => window.dispatchEvent(new Event("kb-test-release-delete-read")));
+    }
+  });
+}

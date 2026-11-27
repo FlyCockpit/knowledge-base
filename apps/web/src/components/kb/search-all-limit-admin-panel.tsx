@@ -21,6 +21,10 @@ import { orpc } from "@/utils/orpc";
 
 type LimitView = Awaited<ReturnType<AppRouterClient["settings"]["kbSearchAllLimit"]>>;
 
+export function validSearchAllLimit(value: string, max: number): boolean {
+  return /^[1-9]\d?$/.test(value) && Number(value) <= max;
+}
+
 /** One whole-number field; the server refuses anything outside 1..max. */
 export function SearchAllLimitForm({ view }: { view: LimitView }) {
   const { t } = useTranslation("admin");
@@ -41,8 +45,7 @@ export function SearchAllLimitForm({ view }: { view: LimitView }) {
         limit: z
           .string()
           .trim()
-          .regex(/^[1-9]\d?$/, invalid)
-          .refine((value) => Number(value) <= view.max, invalid),
+          .refine((value) => validSearchAllLimit(value, view.max), invalid),
       }),
     },
     onSubmit: ({ value }) => save.mutate({ limit: Number(value.limit.trim()) }),

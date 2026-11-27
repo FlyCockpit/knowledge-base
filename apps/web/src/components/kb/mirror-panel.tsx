@@ -84,16 +84,26 @@ export function mirrorControls(bits: readonly string[]): { visible: boolean } {
   return { visible: bits.includes("manage") };
 }
 
-export function splitHostKeys(text: string): string[] {
+export function splitHostKeys(text: string, remote?: { host: string; port: number }): string[] {
+  const expected = remote && (remote.port === 22 ? remote.host : `[${remote.host}]:${remote.port}`);
   return text
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .map((line) => {
+      const parts = line.split(/\s+/);
+      return parts.length === 3 && expected && parts[0] === expected
+        ? parts.slice(1).join(" ")
+        : line;
+    });
 }
 
 /** Pasted (advanced) host keys: 1 to 8 full `<type> <base64>` lines. */
-export function pastedHostKeysValid(text: string): boolean {
-  const keys = splitHostKeys(text);
+export function pastedHostKeysValid(
+  text: string,
+  remote?: { host: string; port: number },
+): boolean {
+  const keys = splitHostKeys(text, remote);
   return keys.length >= 1 && keys.length <= 8 && keys.every((key) => HOST_KEY_SHAPE.test(key));
 }
 
@@ -173,8 +183,8 @@ export function setupApproval(
   if (!inspection || inspection.verdict === "MISMATCH") return null;
   // Pasting full keys is itself the user's explicit approval.
   if (choice.pasted !== null)
-    return pastedHostKeysValid(choice.pasted)
-      ? { hostKeys: splitHostKeys(choice.pasted), hostKeyCheck: "CONFIRMED" }
+    return pastedHostKeysValid(choice.pasted, inspection)
+      ? { hostKeys: splitHostKeys(choice.pasted, inspection), hostKeyCheck: "CONFIRMED" }
       : null;
   if (inspection.verdict === "PUBLISHED")
     return {
@@ -238,8 +248,26 @@ export function mirrorErrorReason(error: unknown): string | null {
   return typeof reason === "string" && URL_REASONS.has(reason) ? reason : null;
 }
 
+export function mirrorRetrySeconds(error: unknown): number | null {
+  const failure = error as { code?: unknown; data?: { retryAfterSeconds?: unknown } } | null;
+  const seconds = failure?.data?.retryAfterSeconds;
+  return failure?.code === "TOO_MANY_REQUESTS" &&
+    typeof seconds === "number" &&
+    Number.isFinite(seconds) &&
+    seconds > 0
+    ? Math.ceil(seconds)
+    : null;
+}
+
 function ReasonError({ error, testId }: { error: unknown; testId: string }) {
   const { t } = useTranslation("kb");
+  const seconds = mirrorRetrySeconds(error);
+  if (seconds !== null)
+    return (
+      <p role="alert" data-testid={testId} className="text-sm text-destructive">
+        {t("settings.mirror.retryAfter", { seconds })}
+      </p>
+    );
   const reason = mirrorErrorReason(error);
   if (!reason) return <ControlError error={error} testId={testId} />;
   return (
@@ -263,7 +291,7 @@ function Note({
     tone === "warning"
       ? "border-destructive/40 text-foreground"
       : tone === "success"
-        ? "border-primary/40 bg-primary/5"
+        ? "border-state-success/40 bg-state-success-bg"
         : "bg-muted/50";
   return (
     <div
@@ -274,7 +302,7 @@ function Note({
     >
       <Icon
         aria-hidden
-        className={`mt-0.5 size-4 shrink-0 ${tone === "warning" ? "text-destructive" : tone === "success" ? "text-primary" : "text-muted-foreground"}`}
+        className={`mt-0.5 size-4 shrink-0 ${tone === "warning" ? "text-destructive" : tone === "success" ? "text-state-success" : "text-muted-foreground"}`}
       />
       <div className="min-w-0 space-y-1">{children}</div>
     </div>
@@ -392,13 +420,15 @@ function HostKeyStep({
               <p>{t("settings.mirror.hostKeys.confirm", { host: where })}</p>
               <Fingerprints keys={inspection.hostKeys} />
             </Note>
-            <CheckRow
-              id="mirror-confirm-fingerprints"
-              checked={confirmed}
-              disabled={false}
-              onToggle={() => onConfirmed(!confirmed)}
-              label={t("settings.mirror.hostKeys.confirmCheck")}
-            />
+            <div className="[&_label]:inline-flex [&_label]:min-h-[44px] [&_label]:items-center">
+              <CheckRow
+                id="mirror-confirm-fingerprints"
+                checked={confirmed}
+                disabled={false}
+                onToggle={() => onConfirmed(!confirmed)}
+                label={t("settings.mirror.hostKeys.confirmCheck")}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -417,7 +447,11 @@ function HostKeyStep({
               : t("settings.mirror.hostKeys.advancedClose")}
           </Button>
           {pasted !== null && (
-            <AdvancedHostKeys value={pasted} onChange={(value) => onPasted(value)} />
+            <AdvancedHostKeys
+              value={pasted}
+              remote={inspection}
+              onChange={(value) => onPasted(value)}
+            />
           )}
         </div>
       )}
@@ -425,10 +459,18 @@ function HostKeyStep({
   );
 }
 
-function AdvancedHostKeys({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function AdvancedHostKeys({
+  value,
+  remote,
+  onChange,
+}: {
+  value: string;
+  remote: { host: string; port: number };
+  onChange: (v: string) => void;
+}) {
   const { t } = useTranslation("kb");
   const form = useForm({ defaultValues: { hostKeys: value } });
-  const invalid = value.trim().length > 0 && !pastedHostKeysValid(value);
+  const invalid = value.trim().length > 0 && !pastedHostKeysValid(value, remote);
   return (
     <form.Field name="hostKeys" listeners={{ onChange: ({ value: next }) => onChange(next) }}>
       {(field) => (
@@ -457,7 +499,9 @@ function SetupWizard({ kb, onDone }: { kb: KbLike; onDone: () => void }) {
   const [confirmed, setConfirmed] = useState(false);
   const [pasted, setPasted] = useState<string | null>(null);
   const [fieldUrl, setFieldUrl] = useState("");
-  const inspect = useMutation(orpc.kbMirror.inspect.mutationOptions());
+  const inspect = useMutation(
+    orpc.kbMirror.inspect.mutationOptions({ meta: { skipGlobalErrorToast: true } }),
+  );
   const configure = useMutation(
     orpc.kbMirror.configure.mutationOptions({
       onSuccess: () => {
@@ -658,6 +702,7 @@ function TestStep({
   return (
     <Step n={n} title={t("settings.mirror.steps.test")} testId="mirror-step-test">
       <p className="text-sm text-muted-foreground">{t("settings.mirror.testIntro")}</p>
+      <p className="text-sm text-muted-foreground">{t("settings.mirror.dryRunLimit")}</p>
       <div data-testid="mirror-test-state" data-state={test.kind} className="space-y-2">
         {test.kind === "running" && (
           <p role="status" className="text-sm">

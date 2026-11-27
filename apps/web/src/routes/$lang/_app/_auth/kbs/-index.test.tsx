@@ -16,6 +16,17 @@ const fixture = vi.hoisted(() => ({
   hasSession: true,
   owned: undefined as Page[] | undefined,
   shared: [{ items: [], nextCursor: null }] as Page[] | undefined,
+  inbox: [{ items: [], nextCursor: null }] as {
+    items: {
+      requestId: string;
+      kbId: string;
+      kbName: string;
+      inviterName: string;
+      bits: string[];
+    }[];
+    nextCursor: string | null;
+  }[],
+  inboxInput: undefined as { limit: number; cursor?: string } | undefined,
   /** `mcpGrants.countActiveMine`: the counts, or "error". */
   counts: { tokens: 0, apps: 0, apiKeys: 0, childTokens: 0 } as
     | { tokens: number; apps: number; apiKeys: number; childTokens: number }
@@ -73,6 +84,14 @@ vi.mock("@/utils/orpc", () => ({
         key: () => ["kbs", "list"],
       },
       shareStatusMine: { queryOptions: () => ({ read: "sharing" }), key: () => ["sharing"] },
+      shareInbox: {
+        infiniteOptions: (options: {
+          input: (cursor: string | undefined) => { limit: number; cursor?: string };
+        }) => {
+          fixture.inboxInput = options.input(undefined);
+          return { relation: "inbox" };
+        },
+      },
     },
     mcpGrants: {
       countActiveMine: { queryOptions: () => ({ read: "counts" }), key: () => ["counts"] },
@@ -88,7 +107,7 @@ const result = (data: unknown, enabled = true) => {
 };
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-  useInfiniteQuery: ({ relation }: { relation: "owned" | "shared" }) => {
+  useInfiniteQuery: ({ relation }: { relation: "owned" | "shared" | "inbox" }) => {
     const pages = fixture[relation];
     const error = fixture.listError[relation];
     return {
@@ -142,6 +161,8 @@ beforeEach(() => {
   fixture.owned = [{ items: [], nextCursor: null }];
   fixture.listError = {};
   fixture.shared = [{ items: [], nextCursor: null }];
+  fixture.inbox = [{ items: [], nextCursor: null }];
+  fixture.inboxInput = undefined;
   fixture.counts = { tokens: 0, apps: 0, apiKeys: 0, childTokens: 0 };
   fixture.sharing = { shared: false };
   fixture.users = { users: [{}], nextCursor: null };
@@ -243,6 +264,28 @@ describe("getting started on the knowledge bases list", () => {
 });
 
 describe("list headings", () => {
+  it("mounts the recipient inbox and displays a pending invitation", () => {
+    fixture.inbox = [
+      {
+        items: [
+          {
+            requestId: "request1",
+            kbId: "kb2",
+            kbName: "Shared notes",
+            inviterName: "Alex",
+            bits: ["read"],
+          },
+        ],
+        nextCursor: null,
+      },
+    ];
+    const html = render();
+    expect(fixture.inboxInput).toEqual({ limit: 20 });
+    expect(html).toContain("list.inbox.title");
+    expect(html).toContain("Shared notes");
+    expect(html).toContain("list.inbox.from(Alex)");
+    expect(html).toContain('data-to="/$lang/kbs/$kbId/settings" data-kb="kb2"');
+  });
   it("count what is loaded, with + while more pages exist, and nothing when empty", () => {
     fixture.owned = [{ items: [{ id: "a" }, { id: "b" }], nextCursor: "next" }];
     fixture.shared = [{ items: [{ id: "c" }], nextCursor: null }];

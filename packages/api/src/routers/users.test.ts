@@ -723,22 +723,43 @@ describe("usersRouter", () => {
       expect(db.user.delete).not.toHaveBeenCalled();
     });
 
-    it("converts account removal failures into CONFLICT when mapped", async () => {
-      db.user.findUnique.mockResolvedValue({ id: "other-user-id" });
-      const { mapAccountDeletionError } = await import("../lib/kb/account-removal");
-      vi.mocked(removeUserAccount).mockRejectedValue(new Error("blocked"));
-      vi.mocked(mapAccountDeletionError).mockReturnValue({
-        code: "CONFLICT",
-        message: "blocked",
-        name: "KbDomainError",
-      } as never);
+    it.each(["remove", "removeForce"] as const)(
+      "%s leaves other deletion conflicts unclassified",
+      async (procedure) => {
+        db.user.findUnique.mockResolvedValue({ id: "other-user-id" });
+        const { mapAccountDeletionError } = await import("../lib/kb/account-removal");
+        vi.mocked(mapAccountDeletionError).mockReturnValue(null);
+        vi.mocked(removeUserAccount).mockRejectedValue(new Error("foreign key constraint"));
+        const client = createRouterClient(usersRouter, { context: buildContext() });
+        await expect(client[procedure]({ userId: "other-user-id" })).rejects.toMatchObject({
+          code: "CONFLICT",
+          data: undefined,
+        });
+      },
+    );
 
-      const client = createRouterClient(usersRouter, { context: buildContext() });
-      await expect(client.remove({ userId: "other-user-id" })).rejects.toSatisfy((e: ORPCError) => {
-        expect(e.code).toBe("CONFLICT");
-        return true;
-      });
-    });
+    it.each(["remove", "removeForce"] as const)(
+      "%s preserves the ownership conflict reason",
+      async (procedure) => {
+        db.user.findUnique.mockResolvedValue({ id: "other-user-id" });
+        const { mapAccountDeletionError } = await import("../lib/kb/account-removal");
+        vi.mocked(removeUserAccount).mockRejectedValue(new Error("blocked"));
+        vi.mocked(mapAccountDeletionError).mockReturnValue({
+          code: "CONFLICT",
+          message: "blocked",
+          name: "KbDomainError",
+        } as never);
+
+        const client = createRouterClient(usersRouter, { context: buildContext() });
+        await expect(client[procedure]({ userId: "other-user-id" })).rejects.toSatisfy(
+          (e: ORPCError) => {
+            expect(e.code).toBe("CONFLICT");
+            expect(e.data).toEqual({ reason: "owns_knowledge_bases" });
+            return true;
+          },
+        );
+      },
+    );
   });
 });
 

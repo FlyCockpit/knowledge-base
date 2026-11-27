@@ -147,7 +147,9 @@ A manager sets the mirror up in KB settings → Mirror, a guided four-step flow:
    with the pending key and reports, in plain words, a host-key mismatch, a key
    that was not added, a missing repository (or one the key cannot see), a
    read-only key, a remote main with commits the KB lacks, or an unreachable
-   host. Nothing changes on the remote. A passing test enables the mirror. A
+   host. Nothing changes on the remote. The dry run checks authentication and
+   write negotiation, but cannot test receive hooks or branch protections;
+   those can still reject a real push. A passing test enables the mirror. A
    manager may enable a first key whose test failed only through a typed
    confirmation, never past a host-key mismatch and never to replace a working
    key; every push still enforces the approved host keys.

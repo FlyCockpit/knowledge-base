@@ -45,6 +45,26 @@ describe("workspace layout", () => {
 });
 
 describe("active editor registry", () => {
+  it("announces scoped path operations with increasing IDs", () => {
+    const store = useKbWorkspaceStore.getState();
+    store.announcePathRenamed("user:a", "kb", "old.md", "new.md");
+    const first = useKbWorkspaceStore.getState().pathEvent!;
+    expect(first).toMatchObject({
+      owner: "user:a",
+      kbId: "kb",
+      kind: "rename",
+      from: "old.md",
+      to: "new.md",
+    });
+    store.announcePathDeleted("user:b", "other", "gone.md");
+    expect(useKbWorkspaceStore.getState().pathEvent).toMatchObject({
+      owner: "user:b",
+      kbId: "other",
+      kind: "delete",
+      path: "gone.md",
+      id: first.id + 1,
+    });
+  });
   const editor = (key: string) => ({
     key,
     dirty: false,
@@ -75,5 +95,32 @@ describe("sidebar view", () => {
       current.sidebarView,
     );
     expect(mergeWorkspaceLayout({ sidebarView: 3 }, current).sidebarView).toBe(current.sidebarView);
+  });
+});
+
+describe("local delete attempt ownership", () => {
+  it("releases a failed/retired attempt without clearing a newer owner/KB attempt", () => {
+    const old = useKbWorkspaceStore.getState().beginPathDelete("user:a", "kb", "a.md");
+    const newer = useKbWorkspaceStore.getState().beginPathDelete("user:b", "other", "a.md");
+    old();
+    expect(useKbWorkspaceStore.getState().pendingDelete).toEqual({
+      owner: "user:b",
+      kbId: "other",
+      path: "a.md",
+    });
+    newer();
+    expect(useKbWorkspaceStore.getState().pendingDelete).toBeNull();
+  });
+  it("marks an explicit completion for the pruning lifecycle after Undo", () => {
+    useKbWorkspaceStore
+      .getState()
+      .announcePathDeleted("user:a", "kb", "a.md", { completedLocally: true, selectNext: true });
+    expect(useKbWorkspaceStore.getState().pathEvent).toMatchObject({
+      owner: "user:a",
+      kbId: "kb",
+      path: "a.md",
+      completedLocally: true,
+      selectNext: true,
+    });
   });
 });

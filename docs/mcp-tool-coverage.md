@@ -96,6 +96,7 @@ Every remaining oRPC leaf is explicitly excluded from MCP (including public brow
 | kbPins.reorder | browser sidebar pins (per-user preference) |
 | kbPins.unpin | browser sidebar pins (per-user preference) |
 | kbs.shareAccept | human sharing |
+| kbs.shareInbox | human sharing |
 | kbs.shareInvite | human sharing |
 | kbs.shareInviteCancel | human sharing |
 | kbs.shareInvitePreview | human sharing |

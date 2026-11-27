@@ -59,6 +59,7 @@ import { useWorkspaceFileRequest } from "@/hooks/use-workspace-file-request";
 import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
 import { documentTitle } from "@/lib/document-text";
 import { cachedKbName, pageHead } from "@/lib/page-title";
+import { useKbWorkspaceStore } from "@/stores/kb-workspace";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -334,6 +335,10 @@ function DocumentPage() {
    * from a closure of an earlier render: everything it decides on is read now.
    */
   const advanceSession = (id: string, next: EditingTarget, previous: EditingTarget) => {
+    if (previous.path && previous.path !== next.path && next.target.kind === "main")
+      useKbWorkspaceStore
+        .getState()
+        .announcePathRenamed(draftOwner, previous.kbId, previous.path, next.path);
     const at = latestDocumentAt(router, previous.kbId);
     const latest = at && targetOf(previous.kbId, at.search);
     const owned =
@@ -397,7 +402,22 @@ function DocumentPage() {
             }),
         },
       });
-    if (!latest || editingTargetKey(latest) !== editingTargetKey(from)) return;
+    const stillCurrent =
+      latest !== null &&
+      latest !== undefined &&
+      editingTargetKey(latest) === editingTargetKey(from);
+    if (from.target.kind === "main" && draftOwner !== null) {
+      // Undo is installed first. The mounted workspace owns the live tab
+      // order and chooses the adjacent tab before removing this clean tab.
+      useKbWorkspaceStore.getState().announcePathDeleted(draftOwner, from.kbId, from.path, {
+        completedLocally: true,
+        selectNext: stillCurrent,
+      });
+      return;
+    }
+    // An unscoped page has no recipient for workspace path events (for
+    // example, an embedded editor without remembered viewer tabs).
+    if (!stillCurrent || !at) return;
     void navigate({ to: "/$lang/kbs/$kbId", params: { lang: at.lang, kbId: from.kbId } });
   };
   // A target shown without an editor (a final state, or a failed read with no
@@ -877,6 +897,9 @@ function DocumentView({
           open={deleting}
           onOpenChange={setDeleting}
           onDeleted={(undo) => onDeleted(target, undo)}
+          onDeleteStart={() =>
+            useKbWorkspaceStore.getState().beginPathDelete(draftOwner, kb.id, target.path)
+          }
         />
       )}
       {absence && (

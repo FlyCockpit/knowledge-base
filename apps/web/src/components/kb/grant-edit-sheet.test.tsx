@@ -1,12 +1,229 @@
+import type { MutationObserver, MutationObserverOptions } from "@tanstack/react-query";
+import type { ReactElement, ReactNode } from "react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  ChangeList,
+  changeListItems,
+  GrantEditSheet,
+  type GrantEditTarget,
+  storedKbOptions,
+} from "./grant-edit-sheet";
+
+const fixture = vi.hoisted(() => ({
+  active: false,
+  scope: "",
+  cursor: 0,
+  cells: new Map<string, unknown[]>(),
+  success: vi.fn(),
+  request: vi.fn(),
+  mutation: undefined as MutationObserver<unknown, Error, unknown> | undefined,
+}));
+
+// A small hook harness lets the actual form and confirmation handlers run in
+// one render turn, before React can publish the mutation's pending state.
+// Query execution and its success/settlement callbacks use TanStack itself.
+vi.mock("react", async (original) => {
+  const actual = await original<typeof import("react")>();
+  const { useState: stateHook, useRef: refHook, useReducer: reducerHook } = actual;
+  function cell<T>(initial: T | (() => T)): [T, (next: T | ((previous: T) => T)) => void] {
+    if (!fixture.active) return stateHook(initial);
+    let cells = fixture.cells.get(fixture.scope);
+    if (!cells) {
+      cells = [];
+      fixture.cells.set(fixture.scope, cells);
+    }
+    const index = fixture.cursor++;
+    if (!(index in cells))
+      cells[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+    const stored = cells;
+    return [
+      stored[index] as T,
+      (next) => {
+        stored[index] =
+          typeof next === "function" ? (next as (previous: T) => T)(stored[index] as T) : next;
+      },
+    ];
+  }
+  return {
+    ...actual,
+    useState: cell,
+    useRef: <T,>(value: T) => (fixture.active ? cell({ current: value })[0] : refHook(value)),
+    useReducer: <T, A>(reducer: (state: T, action: A) => T, initial: T) => {
+      if (!fixture.active) return reducerHook(reducer, initial);
+      const [state, set] = cell(initial);
+      return [state, (action: A) => set((previous) => reducer(previous, action))];
+    },
+  };
+});
+vi.mock("react-i18next", async (original) => {
+  const actual = await original<typeof import("react-i18next")>();
+  const translationHook = actual.useTranslation;
+  return {
+    ...actual,
+    useTranslation: (...args: Parameters<typeof actual.useTranslation>) =>
+      fixture.active ? { t: (key: string) => key } : translationHook(...args),
+  };
+});
+vi.mock("@knowledge-base/ui/components/sileo", () => ({ toast: { success: fixture.success } }));
+vi.mock("@tanstack/react-form", () => ({
+  useForm: (options: { onSubmit: () => void }) => ({ handleSubmit: options.onSubmit }),
+}));
+vi.mock("@/hooks/use-mcp-consent", async (original) => ({
+  ...(await original<typeof import("@/hooks/use-mcp-consent")>()),
+  useLiveKbOptions: () => ({
+    query: { isPending: false },
+    live: [{ kbId: "kb1", name: "Notes", bits: ["read", "propose"] }],
+  }),
+}));
+vi.mock("@/utils/orpc", () => ({
+  orpc: {
+    mcpGrants: {
+      key: () => ["grants"],
+      listAclMine: { infiniteOptions: () => ({}) },
+      updateMine: {
+        mutationOptions: (options: object) => ({ ...options, mutationFn: fixture.request }),
+      },
+    },
+    mcpTokens: { key: () => ["tokens"] },
+  },
+}));
+vi.mock("@tanstack/react-query", async (original) => {
+  const actual = await original<typeof import("@tanstack/react-query")>();
+  const client = new actual.QueryClient();
+  return {
+    ...actual,
+    useQueryClient: () => client,
+    useInfiniteQuery: () => ({
+      isPending: false,
+      isError: false,
+      hasNextPage: false,
+      data: { pages: [{ items: [{ kbId: "kb1", bits: ["read"] }] }] },
+    }),
+    useMutation: (options: MutationObserverOptions<unknown, Error, unknown>) => {
+      fixture.mutation ??= new actual.MutationObserver(client, options);
+      return {
+        isPending: false,
+        error: null,
+        mutate: (input: unknown) => {
+          void fixture.mutation!.mutate(input).catch(() => {});
+        },
+      };
+    },
+  };
+});
+
+type Element = ReactElement<Record<string, unknown>>;
+const target: GrantEditTarget = {
+  grantId: "grant1",
+  kind: "PAT",
+  name: "Token",
+  neverExpires: false,
+  activeElevations: 0,
+  scopes: ["mcp:read", "mcp:write"],
+  toolGroups: ["read", "pull_requests"],
+  allowCreate: false,
+  createdKbBits: [],
+  authoringMode: "both",
+};
+const closed = vi.fn();
+function call(element: Element, scope: string): ReactNode {
+  fixture.scope = scope;
+  fixture.cursor = 0;
+  return (element.type as (props: Record<string, unknown>) => ReactNode)(element.props);
+}
+function elements(node: ReactNode): Element[] {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as Element;
+  return [element, ...elements(element.props.children as ReactNode)];
+}
+function renderForm(): Element[] {
+  const session = GrantEditSheet({ target, onOpenChange: closed }) as Element;
+  let tree = call(session, "session");
+  let form = elements(tree).find((element) => element.props.snapshot);
+  if (!form) {
+    tree = call(session, "session");
+    form = elements(tree).find((element) => element.props.snapshot);
+  }
+  if (!form) throw new Error("Missing grant form");
+  return elements(call(form, "form"));
+}
+function confirm(): () => void {
+  fixture.active = true;
+  let form = renderForm();
+  const duration = form.find((element) => element.props.value === "permanent")!;
+  (duration.props.onChange as (value: string) => void)("1h");
+  const picker = form.find((element) => element.props.selection)!;
+  (picker.props.onChange as (action: object) => void)({
+    type: "toggleBit",
+    kbId: "kb1",
+    bit: "propose",
+  });
+  form = renderForm();
+  (form.find((element) => element.type === "form")!.props.onSubmit as (event: object) => void)({
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  const confirmation = renderForm().find(
+    (element) => element.props.children === "settings:credentials.edit.confirmSubmit",
+  );
+  if (!confirmation) throw new Error("Missing confirmation button");
+  return confirmation.props.onClick as () => void;
+}
+
+beforeEach(() => {
+  fixture.active = false;
+  fixture.cells.clear();
+  fixture.mutation = undefined;
+  fixture.request.mockReset();
+  fixture.success.mockClear();
+  closed.mockClear();
+});
+
+describe("temporary grant confirmation", () => {
+  it("sends one request and one success toast for duplicate confirmation before pending paint", async () => {
+    let finish!: (value: unknown) => void;
+    fixture.request.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const click = confirm();
+    click();
+    click();
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledTimes(1));
+    expect(fixture.request.mock.calls[0]![0]).toMatchObject({ id: "grant1", duration: "1h" });
+    finish({});
+    await vi.waitFor(() => expect(fixture.mutation?.getCurrentResult().status).toBe("success"));
+    expect(fixture.success).toHaveBeenCalledExactlyOnceWith(
+      "settings:credentials.edit.savedTemporary",
+    );
+    expect(closed).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("allows a new confirmation after a failed request settles", async () => {
+    fixture.request.mockRejectedValueOnce(new Error("retry")).mockResolvedValueOnce({});
+    const click = confirm();
+    click();
+    await vi.waitFor(() => expect(fixture.mutation?.getCurrentResult().status).toBe("error"));
+    expect(fixture.success).not.toHaveBeenCalled();
+    click();
+    await vi.waitFor(() => expect(fixture.mutation?.getCurrentResult().status).toBe("success"));
+    expect(fixture.request).toHaveBeenCalledTimes(2);
+    expect(fixture.success).toHaveBeenCalledTimes(1);
+  });
+});
+
 import { MCP_TOOL_PRESETS } from "@knowledge-base/auth/mcp-tool-groups";
 import enSettings from "@knowledge-base/locales/src/en-US/settings.json";
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
 
 import { AclPicker } from "@/components/kb/acl-picker";
-import { ChangeList, changeListItems, storedKbOptions } from "@/components/kb/grant-edit-sheet";
+
 import { type LiveKbOption, selectionReducer } from "@/hooks/use-mcp-consent";
 import { grantEditPlan, selectionFromGrant } from "@/lib/mcp-grant-edit";
 

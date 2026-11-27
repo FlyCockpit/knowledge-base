@@ -15,7 +15,14 @@
     "sharedEmptyTitle": "Aún no se ha compartido nada contigo",
     "sharedEmptyDescription": "Las bases de conocimiento que otras personas compartan contigo aparecen aquí después de aceptar la invitación.",
     "searchable": "Índice de búsqueda",
-    "notSearchable": "Sin índice de búsqueda"
+    "notSearchable": "Sin índice de búsqueda",
+    "inbox": {
+      "title": "Invitaciones pendientes",
+      "empty": "No hay invitaciones pendientes.",
+      "from": "Invitación de {{name}}",
+      "review": "Revisar invitación",
+      "failed": "No se pudieron cargar las invitaciones. Inténtalo de nuevo."
+    }
   },
   "gettingStarted": {
     "createKb": {
@@ -746,6 +753,8 @@
       "description": "Mantén una copia de la rama main de esta base de conocimiento en un repositorio Git externo, por SSH.",
       "behaviour": "Envía main a la rama main de este repositorio solo cuando pulsas Enviar ahora. Nunca trae cambios, nunca fuerza el envío y nunca envía por su cuenta.",
       "setupIntro": "Siguiente paso: escribe el repositorio de destino. Comprobaremos su host y te guiaremos para añadir una clave de despliegue y probar la conexión antes de activar nada.",
+      "retryAfter": "Demasiadas comprobaciones. Espera {{seconds}} segundos y vuelve a intentarlo.",
+      "dryRunLimit": "Esta prueba comprueba la autenticación y la negociación de escritura. Los hooks de recepción o las protecciones de rama aún pueden rechazar un envío real.",
       "addKeyIntro": "Siguiente paso: añade la clave de despliegue de abajo al repositorio con acceso de escritura y luego prueba la conexión. No se envía nada hasta que la prueba pase.",
       "rotationIntro": "Hay una clave nueva en espera. Añádela al repositorio y pruébala; la clave actual ({{fingerprint}}) sigue funcionando hasta que la nueva pase. Después, borra la clave antigua de tu host Git.",
       "steps": {
@@ -1070,7 +1079,8 @@
       "switcher": "Archivos recientes",
       "switcherButton": "Archivos recientes ({{count}})",
       "switcherDescription": "Archivos que abriste en esta base de conocimiento.",
-      "switcherEmpty": "Todavía no hay archivos abiertos."
+      "switcherEmpty": "Todavía no hay archivos abiertos.",
+      "closedDeleted": "Se cerró {{name}} porque se eliminó."
     },
     "dirtyClose": {
       "title": "¿Guardar los cambios de {{name}}?",

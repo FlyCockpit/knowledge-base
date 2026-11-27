@@ -21,7 +21,7 @@ import {
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { TextareaField, TextField } from "@knowledge-base/ui/components/text-field";
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { BookOpen } from "lucide-react";
 import type * as React from "react";
@@ -33,6 +33,7 @@ import { EmptyState } from "@/components/empty-state";
 import { KbPinButton } from "@/components/kb/kb-pin-button";
 import { StatusPill } from "@/components/status-pill";
 import {
+  cancelKbPrivateQueries,
   clearKbPrivateQueries,
   isAccessLoss,
   kbControls,
@@ -548,12 +549,34 @@ function KbMetadataSession({
   );
 }
 
+/** Retire the deleted view before cancelling reads, then navigate and clear
+ * its cache. Enabled observers must not restart reads during navigation. */
+export async function finishKbDeletion(
+  queryClient: QueryClient,
+  kbId: string,
+  onDeleted: () => void | Promise<void>,
+  retire: () => void,
+): Promise<void> {
+  // The layout synchronously unmounts its workspace/Outlet before cancellation:
+  // enabled paginators and pollers must not restart during a slow navigation.
+  retire();
+  await cancelKbPrivateQueries(queryClient, kbId);
+  try {
+    await onDeleted();
+  } finally {
+    clearKbPrivateQueries(queryClient, kbId);
+    void forgetKbPin(queryClient, kbId);
+    await queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
+  }
+}
+
 /** Delete → AlertDialog with typed DELETE. The server enforces owner + manage. */
 export function KbDeleteDialog(props: {
   kb: Pick<KbItem, "id" | "name" | "metadataVersion">;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onDeleted: () => void;
+  onDeleted: () => void | Promise<void>;
+  onRetire: () => void;
 }) {
   return props.open ? <KbDeleteSession key={props.kb.id} {...props} /> : null;
 }
@@ -563,25 +586,31 @@ function KbDeleteSession({
   open,
   onOpenChange,
   onDeleted,
+  onRetire,
 }: React.ComponentProps<typeof KbDeleteDialog>) {
   const { t } = useTranslation("kb");
   const queryClient = useQueryClient();
   const session = useKbMutationSession();
   const attempt = usePayloadAttemptKey();
+  const submitting = useRef(false);
   const remove = useMutation(
     orpc.kbs.delete.mutationOptions({
       onSuccess: async (_result, variables) => {
-        clearKbPrivateQueries(queryClient, variables.kbId);
-        // Gone for everyone: no pin may link to it any more.
-        void forgetKbPin(queryClient, variables.kbId);
-        await queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() });
-        if (!session.current) return;
-        attempt.settle();
-        toast.success(t("manage.deleted"));
+        const active = session.current;
         session.current = false;
-        onDeleted();
+        if (active) {
+          attempt.settle();
+          toast.success(t("manage.deleted"));
+        }
+        await finishKbDeletion(
+          queryClient,
+          variables.kbId,
+          active ? onDeleted : () => {},
+          active ? onRetire : () => {},
+        );
       },
       onError: async (error, variables) => {
+        submitting.current = false;
         const action = kbMutationErrorAction(error);
         if (action === "error") return;
         const active = session.current;
@@ -608,6 +637,9 @@ function KbDeleteSession({
     <ConfirmDeleteDialog
       open={open}
       onOpenChange={(next) => {
+        // A pending delete still owns completion. Cancel must not strand the
+        // mounted deleted page by retiring its navigation callback early.
+        if (!next && submitting.current) return;
         if (!next) session.current = false;
         onOpenChange(next);
       }}
@@ -627,7 +659,8 @@ function KbDeleteSession({
       copyAriaLabel={t("manage.copyToken")}
       isPending={remove.isPending}
       onConfirm={(value) => {
-        if (value !== "DELETE") return;
+        if (value !== "DELETE" || submitting.current) return;
+        submitting.current = true;
         const payload = {
           kbId: kb.id,
           metadataVersion: kb.metadataVersion,

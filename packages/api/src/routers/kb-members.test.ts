@@ -23,6 +23,7 @@ vi.mock("../lib/procedure-budget", () => ({ createProcedureBudget: () => preview
 vi.mock("../lib/kb/shares", () => ({
   shareInvite: vi.fn(async () => ({ accepted: true, requestId: "req" })),
   shareAccept: vi.fn(),
+  shareInbox: vi.fn(async () => ({ items: [], nextCursor: null })),
   shareList: vi.fn(async () => ({ items: [], nextCursor: null })),
   hasSharedKnowledgeBase: vi.fn(async () => true),
   sharePendingList: vi.fn(async () => ({ items: [], nextCursor: null })),
@@ -58,6 +59,7 @@ import { KbDomainError } from "../lib/kb/errors";
 import { configureKbRuntime, resetKbRuntimeForTests } from "../lib/kb/runtime";
 import {
   hasSharedKnowledgeBase,
+  shareInbox,
   shareInvite,
   shareInviteCancel,
   shareInvitePreview,
@@ -347,5 +349,26 @@ describe("kb-members router", () => {
       code: "TOO_MANY_REQUESTS",
     });
     expect(vi.mocked(shareInvitePreview).mock.calls.length).toBe(calls);
+  });
+
+  describe("recipient invitation inbox", () => {
+    it("uses the authenticated recipient and bounded default page", async () => {
+      const client = createRouterClient(kbMembersProcedures, { context: sessionContext() });
+      await expect(client.shareInbox({})).resolves.toEqual({ items: [], nextCursor: null });
+      expect(shareInbox).toHaveBeenLastCalledWith(expect.anything(), "user-1", { limit: 20 });
+    });
+
+    it("rejects oversized pages and malformed cursors", async () => {
+      const client = createRouterClient(kbMembersProcedures, { context: sessionContext() });
+      await expect(client.shareInbox({ limit: 101 })).rejects.toThrow();
+      await expect(client.shareInbox({ cursor: "not-a-cursor" })).rejects.toThrow();
+    });
+
+    it("requires an authenticated recipient", async () => {
+      const client = createRouterClient(kbMembersProcedures, {
+        context: { ...sessionContext(), session: null },
+      });
+      await expect(client.shareInbox({})).rejects.toThrow();
+    });
   });
 });

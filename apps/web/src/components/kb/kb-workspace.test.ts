@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  completeWorkspaceTree,
   fileOpQuestion,
   leaveAsks,
   searchOfTab,
@@ -11,6 +12,24 @@ import { draftKey } from "@/hooks/use-document-draft";
 import { tabKey } from "@/lib/kb-workspace/tabs";
 
 const SHA = "a".repeat(40);
+
+describe("complete tree snapshots", () => {
+  it("prunes only a complete successful snapshot of the current head", () => {
+    const tree = {
+      commitSha: SHA,
+      isPending: false,
+      isError: false,
+      loadingMore: false,
+      truncated: false,
+    };
+    expect(completeWorkspaceTree(true, SHA, tree)).toBe(true);
+    expect(completeWorkspaceTree(false, SHA, tree)).toBe(false);
+    expect(completeWorkspaceTree(true, null, tree)).toBe(false);
+    expect(completeWorkspaceTree(true, "b".repeat(40), tree)).toBe(false);
+    for (const flag of ["isPending", "isError", "loadingMore", "truncated"] as const)
+      expect(completeWorkspaceTree(true, SHA, { ...tree, [flag]: true })).toBe(false);
+  });
+});
 
 describe("workspace URL state", () => {
   it("names no tab on the KB home, nor for a URL that names no file", () => {

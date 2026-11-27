@@ -12,6 +12,7 @@ import {
   useGettingStartedHidden,
 } from "@/components/home/getting-started";
 import { createdKbDestination, KbCreateDialog, KbList } from "@/components/kb/kb-list";
+import { RecipientInvitations } from "@/components/kb/recipient-invitations";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
@@ -75,6 +76,7 @@ function KbIndexPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: orpc.kbs.list.key() }),
       queryClient.invalidateQueries({ queryKey: orpc.kbs.shareStatusMine.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.kbs.shareInbox.key() }),
       queryClient.invalidateQueries({ queryKey: orpc.mcpGrants.countActiveMine.key() }),
       queryClient.invalidateQueries({ queryKey: orpc.users.list.key() }),
     ]);
@@ -109,6 +111,7 @@ function KbIndexPage() {
             the lists (recent agent changes across knowledge bases), each a
             `<section>` with an `<h2>` like `KbSection`. docs/ui.md § The
             signed-in home. */}
+        {session ? <RecipientInvitations lang={lang} /> : null}
         <KbSection
           relation="owned"
           query={owned}

@@ -6,6 +6,7 @@
   "forbidden": "No tienes acceso a esto.",
   "generic": "Algo no funcionó. Intenta de nuevo.",
   "notFound": "Eso no se encontró.",
+  "ownsKnowledgeBases": "Este usuario es propietario de bases de conocimiento. Transfiere o elimina sus bases de conocimiento antes de eliminar la cuenta, o archiva al usuario.",
   "pageDescription": "{{appName}} es una aplicación web",
   "rateLimited": "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
   "rateLimitedWithSeconds": "Demasiados intentos. Inténtalo de nuevo en {{seconds}} segundos.",

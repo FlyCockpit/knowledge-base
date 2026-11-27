@@ -190,6 +190,24 @@ export function renderOpenSshPrivateKey(seed: DeployKeySeed): Buffer {
 
 export type ApprovedHostKey = { algorithm: string; key: string; fingerprint: string };
 
+/** Strip a known_hosts host only when it names exactly the inspected endpoint. */
+export function normalizeHostKeyEntries(
+  entries: readonly string[],
+  remote: { host: string; port: number },
+): string[] {
+  const expected = remote.port === 22 ? remote.host : `[${remote.host}]:${remote.port}`;
+  return entries
+    .flatMap((entry) => entry.split(/\r?\n/))
+    .flatMap((line) => {
+      const text = line.trim();
+      if (!text || text.startsWith("#")) return [];
+      const parts = text.split(/\s+/);
+      if (parts.length === 2) return [parts.join(" ")];
+      if (parts.length !== 3 || parts[0] !== expected) throw invalidHostKey();
+      return [parts.slice(1).join(" ")];
+    });
+}
+
 const ECDSA_POINT_BYTES: Record<string, number> = {
   "ecdsa-sha2-nistp256": 65,
   "ecdsa-sha2-nistp384": 97,

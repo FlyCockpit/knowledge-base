@@ -11,6 +11,7 @@ import {
 } from "@tanstack/react-router";
 import { FileText, GitPullRequest, Plus, Settings } from "lucide-react";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Breadcrumbs, type Crumb } from "@/components/breadcrumbs";
 import { InlineRetry } from "@/components/inline-retry";
@@ -84,6 +85,8 @@ function KbLayout() {
   // The session the protected layout resolved before this page rendered.
   const { session } = Route.useRouteContext();
   const viewerId = session?.user.id ?? null;
+  const [retiredKbId, setRetiredKbId] = useState<string | null>(null);
+  const retired = retiredKbId === kbId;
   const matchRoute = useMatchRoute();
   const search: WorkspaceSearch & { accept?: string } = useSearch({ strict: false });
   // Settings owns its own KB loading: a recipient accepting an invitation
@@ -102,7 +105,7 @@ function KbLayout() {
       input: { kbId },
       retry: false,
       staleTime: 0,
-      enabled: !awaitingAccept,
+      enabled: !awaitingAccept && !retired,
     }),
   );
   const lost = useKbAccessLoss(kbId, [error]);
@@ -160,10 +163,27 @@ function KbLayout() {
         lang={lang}
         freshness={index?.freshness}
         manage={!onPrs}
+        onRetire={() => flushSync(() => setRetiredKbId(kbId))}
       />
       <KbSectionTabs lang={lang} kbId={kbId} />
     </>
   );
+
+  // Successful deletion retires every child observer, including Settings'
+  // independent Outlet. Keep a safe exit available if navigation fails.
+  if (retired)
+    return (
+      <PageShell>
+        <p role="status">{t("manage.deleted")}</p>
+        <Link
+          to="/$lang/kbs"
+          params={{ lang }}
+          className="inline-flex min-h-[44px] items-center underline"
+        >
+          {t("detail.breadcrumbRoot")}
+        </Link>
+      </PageShell>
+    );
 
   // The workspace (file tree, tabs, read/edit view) is the KB home and its
   // documents, full width; the KB's other pages keep their page column.
@@ -289,12 +309,14 @@ function KbHeader({
   lang,
   freshness,
   manage,
+  onRetire,
 }: {
   kb: KbItem;
   lang: string;
   freshness?: IndexFreshness;
   /** Edit details / Delete: on the KB home and settings, never on content pages. */
   manage: boolean;
+  onRetire: () => void;
 }) {
   const { t } = useTranslation("kb");
   const navigate = useNavigate();
@@ -335,6 +357,7 @@ function KbHeader({
         open={deleting}
         onOpenChange={setDeleting}
         onDeleted={() => navigate({ to: "/$lang/kbs", params: { lang } })}
+        onRetire={onRetire}
       />
     </>
   );

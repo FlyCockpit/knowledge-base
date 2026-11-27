@@ -58,6 +58,17 @@ type EditorRegistry = {
     id: number;
   } | null;
   announceRetarget: (owner: string | null, kbId: string, from: string, to: WorkspaceTab) => void;
+  pathEvent: WorkspacePathEvent | null;
+  announcePathRenamed: (owner: string | null, kbId: string, from: string, to: string) => void;
+  announcePathDeleted: (
+    owner: string | null,
+    kbId: string,
+    path: string,
+    options?: { completedLocally: true; selectNext: boolean },
+  ) => void;
+  pendingDelete: { owner: string | null; kbId: string; path: string } | null;
+  /** The returned release clears only this attempt, never a newer deletion. */
+  beginPathDelete: (owner: string | null, kbId: string, path: string) => () => void;
   /**
    * A file operation the tree asked for, carried out by the document page with
    * its own editing session (kb-sharing's move sheet, kb-recovery's delete
@@ -78,6 +89,11 @@ type EditorRegistry = {
   clearFileRequest: () => void;
 };
 
+export type WorkspacePathEvent = { owner: string | null; kbId: string; id: number } & (
+  | { kind: "rename"; from: string; to: string }
+  | { kind: "delete"; path: string; completedLocally?: true; selectNext?: boolean }
+);
+
 /** What the tree asks the document page to do. */
 export type WorkspaceFileRequest =
   /** Open the move sheet for `path`, `toPath` typed in (rename or drag-to-move). */
@@ -91,6 +107,7 @@ export type WorkspaceFileRequest =
 export const FILE_REQUEST_TTL_MS = 15_000;
 
 let fileRequestSeq = 0;
+let pathEventSeq = 0;
 
 export const useKbWorkspaceStore = create<EditorRegistry>()((set, get) => ({
   editor: null,
@@ -101,6 +118,18 @@ export const useKbWorkspaceStore = create<EditorRegistry>()((set, get) => ({
   retarget: null,
   announceRetarget: (owner, kbId, from, to) =>
     set((state) => ({ retarget: { owner, kbId, from, to, id: (state.retarget?.id ?? 0) + 1 } })),
+  pathEvent: null,
+  announcePathRenamed: (owner, kbId, from, to) =>
+    set({ pathEvent: { owner, kbId, from, to, kind: "rename", id: ++pathEventSeq } }),
+  announcePathDeleted: (owner, kbId, path, options) =>
+    set({ pathEvent: { owner, kbId, path, kind: "delete", id: ++pathEventSeq, ...options } }),
+  pendingDelete: null,
+  beginPathDelete: (owner, kbId, path) => {
+    const attempt = { owner, kbId, path };
+    set({ pendingDelete: attempt });
+    return () =>
+      set((state) => (state.pendingDelete === attempt ? { pendingDelete: null } : state));
+  },
   fileRequest: null,
   requestFile: (owner, kbId, request) =>
     set({ fileRequest: { owner, kbId, request, at: Date.now(), id: ++fileRequestSeq } }),

@@ -1,7 +1,7 @@
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
 import enKb from "@knowledge-base/locales/src/en-US/kb.json";
 import esKb from "@knowledge-base/locales/src/es-MX/kb.json";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryCache, QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import type { MouseEvent, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,6 +11,7 @@ import {
   createdKbDestination,
   createErrorText,
   createSchema,
+  finishKbDeletion,
   type KbItem,
   KbList,
   KbManageActions,
@@ -331,5 +332,62 @@ describe("create refusal text", () => {
       ["You can create 5 knowledge bases per hour. Try again in 59 minutes."],
       ["Couldn't create the knowledge base."],
     ]);
+  });
+});
+
+describe("own KB deletion retirement", () => {
+  it("cancels scoped reads, leaves cached data until navigation, and clears after observers retire", async () => {
+    const errors = vi.fn();
+    const client = new QueryClient({
+      queryCache: new QueryCache({ onError: errors }),
+      defaultOptions: { queries: { retry: false } },
+    });
+    const key = [["kbs", "get"], { input: { kbId: KB } }];
+    const otherKey = [["kbs", "get"], { input: { kbId: "other" } }];
+    client.setQueryData(key, { name: "Deleted KB" });
+    client.setQueryData(otherKey, { name: "Other KB" });
+    let failRead: (error: Error) => void = () => {};
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      queryFn: () =>
+        new Promise<never>((_resolve, reject) => {
+          failRead = reject;
+        }),
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const read = observer.refetch();
+    const navigate = vi.fn(async () => {
+      expect(client.getQueryState(key)?.fetchStatus).toBe("idle");
+      expect(client.getQueryData(key)).toEqual({ name: "Deleted KB" });
+    });
+    await finishKbDeletion(client, KB, navigate, unsubscribe);
+    failRead(Object.assign(new Error("No access"), { code: "FORBIDDEN" }));
+    await read;
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(key)).toBeUndefined();
+    expect(client.getQueryData(otherKey)).toEqual({ name: "Other KB" });
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it("clears deleted private data even when navigation rejects", async () => {
+    const client = new QueryClient();
+    const key = [["kbs", "get"], { input: { kbId: KB } }];
+    const otherKey = [["documents", "list"], { input: { kbId: "other" } }];
+    client.setQueryData(key, { name: "Deleted KB" });
+    client.setQueryData(otherKey, { items: [] });
+    const navigationError = new Error("Navigation failed");
+    await expect(
+      finishKbDeletion(
+        client,
+        KB,
+        async () => {
+          throw navigationError;
+        },
+        () => {},
+      ),
+    ).rejects.toBe(navigationError);
+    expect(client.getQueryData(key)).toBeUndefined();
+    expect(client.getQueryData(otherKey)).toEqual({ items: [] });
   });
 });

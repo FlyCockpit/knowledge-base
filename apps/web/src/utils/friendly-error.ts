@@ -40,6 +40,14 @@ export function friendly(error: unknown, fallback?: string): string {
     return i18n.t("errors:notFound");
   }
   if (e.code === "CONFLICT" || e.status === 409) {
+    if (
+      e.data &&
+      typeof e.data === "object" &&
+      "reason" in e.data &&
+      e.data.reason === "owns_knowledge_bases"
+    ) {
+      return i18n.t("errors:ownsKnowledgeBases");
+    }
     return i18n.t("errors:conflict");
   }
   if (e.code === "BAD_REQUEST" || e.status === 400) {

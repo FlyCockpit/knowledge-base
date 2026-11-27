@@ -201,6 +201,7 @@ function GrantEditForm({
         activeElevations: target.activeElevations,
       })
     : null;
+  const saving = useRef(false);
   const update = useMutation(
     orpc.mcpGrants.updateMine.mutationOptions({
       onSuccess: async (_result, variables) => {
@@ -214,18 +215,28 @@ function GrantEditForm({
         onDone();
       },
       // Committed or not, the lists are refetched; the server state is the only truth.
-      onSettled: () =>
-        Promise.all([
-          queryClient.invalidateQueries({ queryKey: orpc.mcpTokens.key() }),
-          queryClient.invalidateQueries({ queryKey: orpc.mcpGrants.key() }),
-        ]),
+      onSettled: async () => {
+        try {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: orpc.mcpTokens.key() }),
+            queryClient.invalidateQueries({ queryKey: orpc.mcpGrants.key() }),
+          ]);
+        } finally {
+          saving.current = false;
+        }
+      },
     }),
   );
-  const save = (edit: GrantEditPlan, length: EditDuration) =>
+  const save = (edit: GrantEditPlan, length: EditDuration) => {
+    // React's pending state paints later; rapid confirmations must share one
+    // request even when both handlers run before that render.
+    if (saving.current) return;
+    saving.current = true;
     update.mutate({
       id: target.grantId,
       ...(length === "permanent" ? edit.input : temporaryInput(edit, length)),
     });
+  };
   // Temporary access always adds, so it is always confirmed. A permanent
   // narrowing is confirmed too while temporary access is active: it ends it.
   const needsConfirm =

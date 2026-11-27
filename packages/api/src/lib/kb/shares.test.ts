@@ -28,6 +28,7 @@ import { assertKbShareCapacityForNewActiveShare } from "./quota";
 import type { KbRuntimeConfig } from "./runtime";
 import {
   hasSharedKnowledgeBase,
+  shareInbox,
   shareInvite,
   shareInviteCancel,
   shareInvitePreview,
@@ -946,5 +947,179 @@ describe("hasSharedKnowledgeBase", () => {
     prisma.shareInvitation.findFirst.mockResolvedValue(null);
     prisma.kbShare.findFirst.mockResolvedValue(null);
     await expect(hasSharedKnowledgeBase(runtime(), "owner")).resolves.toBe(false);
+  });
+});
+
+describe("shareInbox", () => {
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  const date = new Date("2026-01-01T00:00:00Z");
+  const invite = {
+    id: "inv1",
+    kbId: "kb1",
+    canonicalEmail: "ana@example.com",
+    inviterUserId: "owner",
+    bits: ["read"],
+    inviter: { name: "Owner" },
+    knowledgeBase: { name: "Team notes" },
+  };
+  beforeEach(() => {
+    vi.resetAllMocks();
+    loadIdentity.mockResolvedValue({
+      banned: false,
+      twoFactorSatisfied: true,
+      instanceEnabled: true,
+    });
+    authorizeMock.mockResolvedValue(undefined as never);
+    prisma.user.findUnique.mockResolvedValue({ email: "Ana@Example.com", emailVerified: true });
+    prisma.shareInvitation.findMany.mockResolvedValue([{ id: "inv1", createdAt: date, requestId }]);
+    prisma.shareInvitation.findFirst.mockResolvedValue(invite);
+  });
+
+  it("scopes candidates to the live verified canonical recipient and projects only previews", async () => {
+    expect(await shareInbox(runtime, "ana", { limit: 20 })).toEqual({
+      items: [
+        { kbId: "kb1", kbName: "Team notes", inviterName: "Owner", bits: ["read"], requestId },
+      ],
+      nextCursor: null,
+    });
+    expect(prisma.shareInvitation.findMany).toHaveBeenCalledWith({
+      where: { AND: [{ canonicalEmail: "ana@example.com", acceptedAt: null, revokedAt: null }] },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 21,
+      select: { id: true, createdAt: true, requestId: true },
+    });
+  });
+
+  it("does not query invitations for an unverified account", async () => {
+    prisma.user.findUnique.mockResolvedValue({ email: "ana@example.com", emailVerified: false });
+    expect(await shareInbox(runtime, "ana", { limit: 20 })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(prisma.shareInvitation.findMany).not.toHaveBeenCalled();
+  });
+
+  it("omits another recipient even if a candidate becomes reassigned", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValue({
+      ...invite,
+      canonicalEmail: "other@example.com",
+    });
+    expect((await shareInbox(runtime, "ana", { limit: 20 })).items).toEqual([]);
+    expect(authorizeMock).not.toHaveBeenCalled();
+  });
+
+  it("hides revoked or accepted invitations and lost sender authority", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValueOnce(null);
+    expect((await shareInbox(runtime, "ana", { limit: 20 })).items).toEqual([]);
+    authorizeMock.mockRejectedValueOnce(new KbAdmissionError("FORBIDDEN", "Gone"));
+    expect((await shareInbox(runtime, "ana", { limit: 20 })).items).toEqual([]);
+  });
+
+  it("rechecks cancellation and the recipient after the page read", async () => {
+    prisma.shareInvitation.findFirst.mockResolvedValueOnce(invite).mockResolvedValueOnce(null);
+    expect((await shareInbox(runtime, "ana", { limit: 20 })).items).toEqual([]);
+    prisma.user.findUnique.mockReset();
+    prisma.user.findUnique.mockResolvedValue({ email: "ana@example.com", emailVerified: true });
+    prisma.user.findUnique
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValueOnce({ email: "other@example.com", emailVerified: true });
+    expect(await shareInbox(runtime, "ana", { limit: 20 })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+  });
+
+  it("discards the page if recipient verification is lost while it is read", async () => {
+    prisma.user.findUnique
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValueOnce({ email: "ana@example.com", emailVerified: true })
+      .mockResolvedValue({ email: "ana@example.com", emailVerified: false });
+    expect(await shareInbox(runtime, "ana", { limit: 20 })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+  });
+
+  it.each(["cancel", "sender revoked", "KB tombstoned"])(
+    "revalidates the first item when %s happens while a later preview waits",
+    async (change) => {
+      const secondRequest = "22222222-2222-4222-8222-222222222222";
+      const secondInvite = {
+        ...invite,
+        id: "inv2",
+        kbId: "kb2",
+        inviterUserId: "sender2",
+        knowledgeBase: { name: "Second KB" },
+      };
+      prisma.shareInvitation.findMany.mockResolvedValue([
+        { id: "inv1", createdAt: date, requestId },
+        { id: "inv2", createdAt: date, requestId: secondRequest },
+      ]);
+      let enterSecond = () => {};
+      let releaseSecond = () => {};
+      const entered = new Promise<void>((resolve) => {
+        enterSecond = resolve;
+      });
+      const delayed = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      let changed = false;
+      let waiting = false;
+      prisma.shareInvitation.findFirst.mockImplementation(
+        async ({ where }: { where: { requestId: string } }) => {
+          if (where.requestId === secondRequest) {
+            if (!waiting) {
+              waiting = true;
+              enterSecond();
+              await delayed;
+            }
+            return secondInvite;
+          }
+          return changed && change === "cancel" ? null : invite;
+        },
+      );
+      authorizeMock.mockImplementation(async ({ kbId }) => {
+        if (changed && kbId === "kb1" && change !== "cancel")
+          throw new KbAdmissionError(
+            change === "KB tombstoned" ? "NOT_FOUND" : "FORBIDDEN",
+            "Authority ended",
+          );
+        return undefined as never;
+      });
+      const pending = shareInbox(runtime, "ana", { limit: 20 });
+      await entered;
+      changed = true;
+      releaseSecond();
+      const result = await pending;
+      expect(result.items.map((item) => item.kbId)).toEqual(["kb2"]);
+      expect(JSON.stringify(result)).not.toContain("Team notes");
+    },
+  );
+
+  it("advances a bounded keyset page over stale candidates without leaking lookahead", async () => {
+    prisma.shareInvitation.findMany.mockResolvedValueOnce([
+      { id: "inv1", createdAt: date, requestId },
+      { id: "inv0", createdAt: date, requestId: "other" },
+    ]);
+    prisma.shareInvitation.findFirst.mockResolvedValue(null);
+    const first = await shareInbox(runtime, "ana", { limit: 1 });
+    expect(first.items).toEqual([]);
+    expect(first.nextCursor).toBeTypeOf("string");
+    expect(prisma.shareInvitation.findFirst).toHaveBeenCalledTimes(1);
+    await shareInbox(runtime, "ana", { limit: 1, cursor: first.nextCursor! });
+    expect(prisma.shareInvitation.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        take: 2,
+        where: {
+          AND: [
+            { canonicalEmail: "ana@example.com", acceptedAt: null, revokedAt: null },
+            { OR: [{ createdAt: { lt: date } }, { createdAt: date, id: { lt: "inv1" } }] },
+          ],
+        },
+      }),
+    );
   });
 });

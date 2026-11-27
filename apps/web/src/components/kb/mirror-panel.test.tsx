@@ -16,6 +16,7 @@ import {
   mirrorControls,
   mirrorErrorReason,
   mirrorNeedsPolling,
+  mirrorRetrySeconds,
   mirrorViewState,
   pastedHostKeysValid,
   pushSummaryKey,
@@ -224,6 +225,15 @@ describe("an inspection reply belongs to the URL in the field", () => {
 });
 
 describe("setup approval", () => {
+  it("uses a rounded cooldown only for valid rate limit data", () => {
+    expect(
+      mirrorRetrySeconds({ code: "TOO_MANY_REQUESTS", data: { retryAfterSeconds: 1.2 } }),
+    ).toBe(2);
+    expect(
+      mirrorRetrySeconds({ code: "TOO_MANY_REQUESTS", data: { retryAfterSeconds: "2" } }),
+    ).toBeNull();
+    expect(mirrorRetrySeconds({ code: "BAD_REQUEST", data: { retryAfterSeconds: 2 } })).toBeNull();
+  });
   it("approves a provider-verified remote with only its published keys", () => {
     const published = inspection({
       verdict: "PUBLISHED",
@@ -278,6 +288,27 @@ describe("setup approval", () => {
   it("splits one host key per line", () => {
     expect(splitHostKeys(`${HOST_KEY}\n\n  ${HOST_KEY}  \n`)).toEqual([HOST_KEY, HOST_KEY]);
     expect(pastedHostKeysValid(Array(9).fill(HOST_KEY).join("\n"))).toBe(false);
+  });
+  it("accepts host-prefixed keys only for the inspected host and port", () => {
+    const remote = inspection({ port: 2222 });
+    expect(
+      setupApproval(remote, {
+        confirmed: false,
+        pasted: `# scan\n\n[git.example.com]:2222 ${HOST_KEY}`,
+      }),
+    ).toEqual({ hostKeys: [HOST_KEY], hostKeyCheck: "CONFIRMED" });
+    for (const prefix of [
+      "git.example.com",
+      "[git.example.com]:22",
+      "[evil.example.com]:2222",
+      "*.example.com",
+      "|1|hash",
+      "@cert-authority git.example.com",
+    ]) {
+      expect(
+        setupApproval(remote, { confirmed: false, pasted: `${prefix} ${HOST_KEY}` }),
+      ).toBeNull();
+    }
   });
 });
 
@@ -393,6 +424,22 @@ describe("rendered states", () => {
       expect(html).toContain(`data-testid="${id}"`);
     // The active public key stays copyable (needed after an override).
     expect(html).toContain("ssh-ed25519 PUBLIC1");
+  });
+
+  it("shows a successful connection test with the semantic success style", () => {
+    const test = attempt("ACTIVATE", "COMPLETED", null);
+    const html = view(
+      status({
+        state: "ACTIVE",
+        active: key("ACTIVE", 1),
+        pushEnabled: true,
+        lastAttempt: test,
+        lastTest: test,
+      }),
+    );
+    expect(html).toMatch(
+      /data-testid="mirror-next-step" data-tone="success"[^>]*bg-state-success-bg/,
+    );
   });
 
   it("a failed push states the error in plain words", () => {

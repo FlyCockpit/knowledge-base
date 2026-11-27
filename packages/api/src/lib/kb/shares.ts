@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { canonicalizeEmail } from "@knowledge-base/auth/email";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@knowledge-base/config/locales";
+import type { Prisma } from "@knowledge-base/db/client";
 import { mailboxSchema } from "@knowledge-base/env/mailbox";
+
+import { cursorPage, pageTake, withCursor } from "../pagination";
 
 import { recordAuditEvent } from "./audit";
 import type { AuthorityBarrier } from "./authority-lock";
@@ -1054,6 +1057,72 @@ export type ShareInvitePreview = {
   inviterName: string;
   bits: Permission[];
 };
+
+/** Recipient-only inbox. Invitations have no time-based expiry; live pending
+ * state and the sender's current manage authority are the acceptance boundary. */
+export async function shareInbox(
+  runtime: KbRuntimeConfig,
+  userId: string,
+  input: { limit: number; cursor?: string },
+): Promise<{
+  items: Array<ShareInvitePreview & { requestId: string }>;
+  nextCursor: string | null;
+}> {
+  const store = prismaAuthorityStore(runtime.prisma);
+  const recipient = async () => {
+    assertLiveIdentity(await store.loadIdentity(userId));
+    const user = await runtime.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, emailVerified: true } satisfies Prisma.UserSelect,
+    });
+    return user?.emailVerified ? canonicalizeEmail(user.email) : null;
+  };
+  const canonical = await recipient();
+  if (!canonical) return { items: [], nextCursor: null };
+  const limit = Math.min(Math.max(input.limit, 1), 100);
+  const rows = await runtime.prisma.shareInvitation.findMany({
+    where: withCursor(
+      { canonicalEmail: canonical, acceptedAt: null, revokedAt: null },
+      "createdAt",
+      input.cursor,
+      "desc",
+    ),
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: pageTake(limit),
+    select: { id: true, createdAt: true, requestId: true } satisfies Prisma.ShareInvitationSelect,
+  });
+  const page = cursorPage(rows, limit, "createdAt");
+  const items: Array<ShareInvitePreview & { requestId: string }> = [];
+  for (const row of page.items) {
+    try {
+      // Reuse the acceptance preview's live identity, invitation recheck and
+      // sender/KB admission; a dead invitation reveals no KB or sender data.
+      const preview = await shareInvitePreview(runtime, userId, { requestId: row.requestId });
+      items.push({ ...preview, requestId: row.requestId });
+    } catch (error) {
+      if (!(error instanceof KbDomainError && error.code === "NOT_FOUND")) throw error;
+    }
+  }
+  // Earlier previews may have become invalid while a later candidate waited.
+  // Revalidate the entire built page at disclosure, including each invitation,
+  // sender and KB. Run these together rather than serializing another page read.
+  const disclosed = await Promise.all(
+    items.map(async (item) => {
+      try {
+        const live = await shareInvitePreview(runtime, userId, { requestId: item.requestId });
+        return { ...live, requestId: item.requestId };
+      } catch (error) {
+        if (!(error instanceof KbDomainError && error.code === "NOT_FOUND")) throw error;
+        return null;
+      }
+    }),
+  );
+  // A changed or unverified recipient while the page was read discloses nothing.
+  if ((await recipient()) !== canonical) return { items: [], nextCursor: null };
+  // Advance over stale candidates too, so a page of cancelled invitations
+  // cannot strand the recipient before later live invitations.
+  return { items: disclosed.filter((item) => item !== null), nextCursor: page.nextCursor };
+}
 
 /**
  * What the signed-in recipient is about to accept: the KB, who invited them

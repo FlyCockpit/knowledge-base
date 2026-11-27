@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseApprovedHostKeys } from "./deploy-key";
+import { normalizeHostKeyEntries, parseApprovedHostKeys } from "./deploy-key";
 import {
   assertHostKeysTrusted,
   checkHostKey,
@@ -157,6 +157,13 @@ describe("provider fingerprint pins", () => {
         `SHA256:${createHash("sha256").update(Buffer.from(b64, "base64")).digest("base64").replace(/=+$/, "")}`,
       );
       expect(checkHostKey({ host, port: 22 }, key!)).toBe("PUBLISHED");
+      const prefixed = parseApprovedHostKeys(
+        normalizeHostKeyEntries([`${host} ssh-ed25519 ${b64}`], { host, port: 22 }),
+      );
+      expect(checkHostKey({ host, port: 22 }, prefixed[0]!)).toBe("PUBLISHED");
+      expect(() =>
+        normalizeHostKeyEntries([`evil.example ssh-ed25519 ${b64}`], { host, port: 22 }),
+      ).toThrow();
     },
   );
 
