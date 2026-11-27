@@ -391,6 +391,7 @@ describe("stateless legacy 2025-06-18 compatibility and security parity", () => 
     const previousRecovery = kbRecoveryGateOpen();
     setKbRecoveryComplete(true);
     const kbId = "a".repeat(24);
+    let kbGranted = true;
     const kbRow = {
       id: kbId,
       slug: "notes",
@@ -408,10 +409,10 @@ describe("stateless legacy 2025-06-18 compatibility and security parity", () => 
       async (): Promise<DiscoveryInputs> => ({
         toolGroups: ["read"],
         scopes: ["mcp:read"],
-        aclBits: ["read"],
+        aclBits: kbGranted ? ["read"] : [],
         allowCreate: false,
         createdKbBits: [],
-        kbs: [{ id: kbId, name: "Notes", owner: true, bits: ["read"] }],
+        kbs: kbGranted ? [{ id: kbId, name: "Notes", owner: true, bits: ["read"] }] : [],
       }),
     );
     const admission = bindBearerAdmission(
@@ -433,13 +434,14 @@ describe("stateless legacy 2025-06-18 compatibility and security parity", () => 
           twoFactorSatisfied: true,
           toolGroups: ["read"],
         }),
-        grantBits: async (_p, id) => (id === kbId ? ["read"] : []),
+        grantBits: async (_p, id) => (kbGranted && id === kbId ? ["read"] : []),
       },
     );
     const runtime = () =>
       ({
         canonicalOrigin: "https://kb.example.invalid",
         prisma: {
+          $queryRawUnsafe: vi.fn(async () => [{ id: kbId, ownerId: "u", state: "ACTIVE" }]),
           $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
             const sql = strings.join(" ");
             if (sql.includes("grant_kb_acl") && sql.includes("array_agg")) {
@@ -604,6 +606,49 @@ describe("stateless legacy 2025-06-18 compatibility and security parity", () => 
       });
       // tools/call did not trigger discovery.
       expect(localInputs).toHaveBeenCalledTimes(2);
+
+      // A still-valid token without the KB grant can initialize/list but cannot
+      // discover that KB or read a document even when its owner has live access.
+      kbGranted = false;
+      const deniedInit = await endpoint.fetch(
+        legacyRequest({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "codex-mcp-client", version: "0.172.0" },
+          },
+        }),
+      );
+      expect(deniedInit.status).toBe(200);
+      expect(await parseSseJsonRpc(deniedInit)).toMatchObject({
+        result: { instructions: "This connection has no knowledge bases now." },
+      });
+      const deniedList = await endpoint.fetch(
+        legacyRequest({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} }),
+      );
+      expect(deniedList.status).toBe(200);
+      expect(JSON.stringify(await parseSseJsonRpc(deniedList))).not.toContain(kbId);
+      const deniedCall = await endpoint.fetch(
+        legacyRequest({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "knowledge_documents_get",
+            arguments: { kbId, path: "docs/guide.md" },
+          },
+        }),
+      );
+      expect(deniedCall.status).toBe(200);
+      expect(await parseSseJsonRpc(deniedCall)).toMatchObject({
+        result: {
+          isError: true,
+          structuredContent: { error: { code: "NOT_FOUND" } },
+        },
+      });
     } finally {
       setKbRecoveryComplete(previousRecovery);
       await endpoint.close();

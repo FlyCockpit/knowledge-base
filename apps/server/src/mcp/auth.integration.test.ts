@@ -606,15 +606,37 @@ describe("real OAuth resource I/O", () => {
             "mcp-protocol-version": "2025-06-18",
           },
         ]) {
-          const refused = await oauthEndpoint.fetch(
-            new Request(`${f.origin}/mcp`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }),
-            }),
-          );
-          expect(refused.status).toBe(401);
-          expect(refused.headers.get("www-authenticate")).toContain("oauth-protected-resource/mcp");
+          for (const body of [
+            {
+              jsonrpc: "2.0",
+              id: 7,
+              method: "initialize",
+              params: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                clientInfo: { name: "codex-mcp-client", version: "0.172.0" },
+              },
+            },
+            { jsonrpc: "2.0", id: 8, method: "tools/list", params: {} },
+            {
+              jsonrpc: "2.0",
+              id: 9,
+              method: "tools/call",
+              params: { name: "knowledge_bases_list", arguments: {} },
+            },
+          ]) {
+            const refused = await oauthEndpoint.fetch(
+              new Request(`${f.origin}/mcp`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body),
+              }),
+            );
+            expect(refused.status).toBe(401);
+            expect(refused.headers.get("www-authenticate")).toContain(
+              "oauth-protected-resource/mcp",
+            );
+          }
         }
 
         // 5. Authenticated batch on legacy request is refused 400 -32600.
