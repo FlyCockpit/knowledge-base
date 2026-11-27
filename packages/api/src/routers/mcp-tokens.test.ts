@@ -11,20 +11,26 @@ vi.mock("@knowledge-base/db", async () => {
 vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({ marker: "runtime" }) }));
 vi.mock("../lib/mcp-token-access", async (original) => ({
   ...(await original<typeof import("../lib/mcp-token-access")>()),
-  mintPersonalToken: vi.fn(),
+  mintBrowserPersonalToken: vi.fn(),
   listPersonalTokens: vi.fn(),
   revokePersonalToken: vi.fn(),
 }));
 
 import { KbDomainError } from "../lib/kb/errors";
+import { KbAdmissionError } from "../lib/kb/principal";
 import {
   listPersonalTokens,
-  mintPersonalToken,
+  mintBrowserPersonalToken,
   revokePersonalToken,
 } from "../lib/mcp-token-access";
 import { mcpTokensRouter } from "./mcp-tokens";
 
-const session = { session: { user: { id: "owner", role: "user", twoFactorEnabled: true } } };
+const session = {
+  session: {
+    session: { id: "browser-session" },
+    user: { id: "owner", role: "user", twoFactorEnabled: true },
+  },
+};
 const kbId = "a".repeat(24);
 
 describe("mcpTokens router (human control plane only)", () => {
@@ -50,7 +56,7 @@ describe("mcpTokens router (human control plane only)", () => {
         code: "UNAUTHORIZED",
       });
     }
-    expect(mintPersonalToken).not.toHaveBeenCalled();
+    expect(mintBrowserPersonalToken).not.toHaveBeenCalled();
   });
 
   it("requires the forced second factor for minting", async () => {
@@ -65,11 +71,11 @@ describe("mcpTokens router (human control plane only)", () => {
     await expect(
       client.create({ name: "t", scopes: ["mcp:read"], toolGroups: ["read"], acl: [] }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mintPersonalToken).not.toHaveBeenCalled();
+    expect(mintBrowserPersonalToken).not.toHaveBeenCalled();
   });
 
   it("mints for the session user only and returns the secret from the domain once", async () => {
-    vi.mocked(mintPersonalToken).mockResolvedValue({
+    vi.mocked(mintBrowserPersonalToken).mockResolvedValue({
       token: { id: "tok", name: "t", expiresAt: new Date(), lookupPrefix: "p" },
       secret: "kbp_secret",
     });
@@ -83,7 +89,11 @@ describe("mcpTokens router (human control plane only)", () => {
       createdKbBits: ["read" as const],
     };
     await expect(client.create(input)).resolves.toMatchObject({ secret: "kbp_secret" });
-    expect(mintPersonalToken).toHaveBeenCalledWith({ marker: "runtime" }, "owner", input);
+    expect(mintBrowserPersonalToken).toHaveBeenCalledWith(
+      { marker: "runtime" },
+      { userId: "owner", sessionId: "browser-session" },
+      input,
+    );
   });
 
   it("rejects extra fields (no caller-supplied user id, no refresh scope)", async () => {
@@ -110,11 +120,21 @@ describe("mcpTokens router (human control plane only)", () => {
       await expect(
         client.create({ name: "t", scopes: ["mcp:read"], toolGroups, acl: [] } as never),
       ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(mintPersonalToken).not.toHaveBeenCalled();
+    expect(mintBrowserPersonalToken).not.toHaveBeenCalled();
+  });
+
+  it("returns UNAUTHORIZED when the authorizing DB session has ended", async () => {
+    vi.mocked(mintBrowserPersonalToken).mockRejectedValue(
+      new KbAdmissionError("UNAUTHORIZED", "Session ended"),
+    );
+    const client = createRouterClient(mcpTokensRouter, { context: () => session as Context });
+    await expect(
+      client.create({ name: "t", scopes: ["mcp:read"], toolGroups: ["read"], acl: [] }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("maps domain rejections without leaking detail", async () => {
-    vi.mocked(mintPersonalToken).mockRejectedValue(new KbDomainError("CONFLICT", "limit"));
+    vi.mocked(mintBrowserPersonalToken).mockRejectedValue(new KbDomainError("CONFLICT", "limit"));
     vi.mocked(listPersonalTokens).mockResolvedValue({ items: [], nextCursor: null });
     vi.mocked(revokePersonalToken).mockRejectedValue(new KbDomainError("NOT_FOUND", "x"));
     const client = createRouterClient(mcpTokensRouter, { context: () => session as Context });

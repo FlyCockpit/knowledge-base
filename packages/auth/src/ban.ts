@@ -80,14 +80,14 @@ const roleTrimCharacters =
 /**
  * Tombstone every live MCP grant generation (and its PAT) of a user. The
  * caller holds the identity authority lock on the SAME transaction that
- * applies the permanent ban / removal. Tombstones are permanent: unban and
- * unarchive never clear `revokedAt`, so no old generation is ever reactivated —
- * the user must mint or consent to a fresh random generation.
+ * applies the permanent ban / removal or password-reset revocation. Tombstones
+ * are permanent: unban and unarchive never clear `revokedAt`, so no old generation
+ * is ever reactivated — the user must mint or consent to a fresh random generation.
  */
 export async function revokeUserMcpGrants(
   exec: AuthorityStatementExecutor,
   userId: string,
-  reason: "ban" | "account_removal" | "forced_2fa",
+  reason: "ban" | "account_removal" | "forced_2fa" | "password_reset" | "password_change",
 ): Promise<void> {
   await exec(
     `UPDATE "mcp_personal_token" SET "revokedAt" = COALESCE("revokedAt", now())

@@ -2,10 +2,11 @@ import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { protectedProcedure } from "../index";
 import { KbDomainError } from "../lib/kb/errors";
+import { KbAdmissionError } from "../lib/kb/principal";
 import { getKbRuntime } from "../lib/kb/runtime";
 import {
   listPersonalTokens,
-  mintPersonalToken,
+  mintBrowserPersonalToken,
   pageInput,
   patMintInput,
   revokePersonalToken,
@@ -25,7 +26,12 @@ export async function mcpControl<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    const code = error instanceof KbDomainError ? ORPC_CODES[error.code] : undefined;
+    const code =
+      error instanceof KbAdmissionError && error.code === "UNAUTHORIZED"
+        ? "UNAUTHORIZED"
+        : error instanceof KbDomainError
+          ? ORPC_CODES[error.code]
+          : undefined;
     throw new ORPCError(code ?? "INTERNAL_SERVER_ERROR", {
       message: "Credential operation unavailable",
     });
@@ -41,7 +47,13 @@ export const mcpTokensRouter = {
   create: protectedProcedure
     .input(patMintInput)
     .handler(({ context, input }) =>
-      mcpControl(() => mintPersonalToken(getKbRuntime(), context.session.user.id, input)),
+      mcpControl(() =>
+        mintBrowserPersonalToken(
+          getKbRuntime(),
+          { userId: context.session.user.id, sessionId: context.session.session.id },
+          input,
+        ),
+      ),
     ),
   listMine: protectedProcedure
     .input(pageInput)

@@ -5,7 +5,7 @@ import {
   childPageInput,
   listApiKeyChildrenForOwner,
   listApiKeys,
-  mintApiKey,
+  mintBrowserApiKey,
   revokeApiKey,
   revokeApiKeyChild,
   revokeApiKeyChildrenForOwner,
@@ -29,7 +29,13 @@ export const apiKeysRouter = {
   create: protectedProcedure
     .input(apiKeyMintInput)
     .handler(({ context, input }) =>
-      mcpControl(() => mintApiKey(getKbRuntime(), context.session.user.id, input)),
+      mcpControl(() =>
+        mintBrowserApiKey(
+          getKbRuntime(),
+          { userId: context.session.user.id, sessionId: context.session.session.id },
+          input,
+        ),
+      ),
     ),
   listMine: protectedProcedure
     .input(keyPageInput)

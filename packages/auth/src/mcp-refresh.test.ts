@@ -1,5 +1,7 @@
+import type { PrismaClient } from "@knowledge-base/db/client";
 import { describe, expect, it, vi } from "vitest";
 import {
+  issueMcpGenerationClaims,
   MCP_ACCESS_TOKEN_LIFETIME_SECONDS,
   MCP_REFRESH_INACTIVITY_LIFETIME_SECONDS,
   MCP_REFRESH_RETRY_WINDOW_SECONDS,
@@ -8,6 +10,55 @@ import {
 } from "./mcp-refresh";
 
 describe("consent refresh policy", () => {
+  it("claims hook refuses issuance after reset tombstones the live grant", async () => {
+    const now = new Date("2026-09-26T00:00:00Z");
+    const scopes = ["mcp:read", "offline_access"];
+    const grant = {
+      id: "grant",
+      userId: "user",
+      clientId: "client",
+      kind: "OAUTH",
+      scopes,
+      authoringMode: null,
+      revokedAt: null as Date | null,
+    };
+    const tx = {
+      $executeRaw: vi.fn(async () => 0),
+      user: { findUnique: vi.fn(async () => ({ role: "user", twoFactorEnabled: true })) },
+      appSetting: { findMany: vi.fn(async () => []) },
+      consentIntent: {
+        findUnique: vi.fn(async () => ({
+          userId: "user",
+          clientId: "client",
+          resource: "https://kb.example.test/mcp",
+          approvedAt: now,
+          scopes,
+          selection: { scopes, toolGroups: ["read"], acl: [] },
+          grant,
+        })),
+      },
+    };
+    const db = {
+      $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx),
+    } as unknown as PrismaClient;
+    const input = {
+      referenceId: "reference",
+      userId: "user",
+      clientId: "client",
+      resource: "https://kb.example.test/mcp",
+      scopes,
+      grantType: "refresh_token",
+      tokenScopes: scopes,
+      tokenExpiresAt: new Date(now.getTime() + 60_000),
+    };
+    await expect(issueMcpGenerationClaims(db, input, () => now)).resolves.toEqual({
+      mcp_grant_id: "grant",
+    });
+    grant.revokedAt = now;
+    await expect(issueMcpGenerationClaims(db, input, () => now)).rejects.toThrow();
+    expect(tx.consentIntent.findUnique).toHaveBeenCalledTimes(2);
+  });
+
   it("pins 10m access, 72h sliding refresh and upstream 30s retry", () => {
     expect(MCP_ACCESS_TOKEN_LIFETIME_SECONDS).toBe(600);
     expect(MCP_REFRESH_INACTIVITY_LIFETIME_SECONDS).toBe(259200);

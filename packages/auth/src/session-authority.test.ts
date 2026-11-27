@@ -17,6 +17,18 @@ const session = { token: "tok", userId: "u1" };
 const user = (authorityVersion: unknown) => ({ id: "u1", authorityVersion });
 
 describe("session cache version", () => {
+  it("invalidates an already-cached session on the first request after reset deletes it", async () => {
+    const { version } = versionOver(
+      { identity: null, authorityVersion: 3 },
+      { identity: null, authorityVersion: null },
+      { identity: null, authorityVersion: null },
+    );
+    const cached = await version(session, user(3));
+    const nextRequest = await version(session, user(3));
+    expect(nextRequest).not.toBe(cached);
+    expect(await version(session, user(3))).not.toBe(nextRequest);
+  });
+
   it("is the durable epoch while the snapshot is current, so the cache is reused", async () => {
     const { version, $queryRaw } = versionOver(
       { identity: null, authorityVersion: 3 },

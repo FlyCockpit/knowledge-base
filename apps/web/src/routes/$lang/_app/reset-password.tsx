@@ -79,7 +79,7 @@ function ResetPasswordPage() {
   const [tokenRejected, setTokenRejected] = useState(false);
   const [done, setDone] = useState(false);
 
-  const isInvalid = !done && (!token || !!error || tokenRejected);
+  const isInvalid = !done && (!token || error === "INVALID_TOKEN" || tokenRejected);
 
   return (
     <AuthConfigGate
@@ -217,7 +217,8 @@ function ResetPasswordForm({
   onTokenRejected: () => void;
   onDone: () => void;
 }) {
-  const { t } = useTranslation(["auth", "validation"]);
+  const { t } = useTranslation(["auth", "validation", "common"]);
+  const [retryable, setRetryable] = useState(false);
   // Errors are toasted below (a dead link also swaps in the invalid-link card),
   // so the global mutation toast would only repeat them.
   const { mutateAsync: claimSetupLink } = useMutation(
@@ -250,6 +251,7 @@ function ResetPasswordForm({
         onDone();
         return;
       }
+      setRetryable(false);
       const result = await authClient.resetPassword({
         newPassword: value.newPassword,
         token,
@@ -259,15 +261,22 @@ function ResetPasswordForm({
           toast.error(friendly(result.error));
           return;
         }
-        // A rejected token (expired / already used) is the common failure here
-        // — surface the invalid state with a path back to forgot-password.
-        console.error("[reset-password.reset]", result.error);
-        toast.error(t("auth:resetPassword.failed"));
-        onTokenRejected();
+        if (result.error.status === 503) {
+          // The pre-sweep failed before the password write or token consumption.
+          // Keep this form mounted, including both typed password fields.
+          setRetryable(true);
+          return;
+        }
+        if (result.error.code === "INVALID_TOKEN") {
+          toast.error(t("auth:resetPassword.failed"));
+          onTokenRejected();
+          return;
+        }
+        toast.error(friendly(result.error));
         return;
       }
-      // The reset signed out every browser session. Tokens and connected
-      // apps keep working, so the success screen sends the user to review them.
+      // The reset signed out every session and revoked standing credentials.
+      // The success screen explains that tools must reconnect and offers review.
       toast.success(
         isInvite ? t("auth:resetPassword.inviteSuccess") : t("auth:resetPassword.success"),
       );
@@ -323,6 +332,12 @@ function ResetPasswordForm({
         )}
       </form.Field>
 
+      {retryable && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("auth:resetPassword.retryable")}
+        </p>
+      )}
+
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
@@ -334,11 +349,13 @@ function ResetPasswordForm({
           >
             {isSubmitting
               ? t("auth:resetPassword.resetting")
-              : isSetup
-                ? t("auth:resetPassword.setupSubmit")
-                : isInvite
-                  ? t("auth:resetPassword.inviteSubmit")
-                  : t("auth:resetPassword.submit")}
+              : retryable
+                ? t("common:actions.retry")
+                : isSetup
+                  ? t("auth:resetPassword.setupSubmit")
+                  : isInvite
+                    ? t("auth:resetPassword.inviteSubmit")
+                    : t("auth:resetPassword.submit")}
           </Button>
         )}
       </form.Subscribe>

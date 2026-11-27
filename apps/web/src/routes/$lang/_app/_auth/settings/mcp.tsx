@@ -28,8 +28,8 @@ import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/mcp")({
   staticData: { pendingShape: "list" },
-  // Set by the password-reset success screen: the reset signed out every
-  // browser session but left tokens and connected apps working.
+  // Set by the password-reset success screen: sessions and standing
+  // credentials were revoked; review shows any access created since then.
   validateSearch: (search: Record<string, unknown>): { review?: "password-reset" } =>
     search.review === "password-reset" ? { review: "password-reset" } : {},
   head: ({ match }) =>

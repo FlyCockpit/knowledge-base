@@ -488,6 +488,7 @@ function isUniqueViolation(error: unknown): boolean {
 
 function asDomainError(error: unknown): unknown {
   if (error instanceof KbDomainError) return error;
+  if (error instanceof BrowserSessionEndedError) return error;
   if (error instanceof KbAdmissionError) {
     return new KbDomainError(
       error.code === "RATE_LIMITED" || error.code === "STORAGE_UNAVAILABLE"
@@ -526,8 +527,52 @@ export async function lockLiveUser(query: LockQuery, userId: string): Promise<vo
   assertLiveIdentity(await sqlAuthorityStore(query).loadIdentity(userId));
 }
 
+export type BrowserCredentialActor = { userId: string; sessionId: string };
+
+/** Only the browser session fence bypasses control-plane authority error mapping. */
+class BrowserSessionEndedError extends KbAdmissionError {
+  constructor() {
+    super("UNAUTHORIZED", "Session ended");
+  }
+}
+
+/** Caller holds the revocation authority lock through this check and mint commit. */
+export async function assertLiveCredentialSession(
+  query: LockQuery,
+  actor: BrowserCredentialActor,
+): Promise<void> {
+  // Preserve the live authority refusal even when a ban also removed the session.
+  await lockLiveUser(query, actor.userId);
+  const live = await query(
+    `SELECT id FROM "session" WHERE id = $1 AND "userId" = $2
+       AND "expiresAt" > clock_timestamp() AND "impersonatedBy" IS NULL`,
+    [actor.sessionId, actor.userId],
+  );
+  if (live.rows.length !== 1) throw new BrowserSessionEndedError();
+}
+
+export async function mintBrowserPersonalToken(
+  runtime: Runtime,
+  actor: BrowserCredentialActor,
+  raw: PatMintInput,
+): Promise<MintedPersonalToken> {
+  return inAuthorityTransaction(runtime, async (query, opId) => {
+    await assertLiveCredentialSession(query, actor);
+    const { token, secret } = await mintPersonalTokenInTransaction(
+      query,
+      opId,
+      runtime.canonicalOrigin,
+      actor.userId,
+      raw,
+    );
+    return { token, secret };
+  });
+}
+
 /**
- * Human mint. One transaction under authority + user row lock: live identity,
+ * Trusted internal mint (including test fixtures); browser routes must use
+ * mintBrowserPersonalToken so session revocation also fences in-flight requests.
+ * One transaction under authority + user row lock: live identity,
  * live-rights validation of every requested bit, the live-token cap, then one
  * fresh random grant generation, its ACL rows, and the digest-only PAT row.
  * The raw secret exists only in the return value of the committing call.

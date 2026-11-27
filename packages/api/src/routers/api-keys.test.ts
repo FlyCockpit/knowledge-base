@@ -11,7 +11,7 @@ vi.mock("@knowledge-base/db", async () => {
 vi.mock("../lib/kb/runtime", () => ({ getKbRuntime: () => ({ marker: "runtime" }) }));
 vi.mock("../lib/api-keys", async (original) => ({
   ...(await original<typeof import("../lib/api-keys")>()),
-  mintApiKey: vi.fn(),
+  mintBrowserApiKey: vi.fn(),
   listApiKeys: vi.fn(),
   revokeApiKey: vi.fn(),
   listApiKeyChildrenForOwner: vi.fn(),
@@ -22,19 +22,25 @@ vi.mock("../lib/api-keys", async (original) => ({
 import {
   listApiKeyChildrenForOwner,
   listApiKeys,
-  mintApiKey,
+  mintBrowserApiKey,
   revokeApiKey,
   revokeApiKeyChild,
   revokeApiKeyChildrenForOwner,
 } from "../lib/api-keys";
 import { KbDomainError } from "../lib/kb/errors";
+import { KbAdmissionError } from "../lib/kb/principal";
 import { apiKeysRouter } from "./api-keys";
 
-const session = { session: { user: { id: "owner", role: "user", twoFactorEnabled: true } } };
+const session = {
+  session: {
+    session: { id: "browser-session" },
+    user: { id: "owner", role: "user", twoFactorEnabled: true },
+  },
+};
 const keyId = "a".repeat(24);
 const mintInput = { name: "automation", reach: "created" as const, bits: ["read" as const] };
 const domain = [
-  mintApiKey,
+  mintBrowserApiKey,
   listApiKeys,
   revokeApiKey,
   listApiKeyChildrenForOwner,
@@ -91,16 +97,23 @@ describe("apiKeys router (human control plane only)", () => {
         }) as Context,
     });
     await expect(client.create(mintInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mintApiKey).not.toHaveBeenCalled();
+    expect(mintBrowserApiKey).not.toHaveBeenCalled();
   });
 
   it("acts for the session user only and never takes a caller-supplied user", async () => {
-    vi.mocked(mintApiKey).mockResolvedValue({ key: { id: keyId } as never, secret: "kbk_secret" });
+    vi.mocked(mintBrowserApiKey).mockResolvedValue({
+      key: { id: keyId } as never,
+      secret: "kbk_secret",
+    });
     vi.mocked(listApiKeyChildrenForOwner).mockResolvedValue({ items: [], nextCursor: null });
     vi.mocked(revokeApiKeyChild).mockResolvedValue({ id: "t", revoked: true });
     const client = createRouterClient(apiKeysRouter, { context: () => session as Context });
     await expect(client.create(mintInput)).resolves.toMatchObject({ secret: "kbk_secret" });
-    expect(mintApiKey).toHaveBeenCalledWith({ marker: "runtime" }, "owner", mintInput);
+    expect(mintBrowserApiKey).toHaveBeenCalledWith(
+      { marker: "runtime" },
+      { userId: "owner", sessionId: "browser-session" },
+      mintInput,
+    );
     await client.listChildrenMine({ apiKeyId: keyId, limit: 5 });
     expect(listApiKeyChildrenForOwner).toHaveBeenCalledWith({ marker: "runtime" }, "owner", keyId, {
       limit: 5,
@@ -120,7 +133,7 @@ describe("apiKeys router (human control plane only)", () => {
     await expect(
       client.listChildrenMine({ apiKeyId: keyId, userId: "victim" } as never),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    expect(mintApiKey).toHaveBeenCalledTimes(1);
+    expect(mintBrowserApiKey).toHaveBeenCalledTimes(1);
   });
 
   it("revokeMine passes revokeChildren (omitted = the key's own setting); revokeChildrenMine revokes one key's children", async () => {
@@ -154,8 +167,16 @@ describe("apiKeys router (human control plane only)", () => {
     expect(revokeApiKeyChildrenForOwner).toHaveBeenCalledTimes(1);
   });
 
+  it("returns UNAUTHORIZED when the authorizing DB session has ended", async () => {
+    vi.mocked(mintBrowserApiKey).mockRejectedValue(
+      new KbAdmissionError("UNAUTHORIZED", "Session ended"),
+    );
+    const client = createRouterClient(apiKeysRouter, { context: () => session as Context });
+    await expect(client.create(mintInput)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
   it("maps domain rejections without leaking detail", async () => {
-    vi.mocked(mintApiKey).mockRejectedValue(new KbDomainError("QUOTA_EXCEEDED", "limit"));
+    vi.mocked(mintBrowserApiKey).mockRejectedValue(new KbDomainError("QUOTA_EXCEEDED", "limit"));
     vi.mocked(revokeApiKey).mockRejectedValue(new KbDomainError("NOT_FOUND", "x"));
     const client = createRouterClient(apiKeysRouter, { context: () => session as Context });
     await expect(client.create(mintInput)).rejects.toMatchObject({

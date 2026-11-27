@@ -26,6 +26,8 @@ import {
   API_KEY_CHILD_REVOKE_ACTION,
   API_KEY_REVOKE_ACTION,
   aclKbNameSql,
+  assertLiveCredentialSession,
+  type BrowserCredentialActor,
   createGrantCredentialVerifier,
   inAuthorityTransaction,
   kbIdSchema,
@@ -284,8 +286,32 @@ function toKeyView(row: KeyViewRow): ApiKeyView {
  * live-key cap, then the API_KEY grant, its ACL rows and the digest-only key
  * row. The raw secret exists only in the return value.
  */
+export async function mintBrowserApiKey(
+  runtime: Runtime,
+  actor: BrowserCredentialActor,
+  raw: ApiKeyMintInput,
+): Promise<{ key: ApiKeyView; secret: string }> {
+  return inAuthorityTransaction(runtime, async (query, opId) => {
+    await assertLiveCredentialSession(query, actor);
+    return mintApiKeyInTransaction(query, opId, actor.userId, raw);
+  });
+}
+
+/** Trusted internal mint; browser routes use mintBrowserApiKey. */
 export async function mintApiKey(
   runtime: Runtime,
+  userId: string,
+  raw: ApiKeyMintInput,
+  deps: { generateSecret?: typeof generateApiKeySecret; now?: () => Date } = {},
+): Promise<{ key: ApiKeyView; secret: string }> {
+  return inAuthorityTransaction(runtime, (query, opId) =>
+    mintApiKeyInTransaction(query, opId, userId, raw, deps),
+  );
+}
+
+async function mintApiKeyInTransaction(
+  query: LockQuery,
+  opId: string,
   userId: string,
   raw: ApiKeyMintInput,
   deps: { generateSecret?: typeof generateApiKeySecret; now?: () => Date } = {},
@@ -320,100 +346,98 @@ export async function mintApiKey(
   const grantId = newMcpGrantGeneration();
   const allowCreate = input.allowCreate ?? false;
 
-  return inAuthorityTransaction(runtime, async (query, opId) => {
-    await lockLiveUser(query, userId);
-    const acl = await validateAclAgainstLive(
-      sqlAuthorityStore(query),
-      userId,
-      kbIds.map((kbId) => ({ kbId, bits })),
-    );
-    const live = await query<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM api_key k JOIN mcp_grant g ON g.id = k."grantId"
+  await lockLiveUser(query, userId);
+  const acl = await validateAclAgainstLive(
+    sqlAuthorityStore(query),
+    userId,
+    kbIds.map((kbId) => ({ kbId, bits })),
+  );
+  const live = await query<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM api_key k JOIN mcp_grant g ON g.id = k."grantId"
         WHERE k."userId" = $1 AND k."revokedAt" IS NULL AND g."revokedAt" IS NULL
           AND (k."expiresAt" IS NULL OR k."expiresAt" > now())`,
-      [userId],
-    );
-    if ((live.rows[0]?.count ?? 0) >= KB_LIMITS.activeApiKeysPerUser) {
-      throw new KbDomainError("QUOTA_EXCEEDED", "Active API key limit reached");
-    }
-    await query(
-      `INSERT INTO "mcp_grant"
+    [userId],
+  );
+  if ((live.rows[0]?.count ?? 0) >= KB_LIMITS.activeApiKeysPerUser) {
+    throw new KbDomainError("QUOTA_EXCEEDED", "Active API key limit reached");
+  }
+  await query(
+    `INSERT INTO "mcp_grant"
          (id, "actorUserIdSnapshot", "userId", kind, "clientId", "referenceId", scopes,
           "toolGroups", "allowCreate", "createdKbBits", "authoringMode", "allKbsBits", "createdAt")
        VALUES ($1::uuid, $2, $2, 'API_KEY'::"McpGrantKind", $3, $4, $5::text[],
                ARRAY['kb_admin']::text[], $6, $7::text[], 'EDIT'::"McpAuthoringMode", $8::text[], now())`,
-      [
-        grantId,
-        userId,
-        `${API_KEY_CLIENT_ID_PREFIX}${keyId}`,
-        API_KEY_GRANT_REFERENCE,
-        [...API_KEY_GRANT_SCOPES],
-        allowCreate,
-        allowCreate ? bits : [],
-        input.reach === "all" ? bits : [],
-      ],
-    );
-    for (const entry of acl) {
-      await query(
-        `INSERT INTO "grant_kb_acl" ("grantId", "kbId", bits, "createdAt")
-         VALUES ($1::uuid, $2, $3::text[], now())`,
-        [grantId, entry.kbId, entry.bits],
-      );
-    }
+    [
+      grantId,
+      userId,
+      `${API_KEY_CLIENT_ID_PREFIX}${keyId}`,
+      API_KEY_GRANT_REFERENCE,
+      [...API_KEY_GRANT_SCOPES],
+      allowCreate,
+      allowCreate ? bits : [],
+      input.reach === "all" ? bits : [],
+    ],
+  );
+  for (const entry of acl) {
     await query(
-      `INSERT INTO "api_key"
+      `INSERT INTO "grant_kb_acl" ("grantId", "kbId", bits, "createdAt")
+         VALUES ($1::uuid, $2, $3::text[], now())`,
+      [grantId, entry.kbId, entry.bits],
+    );
+  }
+  await query(
+    `INSERT INTO "api_key"
          (id, "userIdSnapshot", "userId", name, "lookupPrefix", "secretDigest", "grantId", reach,
           bits, "allowDelete", "allowMintChildren", "childToolGroups", "childAuthoringMode",
           "childAllowCreate", "childrenEndWithKey", "expiresAt", "createdAt")
        VALUES ($1, $2, $2, $3, $4, $5, $6::uuid, $7::"ApiKeyReach", $8::text[], $9, $10,
                $11::text[], $12::"McpAuthoringMode", $13, $14, $15, now())`,
-      [
-        keyId,
-        userId,
-        input.name,
-        lookupPrefix,
-        digestApiKeySecret(secret),
-        grantId,
-        REACH_TO_DB[input.reach],
-        bits,
-        input.allowDelete ?? false,
-        input.allowMintChildren ?? false,
-        childToolGroups,
-        authoringModeToDb(childAuthoringMode),
-        input.childAllowCreate ?? false,
-        input.childrenEndWithKey ?? false,
-        expiresAt,
-      ],
-    );
-    await recordAuditEvent(query, {
-      opId,
-      action: "api_key_mint",
-      outcome: "SUCCESS",
-      actorKey: `user:${userId}`,
-      actorUserIdSnapshot: userId,
-      actorUserId: userId,
-      grantIdSnapshot: grantId,
-      metadata: {
-        apiKeyId: keyId,
-        reach: input.reach,
-        amount: String(acl.length),
-        flags: [
-          allowCreate ? "create" : null,
-          input.allowDelete ? "delete" : null,
-          input.allowMintChildren ? "mint_children" : null,
-          input.childAllowCreate ? "child_create" : null,
-          childToolGroups.includes("sealed") ? "child_sealed" : null,
-          input.childrenEndWithKey ? "children_end_with_key" : null,
-        ]
-          .filter(Boolean)
-          .join(","),
-      },
-    });
-    const view = await query<KeyViewRow>(`${KEY_VIEW_SQL} WHERE k.id = $1`, [keyId]);
-    const row = view.rows[0];
-    if (!row) throw new Error("minted API key is missing");
-    return { key: toKeyView(row), secret };
+    [
+      keyId,
+      userId,
+      input.name,
+      lookupPrefix,
+      digestApiKeySecret(secret),
+      grantId,
+      REACH_TO_DB[input.reach],
+      bits,
+      input.allowDelete ?? false,
+      input.allowMintChildren ?? false,
+      childToolGroups,
+      authoringModeToDb(childAuthoringMode),
+      input.childAllowCreate ?? false,
+      input.childrenEndWithKey ?? false,
+      expiresAt,
+    ],
+  );
+  await recordAuditEvent(query, {
+    opId,
+    action: "api_key_mint",
+    outcome: "SUCCESS",
+    actorKey: `user:${userId}`,
+    actorUserIdSnapshot: userId,
+    actorUserId: userId,
+    grantIdSnapshot: grantId,
+    metadata: {
+      apiKeyId: keyId,
+      reach: input.reach,
+      amount: String(acl.length),
+      flags: [
+        allowCreate ? "create" : null,
+        input.allowDelete ? "delete" : null,
+        input.allowMintChildren ? "mint_children" : null,
+        input.childAllowCreate ? "child_create" : null,
+        childToolGroups.includes("sealed") ? "child_sealed" : null,
+        input.childrenEndWithKey ? "children_end_with_key" : null,
+      ]
+        .filter(Boolean)
+        .join(","),
+    },
   });
+  const view = await query<KeyViewRow>(`${KEY_VIEW_SQL} WHERE k.id = $1`, [keyId]);
+  const row = view.rows[0];
+  if (!row) throw new Error("minted API key is missing");
+  return { key: toKeyView(row), secret };
 }
 
 export async function listApiKeys(

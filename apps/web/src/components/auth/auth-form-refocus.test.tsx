@@ -1,6 +1,8 @@
 import enAuth from "@knowledge-base/locales/src/en-US/auth.json";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
 import enNav from "@knowledge-base/locales/src/en-US/nav.json";
+import esAuth from "@knowledge-base/locales/src/es-MX/auth.json";
+import esCommon from "@knowledge-base/locales/src/es-MX/common.json";
 import { createInstance } from "i18next";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -30,6 +32,9 @@ type Snapshot = {
 };
 
 const fixture = vi.hoisted(() => ({
+  lang: "en-US",
+  search: {} as Record<string, unknown>,
+  resetPassword: vi.fn(),
   snapshot: {
     data: null,
     isPending: true,
@@ -54,8 +59,8 @@ vi.mock("@tanstack/react-form", async (importOriginal) => {
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({
     options,
-    useParams: () => ({ lang: "en-US" }),
-    useSearch: () => ({}),
+    useParams: () => ({ lang: fixture.lang }),
+    useSearch: () => fixture.search,
     useRouteContext: () => ({}),
   }),
   // Vitest runs the router plugin, which splits route components out into
@@ -87,7 +92,13 @@ vi.mock("@/utils/orpc", () => ({
   },
 }));
 vi.mock("@/lib/auth-client", () => ({
-  authClient: { useSession: () => ({ ...fixture.snapshot, refetch: vi.fn() }) },
+  authClient: {
+    useSession: () => ({ ...fixture.snapshot, refetch: vi.fn() }),
+    resetPassword: fixture.resetPassword,
+  },
+}));
+vi.mock("@knowledge-base/ui/components/sileo", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
 }));
 vi.mock("@/hooks/use-network-status", () => ({ useNetworkStatus: () => true }));
 vi.mock("@knowledge-base/env/web", () => ({ env: { VITE_APP_NAME: "Northwind" } }));
@@ -98,6 +109,7 @@ vi.mock("@/server/auth-session", () => ({
 
 const { resetAuthSessionMemoryForTests } = await import("@/hooks/use-auth-session");
 const { Route: LoginRoute } = await import("@/routes/$lang/_app/login");
+const { Route: ResetRoute } = await import("@/routes/$lang/_app/reset-password");
 const { Route: SignupRoute } = await import("@/routes/$lang/_app/signup");
 const { default: UserMenu } = await import("@/components/user-menu");
 
@@ -105,12 +117,18 @@ const i18n = createInstance();
 beforeAll(async () => {
   await i18n.init({
     lng: "en-US",
-    resources: { "en-US": { auth: enAuth, common: enCommon, nav: enNav } },
+    resources: {
+      "en-US": { auth: enAuth, common: enCommon, nav: enNav },
+      "es-MX": { auth: esAuth, common: esCommon, nav: enNav },
+    },
     interpolation: { escapeValue: false },
     react: { useSuspense: false },
   });
 });
 beforeEach(() => {
+  fixture.search = {};
+  fixture.lang = "en-US";
+  fixture.resetPassword.mockReset();
   // The hook only remembers browser snapshots (the server's never settle).
   vi.stubGlobal("window", {});
   resetAuthSessionMemoryForTests();
@@ -146,6 +164,7 @@ async function pageComponent(route: unknown): Promise<() => ReactNode> {
 }
 const LoginPage = await pageComponent(LoginRoute);
 const SignupPage = await pageComponent(SignupRoute);
+const ResetPage = await pageComponent(ResetRoute);
 
 describe.each([
   ["sign-in", LoginPage],
@@ -441,5 +460,95 @@ describe.each([
     expect(remounted).not.toBe(email);
     expect(remounted?.value).toBe("");
     expect(formApis.size).toBe(2);
+  });
+});
+
+describe.each(["en-US", "es-MX"])("reset-password errors in %s", (lang) => {
+  let container: FakeElement;
+  let root: Root;
+  beforeEach(async () => {
+    const doc = new FakeDocument();
+    const classes = {
+      Node: FakeNode,
+      Element: FakeElement,
+      HTMLElement: FakeElement,
+      HTMLIFrameElement: class {},
+    };
+    const win = { ...classes, document: doc, addEventListener() {}, removeEventListener() {} };
+    doc.defaultView = win;
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", doc);
+    for (const [name, value] of Object.entries(classes)) vi.stubGlobal(name, value);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = doc.body.appendChild(doc.createElement("div"));
+    root = createRoot(container as unknown as Element);
+    formApis.clear();
+    fixture.lang = lang;
+    fixture.search = { token: "reset-link" };
+    await i18n.changeLanguage(lang);
+    await act(async () =>
+      root.render(
+        <I18nextProvider i18n={i18n}>
+          <ResetPage />
+        </I18nextProvider>,
+      ),
+    );
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    await i18n.changeLanguage("en-US");
+  });
+
+  async function submit() {
+    const [form] = [...formApis] as (FormApi & { handleSubmit: () => Promise<void> })[];
+    await act(async () => {
+      form?.setFieldValue("newPassword", "long-enough-password");
+      form?.setFieldValue("confirmPassword", "long-enough-password");
+    });
+    await act(async () => {
+      await form?.handleSubmit();
+    });
+  }
+
+  it("keeps typed passwords and the same form on pre-sweep 503, explains retry and resubmits", async () => {
+    fixture.resetPassword
+      .mockResolvedValueOnce({ error: { status: 503, code: "SERVICE_UNAVAILABLE" } })
+      .mockResolvedValueOnce({ data: { status: true } });
+    const password = findInput(container, "password");
+    await submit();
+    expect(fixture.resetPassword).toHaveBeenCalledOnce();
+    expect(findInput(container, "password") === password).toBe(true);
+    expect(password?.value).toBe("long-enough-password");
+    const [form] = [...formApis] as {
+      state: { values: { newPassword: string; confirmPassword: string } };
+    }[];
+    expect(form?.state.values).toEqual({
+      newPassword: "long-enough-password",
+      confirmPassword: "long-enough-password",
+    });
+    expect(formApis.size).toBe(1);
+    expect(container.textContent).toContain(i18n.t("auth:resetPassword.retryable"));
+    expect(container.textContent).toContain(i18n.t("common:actions.retry"));
+    await submit();
+    expect(fixture.resetPassword).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain(i18n.t("auth:resetPassword.doneTitle"));
+  });
+
+  it("shows invalid-link recovery only for an invalid/expired token", async () => {
+    fixture.resetPassword.mockResolvedValue({ error: { status: 400, code: "INVALID_TOKEN" } });
+    await submit();
+    expect(findInput(container, "password")).toBeUndefined();
+    expect(container.textContent).toContain(i18n.t("auth:resetPassword.invalidTitle"));
+  });
+
+  it("keeps the form for other server errors", async () => {
+    fixture.resetPassword.mockResolvedValue({
+      error: { status: 500, code: "INTERNAL_SERVER_ERROR" },
+    });
+    const password = findInput(container, "password");
+    await submit();
+    expect(findInput(container, "password") === password).toBe(true);
+    expect(password?.value).toBe("long-enough-password");
+    expect(container.textContent).not.toContain(i18n.t("auth:resetPassword.invalidTitle"));
   });
 });

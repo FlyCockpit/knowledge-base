@@ -1,5 +1,6 @@
 import { DEFAULT_LOCALE, isSupportedLocale } from "@knowledge-base/config/locales";
 import prisma from "@knowledge-base/db";
+import { errorClassOf, logInternalError } from "@knowledge-base/env/log";
 import { env, FORCE_SSO, SSO_ENABLED } from "@knowledge-base/env/server";
 import {
   isEmailConfigured,
@@ -9,7 +10,8 @@ import {
   sendEmail,
 } from "@knowledge-base/mailer";
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
+import { deleteSessionCookie } from "better-auth/cookies";
 import { admin, genericOAuth, twoFactor } from "better-auth/plugins";
 import { defaultAc, userAc } from "better-auth/plugins/admin/access";
 import { assertOrdinaryAccountDeletionAllowed } from "./account-deletion-policy.js";
@@ -19,6 +21,10 @@ import {
   isBootstrapComplete,
   rejectImpersonatedSession,
 } from "./bootstrap.js";
+import {
+  revokeCredentialsAfterPasswordChange,
+  revokeCredentialsAfterPasswordReset,
+} from "./credential-revocation.js";
 import { resolveDevicePlugins } from "./device-approval";
 import { resolveMcpPlugins } from "./mcp-plugins.js";
 import { createPasswordPepper } from "./password-pepper.js";
@@ -109,11 +115,96 @@ const rejectIdTokenSignIn = {
   },
 } satisfies BetterAuthPlugin;
 
+function logRevocationFailure(
+  userId: string | undefined,
+  error: unknown,
+  reason: "SECURITY.password_reset" | "SECURITY.password_change",
+): void {
+  // Fixed SECURITY marker; never log exception text, reset tokens or SQL.
+  logInternalError(
+    "auth.library.error",
+    { constructor: { name: errorClassOf(error) } },
+    { reason, userId },
+  );
+}
+
 export const auth = betterAuth({
   database: createBootstrapDatabaseAdapter(prisma),
   hooks: {
-    before: rejectImpersonatedSession,
+    before: createAuthMiddleware(async (ctx) => {
+      await rejectImpersonatedSession(ctx);
+      const method = ctx.method ?? ctx.request?.method;
+      // Anonymous credential/recovery flows must remain usable with an old cookie.
+      const anonymous =
+        ctx.path?.startsWith("/sign-in/") ||
+        ctx.path?.startsWith("/sign-up/") ||
+        ctx.path?.startsWith("/callback/") ||
+        [
+          "/sign-out",
+          "/reset-password",
+          "/request-password-reset",
+          // These pinned plugin endpoints use client/device credentials, not a
+          // browser session. Optional-session registration/consent stays gated.
+          "/oauth2/token",
+          "/oauth2/introspect",
+          "/oauth2/revoke",
+          "/device/code",
+          "/device/token",
+        ].includes(ctx.path ?? "");
+      const cached = ctx.context.session;
+      if (method && method !== "GET" && !anonymous && cached) {
+        // The pinned update-user endpoint reissues cache cookies from its session.
+        // Recheck even when an earlier hook already resolved an accepted cache.
+        const live = await ctx.context.internalAdapter.findSession(cached.session.token);
+        if (
+          !live ||
+          live.session.expiresAt <= new Date() ||
+          live.session.userId !== cached.session.userId
+        ) {
+          ctx.context.session = null;
+          deleteSessionCookie(ctx);
+          throw new APIError("UNAUTHORIZED", { message: "Unauthorized" }, ctx.responseHeaders);
+        }
+        ctx.context.session = live;
+      }
+      if (ctx.path !== "/reset-password") return;
+      // Mirror the pinned endpoint, including its query-token fallback and expiry comparison.
+      const token = ctx.body?.token || ctx.query?.token;
+      if (!token) return;
+      let userId: string | undefined;
+      try {
+        const verification = await ctx.context.internalAdapter.findVerificationValue(
+          `reset-password:${token}`,
+        );
+        if (!verification || verification.expiresAt < new Date()) return;
+        userId = verification.value;
+        await revokeCredentialsAfterPasswordReset(userId);
+      } catch (error) {
+        logRevocationFailure(userId, error, "SECURITY.password_reset");
+        throw new APIError("SERVICE_UNAVAILABLE", {
+          message:
+            "We couldn't finish securing your account. Nothing was changed — try the link again.",
+        });
+      }
+      // Safe direction: if reset later fails before the password write, the
+      // password is unchanged but the user is signed out everywhere and their
+      // credentials stay revoked.
+    }),
     after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/change-password") {
+        // Better Auth verifies the old password before its transaction. This
+        // sweep runs only after the new password commits, so a failure cannot
+        // roll it back: log SECURITY and propagate the failure to the caller.
+        if (isAPIError(ctx.context.returned) || !ctx.context.session) return;
+        const userId = ctx.context.session.user.id;
+        try {
+          await revokeCredentialsAfterPasswordChange(userId);
+        } catch (error) {
+          logRevocationFailure(userId, error, "SECURITY.password_change");
+          throw error;
+        }
+        return;
+      }
       // Generic OAuth 1.7.10 registers a social provider on the core callback.
       // The built-in 2FA matcher covers credential sign-ins only.
       if (ctx.path !== "/callback/:id" || ctx.params?.id !== "sso") return;
@@ -220,21 +311,36 @@ export const auth = betterAuth({
     password: { hash: passwordPepper.hash, verify: passwordPepper.verify },
     minPasswordLength: PASSWORD_MIN_LENGTH,
     maxPasswordLength: PASSWORD_MAX_LENGTH,
-    // A reset is the "my account may be compromised" path: sign out every
-    // browser session in the same transaction as the password write.
+    // The pre-sweep signs out every browser session before the password write;
+    // keep Better Auth's transactional deletion as defense in depth.
     // A cached cookie of a deleted session is refused on its next request
-    // (session-authority.ts versions the cache by the live session/user). PATs
-    // and OAuth grants are NOT revoked; the reset success screen sends the
-    // user to review them (settings/mcp?review=password-reset).
+    // (session-authority.ts versions the cache by the live session/user).
+    // The reset hook also revokes every standing credential and pending CLI login.
     revokeSessionsOnPasswordReset: true,
     // A redeemed reset link proves control of the mailbox it was sent to, so
     // it also verifies the address. This is how an admin invitation's one-time
     // "set your password" link verifies the invitee in the same step.
     // Written through the adapter, so the identity authority lock applies.
     onPasswordReset: async ({ user }) => {
-      if (user.emailVerified) return;
-      const context = await auth.$context;
-      await context.internalAdapter.updateUser(user.id, { emailVerified: true });
+      // Sweep again after the password transaction as defense in depth.
+      // The pre-sweep already prevents old browser sessions minting in the gap.
+      let revocationFailure: { error: unknown } | undefined;
+      try {
+        await revokeCredentialsAfterPasswordReset(user.id);
+      } catch (error) {
+        logRevocationFailure(user.id, error, "SECURITY.password_reset");
+        revocationFailure = { error };
+      }
+      // Core consumes only the redeemed token. Retire every other reset/invite
+      // link for this user, including when the post-sweep failed after commit.
+      await prisma.verification.deleteMany({
+        where: { value: user.id, identifier: { startsWith: "reset-password:" } },
+      });
+      if (!user.emailVerified) {
+        const context = await auth.$context;
+        await context.internalAdapter.updateUser(user.id, { emailVerified: true });
+      }
+      if (revocationFailure) throw revocationFailure.error;
     },
     sendResetPassword: async ({ user, url }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
