@@ -47,15 +47,16 @@ describe("toast facade", () => {
     });
   });
 
-  it("keeps action toasts expanded without changing plain toast autopilot", () => {
+  it("keeps action toasts expanded without changing plain toast autopilot or nesting buttons", () => {
     const onClick = vi.fn();
     toast.success("Deleted", { action: { label: "Undo", onClick } });
     expect(backend.success).toHaveBeenCalledWith(
       expect.objectContaining({
         autopilot: { expand: 0, collapse: 0 },
-        button: { title: "Undo", onClick },
+        description: expect.anything(),
       }),
     );
+    expect(backend.success.mock.calls[0]?.[0]).not.toHaveProperty("button");
     toast.success("Saved");
     expect(backend.success.mock.calls[1]?.[0]).not.toHaveProperty("autopilot");
   });

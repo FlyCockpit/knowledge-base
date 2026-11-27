@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { Toaster as SileoToaster, sileo } from "sileo";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { type SileoState, Toaster as SileoToaster, sileo } from "sileo";
 import "sileo/styles.css";
 
 interface ToasterProps {
@@ -12,6 +12,53 @@ interface ToasterProps {
     | "bottom-right";
 }
 
+const toastActions = new Map<string, () => void>();
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+/**
+ * Renders the toast action inside `description` as a non-interactive pill so
+ * `sileo`'s root `<button data-sileo-toast>` stays a single control with no
+ * nested `<a href>` inside it, while preserving the full accessible name on
+ * that `<button>`.
+ */
+function ToastAction({
+  id,
+  state,
+  title,
+  label,
+  onClick,
+}: {
+  id: string;
+  state: SileoState;
+  title: string;
+  label: string;
+  onClick: () => void;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    toastActions.set(id, onClick);
+    return () => {
+      if (toastActions.get(id) === onClick) toastActions.delete(id);
+    };
+  }, [id, onClick]);
+
+  useIsomorphicLayoutEffect(() => {
+    const toastEl = ref.current?.closest("[data-sileo-toast]");
+    if (!toastEl) return;
+    toastEl.setAttribute("aria-label", title ? `${title} — ${label}` : label);
+    return () => {
+      toastEl.removeAttribute("aria-label");
+    };
+  }, [title, label]);
+
+  return (
+    <span ref={ref} data-sileo-button="" data-state={state} data-toast-action-id={id}>
+      {label}
+    </span>
+  );
+}
+
 // No `theme`: sileo's themes invert the page (a light pill on a dark app).
 // The toast takes the app's popover tokens from globals.css instead, so it
 // follows `.dark` like every other surface, with no JS theme state.
@@ -21,6 +68,17 @@ const Toaster = ({ position = "bottom-center", ...props }: ToasterProps) => {
     <div
       ref={containerRef}
       style={{ display: "contents" }}
+      onClick={(event) => {
+        const toastEl = (event.target as Element | null)?.closest("[data-sileo-toast]");
+        if (!toastEl || toastEl.getAttribute("data-exiting") === "true") return;
+        const actionId = toastEl
+          .querySelector("[data-toast-action-id]")
+          ?.getAttribute("data-toast-action-id");
+        if (!actionId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        toastActions.get(actionId)?.();
+      }}
       onFocusCapture={(event) => {
         const toast = (event.target as Element).closest("[data-sileo-toast]");
         if (toast && !containerRef.current?.contains(event.relatedTarget as Node | null)) {
@@ -112,18 +170,44 @@ export function titleOverflowsPill(message: string, measure: TitleMeasure = meas
 }
 
 function createToastMethod(method: "success" | "error" | "info" | "warning" | "show") {
+  const sileoState: SileoState = method === "show" ? "success" : method;
   return (message: string, options?: ToastOptions) => {
+    const id = nextToastId();
+    const overflowing = titleOverflowsPill(message);
+    const action = options?.action;
+    if (action && typeof window !== "undefined") {
+      toastActions.set(id, action.onClick);
+    }
+    const description = action ? (
+      overflowing ? (
+        <>
+          {message}
+          <ToastAction
+            id={id}
+            state={sileoState}
+            title={message}
+            label={action.label}
+            onClick={action.onClick}
+          />
+        </>
+      ) : (
+        <ToastAction
+          id={id}
+          state={sileoState}
+          title={message}
+          label={action.label}
+          onClick={action.onClick}
+        />
+      )
+    ) : overflowing ? (
+      message
+    ) : undefined;
     return sileo[method]({
-      id: nextToastId(),
+      id,
       title: message,
-      ...(titleOverflowsPill(message) ? { description: message } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(options?.duration != null ? { duration: options.duration } : {}),
-      ...(options?.action
-        ? {
-            autopilot: { expand: 0, collapse: 0 },
-            button: { title: options.action.label, onClick: options.action.onClick },
-          }
-        : {}),
+      ...(action ? { autopilot: { expand: 0, collapse: 0 } } : {}),
     } as Parameters<typeof sileo.show>[0]);
   };
 }
@@ -136,7 +220,10 @@ const toast = {
   info: createToastMethod("info"),
   warning: createToastMethod("warning"),
   dismiss: sileo.dismiss,
-  clear: sileo.clear,
+  clear: () => {
+    toastActions.clear();
+    sileo.clear();
+  },
 };
 
 export { Toaster, toast };

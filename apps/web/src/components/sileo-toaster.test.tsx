@@ -107,3 +107,58 @@ describe("keyboard focus on toasts", () => {
     }
   });
 });
+
+describe("action toasts avoid nested interactive elements", () => {
+  it("renders toast action inside description as a span instead of a nested anchor", () => {
+    const onUndo = vi.fn();
+    toast.success("Archived", { action: { label: "Undo", onClick: onUndo } });
+    const markup = renderToStaticMarkup(<Toaster />);
+    expect(markup).toContain("data-toast-action-id=");
+    expect(markup).toContain("data-sileo-button");
+    expect(markup).not.toMatch(/<a\b[^>]*data-sileo-button/);
+    expect(markup).not.toContain("<a ");
+    const buttons = markup.match(/<button[^>]*data-sileo-toast[^>]*>[\s\S]*?<\/button>/g) ?? [];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.slice(button.indexOf(">") + 1, -"</button>".length)).not.toMatch(
+        /<(a|button)\b/,
+      );
+    }
+    toast.clear();
+  });
+
+  it("exposes an onClick handler on Toaster wrapper", () => {
+    const onUndo = vi.fn();
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      addEventListener() {},
+      removeEventListener() {},
+    });
+    refs.current = { current: null };
+    try {
+      toast.success("Archived", { action: { label: "Undo", onClick: onUndo } });
+      const markup = renderToStaticMarkup(<Toaster />);
+      const match = markup.match(/data-toast-action-id="([^"]+)"/);
+      expect(match).toBeTruthy();
+      const wrapper = Toaster({});
+      const stopPropagation = vi.fn();
+      const preventDefault = vi.fn();
+      const toastEl = {
+        getAttribute: () => null,
+        querySelector: () => ({ getAttribute: () => match![1] }),
+      };
+      wrapper.props.onClick({
+        target: { closest: () => toastEl },
+        preventDefault,
+        stopPropagation,
+      });
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(stopPropagation).toHaveBeenCalledOnce();
+      expect(onUndo).toHaveBeenCalledOnce();
+    } finally {
+      refs.current = null;
+      vi.unstubAllGlobals();
+      toast.clear();
+    }
+  });
+});

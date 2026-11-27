@@ -34,6 +34,7 @@ export function parseEvalOutput(out: string): unknown {
 
 export function sessionName(
   check: string,
+  // Dev-only browser-check harness knob: intentionally unregistered in scripts/lib/env-manifest.ts.
   prefix = process.env.BROWSER_CHECK_SESSION_PREFIX ?? "",
   pid = process.pid,
 ): string {

@@ -484,6 +484,12 @@
   --sileo-btn-bg: color-mix(in oklch, var(--popover-foreground) 8%, transparent);
   --sileo-btn-bg-hover: color-mix(in oklch, var(--popover-foreground) 14%, transparent);
 }
+:root
+  [data-sileo-viewport]
+  [data-sileo-toast]:has([data-sileo-button]):is(:hover, :focus-visible)
+  [data-sileo-button] {
+  background-color: var(--sileo-btn-bg-hover, transparent);
+}
 /* sileo sizes the pill from the header's measured width but draws it inside a
    fixed 350px SVG whose filter region clips anything wider: a long title used
    to push the badge icon half outside a square-cut pill. Cap the header row to

@@ -686,7 +686,9 @@ test("phone: deleting an open main document removes it from Recent and offers Un
   await expect(
     page.getByText(enKb.document.deletedToast.replace("{{path}}", README)),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: enKb.document.undo, exact: true })).toBeVisible();
+  await expect(
+    page.locator("[data-sileo-toast] [data-sileo-button]", { hasText: enKb.document.undo }),
+  ).toBeVisible();
   await expect(page).not.toHaveURL(/path=readme\.md/);
   await page.getByTestId("kb-tab-switcher").click();
   await expect(page.getByRole("dialog").getByRole("button", { name: /^readme\.md/ })).toHaveCount(
@@ -1002,7 +1004,9 @@ for (const delayed of ["get", "tree"] as const) {
       if (delayed === "tree")
         await page.evaluate(() => window.dispatchEvent(new Event("kb-test-release-delete-read")));
       await toast.hover();
-      await page.getByRole("link", { name: enKb.document.undo, exact: true }).click();
+      await page
+        .locator("[data-sileo-toast] [data-sileo-button]", { hasText: enKb.document.undo })
+        .click();
       await expect
         .poll(() => serverText(page, kb.id, ALPHA).catch(() => null))
         .toContain("First guide.");

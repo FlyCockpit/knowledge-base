@@ -25,6 +25,7 @@
  * Skipping step 2 fails CI — that is deliberate. A variable that the generator
  * doesn't know about is a variable that silently goes missing from a
  * production deploy and surfaces as a boot crash weeks later.
+ * Dev-only harness knobs (for example BROWSER_CHECK_SESSION_PREFIX) stay unregistered here.
  *
  * REMOVING A FEATURE MODULE: delete that module's
  * group and its vars from this file, then run `pnpm env:sync`.

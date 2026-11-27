@@ -2153,9 +2153,10 @@ test("a deleted document comes back with Undo, with no false not-found toast", a
   await page
     .getByText(enKb.document.deletedToast.replace("{{path}}", docPath))
     .hover({ timeout: ACTION_MS });
-  // The toast library renders its action as a link-styled button (`<a>`).
+  // The flattened toast keeps a single <button data-sileo-toast> and renders the
+  // action pill inside it as `[data-sileo-button]` (click delegates from the toaster wrapper).
   await page
-    .getByRole("link", { name: enKb.document.undo, exact: true })
+    .locator("[data-sileo-toast] [data-sileo-button]", { hasText: enKb.document.undo })
     .click({ timeout: ACTION_MS });
   // Until Undo's save lands the document is still deleted, and a throwing
   // poll callback is not retried: read "not there yet" as null.
