@@ -86,7 +86,7 @@ describe("sidebar search hits", () => {
         lang="en-US"
         kbId="kb1"
         hits={[hit("bread/sourdough.md", 0.7, true), hit("cars.md", 0.1)]}
-        calibration="external"
+        calibration="embeddinggemma-2-q8_0"
         query="flour gluten"
         onOpen={noop}
       />,
@@ -112,7 +112,7 @@ describe("sidebar search hits", () => {
         lang="en-US"
         kbId="kb1"
         hits={[hit("cars.md", 0.05)]}
-        calibration="external"
+        calibration="embeddinggemma-2-q8_0"
         query="flour"
         onOpen={noop}
       />,
@@ -121,13 +121,33 @@ describe("sidebar search hits", () => {
     expect(html).toContain(enKb.search.relevance.noClose);
   });
 
+  it("shows all uncalibrated hits without badges or folding", () => {
+    for (const calibration of ["unknown", "external"]) {
+      const html = render(
+        <SidebarHits
+          lang="en-US"
+          kbId="kb1"
+          hits={[hit("first.md", 0.01), hit("second.md", 0.02)]}
+          calibration={calibration}
+          query="flour"
+          onOpen={noop}
+        />,
+      );
+      expect(html).toContain("first.md");
+      expect(html).toContain("second.md");
+      expect(html).not.toContain('data-testid="workspace-search-band"');
+      expect(html).not.toContain('data-testid="workspace-search-no-close"');
+      expect(html).not.toContain('aria-expanded="false"');
+    }
+  });
+
   it("explains an empty reply", () => {
     const html = render(
       <SidebarHits
         lang="en-US"
         kbId="kb1"
         hits={[]}
-        calibration="external"
+        calibration="embeddinggemma-2-q8_0"
         query="x"
         onOpen={noop}
       />,

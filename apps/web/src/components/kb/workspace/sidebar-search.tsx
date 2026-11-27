@@ -262,7 +262,7 @@ function SidebarHit({
           <span className="min-w-0 truncate font-mono text-sm font-medium" title={hit.path}>
             {hit.path.slice(slash + 1)}
           </span>
-          {band && (
+          {band && band.band !== "neutral" && (
             <span
               className="ml-auto shrink-0 text-xs text-muted-foreground"
               data-testid="workspace-search-band"

@@ -51,6 +51,7 @@ const summary = (over: Partial<ProviderRow> = {}): ProviderRow => ({
   model: "text-embed",
   dimensions: 8,
   contextTokens: null,
+  calibrationFamily: "unknown",
   status: "ready",
   probe: { state: "ready", reason: null, failure: null },
   ...over,
@@ -258,12 +259,21 @@ describe("provider list", () => {
   it("never renders an endpoint or key field and shows status per row", () => {
     const html = wrap(
       <ProviderListView
-        providers={[summary(), summary({ providerId: "q".repeat(24), status: "revoked" })]}
+        providers={[
+          summary(),
+          summary({
+            providerId: "q".repeat(24),
+            status: "revoked",
+            calibrationFamily: "embeddinggemma-2-q8_0",
+          }),
+        ]}
         probes={{}}
         onProbe={() => {}}
         onRevoke={() => {}}
       />,
     );
+    expect(html).toContain(enSettings.providers.calibrationOptions.unknown);
+    expect(html).toContain(enSettings.providers.calibrationOptions["embeddinggemma-2-q8_0"]);
     expect(html).toContain('data-status="ready"');
     expect(html).toContain('data-status="revoked"');
     expect(html).not.toMatch(/https?:\/\//);

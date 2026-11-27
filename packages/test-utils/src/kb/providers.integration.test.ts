@@ -259,6 +259,7 @@ describe("providers durable registry and real fake HTTP", () => {
     const listed = await listMyProviders(runtime, owner.id);
     expect(listed.items[0]!.status).toBe("ready");
     expect(Object.keys(listed.items[0]!).sort()).toEqual([
+      "calibrationFamily",
       "contextTokens",
       "dimensions",
       "kind",
@@ -269,12 +270,63 @@ describe("providers durable registry and real fake HTTP", () => {
       "revision",
       "status",
     ]);
+    expect(listed.items[0]!.calibrationFamily).toBe("unknown");
     expect(listed.items[0]!.probe).toEqual({ state: "ready", reason: null, failure: null });
     expect(JSON.stringify(listed)).not.toContain(config.apiKey);
     expect(JSON.stringify(listed)).not.toContain(config.endpointUrl);
     expect(http.requests.at(-1)!.url).toBe("/tenant/exact");
     expect(http.requests.at(-1)!.headers.authorization).toBe(`Bearer ${config.apiKey}`);
     expect(await probe(created.jobId)).toEqual({ skipped: true });
+  });
+  it("persists calibration across provider revisions without changing the embedding fingerprint", async () => {
+    const owner = await user();
+    const request = input();
+    const created = await createProvider(runtime, owner.id, request, masterKey);
+    const first = await revisionRow(created.jobId);
+    expect(first.calibrationFamily).toBeNull();
+    expect(created.provider.calibrationFamily).toBe("unknown");
+    expect((await listMyProviders(runtime, owner.id)).items[0]!.calibrationFamily).toBe("unknown");
+
+    // NULL is also the value retained by revisions predating calibration.
+    expect((await listMyProviders(runtime, owner.id)).items[0]!.calibrationFamily).toBe("unknown");
+    await expect(
+      createProvider(
+        runtime,
+        owner.id,
+        { ...request, calibrationFamily: "embeddinggemma-2-q8_0" },
+        masterKey,
+      ),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_MISMATCH" });
+
+    const { name: _name, ...configuration } = input();
+    const providerId = created.provider.providerId;
+    for (const [index, calibrationFamily] of (
+      ["embeddinggemma-2-q8_0", "qwen3-embedding-0.6b-q8_0"] as const
+    ).entries()) {
+      const nextRequest = {
+        ...configuration,
+        providerId,
+        calibrationFamily,
+        idempotencyKey: randomUUID(),
+      } as const;
+      const next = await probeProvider(runtime, owner.id, nextRequest, masterKey);
+      const revision = await revisionRow(next.jobId);
+      expect(revision.version).toBe(index + 2);
+      expect(revision.calibrationFamily).toBe(calibrationFamily);
+      expect(revision.fingerprint).toBe(first.fingerprint);
+      expect(next.provider.calibrationFamily).toBe(calibrationFamily);
+      expect((await listMyProviders(runtime, owner.id)).items[0]!.calibrationFamily).toBe(
+        calibrationFamily,
+      );
+      await expect(
+        probeProvider(
+          runtime,
+          owner.id,
+          { ...nextRequest, calibrationFamily: "unknown" },
+          masterKey,
+        ),
+      ).rejects.toMatchObject({ code: "IDEMPOTENCY_MISMATCH" });
+    }
   });
   it("a worker-failed probe is terminal FAILED with a reason; a stuck probe times out and stays terminal", async () => {
     const owner = await user();

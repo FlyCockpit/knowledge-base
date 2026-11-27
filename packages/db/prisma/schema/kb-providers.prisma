@@ -28,6 +28,7 @@ model ProviderRevision {
   endpointUrl    String
   model          String
   dimensions     Int
+  calibrationFamily String?
   ciphertext     String?
   aadVersion     Int               @default(1)
   keyVersion     Int               @default(1)

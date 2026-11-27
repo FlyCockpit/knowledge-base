@@ -368,6 +368,7 @@ function RelevanceMeter({
 }) {
   const { t } = useTranslation("kb");
   const { band, level } = assessRelevance(relevance, calibration);
+  if (band === "neutral") return null;
   const label = t(`search.relevance.band.${band}`);
   return (
     <span className="inline-flex items-center gap-1.5" data-testid="search-relevance">

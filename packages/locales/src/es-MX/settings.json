@@ -543,6 +543,13 @@
     "revoking": "Revocando…",
     "copyToken": "Copiar texto de confirmación",
     "revision": "Revisión {{revision}}",
+    "calibrationLabel": "Familia de calibración",
+    "calibrationHint": "Desconocida muestra el orden sin etiquetas de intensidad. Una familia conocida aplica sus bandas de relevancia medidas.",
+    "calibrationOptions": {
+      "unknown": "Desconocida (solo orden)",
+      "embeddinggemma-2-q8_0": "EmbeddingGemma",
+      "qwen3-embedding-0.6b-q8_0": "Qwen3-Embedding-0.6B"
+    },
     "line": "{{model}} · {{dimensions}} dimensiones",
     "status": {
       "ready": "Listo",

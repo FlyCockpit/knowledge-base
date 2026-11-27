@@ -82,13 +82,17 @@ similarity of the hit's chunk to the query (1 − the vector arm's cosine
 distance over the int8 vectors; null when the vector arm did not rank the
 chunk among its candidates, or for a keyword-only search), `semanticRank`,
 `keyword` (the lexical arm matched it) and `keywordRank`; the reply adds
-`calibration` (the built-in model id, `external` for an OpenAI-compatible
-provider, whose model name is never sent, or `lexical`) and
+`calibration` (the built-in model id, a selected external calibration family,
+`unknown`, or `lexical`; external model names are never sent) and
 `indexedCommittedAt` (the indexed commit's time, for "from the version saved 5
 min ago"). The page turns these into Strong / Related / Weak bands with
 per-model thresholds (`apps/web/src/lib/search-relevance.ts`) and collapses hits
 below the model's floor under "Weaker matches"; it never shows the fused
-`score` as a similarity. A hit's `snippet` is plain text on every transport (MCP, CLI and
+`score` as a similarity. External provider registration offers EmbeddingGemma and
+Qwen3-Embedding-0.6B measured calibration families, or Unknown (the default
+for new and existing providers). Unknown shows all hits in rank order without
+strength labels or folding. Choose a measured family only for a matching model.
+A hit's `snippet` is plain text on every transport (MCP, CLI and
 web): Markdown markup is reduced to its text (shared corpus
 `fixtures/plain-snippet.json`); its `span` still cites the exact source bytes.
 

@@ -1,4 +1,6 @@
-/** The search relevance meter's details: a named dialog, keyboard-operable, focus returns. */
+/** The search relevance meter's details: a named dialog, keyboard-operable, focus returns.
+ * Unknown calibration's neutral rank-only behavior is covered by search-results.test.tsx.
+ */
 import { randomUUID } from "node:crypto";
 import enKb from "@knowledge-base/locales/src/en-US/kb.json" with { type: "json" };
 import { expect, type Page, test } from "@playwright/test";
@@ -55,7 +57,7 @@ test("relevance details open as a named dialog, close on Escape and return focus
         indexedCommitSha: sha,
         headSha: sha,
         indexNotices: [],
-        calibration: "external",
+        calibration: "embeddinggemma-2-q8_0",
         indexedCommittedAt: null,
         results: [
           {

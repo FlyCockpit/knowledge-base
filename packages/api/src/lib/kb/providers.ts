@@ -3,6 +3,11 @@ import type { Prisma } from "@knowledge-base/db/client";
 import { z } from "zod";
 import { cursorPage, cursorPageInput, pageTake, withCursor } from "../pagination";
 import { recordAuditEvent } from "./audit";
+import {
+  normalizeCalibrationFamily,
+  PROVIDER_CALIBRATION_FAMILIES,
+  type ProviderCalibrationFamily,
+} from "./calibration";
 import { canonicalizeHttpsEndpointUrl } from "./egress";
 import { type EmbeddingFailureReason, parseProbeFailure } from "./embed-client";
 import { encryptKbSecret, requireKbMasterKey } from "./envelope";
@@ -26,6 +31,7 @@ import type { KbRuntimeConfig } from "./runtime";
 const id = z.string().regex(/^[a-z0-9]{24}$/);
 const key = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const configuration = {
+  calibrationFamily: z.enum(PROVIDER_CALIBRATION_FAMILIES).default("unknown"),
   endpointUrl: z.string().min(1).max(2048),
   model: z
     .string()
@@ -68,6 +74,7 @@ const summarySelect = {
       version: true,
       model: true,
       dimensions: true,
+      calibrationFamily: true,
       job: { select: { state: true, lastError: true } },
     },
   },
@@ -210,6 +217,7 @@ export async function listMyProviders(
       items: page.items.map((row) => ({
         ...publicSummary(row),
         probe: providerProbeState(row.revisions[0]!.job),
+        calibrationFamily: normalizeCalibrationFamily(row.revisions[0]!.calibrationFamily),
       })),
       nextCursor: page.nextCursor,
     };
@@ -294,7 +302,10 @@ async function registerRevision(
   userId: string,
   input: z.infer<typeof providerCreateInput> | z.infer<typeof providerProbeInput>,
   keyValue: string | undefined,
-): Promise<{ provider: Summary; jobId: string }> {
+): Promise<{
+  provider: Summary & { calibrationFamily: ProviderCalibrationFamily };
+  jobId: string;
+}> {
   const masterKey = requireKbMasterKey(keyValue);
   let endpointUrl: string;
   try {
@@ -315,6 +326,7 @@ async function registerRevision(
         input.model,
         input.dimensions,
         input.apiKey,
+        ...(input.calibrationFamily === "unknown" ? [] : [input.calibrationFamily]),
       ]),
     )
     .digest("hex");
@@ -400,7 +412,7 @@ async function registerRevision(
           desired: { providerId, revision: version, ownerId: userId },
         });
         await query(
-          `INSERT INTO provider_revision ("providerId",version,"endpointUrl",model,dimensions,ciphertext,"aadVersion","keyVersion","ownerSnapshot",fingerprint,"idempotencyKey","requestHash","jobId") VALUES ($1,$2,$3,$4,$5,$6,1,1,$7,$8,$9,$10,$11)`,
+          `INSERT INTO provider_revision ("providerId",version,"endpointUrl",model,dimensions,ciphertext,"aadVersion","keyVersion","ownerSnapshot",fingerprint,"idempotencyKey","requestHash","jobId","calibrationFamily") VALUES ($1,$2,$3,$4,$5,$6,1,1,$7,$8,$9,$10,$11,$12)`,
           [
             providerId,
             version,
@@ -413,6 +425,7 @@ async function registerRevision(
             input.idempotencyKey,
             requestHash,
             jobId,
+            input.calibrationFamily === "unknown" ? null : input.calibrationFamily,
           ],
         );
         await recordAuditEvent(query, {
@@ -440,6 +453,7 @@ async function registerRevision(
           model: input.model,
           dimensions: input.dimensions,
           contextTokens: null,
+          calibrationFamily: input.calibrationFamily,
           status: row.rows[0]!.state === "COMPLETE" ? "ready" : "unavailable",
         },
       };

@@ -236,6 +236,21 @@ describe("relevance meter and floor", () => {
     expect(out).not.toMatch(/>[^<]*(?:50\s?%|0\.5\b)[^<]*</);
   });
 
+  it("keeps uncalibrated results in rank order without labels or folding", () => {
+    for (const calibration of ["unknown", "external"]) {
+      const out = render(
+        view([unrelated("first.md", 0.01), unrelated("second.md", 0.02)], { calibration }),
+      );
+      expect(out.indexOf("first.md")).toBeGreaterThan(-1);
+      expect(out.indexOf("second.md")).toBeGreaterThan(out.indexOf("first.md"));
+      expect(out).not.toContain('role="meter"');
+      expect(out).not.toContain('data-testid="search-no-close"');
+      expect(out).not.toContain(i18n.t("search.relevance.weaker", { count: 2 }));
+      for (const label of Object.values(enKb.search.relevance.band))
+        expect(out).not.toContain(label);
+    }
+  });
+
   it("highlights the query's words in the snippet", () => {
     const out = render(view([sourdough]));
     expect(out).toMatch(/<mark[^>]*>flour<\/mark>/);

@@ -132,8 +132,8 @@ describe("browser relevance (never the fused score)", () => {
       // Cosine distance 0.1 from the vector arm: similarity 0.9.
       ["b.md", { semantic: 0.9, semanticRank: 1, keyword: false, keywordRank: null }],
     ]);
-    // A mocked generation row without a provider: the conservative external table.
-    expect(browser.calibration).toBe("external");
+    // A mocked generation row without a provider: unknown calibration.
+    expect(browser.calibration).toBe("unknown");
     const { calibration: _calibration, indexedCommittedAt, ...rest } = browser;
     // No repositories directory given: the commit time is simply unknown.
     expect(indexedCommittedAt).toBeNull();
@@ -149,6 +149,7 @@ describe("browser relevance (never the fused score)", () => {
     await searchKnowledgeBaseForBrowser(options, actor, { kbId, query: "alpha" });
     const lease = statements().find((text) => text.includes("generation_lease"))!;
     expect(lease).toContain('AS "providerModel"');
+    expect(lease).toContain('r."calibrationFamily"');
     expect(lease).toContain("FOR KEY SHARE OF g");
   });
 
@@ -237,7 +238,7 @@ describe("browser relevance (never the fused score)", () => {
     }
   });
 
-  it("keys calibration by built-in model id, else external; lexical generations say so", () => {
+  it("keys calibration by built-in model id, else unknown; lexical generations say so", () => {
     expect(
       relevanceCalibration(
         { providerId: "builtinembeddingmodel000", providerModel: "embeddinggemma-2-q8_0" },
@@ -249,11 +250,27 @@ describe("browser relevance (never the fused score)", () => {
         { providerId: "builtinembeddingmodel000", providerModel: "not-a-model" },
         false,
       ),
-    ).toBe("external");
+    ).toBe("unknown");
+    expect(
+      relevanceCalibration(
+        { providerId: "builtinembeddingmodel000", providerModel: "qwen3-embedding-0.6b-q8_0" },
+        false,
+      ),
+    ).toBe("qwen3-embedding-0.6b-q8_0");
     // An external provider's model name never reaches the browser.
     expect(
       relevanceCalibration({ providerId: "p".repeat(24), providerModel: "secret-model" }, false),
-    ).toBe("external");
+    ).toBe("unknown");
+    for (const family of ["embeddinggemma-2-q8_0", "qwen3-embedding-0.6b-q8_0"]) {
+      expect(
+        relevanceCalibration({ providerId: "external", providerCalibration: family }, false),
+      ).toBe(family);
+    }
+    for (const family of [null, "unknown", "bogus"]) {
+      expect(
+        relevanceCalibration({ providerId: "external", providerCalibration: family }, false),
+      ).toBe("unknown");
+    }
     expect(relevanceCalibration({ providerId: null, providerModel: null }, true)).toBe("lexical");
   });
 

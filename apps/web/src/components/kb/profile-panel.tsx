@@ -1,3 +1,4 @@
+import { PROVIDER_CALIBRATION_FAMILIES } from "@knowledge-base/api/lib/kb/calibration";
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
 import { Button } from "@knowledge-base/ui/components/button";
 import {
@@ -32,7 +33,8 @@ type ListMine = Awaited<ReturnType<AppRouterClient["embeddingProviders"]["listMi
 /** An owned provider as the list shows it: public summary plus its latest probe state. */
 export type ProviderRow = ListMine["items"][number];
 /** The public provider projection (no probe state), e.g. a create/probe response. */
-export type ProviderSummary = Omit<ProviderRow, "probe">;
+export type ProviderSummary = Omit<ProviderRow, "probe" | "calibrationFamily"> &
+  Partial<Pick<ProviderRow, "calibrationFamily">>;
 type ProfileGet = Awaited<ReturnType<AppRouterClient["kbIndex"]["profile"]>>;
 type IndexStatus = ProfileGet["index"];
 type KbLike = { id: string; capabilities: readonly string[] };
@@ -189,7 +191,8 @@ export function ProviderListView({
               <p className="truncate text-sm font-medium">{provider.name}</p>
               <p className="text-xs text-muted-foreground">
                 {t("providers.line", { model: provider.model, dimensions: provider.dimensions })} ·{" "}
-                {t("providers.revision", { revision: provider.revision })}
+                {t("providers.revision", { revision: provider.revision })} ·{" "}
+                {t(`providers.calibrationOptions.${provider.calibrationFamily}`)}
               </p>
               {outcome && (
                 <p
@@ -295,7 +298,17 @@ function ProviderSecretDialog({
     callbacks,
   );
   const form = useForm({
-    defaultValues: { name: "", endpointUrl: "", model: "", dimensions: "", apiKey: "" },
+    defaultValues: {
+      name: "",
+      endpointUrl: "",
+      model: "",
+      dimensions: "",
+      apiKey: "",
+      calibrationFamily:
+        target.mode === "probe"
+          ? (target.provider.calibrationFamily ?? "unknown")
+          : ("unknown" as const),
+    },
     validators: {
       onSubmit: z.object({
         name: z
@@ -314,6 +327,7 @@ function ProviderSecretDialog({
           .max(200)
           .refine((value) => !value.includes("\0"), t("settings:providers.errors.invalid")),
         dimensions: z.string().regex(/^\d{1,4}$/),
+        calibrationFamily: z.enum(PROVIDER_CALIBRATION_FAMILIES),
         apiKey: z
           .string()
           .min(1)
@@ -328,6 +342,7 @@ function ProviderSecretDialog({
         endpointUrl: value.endpointUrl.trim(),
         model: value.model.trim(),
         dimensions: Number(value.dimensions),
+        calibrationFamily: value.calibrationFamily,
         apiKey: value.apiKey,
         idempotencyKey,
       };
@@ -417,6 +432,35 @@ function ProviderSecretDialog({
                 inputMode="numeric"
                 maxLength={4}
               />
+            )}
+          </form.Field>
+          <form.Field name="calibrationFamily">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor="provider-calibration">
+                  {t("settings:providers.calibrationLabel")}
+                </Label>
+                <select
+                  id="provider-calibration"
+                  className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) =>
+                    field.handleChange(
+                      z.enum(PROVIDER_CALIBRATION_FAMILIES).parse(event.target.value),
+                    )
+                  }
+                >
+                  {PROVIDER_CALIBRATION_FAMILIES.map((family) => (
+                    <option key={family} value={family}>
+                      {t(`settings:providers.calibrationOptions.${family}`)}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings:providers.calibrationHint")}
+                </p>
+              </div>
             )}
           </form.Field>
           <form.Field name="apiKey">

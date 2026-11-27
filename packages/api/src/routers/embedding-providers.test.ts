@@ -59,6 +59,30 @@ describe("human provider procedures", () => {
     expect(createProvider).not.toHaveBeenCalled();
     expect(probeProvider).not.toHaveBeenCalled();
   });
+  it("defaults, accepts, and validates calibration families", async () => {
+    const client = createRouterClient(embeddingProvidersRouter, { context: () => context });
+    vi.mocked(createProvider).mockRejectedValue(new Error("fixture"));
+    await expect(client.create(input)).rejects.toBeDefined();
+    expect(createProvider).toHaveBeenLastCalledWith(
+      {},
+      "owner",
+      { ...input, calibrationFamily: "unknown" },
+      "test-master",
+    );
+    await expect(
+      client.create({ ...input, calibrationFamily: "embeddinggemma-2-q8_0" }),
+    ).rejects.toBeDefined();
+    expect(createProvider).toHaveBeenLastCalledWith(
+      {},
+      "owner",
+      { ...input, calibrationFamily: "embeddinggemma-2-q8_0" },
+      "test-master",
+    );
+    await expect(
+      client.create({ ...input, calibrationFamily: "invalid" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(createProvider).toHaveBeenCalledTimes(2);
+  });
   it("denies anonymous calls on every procedure and exposes no attach or secret read", async () => {
     const client = createRouterClient(embeddingProvidersRouter, {
       context: () => ({ session: null }),
@@ -91,7 +115,12 @@ describe("human provider procedures", () => {
       code: "INTERNAL_SERVER_ERROR",
       message: "Provider operation unavailable",
     });
-    expect(createProvider).toHaveBeenCalledWith({}, "owner", input, "test-master");
+    expect(createProvider).toHaveBeenCalledWith(
+      {},
+      "owner",
+      { ...input, calibrationFamily: "unknown" },
+      "test-master",
+    );
   });
 
   it("every signed-in user can list the built-in system providers (no secret fields)", async () => {

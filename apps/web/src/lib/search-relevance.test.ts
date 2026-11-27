@@ -50,10 +50,19 @@ describe("relevance bands", () => {
     expect(assessRelevance(rel(0.6), GEMMA)).toMatchObject({ band: "weak", passes: false });
   });
 
-  it("falls back to the conservative external table for unknown calibrations", () => {
-    expect(thresholdsFor("some-model")).toBe(RELEVANCE_THRESHOLDS.external);
-    expect(thresholdsFor(undefined)).toBe(RELEVANCE_THRESHOLDS.external);
-    expect(thresholdsFor("__proto__")).toBe(RELEVANCE_THRESHOLDS.external);
+  it("shows uncalibrated hits neutrally without folding", () => {
+    const hits = [{ relevance: rel(0.01) }, { relevance: rel(0.8) }];
+    for (const calibration of ["unknown", "external", undefined, "__proto__", "some-model"]) {
+      expect(thresholdsFor(calibration)).toBeNull();
+      expect(assessRelevance(rel(0.01), calibration)).toEqual({
+        band: "neutral",
+        passes: true,
+        level: null,
+      });
+      expect(partitionByFloor(hits, calibration)).toEqual({ shown: hits, weaker: [] });
+    }
+    expect(assessRelevance(rel(0.61), GEMMA)).toMatchObject({ band: "weak", passes: false });
+    expect(assessRelevance(rel(0.75), GEMMA)).toMatchObject({ band: "strong", passes: true });
   });
 
   it("lets a keyword match lift a hit and pass the floor", () => {

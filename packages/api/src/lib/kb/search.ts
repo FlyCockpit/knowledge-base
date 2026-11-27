@@ -4,6 +4,7 @@ import { Client } from "pg";
 import type { z } from "zod";
 import type { IndexStatus } from "./attachment";
 import { BUILTIN_MODELS } from "./builtin-model";
+import { isKnownCalibrationFamily } from "./calibration";
 import { type CitationHit, type CitationSourceRow, projectCitationHit } from "./citation";
 import { IndexFileMissingError, KbDomainError } from "./errors";
 import type { IndexActor } from "./generations";
@@ -85,9 +86,9 @@ export type HitRelevance = {
   keywordRank: number | null;
 };
 /**
- * Which threshold table the browser's relevance bands use: the built-in model id, "external"
- * for an OpenAI-compatible provider (the model name is never sent), or "lexical" for a
- * keyword-only generation.
+ * Which threshold table the browser's relevance bands use: the built-in model id, an
+ * external provider's chosen calibration family (or "unknown" for neutral rank only; the
+ * raw model name is never sent), or "lexical" for a keyword-only generation.
  */
 export type RelevanceCalibration = string;
 export type HybridRead = {
@@ -126,6 +127,7 @@ type LeasedGeneration = {
   active: boolean;
   providerId?: string | null;
   providerModel?: string | null;
+  providerCalibration?: string | null;
 };
 
 /**
@@ -143,11 +145,12 @@ export const READER_ACK_SLACK_MS = 5000;
 
 const GENERATION_COLUMNS = `g.dimensions,g."commitSha",k.name,g.fingerprint,g."chunkCount",g."documentCount",g.state,
   (k."activeGenerationId" IS NOT DISTINCT FROM g.id) AS active, g."providerId" AS "providerId",
-  (SELECT r.model FROM provider_revision r WHERE r."providerId"=g."providerId" AND r.version=g."providerVersion") AS "providerModel"`;
+  (SELECT r.model FROM provider_revision r WHERE r."providerId"=g."providerId" AND r.version=g."providerVersion") AS "providerModel",
+  (SELECT r."calibrationFamily" FROM provider_revision r WHERE r."providerId"=g."providerId" AND r.version=g."providerVersion") AS "providerCalibration"`;
 
 /** The relevance calibration of a generation (see `RelevanceCalibration`). */
 export function relevanceCalibration(
-  generation: Pick<LeasedGeneration, "providerId" | "providerModel">,
+  generation: Pick<LeasedGeneration, "providerId" | "providerModel" | "providerCalibration">,
   lexical: boolean,
 ): RelevanceCalibration {
   if (lexical) return "lexical";
@@ -157,7 +160,9 @@ export function relevanceCalibration(
     Object.hasOwn(BUILTIN_MODELS, generation.providerModel)
   )
     return generation.providerModel;
-  return "external";
+  return isKnownCalibrationFamily(generation.providerCalibration)
+    ? generation.providerCalibration
+    : "unknown";
 }
 
 /**

@@ -8,7 +8,7 @@
  * Cosine values are not comparable across embedding models (each model spreads
  * unrelated text over a different range), so the bands are calibrated per
  * model: `RELEVANCE_THRESHOLDS`, keyed by the reply's `calibration` (the
- * built-in model id, or "external" for an OpenAI-compatible provider). The basis
+ * measured model family). The basis
  * of each row is recorded in work/kb-workspace/search-calibration.md.
  */
 
@@ -41,16 +41,12 @@ export type RelevanceThresholds = {
 export const RELEVANCE_THRESHOLDS: Readonly<Record<string, RelevanceThresholds>> = {
   "qwen3-embedding-0.6b-q8_0": { strong: 0.55, related: 0.4, floor: 0.32 },
   "embeddinggemma-2-q8_0": { strong: 0.72, related: 0.66, floor: 0.63 },
-  // Unknown or external models (not measured): a low floor, so few real hits are hidden.
-  external: { strong: 0.6, related: 0.45, floor: 0.3 },
 };
 
-export function thresholdsFor(calibration: string | undefined): RelevanceThresholds {
-  return (
-    (calibration !== undefined && Object.hasOwn(RELEVANCE_THRESHOLDS, calibration)
-      ? RELEVANCE_THRESHOLDS[calibration]
-      : undefined) ?? RELEVANCE_THRESHOLDS.external!
-  );
+export function thresholdsFor(calibration: string | undefined): RelevanceThresholds | null {
+  return calibration !== undefined && Object.hasOwn(RELEVANCE_THRESHOLDS, calibration)
+    ? (RELEVANCE_THRESHOLDS[calibration] ?? null)
+    : null;
 }
 
 /**
@@ -59,13 +55,15 @@ export function thresholdsFor(calibration: string | undefined): RelevanceThresho
  */
 type RelevanceBand = "strong" | "related" | "weak" | "keyword";
 
-export type RelevanceAssessment = {
-  band: RelevanceBand;
-  /** Shown among the results; false collapses it under "Weaker matches". */
-  passes: boolean;
-  /** Meter fill, 1–3 (weak, related, strong); a keyword-only match is 2. */
-  level: 1 | 2 | 3;
-};
+export type RelevanceAssessment =
+  | { band: "neutral"; passes: true; level: null }
+  | {
+      band: RelevanceBand;
+      /** Shown among the results; false collapses it under "Weaker matches". */
+      passes: boolean;
+      /** Meter fill, 1–3 (weak, related, strong); a keyword-only match is 2. */
+      level: 1 | 2 | 3;
+    };
 
 const LEVEL: Record<RelevanceBand, 1 | 2 | 3> = { weak: 1, keyword: 2, related: 2, strong: 3 };
 
@@ -83,6 +81,7 @@ export function assessRelevance(
 ): RelevanceAssessment {
   if (calibration === "lexical") return { band: "keyword", passes: true, level: 2 };
   const t = thresholdsFor(calibration);
+  if (t === null) return { band: "neutral", passes: true, level: null };
   const s = relevance.semantic;
   let band: RelevanceBand =
     s === null ? "weak" : s >= t.strong ? "strong" : s >= t.related ? "related" : "weak";
