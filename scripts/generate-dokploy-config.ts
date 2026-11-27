@@ -241,6 +241,7 @@ function environments(compose: boolean, project: string) {
       ...values(smtpKeys),
       ...values([
         "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_SECRET_PREVIOUS",
         "BETTER_AUTH_URL",
         "ADMIN_EMAIL",
         // Optional, no default: unset = the first-admin setup route is absent.

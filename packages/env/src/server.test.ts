@@ -17,6 +17,7 @@ const BASE_ENV: EnvMap = {
   BETTER_AUTH_SECRET: "kV3mQ7xZ2bN9wL5pR8tY4cJ6hF1dS0gU",
   // https, so the production-only http:// guards stay out of the way.
   BETTER_AUTH_URL: "https://app.example.com",
+  BETTER_AUTH_SECRET_PREVIOUS: undefined,
   // Every optional key the startup guards read starts explicitly undefined,
   // so a value exported in the developer's shell cannot skew a case.
   ADMIN_EMAIL: undefined,
@@ -470,4 +471,16 @@ describe("asset S3 startup validation", () => {
     });
     expect(result.env.KB_ASSET_S3_ENABLED).toBe(false);
   });
+});
+
+it("validates the previous password pepper secret", async () => {
+  const previous = "D9sT7wV4rQ1pL8nM5kH2fG6cB3xZ0yAa";
+  const mod = await importServerEnv({ BETTER_AUTH_SECRET_PREVIOUS: previous });
+  expect(mod.env.BETTER_AUTH_SECRET_PREVIOUS?.reveal()).toBe(previous);
+  vi.resetModules();
+  await expect(
+    importServerEnv({ BETTER_AUTH_SECRET_PREVIOUS: BASE_ENV.BETTER_AUTH_SECRET }),
+  ).rejects.toThrow();
+  vi.resetModules();
+  await expect(importServerEnv({ BETTER_AUTH_SECRET_PREVIOUS: "short" })).rejects.toThrow();
 });

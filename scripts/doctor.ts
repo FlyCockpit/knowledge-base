@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 
 import { validateKbMasterKeyFormat } from "@knowledge-base/env/kb-master-key";
 
+import { PasswordPepperKeyError, pepperFingerprint } from "../packages/auth/src/password-pepper.js";
 import { claudeHooksStatus } from "./install-claude-hooks.js";
 
 const ROOT = resolve(import.meta.dirname!, "..");
@@ -25,13 +26,23 @@ const ROOT = resolve(import.meta.dirname!, "..");
  * dependencies (`@knowledge-base/db`, `ioredis`) that live in that package without
  * adding them to the root package.json.
  */
-function runInPackage(filter: string, script: string): { ok: boolean; output: string } {
+function runInPackage(
+  filter: string,
+  script: string,
+  extraEnv: Record<string, string> = {},
+): { ok: boolean; output: string } {
   const result = spawnSync(
     "pnpm",
     ["--silent", "-F", filter, "exec", "node", "--input-type=module", "-e", script],
     {
       cwd: ROOT,
       encoding: "utf-8",
+      env: {
+        ...process.env,
+        BETTER_AUTH_SECRET: undefined,
+        BETTER_AUTH_SECRET_PREVIOUS: undefined,
+        ...extraEnv,
+      },
       shell: process.platform === "win32",
     },
   );
@@ -210,6 +221,157 @@ async function checkEnv() {
       required: true,
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Password pepper: read-only inventory, with only fingerprints sent to pg.
+// ---------------------------------------------------------------------------
+function checkPasswordPepper() {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    record({
+      name: "password pepper",
+      status: "fail",
+      detail: "BETTER_AUTH_SECRET is not set",
+      hint: "Restore this environment's BETTER_AUTH_SECRET; losing it means every password must be reset.",
+      required: true,
+    });
+    return;
+  }
+  const fingerprint = pepperFingerprint(secret);
+  const previous = process.env.BETTER_AUTH_SECRET_PREVIOUS;
+  const previousFingerprint = previous ? pepperFingerprint(previous) : "";
+  if (results.find((r) => r.name === "database")?.status !== "ok") {
+    record({
+      name: "password pepper",
+      status: "skip",
+      detail: `key fp ${fingerprint}; database is not reachable`,
+      hint: "Fix the database check, then run pnpm doctor:app again.",
+      required: true,
+    });
+    return;
+  }
+  // Unpadded base64url needs ceil(bytes * 8 / 6) characters. Require at
+  // least one ciphertext byte beyond the 12-byte nonce and 16-byte GCM tag.
+  const minPayloadLength = Math.ceil(((12 + 16 + 1) * 8) / 6);
+  const envelopePattern = `^pw1:[0-9a-f]{16}:[A-Za-z0-9_-]{${minPayloadLength},}$`;
+  const script = `
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 3000,
+      statement_timeout: 10000 });
+    try {
+      await client.connect();
+      const { rows } = await client.query(\`
+        SELECT kind, fingerprint, count(*)::int AS count FROM (
+          SELECT CASE
+            WHEN password ~ '${envelopePattern}' THEN CASE
+              WHEN split_part(password, ':', 2) = $1 THEN 'current'
+              WHEN split_part(password, ':', 2) = $2 THEN 'previous'
+              ELSE 'unknown-key' END
+            WHEN password LIKE 'pw1:%' THEN 'invalid-envelope'
+            WHEN password ~ '^[0-9a-f]{32}:[0-9a-f]{128}$' THEN 'legacy'
+            ELSE 'malformed' END AS kind,
+            CASE WHEN password ~ '${envelopePattern}'
+              THEN split_part(password, ':', 2) ELSE '' END AS fingerprint
+          FROM account WHERE password IS NOT NULL
+        ) AS passwords GROUP BY kind, fingerprint
+      \`, [process.env.PEPPER_CURRENT_FP, process.env.PEPPER_PREVIOUS_FP]);
+      console.log(JSON.stringify(rows));
+    } catch {
+      console.error("Could not count stored password hashes; check database access and migrations.");
+      process.exitCode = 1;
+    } finally { await client.end(); }
+  `;
+  const { ok, output } = runInPackage("@knowledge-base/db", script, {
+    PEPPER_CURRENT_FP: fingerprint,
+    PEPPER_PREVIOUS_FP: previousFingerprint,
+  });
+  if (!ok) {
+    record({
+      name: "password pepper",
+      status: "fail",
+      detail: "could not count stored password hashes",
+      hint: "Check database access and apply pending migrations, then run pnpm doctor:app again.",
+      required: true,
+    });
+    return;
+  }
+  const counts = {
+    current: 0,
+    previous: 0,
+    legacy: 0,
+    malformed: 0,
+    "invalid-envelope": 0,
+    "unknown-key": 0,
+  };
+  const unknown: string[] = [];
+  try {
+    const rows: unknown = JSON.parse(output);
+    if (!Array.isArray(rows)) throw new Error("invalid counts");
+    for (const row of rows) {
+      if (
+        typeof row !== "object" ||
+        row === null ||
+        !Object.hasOwn(counts, row.kind) ||
+        !Number.isInteger(row.count) ||
+        row.count < 0 ||
+        typeof row.fingerprint !== "string"
+      )
+        throw new Error("invalid count");
+      const kind = row.kind as keyof typeof counts;
+      counts[kind] += row.count;
+      if (kind === "unknown-key") {
+        if (!/^[0-9a-f]{16}$/.test(row.fingerprint)) throw new Error("invalid fingerprint");
+        unknown.push(row.fingerprint);
+      }
+    }
+  } catch {
+    record({
+      name: "password pepper",
+      status: "fail",
+      detail: "could not read password hash counts",
+      hint: "Check database access and migrations, then run pnpm doctor:app again.",
+      required: true,
+    });
+    return;
+  }
+  const detail = `ok (key fp ${fingerprint}); current ${counts.current}, previous ${counts.previous}, legacy ${counts.legacy}, malformed ${counts.malformed}, unknown ${counts["unknown-key"]}, invalid envelopes ${counts["invalid-envelope"]}; authenticity is checked at server start`;
+  if (counts["unknown-key"] > 0) {
+    const error = new PasswordPepperKeyError(counts["unknown-key"], unknown.sort(), [
+      fingerprint,
+      ...(previousFingerprint ? [previousFingerprint] : []),
+    ]);
+    record({
+      name: "password pepper",
+      status: "fail",
+      detail: error.message,
+      hint: "Restore the original secret, or configure it as BETTER_AUTH_SECRET_PREVIOUS while rotating. If lost, those passwords must be reset.",
+      required: true,
+    });
+    return;
+  }
+  const hints: string[] = [];
+  if (counts.previous > 0)
+    hints.push(
+      `${counts.previous} hashes still under previous key ${previousFingerprint}; keep BETTER_AUTH_SECRET_PREVIOUS set and restart all servers to re-wrap`,
+    );
+  if (counts.legacy > 0)
+    hints.push(`${counts.legacy} hashes not yet sealed; the next server start seals them`);
+  if (counts.malformed > 0)
+    hints.push(
+      `${counts.malformed} malformed password values; run pnpm auth:pepper:reset-unusable`,
+    );
+  if (counts["invalid-envelope"] > 0)
+    hints.push(
+      `${counts["invalid-envelope"]} structurally invalid password envelopes; run pnpm auth:pepper:reset-unusable`,
+    );
+  record({
+    name: "password pepper",
+    status: hints.length ? "warn" : "ok",
+    detail,
+    ...(hints.length ? { hint: hints.join("; ") } : {}),
+    required: true,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +751,7 @@ async function main() {
   const envOk = results.find((r) => r.name === "env (zod schema)")?.status === "ok";
   if (envOk) {
     checkDatabase();
+    checkPasswordPepper();
     checkRedis();
     await checkSmtp();
   } else {

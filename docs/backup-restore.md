@@ -43,7 +43,7 @@ Supply only the public recipient as `BACKUP_AGE_RECIPIENT` to the backup role.
 Retain the private identity, original `KB_MASTER_KEY`, `BETTER_AUTH_SECRET` and
 any other needed auth keys separately from the encrypted bundle and application
 volumes. Provider/sealed/share ciphertext needs the original master key; TOTP
-and backup-code records need the original auth secret. Missing/wrong required
+and backup-code records need the original auth secret. Sealed password hashes also need their matching auth secret; retain a previous secret separately when backups span a rotation. Restore accepts `BETTER_AUTH_SECRET_PREVIOUS` for password envelopes, but TOTP and backup-code records still require their original current auth secret. Missing/wrong required
 keys refuse restore promotion. Never print those values to diagnose readiness.
 
 ## Quiesced bundle

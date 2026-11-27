@@ -18,6 +18,7 @@ export const serverVars = {
   PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   SERVER_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   BETTER_AUTH_SECRET: z.string().min(32).transform(toSecret),
+  BETTER_AUTH_SECRET_PREVIOUS: z.string().min(32).optional().transform(toSecret),
   BETTER_AUTH_URL: originUrl("BETTER_AUTH_URL"),
   CORS_ORIGIN: originUrl("CORS_ORIGIN").optional(),
   SSO_ENABLED: strictBooleanFlag(),

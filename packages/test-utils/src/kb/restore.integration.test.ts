@@ -38,13 +38,14 @@ import {
 import { createMcpConsentService } from "@knowledge-base/auth/mcp-consent";
 import { resolveMcpPlugins } from "@knowledge-base/auth/mcp-plugins";
 import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
+import { createPasswordPepper } from "@knowledge-base/auth/password-pepper";
 import { createSessionCacheVersion } from "@knowledge-base/auth/session-authority";
 import { PrismaClient } from "@knowledge-base/db/client";
 import { createPrismaPgAdapter } from "@knowledge-base/db/prisma-adapter";
 import { assetS3Locator } from "@knowledge-base/env/asset-storage-config";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { hashPassword, symmetricEncrypt } from "better-auth/crypto";
+import { symmetricEncrypt } from "better-auth/crypto";
 import { twoFactor } from "better-auth/plugins";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { Client } from "pg";
@@ -86,6 +87,7 @@ const root = resolve(import.meta.dirname, "../../../..");
 vi.mock("@knowledge-base/queue", () => ({ redisConnection: {} }));
 const authSecret = "disposable-restore-auth-secret-only";
 const password = "disposable-restore-password-only";
+const pepper = createPasswordPepper({ secret: authSecret });
 const totp = "JBSWY3DPEHPK3PXP";
 function authFor(db: PrismaClient) {
   return betterAuth({
@@ -93,7 +95,7 @@ function authFor(db: PrismaClient) {
     baseURL: "https://restore.invalid",
     secret: authSecret,
     session: { cookieCache: { enabled: true, maxAge: 60, version: createSessionCacheVersion(db) } },
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: true, password: { hash: pepper.hash, verify: pepper.verify } },
     plugins: [
       twoFactor(),
       ...resolveMcpPlugins({ baseUrl: "https://restore.invalid", secret: authSecret, db }),
@@ -205,7 +207,7 @@ async function seedFixture() {
       userId: user.id,
       accountId: user.id,
       providerId: "credential",
-      password: await hashPassword(password),
+      password: await pepper.hash(password),
     },
   });
   await db.twoFactor.create({

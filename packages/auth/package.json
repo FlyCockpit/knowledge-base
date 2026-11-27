@@ -10,6 +10,12 @@
     "./ban": {
       "default": "./src/ban.ts"
     },
+    "./password-pepper": {
+      "default": "./src/password-pepper.ts"
+    },
+    "./password-pepper-store": {
+      "default": "./src/password-pepper-store.ts"
+    },
     "./password-policy": {
       "default": "./src/password-policy.ts"
     },

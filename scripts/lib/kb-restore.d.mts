@@ -6,6 +6,7 @@ export function restoreOffline(input: {
   dataDir: string;
   masterKey?: string;
   authSecret?: string;
+  previousAuthSecret?: string;
   assetSourceRemap?: boolean;
   signal?: AbortSignal;
   barrier?: (phase: string) => Promise<void>;

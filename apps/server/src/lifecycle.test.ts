@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { AssetStorageLifecycle } from "@knowledge-base/api/lib/kb/asset-storage-lifecycle";
 import { MUTATION_DEADLINE_MS } from "@knowledge-base/api/lib/kb/lock";
-import { captureLog } from "@knowledge-base/env/log";
+import { createPasswordPepper } from "@knowledge-base/auth/password-pepper";
+import { syncPasswordPepper } from "@knowledge-base/auth/password-pepper-store";
+import type prisma from "@knowledge-base/db";
+import { captureLog, logEvent } from "@knowledge-base/env/log";
+import { recordReader, renderServiceRecord } from "@knowledge-base/env/service-output";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { Secret } = await vi.hoisted(() => import("@knowledge-base/env/secret"));
@@ -168,6 +172,106 @@ afterEach(() => {
 });
 
 describe("createServerLifecycle", () => {
+  it.each(["success", "refused"] as const)(
+    "publishes pepper %s through the service record channel",
+    async (outcome) => {
+      const current = createPasswordPepper({ secret: "disposable-unit-test-current-123456789" });
+      const old = createPasswordPepper({ secret: "disposable-unit-test-previous-12345678" });
+      const password =
+        outcome === "success"
+          ? `${"01".repeat(16)}:${"23".repeat(64)}`
+          : await old.hash("unit-test-password");
+      const tx = {
+        $executeRaw: vi.fn().mockResolvedValue(1),
+        account: {
+          findMany: vi.fn().mockResolvedValue([{ id: "a", password }]),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          count: vi.fn().mockResolvedValue(0),
+        },
+      };
+      const db = {
+        $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(tx),
+      } as unknown as Pick<typeof prisma, "$transaction">;
+      const captured = captureLog();
+      try {
+        const listen = vi.fn(() => ({ close: (done: () => void) => done() }));
+        await createServerLifecycle({
+          syncPasswordPepper: () =>
+            syncPasswordPepper(db, current, { info: vi.fn(), warn: vi.fn() }, (event) =>
+              logEvent("password-pepper", event),
+            ),
+        }).start(listen);
+        const published: ReturnType<typeof renderServiceRecord>[] = [];
+        const reader = recordReader((record) => published.push(renderServiceRecord(record)));
+        for (const record of captured.records)
+          reader.write(Buffer.from(`${JSON.stringify(record)}\n`));
+        expect(reader.finish()).toBe(0);
+        const pepper = published.filter((record) => record.site === "password-pepper");
+        if (outcome === "success") {
+          expect(pepper.map((record) => record.event)).toEqual(["sealed", "ok"]);
+          expect(listen).toHaveBeenCalledOnce();
+        } else {
+          expect(pepper).toEqual([
+            expect.objectContaining({
+              event: "key-refused",
+              level: "error",
+              unknownFingerprint: old.fingerprint,
+              fingerprint: current.fingerprint,
+              count: 1,
+            }),
+          ]);
+          expect(listen).not.toHaveBeenCalled();
+          expect(process.exit).toHaveBeenCalledWith(1);
+        }
+      } finally {
+        captured.restore();
+      }
+    },
+  );
+
+  it("syncs password hashes after maintenance admission and before listening", async () => {
+    const syncPasswordPepper = vi.fn(async () => {
+      state.events.push("pepper");
+    });
+    await createServerLifecycle({ syncPasswordPepper }).start(() => {
+      state.events.push("listen");
+      return { close: (done) => done() };
+    });
+    expect(state.events.indexOf("pepper")).toBeGreaterThan(state.events.indexOf("maintenance"));
+    expect(state.events.indexOf("listen")).toBeGreaterThan(state.events.indexOf("pepper"));
+  });
+
+  it("refuses to listen if password synchronization fails", async () => {
+    const listen = vi.fn();
+    await createServerLifecycle({
+      syncPasswordPepper: async () => {
+        throw new Error("unknown key");
+      },
+    }).start(listen);
+    expect(listen).not.toHaveBeenCalled();
+  });
+
+  it("waits for password synchronization before disconnecting on shutdown", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const listen = vi.fn();
+    const starting = createServerLifecycle({
+      syncPasswordPepper: async () => {
+        entered.resolve();
+        await release.promise;
+      },
+    }).start(listen);
+    await entered.promise;
+    listeners.get("SIGTERM")?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(state.disconnectDb).not.toHaveBeenCalled();
+    release.resolve();
+    await starting;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listen).not.toHaveBeenCalled();
+    expect(state.disconnectDb).toHaveBeenCalledOnce();
+  });
+
   it("starts registry tracking after maintenance and marks ready only once the HTTP listener opens", async () => {
     let opened: (() => void) | undefined;
     const lifecycle = createServerLifecycle();

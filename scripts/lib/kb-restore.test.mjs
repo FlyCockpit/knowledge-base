@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { putPinnedAgeOnPath } from "./age-pin.mjs";
 import { encryptBundle } from "./kb-backup.mjs";
-import { extractBundle, RESTORE_SURFACE, restoreOffline } from "./kb-restore.mjs";
+import { extractBundle, RESTORE_SURFACE, restoreOffline, verifyKeys } from "./kb-restore.mjs";
 
 // Real age for fixtures and the code under test: the repo's pinned release.
 await putPinnedAgeOnPath();
@@ -721,4 +721,34 @@ test("refusals before the fence and the CLI's argument check are exit 3 too", as
   })();
   assert.equal(cli.status, 3);
   assert.match(cli.stderr, /^REFUSED: RESTORE_INVALID_ARGUMENTS; nothing was changed\./);
+});
+
+test("restore validates sealed password keys, including the previous key, without writes", async () => {
+  const { tsImport } = await import("tsx/esm/api");
+  const { createPasswordPepper } = await tsImport(
+    "../../packages/auth/src/password-pepper.ts",
+    import.meta.url,
+  );
+  const oldSecret = "fixture-old-restore-pepper-secret-123456";
+  const newSecret = "fixture-new-restore-pepper-secret-123456";
+  const oldPepper = createPasswordPepper({ secret: oldSecret });
+  const sealed = await oldPepper.hash("fixture-password");
+  const statements = [];
+  const client = {
+    query: async (sql, values) => {
+      statements.push(sql);
+      if (sql.includes("FROM account") && values[0] === "")
+        return { rows: [{ id: "a", password: sealed }] };
+      return { rows: [] };
+    },
+  };
+  await verifyKeys(client, undefined, oldSecret);
+  await verifyKeys(client, undefined, newSecret, oldSecret);
+  await assert.rejects(verifyKeys(client, undefined, newSecret), {
+    code: "RESTORE_AUTH_SECRET_MISMATCH",
+  });
+  await assert.rejects(verifyKeys(client, undefined, undefined), {
+    code: "RESTORE_AUTH_SECRET_REQUIRED",
+  });
+  assert.ok(statements.every((sql) => /^SELECT/.test(sql)));
 });

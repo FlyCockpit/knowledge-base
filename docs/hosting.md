@@ -150,3 +150,12 @@ there is no signed public bypass or remote deletion. See the
 for writer/operator/dump identity separation, advisory recency, outage behavior,
 dual-fenced initialization/migration/reconciliation and reference-only backup
 retention. One server and one worker still share one host/local volume.
+
+
+## Password pepper
+
+Credential password hashes are sealed with an AES-GCM key derived from `BETTER_AUTH_SECRET`. Before the HTTP listener starts, the server seals legacy hashes and checks all stored envelopes. Unknown keys prevent startup; corrupt values are reported. `pnpm doctor:app` provides a read-only inventory; authenticity is checked at startup. Keep the auth secret outside database backups, and retain the matching secret for every backup.
+
+For a password pepper key change, stop all server replicas, configure the new `BETTER_AUTH_SECRET` and the old value as `BETTER_AUTH_SECRET_PREVIOUS`, then start the server. It rewraps the hashes; remove the previous value only after startup reports none remain and all old replicas are stopped. The previous value covers password hashes only: this application also encrypts TOTP and backup codes with the current auth secret, so changing it requires separate recovery or re-enrollment of those factors. Existing sessions are invalidated. Do not rotate a live deployment without accounting for those effects.
+
+If a key is lost or values are corrupt, stop all servers and any backup, restore, or migration operations, then run `pnpm auth:pepper:reset-unusable` from a checkout with the target database and server environment configured to preview affected user IDs. After reviewing the result, rerun with `--confirm <count>`; an owner targeting a non-local database must also pass `--allow-non-local`. Users must then reset their passwords by email. The recovery command replaces unusable passwords and is irreversible; keep a verified backup before applying it.

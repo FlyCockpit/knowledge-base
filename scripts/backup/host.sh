@@ -152,7 +152,7 @@ require_backups() {
 mount_source() { docker inspect -f "{{range .Mounts}}{{if eq .Destination \"$2\"}}{{.Source}}{{end}}{{end}}" "$1"; }
 app_env() {
   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$server" |
-    grep -E '^(DATABASE_URL|KB_DATA_ROOT|KB_MASTER_KEY|BETTER_AUTH_SECRET|BACKUP_[A-Z_]+|KB_ASSET_[A-Z_]+|S3_ACCESS_KEY_ID)=' |
+    grep -E '^(DATABASE_URL|KB_DATA_ROOT|KB_MASTER_KEY|BETTER_AUTH_SECRET|BETTER_AUTH_SECRET_PREVIOUS|BACKUP_[A-Z_]+|KB_ASSET_[A-Z_]+|S3_ACCESS_KEY_ID)=' |
     sed '/^KB_ASSET_S3_SECRET_ACCESS_KEY=/d;/^KB_INSTANCE_ID=/d'
 }
 run_image() {

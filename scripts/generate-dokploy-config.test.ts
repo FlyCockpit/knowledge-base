@@ -208,6 +208,7 @@ test("native applications reference only the five set-once keys; the rest are li
   assert.equal(app("backup").environment.BACKUP_KEEP, "14");
   // Keys without a default are left out and listed as that role's optional keys.
   for (const [role, key] of [
+    ["server", "BETTER_AUTH_SECRET_PREVIOUS"],
     ["server", "SMTP_HOST"],
     ["server", "BACKUP_AGE_RECIPIENT"],
     ["worker", "SMTP_HOST"],
@@ -247,6 +248,7 @@ test("backup settings reach the leader and scheduler; SMTP and monitor keys reac
     "KB_ASSET_S3_SECRET_ACCESS_KEY",
     "KB_ASSET_S3_OPERATOR_SECRET_ACCESS_KEY",
     "BETTER_AUTH_SECRET",
+    "BETTER_AUTH_SECRET_PREVIOUS",
   ]) {
     assert.ok(!(key in app("worker").environment));
     assert.ok(!optional.worker.includes(key), key);

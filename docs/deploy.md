@@ -94,7 +94,7 @@ credentials to development or commit filled env files.
 | REDIS_URL | Server and worker; private authenticated network, no public port |
 | KB_DATA_ROOT | Server, worker, backup/restore; the one data volume, default `/var/lib/knowledge-base` |
 | KB_MASTER_KEY | Server and worker; exactly base64 32 bytes, encrypts providers/sealed/shares/mirror keys; retain separately for restore |
-| BETTER_AUTH_SECRET / BETTER_AUTH_URL | Server; strong secret and exact HTTPS canonical origin; retain secret for restored TOTP/backup codes |
+| BETTER_AUTH_SECRET / BETTER_AUTH_URL | Server; strong secret and exact HTTPS canonical origin; retain secret for restored passwords and TOTP/backup codes |
 | ADMIN_EMAIL | One canonical identity required for first production bootstrap, even with public signup on |
 | MIGRATE_ON_START | Server true; worker false. Optional one-shot migrate before rollout. |
 | BACKUP_ENABLED / BACKUP_AGE_RECIPIENT | Optional: default off; enable backups and supply the public recipient only when opting in; private identity separately held by operator |
@@ -424,3 +424,5 @@ would let callers forge their rate-limit key.
 Run `pnpm deploy:check https://kb.example` after deploying. It defaults to the current checkout commit, polls the public /ready endpoint and requires two consecutive ready replies reporting that commit. Use `--commit <sha>` for an explicit release and `--timeout <seconds>` for slow VPS builds. The image bakes its commit; missing metadata produces a clear failure. A failed check means the expected release has not been confirmed live.
 
 Set GitHub repository variable DEPLOY_CHECK_URL to the **development** origin that auto-deploys main to enable the optional default-branch deploy-check workflow. Production deploys immutable release tags manually; run deploy:check with that release SHA after its deployment. DEPLOY_CHECK_TIMEOUT defaults to 1800 seconds. It uses no secrets. For host placement, mounts, runtime inventory and readiness details, use `pnpm dokploy:verify --server <project>-server --worker <project>-worker --url <origin>`.
+
+`BETTER_AUTH_SECRET_PREVIOUS` is optional on the server during password pepper rotation; see [password pepper](./hosting.md#password-pepper) for the required replica and two-factor precautions.

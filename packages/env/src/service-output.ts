@@ -66,7 +66,8 @@ export function superviseService(service: "server" | "worker", entry: URL): void
           entry,
         ),
       );
-  const publish = (record: LogRecord) => process.stdout.write(`${JSON.stringify(record)}\n`);
+  const publish = (record: LogRecord) =>
+    process.stdout.write(`${JSON.stringify(renderServiceRecord(record))}\n`);
   publish(logRecord("service.start", { service }));
   const child = spawn(
     fenced ? native : process.execPath,
@@ -136,4 +137,38 @@ export function superviseService(service: "server" | "worker", entry: URL): void
   child.once("exit", (code, signal) => {
     outlivedTimer = setTimeout(() => finish(code, signal, true), OUTLIVED_DRAIN_MS);
   });
+}
+
+/** Called only after validation; all interpolated values have closed formats. */
+export function renderServiceRecord(record: LogRecord): LogRecord {
+  if (record.site !== "password-pepper") return record;
+  const { event, fingerprint, previousFingerprint, unknownFingerprint, count, docs } = record;
+  let message: string;
+  let level = "info";
+  switch (event) {
+    case "ok":
+      message = `password pepper: ok (key fp ${fingerprint})`;
+      break;
+    case "sealed":
+      message = `password pepper: sealed ${count} existing password hash(es) under key ${fingerprint}`;
+      break;
+    case "rewrapped-complete":
+      message = `password pepper: re-wrapped ${count} password hash(es) from key ${previousFingerprint} to key ${fingerprint}; none remain under the previous key, so BETTER_AUTH_SECRET_PREVIOUS can now be removed`;
+      break;
+    case "previous-remaining":
+      level = "warn";
+      message = `password pepper: ${count} password hash(es) are still under previous key ${previousFingerprint} (corrupt, or written by a replica still running the old configuration); keep BETTER_AUTH_SECRET_PREVIOUS set and restart again; see ${docs}`;
+      break;
+    case "unusable":
+      level = "warn";
+      message = `password pepper: ${count} stored password value(s) are corrupt or not a password hash and can never sign in; run \`pnpm auth:pepper:reset-unusable\` (${docs})`;
+      break;
+    case "key-refused":
+      level = "error";
+      message = `password pepper: ${count} stored password hash(es) are sealed under unconfigured keys including ${unknownFingerprint}; configured BETTER_AUTH_SECRET key is ${fingerprint}${previousFingerprint ? ` (previous: ${previousFingerprint})` : ""}. Refusing to start. Restore the original BETTER_AUTH_SECRET as the current or previous secret; if lost, reset those passwords with \`pnpm auth:pepper:reset-unusable\` while the server is stopped; see ${docs}.`;
+      break;
+    default:
+      return record;
+  }
+  return { ...record, level, message };
 }

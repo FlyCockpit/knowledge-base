@@ -58,6 +58,7 @@
     "generate:secret": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
     "generate:vapid": "pnpm -F @knowledge-base/api exec web-push generate-vapid-keys",
     "generate:secrets": "tsx scripts/generate-secrets.ts",
+    "auth:pepper:reset-unusable": "tsx scripts/auth-pepper-reset-unusable.ts",
     "env:sync": "tsx scripts/sync-env-example.ts",
     "env:check": "tsx scripts/sync-env-example.ts --check",
     "env:check-entrypoints": "tsx scripts/check-load-dotenv-contract.ts",

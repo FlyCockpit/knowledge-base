@@ -62,3 +62,5 @@ shipped because they require GHAS on private repos:
 
 If the repository is public, or you have GHAS, add either as a workflow at no
 behavioral cost.
+
+Credential password hashes are sealed under a key derived from `BETTER_AUTH_SECRET`. Protect and retain that secret separately from database backups; [password pepper operations](docs/hosting.md#password-pepper) cover rotation and recovery.

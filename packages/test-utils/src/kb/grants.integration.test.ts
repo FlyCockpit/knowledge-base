@@ -49,6 +49,7 @@ import {
 } from "@knowledge-base/auth/bootstrap";
 import { createMcpConsentService } from "@knowledge-base/auth/mcp-consent";
 import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
+import { createPasswordPepper } from "@knowledge-base/auth/password-pepper";
 import type { createSessionCacheVersion as CreateSessionCacheVersion } from "@knowledge-base/auth/session-authority";
 import { isTwoFactorRequirementSatisfied } from "@knowledge-base/auth/two-factor-policy";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
@@ -3259,6 +3260,7 @@ type Versioner = ReturnType<typeof CreateSessionCacheVersion>;
 
 describe("cached session authority and server-owned user columns", () => {
   const secret = "disposable-cookie-cache-signing-secret";
+  const pepper = createPasswordPepper({ secret });
   let resetToken = "";
   async function authWithCookieCache(aroundVersion?: (version: Versioner) => Versioner) {
     const { knowledgeBaseAdminPermissions } = await import("@knowledge-base/auth/roles");
@@ -3281,6 +3283,7 @@ describe("cached session authority and server-owned user columns", () => {
       rateLimit: { enabled: false },
       emailAndPassword: {
         enabled: true,
+        password: { hash: pepper.hash, verify: pepper.verify },
         revokeSessionsOnPasswordReset: true,
         sendResetPassword: async ({ token }) => {
           resetToken = token;

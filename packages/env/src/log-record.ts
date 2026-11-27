@@ -36,6 +36,7 @@ export const LOG_SITES = {
   "supervisor.op-rejected": ["warn", "fenced operation request rejected"],
   "supervisor.op-drain": ["warn", "fenced operation drain started"],
   "supervisor.op-kill": ["error", "fenced operation killed after drain timeout"],
+  "password-pepper": ["info", "password pepper diagnostic"],
   // Server lifecycle.
   "server.listening": ["info", "server listening"],
   "server.non-production": [
@@ -232,6 +233,7 @@ export type StartupStage =
   | "config"
   | "git"
   | "maintenance"
+  | "password-pepper"
   | "process-fence"
   | "data-root"
   | "push-spools"
@@ -252,29 +254,50 @@ export type StartupStage =
   | "consumer-ready"
   | "heartbeat"
   | "dispatcher";
+export const PASSWORD_PEPPER_DOCS = "docs/hosting.md § Password pepper";
+export type PasswordPepperEvent =
+  | { event: "ok"; fingerprint: string }
+  | { event: "sealed"; fingerprint: string; count: number }
+  | { event: "rewrapped-complete"; fingerprint: string; previousFingerprint: string; count: number }
+  | {
+      event: "previous-remaining";
+      previousFingerprint: string;
+      count: number;
+      docs: typeof PASSWORD_PEPPER_DOCS;
+    }
+  | { event: "unusable"; count: number; docs: typeof PASSWORD_PEPPER_DOCS }
+  | {
+      event: "key-refused";
+      unknownFingerprint: string;
+      fingerprint: string;
+      previousFingerprint?: string;
+      count: number;
+      docs: typeof PASSWORD_PEPPER_DOCS;
+    };
+
 export type LogFields = {
   [K in Exclude<LogFieldKey, "stage">]?: string | number | null | undefined;
-} & {
-  stage?:
-    | StartupStage
-    | "http-close"
-    | "bearer-drain"
-    | "start"
-    | "finished"
-    | "minute"
-    | "hourly"
-    | "router"
-    | "force"
-    | "structured-read"
-    | "hybrid-connect"
-    | "hybrid-read"
-    | "recovered"
-    | "backoff"
-    | "idle"
-    | "completed"
-    | "deferred"
-    | "pass";
-};
+} & Partial<PasswordPepperEvent> & {
+    stage?:
+      | StartupStage
+      | "http-close"
+      | "bearer-drain"
+      | "start"
+      | "finished"
+      | "minute"
+      | "hourly"
+      | "router"
+      | "force"
+      | "structured-read"
+      | "hybrid-connect"
+      | "hybrid-read"
+      | "recovered"
+      | "backoff"
+      | "idle"
+      | "completed"
+      | "deferred"
+      | "pass";
+  };
 
 /** An error that carries its own typed, enumerated log detail. */
 export interface LogDetail {
@@ -383,6 +406,11 @@ export type LogRecord = Record<string, string | number>;
 /** The record for one event; exported for tests. */
 export function logRecord(site: LogSite, fields: LogFields = {}, error?: unknown): LogRecord {
   const [level, message] = LOG_SITES[site];
+  if (site === "password-pepper") {
+    const record = { level, site, message, ...fields };
+    const validated = validateLogRecord(record);
+    return validated ?? logRecord("service.records-rejected", { count: 1 });
+  }
   const record: LogRecord = { level, site, message };
   const put = (key: string, value: string | number | undefined) => {
     if (value !== undefined && !(key in record)) record[key] = value;
@@ -412,6 +440,7 @@ export function validateLogRecord(value: unknown): LogRecord | undefined {
   const site = input.site as LogSite;
   const [level, message] = LOG_SITES[site];
   if (input.level !== level || input.message !== message) return;
+  if (site === "password-pepper") return validatePasswordPepperRecord(input);
   const result: LogRecord = { level, site, message };
   for (const [key, value] of Object.entries(input)) {
     if (key === "site" || key === "level" || key === "message") continue;
@@ -419,5 +448,41 @@ export function validateLogRecord(value: unknown): LogRecord | undefined {
     if (safe === undefined) return;
     result[key] = safe;
   }
+  return result;
+}
+
+/** Only closed event-specific fields may cross the supervisor boundary. */
+function validatePasswordPepperRecord(input: Record<string, unknown>): LogRecord | undefined {
+  const shapes: Record<string, readonly string[]> = {
+    ok: ["fingerprint"],
+    sealed: ["fingerprint", "count"],
+    "rewrapped-complete": ["fingerprint", "previousFingerprint", "count"],
+    "previous-remaining": ["previousFingerprint", "count", "docs"],
+    unusable: ["count", "docs"],
+    "key-refused": ["unknownFingerprint", "fingerprint", "count", "docs"],
+  };
+  if (typeof input.event !== "string" || !Object.hasOwn(shapes, input.event)) return;
+  const keys = [...shapes[input.event]!];
+  if (input.event === "key-refused" && Object.hasOwn(input, "previousFingerprint"))
+    keys.push("previousFingerprint");
+  if (Object.keys(input).length !== keys.length + 4) return;
+  for (const key of keys) {
+    const value = input[key];
+    if (
+      key === "count"
+        ? typeof value !== "number" || !Number.isSafeInteger(value) || value < 0
+        : key === "docs"
+          ? value !== PASSWORD_PEPPER_DOCS
+          : typeof value !== "string" || !/^[0-9a-f]{16}$/.test(value)
+    )
+      return;
+  }
+  const result: LogRecord = {
+    level: "info",
+    site: "password-pepper",
+    message: "password pepper diagnostic",
+    event: input.event,
+  };
+  for (const key of keys) result[key] = input[key] as string | number;
   return result;
 }

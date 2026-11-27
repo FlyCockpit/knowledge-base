@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { auth } from "./index";
+import { auth, passwordPepper } from "./index";
 
 const { Secret } = await vi.hoisted(() => import("@knowledge-base/env/secret"));
 
@@ -374,4 +374,12 @@ describe("user-create hook locale", () => {
     );
     expect(bootstrap.data).toMatchObject({ locale: "es-MX" });
   });
+});
+
+it("uses the password pepper for Better Auth hashing and verification", async () => {
+  const context = await auth.$context;
+  const sealed = await context.password.hash("fixture-password");
+  expect(sealed.startsWith(`pw1:${passwordPepper.fingerprint}:`)).toBe(true);
+  expect(await context.password.verify({ hash: sealed, password: "fixture-password" })).toBe(true);
+  expect(await context.password.verify({ hash: sealed, password: "incorrect" })).toBe(false);
 });

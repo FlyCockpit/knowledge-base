@@ -52,6 +52,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 /** The HTTP host owns signals before dependency startup. It never starts job consumers. */
 export function createServerLifecycle(
   options: {
+    syncPasswordPepper?: () => Promise<unknown>;
     closeBearerAdmission?: () => Promise<void>;
     /** Permits each admission gate still holds; named when the drain times out. */
     admissionOutstanding?: () => { http: number; bearer: number };
@@ -69,6 +70,7 @@ export function createServerLifecycle(
     | undefined;
   let closing: Promise<void> | undefined;
   let claimed = false;
+  let pepperSync: Promise<unknown> | undefined;
   let exitCode = 0;
   let exportLifecycle: { stop(): Promise<void> } | undefined;
   let recoverySweep: { stop(): void } | undefined;
@@ -162,6 +164,7 @@ export function createServerLifecycle(
       // In-flight index reads settled with the HTTP drain; terminate the reader threads.
       await indexReader?.stop();
       await assetStorage.stop();
+      await pepperSync?.catch(() => {});
       await prisma.$disconnect();
       redisConnection.disconnect();
       await maintenance?.release();
@@ -231,6 +234,10 @@ export function createServerLifecycle(
               assertServerFence: assertProcessFence,
             }),
         );
+        requireRunning();
+        stage = "password-pepper";
+        pepperSync = options.syncPasswordPepper?.();
+        await pepperSync;
         requireRunning();
         instanceHeartbeat = startInstanceHeartbeat({ role: "server" });
         stage = "process-fence";

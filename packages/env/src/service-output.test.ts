@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { logRecord } from "./log";
-import { recordReader } from "./service-output";
+import { PASSWORD_PEPPER_DOCS } from "./log-record";
+import { recordReader, renderServiceRecord } from "./service-output";
 
 describe("dedicated record channel", () => {
   it("keeps split frames, rejects forged/unknown fields and recovers after oversized frames", () => {
@@ -70,4 +71,52 @@ describe("service exit", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+it("renders every validated pepper diagnostic with fixed operator guidance", () => {
+  const fp = "0123456789abcdef";
+  const previous = "abcdef0123456789";
+  const cases = [
+    [{ event: "ok", fingerprint: fp }, "info", "ok (key fp"],
+    [{ event: "sealed", fingerprint: fp, count: 1 }, "info", "sealed 1 existing"],
+    [
+      { event: "rewrapped-complete", fingerprint: fp, previousFingerprint: previous, count: 2 },
+      "info",
+      "can now be removed",
+    ],
+    [
+      {
+        event: "previous-remaining",
+        previousFingerprint: previous,
+        count: 1,
+        docs: PASSWORD_PEPPER_DOCS,
+      },
+      "warn",
+      "keep BETTER_AUTH_SECRET_PREVIOUS",
+    ],
+    [
+      { event: "unusable", count: 1, docs: PASSWORD_PEPPER_DOCS },
+      "warn",
+      "auth:pepper:reset-unusable",
+    ],
+    [
+      {
+        event: "key-refused",
+        fingerprint: fp,
+        previousFingerprint: previous,
+        unknownFingerprint: previous,
+        count: 2,
+        docs: PASSWORD_PEPPER_DOCS,
+      },
+      "error",
+      "Refusing to start",
+    ],
+  ] as const;
+  for (const [fields, level, expected] of cases) {
+    const accepted: ReturnType<typeof logRecord>[] = [];
+    const reader = recordReader((record) => accepted.push(renderServiceRecord(record)));
+    reader.write(Buffer.from(`${JSON.stringify(logRecord("password-pepper", fields))}\n`));
+    expect(reader.finish()).toBe(0);
+    expect(accepted[0]).toMatchObject({ level, message: expect.stringContaining(expected) });
+  }
 });

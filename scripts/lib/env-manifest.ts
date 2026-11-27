@@ -610,6 +610,14 @@ export const ENV_VARS: EnvVar[] = [
     ],
   },
   {
+    key: "BETTER_AUTH_SECRET_PREVIOUS",
+    group: "auth",
+    source: "manual",
+    required: false,
+    secret: true,
+    comment: ["Optional previous auth secret during password pepper rotation."],
+  },
+  {
     key: "BETTER_AUTH_URL",
     format: "origin",
     group: "auth",

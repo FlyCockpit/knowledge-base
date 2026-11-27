@@ -210,7 +210,7 @@ fi
 ESCAPABLE=0
 case "$CMD" in
   db:seed | db:studio | db:migrate:apply) ESCAPABLE=1 ;;
-  db:migrate | db:migrate:rebase | db:worktree | db:reset:local | db:seed:e2e) ESCAPABLE=0 ;;
+  db:migrate | db:migrate:rebase | db:worktree | db:reset:local | db:seed:e2e | auth:pepper:reset-unusable) ESCAPABLE=0 ;;
   *)
     echo "FATAL: usage: $0 <COMMAND_NAME> [--shadow]" >&2
     echo "       COMMAND_NAME is db:seed | db:studio | db:migrate | db:migrate:apply |" >&2

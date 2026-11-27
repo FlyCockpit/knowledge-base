@@ -53,6 +53,12 @@ export const env = createEnv({
       };
       if (isWeakSecret(value.BETTER_AUTH_SECRET.reveal()))
         guard("BETTER_AUTH_SECRET", "WEAK_SECRET");
+      if (value.BETTER_AUTH_SECRET_PREVIOUS instanceof Secret) {
+        if (isWeakSecret(value.BETTER_AUTH_SECRET_PREVIOUS.reveal()))
+          guard("BETTER_AUTH_SECRET_PREVIOUS", "WEAK_SECRET");
+        if (value.BETTER_AUTH_SECRET_PREVIOUS.reveal() === value.BETTER_AUTH_SECRET.reveal())
+          ctx.addIssue(configIssue("BETTER_AUTH_SECRET_PREVIOUS", "DUPLICATE_SECRET"));
+      }
       if (value.SSO_CLIENT_SECRET && isWeakSecret(value.SSO_CLIENT_SECRET.reveal()))
         guard("SSO_CLIENT_SECRET", "WEAK_SECRET");
       // A key that already failed its own length check reaches this refinement

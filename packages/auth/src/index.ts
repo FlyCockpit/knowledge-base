@@ -21,6 +21,7 @@ import {
 } from "./bootstrap.js";
 import { resolveDevicePlugins } from "./device-approval";
 import { resolveMcpPlugins } from "./mcp-plugins.js";
+import { createPasswordPepper } from "./password-pepper.js";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
 import { knowledgeBaseAdminPermissions } from "./roles";
 import { createSessionCacheVersion } from "./session-authority";
@@ -37,6 +38,11 @@ export { drainVerificationMail } from "./verification-mail.js";
 const ssoEnabled = SSO_ENABLED;
 const forceSso = FORCE_SSO;
 const isCrossOrigin = !!env.CORS_ORIGIN;
+
+export const passwordPepper = createPasswordPepper({
+  secret: env.BETTER_AUTH_SECRET.reveal(),
+  previousSecret: env.BETTER_AUTH_SECRET_PREVIOUS?.reveal(),
+});
 
 const twoFactorPlugin = twoFactor({
   issuer: "knowledge-base",
@@ -211,6 +217,7 @@ export const auth = betterAuth({
     // guessing cost. The login form deliberately does not mirror it, since an
     // account created under an older policy must still be able to
     // authenticate.
+    password: { hash: passwordPepper.hash, verify: passwordPepper.verify },
     minPasswordLength: PASSWORD_MIN_LENGTH,
     maxPasswordLength: PASSWORD_MAX_LENGTH,
     // A reset is the "my account may be compromised" path: sign out every

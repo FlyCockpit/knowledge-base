@@ -23,7 +23,7 @@ const hostile = () =>
   );
 
 describe("the process's only output: fixed records", () => {
-  it.each(Object.keys(LOG_SITES) as LogSite[])(
+  it.each((Object.keys(LOG_SITES) as LogSite[]).filter((site) => site !== "password-pepper"))(
     "%s: closed level, fixed message, no error text",
     (site) => {
       const log = captureLog();

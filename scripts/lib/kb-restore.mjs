@@ -54,9 +54,14 @@ async function restoreDomain() {
         tsImport(join(ROOT, `packages/api/src/lib/kb/${name}.ts`), import.meta.url),
       ),
     );
+    const pepper = await tsImport(
+      join(ROOT, "packages/auth/src/password-pepper.ts"),
+      import.meta.url,
+    );
     domain = Object.assign(
       {},
       ...modules,
+      pepper,
       await import(
         createRequire(join(ROOT, "packages/auth/package.json")).resolve("better-auth/crypto")
       ),
@@ -228,7 +233,7 @@ export const RESTORE_SURFACE = {
     oauth_client_assertion: "id",
     generation_lease: "requestId",
     kb_model_volume_lease: "id",
-    account: "id accessToken refreshToken idToken",
+    account: "id password accessToken refreshToken idToken",
     kb_remote: "kbId state remoteVersion activeKeyId pendingKeyId",
     kb_deploy_key_version: "id ciphertext state destroyedAt",
     kb_mirror_attempt: "state resultCode finishedAt",
@@ -788,8 +793,33 @@ async function validateStore(client, stage, metadata, inventory, signal) {
     profileCursor = profiles.at(-1).id;
   }
 }
-async function verifyKeys(client, masterKey, authSecret) {
+export async function verifyKeys(client, masterKey, authSecret, previousAuthSecret) {
   const { decryptKbSecretBytes, symmetricDecrypt } = await restoreDomain();
+  const { createPasswordPepper } = await restoreDomain();
+  let afterPassword = "";
+  let pepper;
+  for (;;) {
+    const { rows } = await client.query(
+      "SELECT id,password FROM account WHERE id>$1 AND password IS NOT NULL ORDER BY id LIMIT 100",
+      [afterPassword],
+    );
+    if (!rows.length) break;
+    if (!authSecret) fail("RESTORE_AUTH_SECRET_REQUIRED");
+    try {
+      pepper ??= createPasswordPepper({ secret: authSecret, previousSecret: previousAuthSecret });
+    } catch {
+      fail("RESTORE_AUTH_SECRET_MISMATCH");
+    }
+    for (const row of rows) {
+      const kind = pepper.classify(row.password);
+      if (
+        kind === "unknown-key" ||
+        ((kind === "current" || kind === "previous") && !pepper.isAuthentic(row.password))
+      )
+        fail("RESTORE_AUTH_SECRET_MISMATCH");
+    }
+    afterPassword = rows[rows.length - 1].id;
+  }
   const key = masterKey ? Buffer.from(masterKey, "base64") : null;
   try {
     let cursor = "";
@@ -1096,6 +1126,7 @@ async function restoreTarget(
     dataDir,
     masterKey,
     authSecret,
+    previousAuthSecret,
     assetSourceRemap = false,
     signal,
     barrier = async () => {},
@@ -1296,7 +1327,7 @@ async function restoreTarget(
     }
     await validateStore(client, stage, metadata, inventory, signal);
     step = "KEYS";
-    await verifyKeys(client, masterKey, authSecret);
+    await verifyKeys(client, masterKey, authSecret, previousAuthSecret);
     step = "RESET";
     if (attempt.state === "IMPORTED") {
       attempt.epoch = await resetAuthority(client, metadata, attemptId);
@@ -1398,6 +1429,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       dataDir: process.env.KB_DATA_ROOT,
       masterKey: process.env.KB_MASTER_KEY,
       authSecret: process.env.BETTER_AUTH_SECRET,
+      previousAuthSecret: process.env.BETTER_AUTH_SECRET_PREVIOUS,
       assetSourceRemap: flags.includes("--asset-source-remap"),
       signal: controller.signal,
     });

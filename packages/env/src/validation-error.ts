@@ -12,6 +12,7 @@ const settings = new Set<string>([
 const CONFIG_REASONS = [
   "ASSET_STORAGE_INVALID",
   "WEAK_SECRET",
+  "DUPLICATE_SECRET",
   "REQUIRED_FOR_FORCE_SSO",
   "VAPID_PARTIAL",
   "SMTP_FROM_MISSING",

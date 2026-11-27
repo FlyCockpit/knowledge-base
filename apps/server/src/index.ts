@@ -15,10 +15,11 @@ import {
 } from "@knowledge-base/api/lib/push-subscription";
 import { isTwoFactorPolicySatisfied } from "@knowledge-base/api/lib/two-factor-policy";
 import { appRouter } from "@knowledge-base/api/routers/index";
-import { auth, drainVerificationMail, type Session } from "@knowledge-base/auth";
+import { auth, drainVerificationMail, passwordPepper, type Session } from "@knowledge-base/auth";
 import { isUserBanned } from "@knowledge-base/auth/ban";
 import { createDeviceApprovalService } from "@knowledge-base/auth/device-approval";
 import { canonicalMcpResource } from "@knowledge-base/auth/mcp-config";
+import { syncPasswordPepper } from "@knowledge-base/auth/password-pepper-store";
 import { isImpersonatedSession } from "@knowledge-base/auth/roles";
 import { CANONICAL_ORIGIN_HEADER } from "@knowledge-base/config/locales";
 import { ORPC_BATCH_MAX_SIZE } from "@knowledge-base/config/orpc-batch";
@@ -270,6 +271,10 @@ const gitHttp = createGitHttp({
   },
 });
 const lifecycle = createServerLifecycle({
+  syncPasswordPepper: () =>
+    syncPasswordPepper(prisma, passwordPepper, undefined, (event) =>
+      logEvent("password-pepper", event),
+    ),
   closeGitAdmission: () => gitHttp.close(),
   drainMail: drainVerificationMail,
   closeBearerAdmission: () => {
