@@ -57,7 +57,7 @@ export function tooManyBasesMessage(max: number): string {
 export const WRITE_MODE_MESSAGES = {
   dream:
     'This credential\'s write mode does not allow dreams. Write the change directly with mode "edit", or ask the owner for a credential that may dream.',
-  edit: 'This credential\'s write mode allows only dreams. Use knowledge_changes_apply with mode "dream", or ask the owner for a credential that may edit.',
+  edit: 'This credential\'s write mode allows only dreams. Use the MCP tool knowledge_changes_apply with mode "dream" to consolidate the listed source sessions into documents written by dreams or agents; it never changes documents written by a person. Pass empty changes, sourceSessionIds and dream upserts. Write access commits to main; propose-only access commits to your automatic pull request. For direct edits, ask the owner for a credential that may edit.',
 } as const;
 
 export const KB_ERROR_MESSAGES: Record<KbProtocolErrorCode, string> = {

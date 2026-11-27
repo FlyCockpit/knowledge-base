@@ -70,6 +70,8 @@ vi.mock("../lib/kb/document-history", async (importOriginal) => ({
 import type { Context } from "../context";
 import { invalidArgument, pathExists } from "../lib/kb/argument-reasons";
 import { KbDomainError } from "../lib/kb/errors";
+import { writeModeRefusal } from "../lib/kb/principal";
+import { WRITE_MODE_MESSAGES } from "../lib/kb/protocol/envelope";
 import { documentErrorToOrpc, documentsRouter } from "./documents";
 
 function signedIn() {
@@ -402,6 +404,36 @@ describe("documents.list titles", () => {
       ],
       nextCursor: null,
     });
+  });
+});
+
+describe("document API write-mode refusals", () => {
+  it.each(["create", "update", "move", "delete"] as const)(
+    "%s preserves the status and explains the dream tool when the domain refuses a direct edit",
+    async (operation) => {
+      mocks.publish.mockRejectedValueOnce(writeModeRefusal("edit"));
+      const request = {
+        kbId: "a".repeat(24),
+        baseRevision: "e".repeat(40),
+        path: "notes/a.md",
+        toPath: "archive/a.md",
+        content: { markdown: "# Notes" },
+        confirm: "DELETE" as const,
+        idempotencyKey: "refused-edit-0123456789",
+      };
+      await expect(signedIn()[operation](request)).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        status: 403,
+        message: WRITE_MODE_MESSAGES.edit,
+        data: { code: "FORBIDDEN" },
+      });
+    },
+  );
+
+  it("does not suggest a dream for an unrelated forbidden error", () => {
+    expect(() => documentErrorToOrpc(new KbDomainError("FORBIDDEN", "Forbidden"))).toThrow(
+      "Forbidden",
+    );
   });
 });
 

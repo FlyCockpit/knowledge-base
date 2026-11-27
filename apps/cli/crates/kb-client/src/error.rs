@@ -43,7 +43,7 @@ pub const TOO_MANY_BASES_REASON: &str = "TOO_MANY_BASES";
 /// `FORBIDDEN` by the credential's write mode, by what the call needed (the
 /// server's `WRITE_MODE_MESSAGES`, `protocol/envelope.ts`).
 pub const WRITE_MODE_DREAM_MESSAGE: &str = "This credential's write mode does not allow dreams. Write the change directly with mode \"edit\", or ask the owner for a credential that may dream.";
-pub const WRITE_MODE_EDIT_MESSAGE: &str = "This credential's write mode allows only dreams. Use knowledge_changes_apply with mode \"dream\", or ask the owner for a credential that may edit.";
+pub const WRITE_MODE_EDIT_MESSAGE: &str = "This credential's write mode allows only dreams. Use the MCP tool knowledge_changes_apply with mode \"dream\" to consolidate the listed source sessions into documents written by dreams or agents; it never changes documents written by a person. Pass empty changes, sourceSessionIds and dream upserts. Write access commits to main; propose-only access commits to your automatic pull request. For direct edits, ask the owner for a credential that may edit.";
 /// Wire reason of [`ErrorDetails::WriteMode`].
 pub const WRITE_MODE_REASON: &str = "WRITE_MODE";
 

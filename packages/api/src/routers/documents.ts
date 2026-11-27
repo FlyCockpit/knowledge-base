@@ -40,6 +40,7 @@ import {
   KB_FIELD_POINTER_RE,
   KB_INVALID_ARGUMENT_REASONS,
   type KbInvalidArgumentReason,
+  kbProtocolMessageForCode,
 } from "../lib/kb/protocol/envelope";
 import { readRecentChanges } from "../lib/kb/recent-changes";
 import { getKbRuntime } from "../lib/kb/runtime";
@@ -137,7 +138,19 @@ export function documentErrorToOrpc(error: unknown): never {
               : mapped.code === "RATE_LIMITED" || mapped.code === "QUOTA_EXCEEDED"
                 ? "TOO_MANY_REQUESTS"
                 : "INTERNAL_SERVER_ERROR";
-    const details = mapped.details as { reason?: unknown; field?: unknown } | undefined;
+    const details = mapped.details as
+      | { reason?: unknown; field?: unknown; required?: unknown }
+      | undefined;
+    if (
+      mapped.code === "FORBIDDEN" &&
+      details?.reason === "WRITE_MODE" &&
+      (details.required === "edit" || details.required === "dream")
+    ) {
+      throw new ORPCError(code, {
+        message: kbProtocolMessageForCode(mapped.code, details),
+        data: { code: mapped.code },
+      });
+    }
     // Creating (or moving onto) a path that already exists: the form names the path field.
     if (mapped.code === "CONFLICT" && details?.reason === "PATH_EXISTS") {
       throw new ORPCError(code, {

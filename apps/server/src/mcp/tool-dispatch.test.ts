@@ -3,7 +3,10 @@ import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-q
 import { KbDomainError } from "@knowledge-base/api/lib/kb/errors";
 import { KbLockError, type KbLockErrorCode } from "@knowledge-base/api/lib/kb/lock";
 import { KB_TOOL_NAMES } from "@knowledge-base/api/lib/kb/protocol/catalog";
-import { tooManyBasesMessage } from "@knowledge-base/api/lib/kb/protocol/envelope";
+import {
+  tooManyBasesMessage,
+  WRITE_MODE_MESSAGES,
+} from "@knowledge-base/api/lib/kb/protocol/envelope";
 import fixtures from "@knowledge-base/api/lib/kb/protocol/fixtures.json";
 import { kbReadToolSchemas } from "@knowledge-base/api/lib/kb/protocol/reads";
 import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
@@ -353,9 +356,38 @@ describe("write-mode authorization at dispatch", () => {
         signal: new AbortController().signal,
       });
       expect(result.structuredContent, label).toMatchObject({
-        error: { code: "FORBIDDEN", details: { reason: "WRITE_MODE", required: need } },
+        error: {
+          code: "FORBIDDEN",
+          message: WRITE_MODE_MESSAGES[need],
+          retryable: false,
+          details: { reason: "WRITE_MODE", required: need },
+        },
       });
+      expect(result.isError, label).toBe(true);
+      expect(JSON.parse(result.content[0].text), label).toEqual(result.structuredContent);
     }
+  });
+
+  it.each([
+    "knowledge_documents_create",
+    "knowledge_documents_update",
+    "knowledge_documents_delete",
+    "knowledge_changes_apply",
+  ] as const)("%s tells a dream-only caller how to continue", async (name) => {
+    const result = await dispatchTool(name, fixtures.tools[name].validInput as never, {
+      runtime,
+      actor: actor("dream"),
+      signal: new AbortController().signal,
+    });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "FORBIDDEN",
+        message: expect.stringContaining('MCP tool knowledge_changes_apply with mode "dream"'),
+        details: { reason: "WRITE_MODE", required: "edit" },
+      },
+    });
+    expect(result.content[0].text).toContain("consolidate the listed source sessions");
+    expect(result.content[0].text).toContain("never changes documents written by a person");
   });
 
   it("lets the matching mode and `both` past the write-mode check (then the stub fails)", async () => {

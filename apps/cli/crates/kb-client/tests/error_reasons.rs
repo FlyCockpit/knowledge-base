@@ -490,6 +490,11 @@ fn schema_violations_carry_reason_and_pointer() {
 fn write_mode_refusals_round_trip_with_their_messages() {
     use kb_client::authoring::WriteKind;
     use kb_client::error::{WRITE_MODE_DREAM_MESSAGE, WRITE_MODE_EDIT_MESSAGE, message_for};
+    assert!(
+        WRITE_MODE_EDIT_MESSAGE.contains("MCP tool knowledge_changes_apply with mode \"dream\"")
+    );
+    assert!(WRITE_MODE_EDIT_MESSAGE.contains("consolidate the listed source sessions"));
+    assert!(WRITE_MODE_EDIT_MESSAGE.contains("never changes documents written by a person"));
     for (kind, wire, message) in [
         (WriteKind::Dream, "dream", WRITE_MODE_DREAM_MESSAGE),
         (WriteKind::Edit, "edit", WRITE_MODE_EDIT_MESSAGE),
