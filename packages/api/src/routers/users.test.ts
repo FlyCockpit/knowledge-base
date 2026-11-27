@@ -17,23 +17,41 @@ vi.mock("@knowledge-base/db", async () => {
   return { default: db };
 });
 
+// `configured`: SMTP_HOST and SMTP_FROM set; `host`: SMTP_HOST set at all.
+const mail = vi.hoisted(() => ({ configured: true, host: true }));
 vi.mock("@knowledge-base/env/server", () => ({
-  env: { BETTER_AUTH_URL: "http://localhost:3000" },
+  env: {
+    BETTER_AUTH_URL: "http://localhost:3000",
+    get SMTP_HOST() {
+      return mail.host ? "smtp.example.test" : undefined;
+    },
+  },
   ADMIN_EMAIL: undefined,
 }));
 
 // Mock @knowledge-base/auth so the router's `auth.api.createUser` call hits a stub
 // instead of pulling in the real better-auth (which needs an env, prisma, etc).
-const { createVerificationValue } = vi.hoisted(() => ({
-  createVerificationValue: vi.fn(async (value: unknown) => value),
-}));
 vi.mock("@knowledge-base/auth", () => ({
   auth: {
     api: {
       createUser: vi.fn(),
     },
-    $context: Promise.resolve({ internalAdapter: { createVerificationValue } }),
+    $context: Promise.resolve({ options: {} }),
   },
+}));
+
+// The link storage and its locks have their own tests (packages/auth); here
+// only what the invite mints and records, and when.
+const links = vi.hoisted(() => ({
+  mintSetPasswordLink: vi.fn(async ({ ttlMs }: { userId: string; ttlMs: number }) => ({
+    token: "t".repeat(43),
+    expiresAt: new Date(Date.now() + ttlMs),
+  })),
+  recordResetLinkProof: vi.fn(async (_input: unknown) => true),
+}));
+vi.mock("@knowledge-base/auth/password-reset-links", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@knowledge-base/auth/password-reset-links")>()),
+  ...links,
 }));
 
 // Mock @knowledge-base/mailer so invites don't try to open SMTP. Tests assert on the
@@ -41,6 +59,7 @@ vi.mock("@knowledge-base/auth", () => ({
 // stable subject/html so the router can pass them straight through to
 // `sendEmail` — the actual rendering is tested in the mailer package.
 vi.mock("@knowledge-base/mailer", () => ({
+  isEmailConfigured: () => mail.configured,
   sendEmail: vi.fn(),
   renderInviteUser: vi.fn(() => ({
     subject: "You've been invited",
@@ -136,6 +155,8 @@ function buildContext(
 describe("usersRouter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mail.configured = true;
+    mail.host = true;
     db.$transaction.mockImplementation((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
   });
 
@@ -363,19 +384,27 @@ describe("usersRouter", () => {
       expect(db.user.findUnique).not.toHaveBeenCalled();
       expect(getGrantedUserLocale()).toBeUndefined();
 
-      // A Better Auth reset token: single use, consumed with the password write.
-      expect(createVerificationValue).toHaveBeenCalledOnce();
-      const stored = createVerificationValue.mock.calls[0]?.[0] as {
-        identifier: string;
-        value: string;
-        expiresAt: Date;
-      };
-      expect(stored.value).toBe("new-user-id");
-      const token = stored.identifier.replace(/^reset-password:/, "");
-      expect(stored.identifier).toBe(`reset-password:${token}`);
-      expect(token.length).toBeGreaterThanOrEqual(32);
-      expect(stored.expiresAt.getTime()).toBeGreaterThan(before);
-      expect(stored.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 72 * 3_600_000);
+      // A Better Auth reset token (single use, consumed with the password
+      // write), minted under the credential-setup lock, valid 72 hours.
+      expect(links.mintSetPasswordLink).toHaveBeenCalledOnce();
+      expect(links.mintSetPasswordLink).toHaveBeenCalledWith({
+        userId: "new-user-id",
+        ttlMs: 72 * 3_600_000,
+        noSmtpInviteFor: undefined,
+      });
+      const minted = await links.mintSetPasswordLink.mock.results[0]?.value;
+      const token = minted.token as string;
+      expect(minted.expiresAt.getTime()).toBeGreaterThan(before);
+      // Mailed, so spending it proves the inbox.
+      expect(links.recordResetLinkProof).toHaveBeenCalledWith({
+        token,
+        userId: "new-user-id",
+        email: "new@example.com",
+        proof: "mailbox",
+      });
+      expect(links.recordResetLinkProof.mock.invocationCallOrder[0]).toBeGreaterThan(
+        sendEmailMock.mock.invocationCallOrder[0] ?? Infinity,
+      );
 
       const rendered = vi.mocked(renderInviteUser).mock.calls.at(-1)?.[0];
       // Better Auth's token check first, then the localized set-password page.
@@ -423,6 +452,69 @@ describe("usersRouter", () => {
       // Without mail, the admin hands the one-time link over out of band.
       expect(res.setPasswordUrl).toMatch(/^http:\/\/localhost:3000\/api\/auth\/reset-password\//);
       expect(res.setPasswordUrl).toContain(encodeURIComponent("/en-US/reset-password?invite=1"));
+      // SMTP exists, so the shown link proves nothing: no record, and the
+      // invitee confirms the address by mail at first sign-in.
+      expect(links.recordResetLinkProof).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ confirmsEmailAtSignIn: true });
+    });
+
+    it("treats a half SMTP setup (host, no sender) as broken SMTP: no proof", async () => {
+      mail.configured = false;
+      authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      const res = await client.invite({ email: "new@example.com", name: "New", locale: "en-US" });
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ emailSent: false, confirmsEmailAtSignIn: true });
+      expect(links.mintSetPasswordLink).toHaveBeenCalledWith(
+        expect.objectContaining({ noSmtpInviteFor: undefined }),
+      );
+    });
+
+    it("on a server with no SMTP, shows the private link and records it as the admin's invite", async () => {
+      mail.configured = false;
+      mail.host = false;
+      authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      const res = await client.invite({ email: "new@example.com", name: "New", locale: "en-US" });
+      expect(sendEmailMock).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ emailSent: false, confirmsEmailAtSignIn: false });
+      // The proof is written with the link, in one transaction.
+      expect(links.mintSetPasswordLink).toHaveBeenCalledWith({
+        userId: "new-user-id",
+        ttlMs: 72 * 3_600_000,
+        noSmtpInviteFor: "new@example.com",
+      });
+      expect(links.recordResetLinkProof).not.toHaveBeenCalled();
+    });
+
+    it("keeps a mailed invite mailed when recording its proof fails, never revealing the link", async () => {
+      authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
+      sendEmailMock.mockResolvedValue(undefined);
+      links.recordResetLinkProof.mockRejectedValueOnce(new Error("db down"));
+      const { captureLog } = await import("@knowledge-base/env/log");
+      const log = captureLog();
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      try {
+        const res = await client.invite({ email: "new@example.com", name: "New", locale: "en-US" });
+        expect(res).toEqual({ userId: "new-user-id", emailSent: true });
+      } finally {
+        log.restore();
+      }
+      expect(log.records.map((r) => r.site)).toEqual(["users.invite-link-proof"]);
+      expect(JSON.stringify(log.records)).not.toContain("reset-password/");
+    });
+
+    it("answers CONFLICT when the new account is no longer a pending invite", async () => {
+      const { SetPasswordLinkRefusedError } = await import(
+        "@knowledge-base/auth/password-reset-links"
+      );
+      authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
+      links.mintSetPasswordLink.mockRejectedValueOnce(new SetPasswordLinkRefusedError());
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      await expect(
+        client.invite({ email: "new@example.com", name: "New", locale: "en-US" }),
+      ).rejects.toSatisfy((e: ORPCError) => e.code === "CONFLICT");
+      expect(sendEmailMock).not.toHaveBeenCalled();
     });
 
     it("translates a duplicate-email error into a CONFLICT", async () => {

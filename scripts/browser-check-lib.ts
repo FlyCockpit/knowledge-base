@@ -334,8 +334,15 @@ const PASSWORD = "input[autocomplete=current-password]";
 /** The sign-in form once React has hydrated it ("ready"); a submit before that reloads the page. */
 const FORM_HYDRATED = `(() => { const form = document.querySelector(${JSON.stringify(PASSWORD)})?.form; return form && Object.keys(form).some((key) => key.startsWith("__reactProps")) ? "ready" : null; })()`;
 
-/** Clicks Verify (the button after the code field) once React has enabled it for the typed code. */
-const VERIFY_CODE = `(() => { const button = document.getElementById("totp-code")?.closest("div")?.nextElementSibling; if (!button || button.disabled) return null; button.click(); return "clicked"; })()`;
+/**
+ * Clicks Verify (the button after the code field) once React has enabled it
+ * for the typed code. The navigation the click starts can cut off the very
+ * evaluation that clicked; `pollPage` then runs this again on the next page,
+ * and already being on `landing` means the click went through.
+ */
+function verifyCode(landing: string): string {
+  return `(() => { if (location.pathname === ${JSON.stringify(landing)}) return "app"; const button = document.getElementById("totp-code")?.closest("div")?.nextElementSibling; if (!button || button.disabled) return null; button.click(); return "clicked"; })()`;
+}
 
 export interface Account {
   email: string;
@@ -396,7 +403,8 @@ export async function formSignIn(
     } catch {
       throw new Error("could not type the verification code");
     }
-    if ((await pollPage(run, VERIFY_CODE, pause)) !== "clicked")
+    const verify = await pollPage(run, verifyCode(landing), pause);
+    if (verify !== "clicked" && verify !== "app")
       throw new Error("the Verify button did not enable for the typed code");
     const done = await pollPage(run, at, pause);
     if (done !== "app")

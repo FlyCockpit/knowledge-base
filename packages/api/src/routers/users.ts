@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { auth } from "@knowledge-base/auth";
 import { runWithAllowedAccountDeletion } from "@knowledge-base/auth/account-deletion-policy";
 import {
@@ -6,6 +5,11 @@ import {
   revokeUserMcpGrants,
   withOutgoingTwoFactorMcpSettlement,
 } from "@knowledge-base/auth/ban";
+import {
+  mintSetPasswordLink,
+  recordResetLinkProof,
+  SetPasswordLinkRefusedError,
+} from "@knowledge-base/auth/password-reset-links";
 import { runWithAdminMutationActor } from "@knowledge-base/auth/session-authority";
 import { runWithAllowedUserCreation } from "@knowledge-base/auth/user-creation-policy";
 import {
@@ -16,7 +20,7 @@ import {
 import prisma, { type Prisma } from "@knowledge-base/db";
 import { logInternalError } from "@knowledge-base/env/log";
 import { env } from "@knowledge-base/env/server";
-import { renderInviteUser, sendEmail } from "@knowledge-base/mailer";
+import { isEmailConfigured, renderInviteUser, sendEmail } from "@knowledge-base/mailer";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { adminOr404Procedure, liveAdminOr404Procedure } from "../index";
@@ -39,19 +43,44 @@ const userStatusFilter = z.enum(["all", "active", "archived"]);
 const INVITE_SET_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
- * Mint a Better Auth password-reset token for the new account (stored as
- * `reset-password:<token>` → userId, exactly like `requestPasswordReset`) and
- * return the link that leads to the localized page redeeming it. Better Auth's
+ * Mint the invitee's one-time set-password link: a Better Auth password-reset
+ * token (`reset-password:<token>` → userId, exactly like
+ * `requestPasswordReset`), minted under the per-user credential-setup lock
+ * while the account is still a pending invite
+ * (@knowledge-base/auth/password-reset-links `mintSetPasswordLink`), and the
+ * link that leads to the localized page redeeming it. Better Auth's
  * `/reset-password` consumes the token in the same transaction as the
  * password write, so the link works once.
+ *
+ * The row is written in Better Auth 1.7's own format directly (the internal
+ * adapter cannot join a Prisma transaction). That format holds only while the
+ * identifier is stored in plain text and verification rows live in Postgres
+ * (no `verification.storeIdentifier`, no `secondaryStorage`); both are checked
+ * here so a config change fails loudly instead of minting dead links.
  */
-async function createInviteSetPasswordUrl(userId: string, locale: string): Promise<string> {
-  const token = randomBytes(24).toString("base64url");
+async function createInviteSetPasswordUrl(
+  userId: string,
+  locale: string,
+  noSmtpInviteFor: string | undefined,
+): Promise<{ url: string; token: string }> {
   const context = await auth.$context;
-  await context.internalAdapter.createVerificationValue({
-    identifier: `reset-password:${token}`,
-    value: userId,
-    expiresAt: new Date(Date.now() + INVITE_SET_PASSWORD_TTL_MS),
+  // Widened on purpose: today's config sets neither key.
+  const options: Record<string, unknown> = { ...context.options };
+  const verification = options.verification;
+  const transformsIdentifier =
+    typeof verification === "object" &&
+    verification !== null &&
+    "storeIdentifier" in verification &&
+    verification.storeIdentifier !== undefined;
+  if (transformsIdentifier || options.secondaryStorage !== undefined) {
+    throw new Error(
+      "The invite link writes plain-identifier verification rows to Postgres; update it for the new Better Auth verification storage config.",
+    );
+  }
+  const { token } = await mintSetPasswordLink({
+    userId,
+    ttlMs: INVITE_SET_PASSWORD_TTL_MS,
+    noSmtpInviteFor,
   });
   const lang = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
   // The localized page the link lands on. Better Auth's GET endpoint checks
@@ -61,7 +90,24 @@ async function createInviteSetPasswordUrl(userId: string, locale: string): Promi
   landing.searchParams.set("invite", "1");
   const url = new URL(`/api/auth/reset-password/${token}`, env.BETTER_AUTH_URL);
   url.searchParams.set("callbackURL", landing.toString());
-  return url.toString();
+  return { url: url.toString(), token };
+}
+
+/**
+ * Record that the invite link was mailed, so spending it proves the
+ * address; a failure is logged, never surfaced (the invite stands; the
+ * invitee then confirms the address through the mail sign-in sends them).
+ */
+async function recordMailedInviteLink(
+  link: { token: string },
+  userId: string,
+  email: string,
+): Promise<void> {
+  try {
+    await recordResetLinkProof({ token: link.token, userId, email, proof: "mailbox" });
+  } catch (err) {
+    logInternalError("users.invite-link-proof", err);
+  }
 }
 
 const USER_SELECT = {
@@ -163,9 +209,14 @@ export const usersRouter = {
       // The account starts unverified, and the invite email is the only mail:
       // createUser sends no verification mail, and sign-in's resend
       // (`sendOnSignIn`) needs a password, which the account does not have
-      // until the link is spent. Spending it proves the inbox and marks the
-      // email verified then (`onPasswordReset`), so an invite to a mistyped
-      // address never yields a verified account.
+      // until the link is spent. Spending a MAILED link proves the inbox and
+      // marks the email verified then (@knowledge-base/auth/password-reset-links).
+      // A link shown to the admin because the mail failed only sets the
+      // password; sign-in then mails the invitee a verification link. So an
+      // invite to a mistyped address never yields a verified account on a
+      // server that can send mail. On a server with no SMTP at all, the shown
+      // link is the documented private invitation and the admin's invite
+      // vouches for the address (docs/access-matrix.md).
       let userId: string;
       try {
         // The grant's locale seeds `User.locale` in the user-create hook
@@ -209,30 +260,66 @@ export const usersRouter = {
 
       // A one-time "set your password" link. It is Better Auth's own
       // password-reset token (single use, consumed with the password write),
-      // with a longer expiry; using it also verifies the address
-      // (`onPasswordReset` in packages/auth). Localized `/$lang/` URL.
-      const setPasswordUrl = await createInviteSetPasswordUrl(userId, input.locale);
+      // with a longer expiry. Localized `/$lang/` URL.
+      // On a server with no SMTP at all (no SMTP_HOST) the shown link is the
+      // private invitation, and the invite vouches for the address: that
+      // proof is written with the link (docs/access-matrix.md). A half
+      // configuration (a host without a sender) is a broken SMTP setup, not
+      // "no SMTP": no proof, and the invitee confirms the address by mail.
+      const smtpConfigured = isEmailConfigured();
+      const noSmtp = !env.SMTP_HOST;
+      let link: { url: string; token: string };
+      try {
+        link = await createInviteSetPasswordUrl(
+          userId,
+          input.locale,
+          noSmtp ? input.email : undefined,
+        );
+      } catch (err) {
+        if (err instanceof SetPasswordLinkRefusedError) {
+          throw new ORPCError("CONFLICT", {
+            message: "That account is already in use, so no invite link was created.",
+          });
+        }
+        throw err;
+      }
+      const setPasswordUrl = link.url;
 
       // Email send is best-effort: if SMTP is not configured (or fails) the
       // admin gets the link to hand over out of band. The failure is logged
       // but does not roll back the user creation — undoing it would race
       // against any concurrent admin who is already looking at the new row.
       let emailSent = false;
-      try {
-        const { subject, html } = renderInviteUser({
-          name: input.name,
-          email: input.email,
-          setPasswordUrl,
-          expiresInHours: INVITE_SET_PASSWORD_TTL_MS / 3_600_000,
-          locale: input.locale,
-        });
-        await sendEmail({ to: input.email, subject, html });
-        emailSent = true;
-      } catch (err) {
-        logInternalError("users.invite-email", err);
+      if (smtpConfigured) {
+        try {
+          const { subject, html } = renderInviteUser({
+            name: input.name,
+            email: input.email,
+            setPasswordUrl,
+            expiresInHours: INVITE_SET_PASSWORD_TTL_MS / 3_600_000,
+            locale: input.locale,
+          });
+          await sendEmail({ to: input.email, subject, html });
+          emailSent = true;
+        } catch (err) {
+          logInternalError("users.invite-email", err);
+        }
       }
 
-      return emailSent ? { userId, emailSent } : { userId, emailSent, setPasswordUrl };
+      if (emailSent) {
+        // Mailed: spending it proves the inbox. Never hand the admin the link
+        // after the mail went out.
+        await recordMailedInviteLink(link, userId, input.email);
+        return { userId, emailSent };
+      }
+      // SMTP configured but the send failed: no proof; the invitee confirms
+      // the address at first sign-in.
+      return {
+        userId,
+        emailSent,
+        setPasswordUrl,
+        confirmsEmailAtSignIn: !noSmtp,
+      };
     }),
 
   setRole: liveAdminOr404Procedure

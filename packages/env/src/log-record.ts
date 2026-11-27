@@ -77,6 +77,14 @@ export const LOG_SITES = {
   "auth.library": ["warn", "authentication library reported a problem"],
   "auth.library.error": ["error", "authentication library reported an error"],
   "auth.verification-email": ["error", "sign-up verification email could not be sent"],
+  "auth.reset-link-proof": [
+    "error",
+    "recording a mailed reset link failed; the link is refused once the account is active",
+  ],
+  "auth.reset-link-cleanup": [
+    "error",
+    "deleting leftover reset links failed; they are refused at redemption and expire on their own",
+  ],
   "auth.verification-email-skipped": [
     "warn",
     "sign-up verification email not sent: too many in flight; sign-in sends it again",
@@ -141,6 +149,10 @@ export const LOG_SITES = {
   "push.delivery": ["warn", "web push delivery failed"],
   "users.invite": ["error", "invited account creation failed"],
   "users.invite-email": ["warn", "invite email failed"],
+  "users.invite-link-proof": [
+    "error",
+    "recording the invite link's proof failed; the invitee confirms the address at sign-in",
+  ],
   "users.remove": ["error", "account removal failed"],
   "backup.config": ["warn", "backup configuration warning"],
   // Worker.

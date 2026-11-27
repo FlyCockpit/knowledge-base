@@ -67,6 +67,25 @@ vi.mock("@knowledge-base/db", () => {
   };
 });
 
+// The reset-link and activation rules have their own tests; here only that
+// the production config calls them at the right moments.
+const linkRules = vi.hoisted(() => ({
+  isResetLinkRedeemable: vi.fn(async (_token: string) => true),
+  recordResetLinkProof: vi.fn(async (_input: unknown) => true),
+}));
+vi.mock("./password-reset-links.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./password-reset-links")>()),
+  ...linkRules,
+}));
+const activation = vi.hoisted(() => ({
+  afterAccountCreate: vi.fn(async (_account: unknown) => {}),
+  afterUserUpdate: vi.fn(async (_user: unknown, _context: unknown) => {}),
+}));
+vi.mock("./account-activation.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./account-activation")>()),
+  ...activation,
+}));
+
 async function fixture() {
   const base = await auth.$context;
   const now = new Date();
@@ -335,7 +354,7 @@ describe("password reset", () => {
     expect(revokeCredentialsAfterPasswordReset).toHaveBeenCalledTimes(2);
   });
 
-  it("finishes invite verification and kills another reset link before reporting post-sweep failure", async () => {
+  it("kills another reset link before reporting post-sweep failure, and verifies nothing itself", async () => {
     const f = await resetFixture(false);
     const context = await auth.$context;
     f.finishOtherLinks();
@@ -350,7 +369,9 @@ describe("password reset", () => {
       .mockRejectedValueOnce(error);
     expect((await f.post()).status).toBe(500);
     expect(f.state()).toMatchObject({ tokenLive: false, password: "new-password-hash" });
-    expect(updateUser).toHaveBeenCalledExactlyOnceWith("user", { emailVerified: true });
+    // A proved link verifies inside the spending transaction (admitResetSpend);
+    // this callback never asserts the address.
+    expect(updateUser).not.toHaveBeenCalled();
     expect(prisma.verification.deleteMany).toHaveBeenCalledExactlyOnceWith({
       where: { value: "user", identifier: { startsWith: "reset-password:" } },
     });
@@ -366,7 +387,7 @@ describe("password reset", () => {
   });
 
   it.each([true, false])(
-    "revokes standing credentials when emailVerified is %s, preserving invite verification",
+    "revokes standing credentials when emailVerified is %s, and never verifies the address",
     async (emailVerified) => {
       const { data } = await fixture();
       const context = await auth.$context;
@@ -377,14 +398,7 @@ describe("password reset", () => {
         user: { ...data.user, emailVerified },
       });
       expect(revokeCredentialsAfterPasswordReset).toHaveBeenCalledExactlyOnceWith(data.user.id);
-      if (emailVerified) {
-        expect(updateUser).not.toHaveBeenCalled();
-      } else {
-        expect(updateUser).toHaveBeenCalledExactlyOnceWith(data.user.id, { emailVerified: true });
-        expect(
-          vi.mocked(revokeCredentialsAfterPasswordReset).mock.invocationCallOrder[0],
-        ).toBeLessThan(updateUser.mock.invocationCallOrder[0]!);
-      }
+      expect(updateUser).not.toHaveBeenCalled();
     },
   );
 
@@ -412,23 +426,9 @@ describe("password reset", () => {
         }),
       ]);
       expect(JSON.stringify(log.records)).not.toContain(error.message);
-      if (emailVerified) expect(updateUser).not.toHaveBeenCalled();
-      else expect(updateUser).toHaveBeenCalledWith(data.user.id, { emailVerified: true });
+      expect(updateUser).not.toHaveBeenCalled();
     },
   );
-
-  it("preserves verification failure semantics after revoking credentials", async () => {
-    const { data } = await fixture();
-    const context = await auth.$context;
-    const error = new Error("verification unavailable");
-    vi.spyOn(context.internalAdapter, "updateUser").mockRejectedValueOnce(error);
-    await expect(
-      auth.options.emailAndPassword.onPasswordReset({
-        user: { ...data.user, emailVerified: false },
-      }),
-    ).rejects.toBe(error);
-    expect(revokeCredentialsAfterPasswordReset).toHaveBeenCalledExactlyOnceWith(data.user.id);
-  });
 });
 
 describe("SSO second-factor after hook", () => {
@@ -921,4 +921,93 @@ describe("Better Auth write session authority", () => {
       expect(response.headers.getSetCookie()).toEqual([]);
     },
   );
+});
+
+describe("reset links and activation wiring", () => {
+  it("refuses an unredeemable reset link as INVALID_TOKEN before the sweep and the spend", async () => {
+    const f = await resetFixture();
+    linkRules.isResetLinkRedeemable.mockResolvedValueOnce(false);
+    const response = await f.post();
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { code?: string }).code).toBe("INVALID_TOKEN");
+    expect(linkRules.isResetLinkRedeemable).toHaveBeenCalledWith("retry-token");
+    expect(revokeCredentialsAfterPasswordReset).not.toHaveBeenCalled();
+    expect(f.consume).not.toHaveBeenCalled();
+    expect(f.state().password).toBe("old-password-hash");
+    // A redeemable one goes on to the sweep and the spend.
+    expect((await f.post()).status).toBe(200);
+  });
+
+  it("answers a failed redeemability check like a failed sweep: 503, nothing changed", async () => {
+    const f = await resetFixture();
+    linkRules.isResetLinkRedeemable.mockRejectedValueOnce(new Error("private lock timeout"));
+    const log = captureLog();
+    const response = await f.post();
+    log.restore();
+    expect(response.status).toBe(503);
+    expect(f.consume).not.toHaveBeenCalled();
+    expect(revokeCredentialsAfterPasswordReset).not.toHaveBeenCalled();
+    expect(f.state()).toMatchObject({ tokenLive: true, password: "old-password-hash" });
+    expect(JSON.stringify(log.records)).not.toContain("private lock timeout");
+    // The same link then works.
+    expect((await f.post()).status).toBe(200);
+  });
+
+  it("records a mailed forgot-password link only after the mail went out", async () => {
+    const { sendEmail, renderResetPassword } = await import("@knowledge-base/mailer");
+    vi.mocked(renderResetPassword).mockReturnValue({ subject: "s", html: "h" });
+    const send = auth.options.emailAndPassword?.sendResetPassword;
+    if (!send) throw new Error("missing sendResetPassword");
+    const user = { id: "u1", email: "ada@example.test" } as never;
+    vi.mocked(sendEmail).mockRejectedValueOnce(new Error("smtp down"));
+    await expect(send({ user, url: "https://x/r", token: "tok" })).rejects.toThrow();
+    expect(linkRules.recordResetLinkProof).not.toHaveBeenCalled();
+    vi.mocked(sendEmail).mockResolvedValueOnce(undefined);
+    await send({ user, url: "https://x/r", token: "tok" });
+    expect(linkRules.recordResetLinkProof).toHaveBeenCalledWith({
+      token: "tok",
+      userId: "u1",
+      email: "ada@example.test",
+      proof: "mailbox",
+    });
+  });
+
+  it("refuses email changes and admin-asserted verification; activation hooks are wired", async () => {
+    const hooks = auth.options.databaseHooks;
+    const before = hooks?.user?.update?.before as unknown as (
+      data: Record<string, unknown>,
+      ctx: { path?: string },
+    ) => Promise<unknown>;
+    await expect(
+      before({ email: "new@example.test" }, { path: "/admin/update-user" }),
+    ).rejects.toMatchObject({
+      body: { code: "EMAIL_CHANGE_UNSUPPORTED" },
+    });
+    await expect(
+      before({ emailVerified: true }, { path: "/admin/update-user" }),
+    ).rejects.toMatchObject({
+      body: { code: "EMAIL_VERIFICATION_BY_MAIL_ONLY" },
+    });
+    await expect(
+      before({ emailVerified: true }, { path: "/verify-email" }),
+    ).resolves.toBeUndefined();
+    const ctx = {};
+    await hooks?.user?.update?.after?.({ id: "u1", emailVerified: true } as never, ctx as never);
+    expect(activation.afterUserUpdate).toHaveBeenCalledWith({ id: "u1", emailVerified: true }, ctx);
+    await hooks?.account?.create?.after?.({ userId: "u1", providerId: "sso" } as never);
+    expect(activation.afterAccountCreate).toHaveBeenCalledWith({ userId: "u1", providerId: "sso" });
+  });
+
+  it("refuses Better Auth's /admin/create-user outside users.invite", async () => {
+    const create = auth.options.databaseHooks?.user?.create?.before as unknown as (
+      user: Record<string, unknown>,
+      ctx: { path?: string; headers?: Headers },
+    ) => Promise<unknown>;
+    await expect(
+      create(
+        { email: "x@example.test", name: "X" },
+        { path: "/admin/create-user", headers: new Headers() },
+      ),
+    ).rejects.toMatchObject({ body: { code: "ADMIN_CREATE_USER_UNSUPPORTED" } });
+  });
 });

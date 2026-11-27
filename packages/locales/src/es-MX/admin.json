@@ -341,6 +341,7 @@
     "revealTitle": "Invitación enviada",
     "revealEmailedDescription": "Se envió a {{email}} un enlace de un solo uso para elegir su contraseña. Vence en 72 horas.",
     "revealNotEmailedDescription": "Se creó la cuenta de {{email}}, pero no se pudo enviar el correo. Comparte este enlace de un solo uso por otro medio. Vence en 72 horas.",
+    "revealConfirmAtSignIn": "Confirman su dirección de correo la primera vez que inician sesión: en ese momento les enviamos un enlace.",
     "deleteTitle": "¿Eliminar este usuario?",
     "deleteDescription": "Esto elimina permanentemente la cuenta y sus sesiones. Esto no se puede deshacer. Para preservar el contenido creado por un usuario, archívalo en su lugar.",
     "typeEmailToConfirm": "Escribe el correo del usuario para confirmar",

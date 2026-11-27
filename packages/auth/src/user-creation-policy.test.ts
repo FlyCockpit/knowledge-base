@@ -4,6 +4,7 @@ import {
   getAllowedUserCreationMode,
   getGrantedUserLocale,
   getUserCreationBlockReason,
+  refuseUngrantedAdminCreateUser,
   runWithAllowedUserCreation,
   SIGNUP_DISABLED_MESSAGE,
 } from "./user-creation-policy";
@@ -57,5 +58,36 @@ describe("signup-disabled decision", () => {
 
   it("keeps the stable message the admin-invite error translation matches on", () => {
     expect(SIGNUP_DISABLED_MESSAGE).toMatch(/sign-?up.*disabled/i);
+  });
+});
+
+describe("refuseUngrantedAdminCreateUser", () => {
+  const codeOf = (fn: () => void) => {
+    try {
+      fn();
+      return null;
+    } catch (error) {
+      return (error as { body?: { code?: string } }).body?.code ?? "unknown";
+    }
+  };
+  const admin = { path: "/admin/create-user" };
+
+  it("refuses /admin/create-user without the admin-invite grant (an HTTP call)", async () => {
+    expect(codeOf(() => refuseUngrantedAdminCreateUser(admin))).toBe(
+      "ADMIN_CREATE_USER_UNSUPPORTED",
+    );
+    await runWithAllowedUserCreation("admin-bootstrap", () => {
+      expect(codeOf(() => refuseUngrantedAdminCreateUser(admin))).toBe(
+        "ADMIN_CREATE_USER_UNSUPPORTED",
+      );
+    });
+  });
+
+  it("lets users.invite (the grant) and every other path through", async () => {
+    await runWithAllowedUserCreation("admin-invite", () => {
+      expect(codeOf(() => refuseUngrantedAdminCreateUser(admin))).toBe(null);
+    });
+    expect(codeOf(() => refuseUngrantedAdminCreateUser({ path: "/sign-up/email" }))).toBe(null);
+    expect(codeOf(() => refuseUngrantedAdminCreateUser(null))).toBe(null);
   });
 });

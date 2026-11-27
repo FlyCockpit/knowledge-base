@@ -177,7 +177,9 @@ function fakeBrowser(answer: (script: string) => string | Error = () => "true") 
 }
 
 /** A stack whose sign-in ends in a full page load: the first poll after the submit is cut off. */
-function stack(options: { secondFactor?: boolean; landsOn?: string } = {}) {
+function stack(
+  options: { secondFactor?: boolean; landsOn?: string; clickNavigates?: boolean } = {},
+) {
   let submitted = false;
   let verified = false;
   let cutOff = false;
@@ -188,8 +190,11 @@ function stack(options: { secondFactor?: boolean; landsOn?: string } = {}) {
       return "true";
     }
     if (script.includes("button.click()")) {
+      // Once verified, the page is the landing page: no code field, no button.
+      if (verified) return script.includes("if (location.pathname ===") ? '"app"' : "null";
       verified = true;
-      return '"clicked"';
+      // The navigation the click starts can cut off the clicking evaluation itself.
+      return options.clickNavigates ? navigated() : '"clicked"';
     }
     if (script === "location.pathname") return JSON.stringify(options.landsOn ?? "/en-US/login");
     if (script.startsWith("location.pathname ===")) {
@@ -245,6 +250,16 @@ describe("formSignIn", () => {
     );
     assert.equal(asked, 1);
     assert.ok(commands.some((command) => command.input?.includes('"123456"')));
+  });
+
+  it("accepts a Verify click whose own evaluation the navigation cut off", async () => {
+    const { browser } = fakeBrowser(stack({ secondFactor: true, clickNavigates: true }));
+    await formSignIn(
+      { base, browser, args: [] },
+      { ...account, totp: () => "123456" },
+      "/en-US/settings",
+      noPause,
+    );
   });
 
   it("says what is wrong when the account has a second factor and no code", async () => {

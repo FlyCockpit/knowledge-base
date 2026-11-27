@@ -50,6 +50,7 @@ import {
 import { createMcpConsentService } from "@knowledge-base/auth/mcp-consent";
 import { MCP_TOOL_GROUPS } from "@knowledge-base/auth/mcp-tool-groups";
 import { createPasswordPepper } from "@knowledge-base/auth/password-pepper";
+import { recordResetLinkProof } from "@knowledge-base/auth/password-reset-links";
 import type { createSessionCacheVersion as CreateSessionCacheVersion } from "@knowledge-base/auth/session-authority";
 import { isTwoFactorRequirementSatisfied } from "@knowledge-base/auth/two-factor-policy";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
@@ -3285,8 +3286,17 @@ describe("cached session authority and server-owned user columns", () => {
         enabled: true,
         password: { hash: pepper.hash, verify: pepper.verify },
         revokeSessionsOnPasswordReset: true,
-        sendResetPassword: async ({ token }) => {
+        // As production (packages/auth/src/index.ts): the mailed link is
+        // recorded, so the bootstrap adapter's spend check admits it for an
+        // active account.
+        sendResetPassword: async ({ token, user }) => {
           resetToken = token;
+          await recordResetLinkProof({
+            token,
+            userId: user.id,
+            email: user.email,
+            proof: "mailbox",
+          });
         },
       },
       user: {

@@ -103,7 +103,11 @@ describe("server-owned user columns", () => {
     const before = auth.options.databaseHooks?.user?.create?.before;
     if (!before) throw new Error("missing user.create.before hook");
     const user = { name: "Ann", email: "ann@example.test", emailVerified: true };
-    const admin = await before(user as never, { path: ADMIN_CREATE_USER_PATH } as never);
+    // Only users.invite reaches the route, under its grant.
+    const { runWithAllowedUserCreation } = await import("./user-creation-policy");
+    const admin = await runWithAllowedUserCreation("admin-invite", () =>
+      before(user as never, { path: ADMIN_CREATE_USER_PATH } as never),
+    );
     expect(admin && typeof admin === "object" && admin.data.emailVerified).toBe(false);
     const sso = await before(user as never, { path: "/oauth2/callback/sso" } as never);
     expect(sso && typeof sso === "object" && sso.data.emailVerified).toBe(true);

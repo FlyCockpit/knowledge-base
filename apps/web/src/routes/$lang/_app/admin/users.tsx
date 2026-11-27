@@ -76,7 +76,13 @@ function buildInviteSchema() {
 }
 
 /** What the admin sees after an invite; the link only when it was not emailed. */
-type InviteReveal = { email: string; emailSent: boolean; setPasswordUrl?: string };
+type InviteReveal = {
+  email: string;
+  emailSent: boolean;
+  setPasswordUrl?: string;
+  /** The shown link does not verify the address: the invitee confirms it by mail at first sign-in. */
+  confirmsEmailAtSignIn?: boolean;
+};
 
 export const Route = createFileRoute("/$lang/_app/admin/users")({
   staticData: { pendingShape: "list", pendingWidth: "wide" },
@@ -509,6 +515,8 @@ function InviteUserDialog({
         email: value.email,
         emailSent: result.emailSent,
         setPasswordUrl: "setPasswordUrl" in result ? result.setPasswordUrl : undefined,
+        confirmsEmailAtSignIn:
+          "confirmsEmailAtSignIn" in result ? result.confirmsEmailAtSignIn : undefined,
       });
       form.reset();
     },
@@ -657,6 +665,11 @@ function RevealInviteDialog({
               onCopyError={() => toast.error(t("errors:couldNotCopy"))}
             />
             <p className="text-xs text-muted-foreground">{t("admin:users.setPasswordLinkHint")}</p>
+            {reveal.confirmsEmailAtSignIn && (
+              <p className="text-xs text-muted-foreground">
+                {t("admin:users.revealConfirmAtSignIn")}
+              </p>
+            )}
           </div>
         )}
 

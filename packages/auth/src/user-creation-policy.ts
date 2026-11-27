@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Locale } from "@knowledge-base/config/locales";
+import { APIError } from "better-auth/api";
+import { ADMIN_CREATE_USER_PATH } from "./user-columns.js";
 
 export type UserCreationMode = "admin-bootstrap" | "admin-invite";
 
@@ -46,4 +48,25 @@ export function runWithAllowedUserCreation<T>(
  */
 export function getGrantedUserLocale(): Locale | undefined {
   return userCreationModeStorage.getStore()?.locale;
+}
+
+/**
+ * Better Auth's `/admin/create-user` runs only under the `admin-invite` grant,
+ * that is only from `users.invite` (packages/api) on the server, which never
+ * lets anyone choose the password or the verification state. An HTTP call to
+ * Better Auth's own route (an admin session reaches `/api/auth/admin/*`) is
+ * refused, sign-up enabled or not: it would let an admin create an account
+ * with a password they chose, for an address someone else owns. Runs first in
+ * `databaseHooks.user.create.before`; an HTTP request can never carry the
+ * grant, which lives in this process's AsyncLocalStorage.
+ */
+export function refuseUngrantedAdminCreateUser(
+  context: { path?: string } | null | undefined,
+): void {
+  if (context?.path === ADMIN_CREATE_USER_PATH && getAllowedUserCreationMode() !== "admin-invite") {
+    throw new APIError("FORBIDDEN", {
+      message: "Invite users from the admin dashboard.",
+      code: "ADMIN_CREATE_USER_UNSUPPORTED",
+    });
+  }
 }

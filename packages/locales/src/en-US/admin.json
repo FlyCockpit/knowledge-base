@@ -341,6 +341,7 @@
     "revealTitle": "Invite sent",
     "revealEmailedDescription": "{{email}} has been emailed a one-time link to set their password. It expires in 72 hours.",
     "revealNotEmailedDescription": "The account for {{email}} was created, but the email could not be sent. Share this one-time link with them through another channel. It expires in 72 hours.",
+    "revealConfirmAtSignIn": "They confirm their email address when they first sign in: we email them a link then.",
     "deleteTitle": "Delete this user?",
     "deleteDescription": "This permanently removes the account and its sessions. This cannot be undone. To preserve a user's authored content, archive them instead.",
     "typeEmailToConfirm": "Type the user's email to confirm",

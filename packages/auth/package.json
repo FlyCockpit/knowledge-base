@@ -19,6 +19,9 @@
     "./password-policy": {
       "default": "./src/password-policy.ts"
     },
+    "./password-reset-links": {
+      "default": "./src/password-reset-links.ts"
+    },
     "./roles": {
       "default": "./src/roles.ts"
     },

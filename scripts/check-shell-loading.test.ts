@@ -263,9 +263,17 @@ interface FakeElement {
   paddingBottom: string;
   nodeType: 1;
   isConnected: boolean;
+  /** Element children, then the trailing text run (if any). */
+  childNodes: (FakeElement | FakeText)[];
 }
 
-function fakeDom(viewport: number) {
+interface FakeText {
+  nodeType: 3;
+  nodeValue: string;
+  rect: { left: number; top: number; width: number; height: number };
+}
+
+function fakeDom(viewport: number, { trailingText = false } = {}) {
   const el = (
     tag: string,
     rect: [number, number, number, number],
@@ -283,6 +291,7 @@ function fakeDom(viewport: number) {
       paddingBottom,
       nodeType: 1,
       isConnected: true,
+      childNodes: [...children],
     };
     for (const child of children) child.parentElement = node;
     return node;
@@ -309,7 +318,17 @@ function fakeDom(viewport: number) {
   // A long page: rows down to 2000px, 24px of page padding, then the footer.
   const footerText = el("p", [16, 2116, 200, 20]);
   const footer = el("footer", [0, 2100, 1280, 50], { "data-public-footer": "" }, [footerText]);
-  const row = el("div", [16, 1960, 1248, 40]);
+  // With trailingText, the last row is a paragraph: an early inline link,
+  // then text that wraps on down to 2040px.
+  const row = trailingText
+    ? el("p", [16, 1960, 1248, 80], {}, [el("a", [16, 1960, 120, 20])])
+    : el("div", [16, 1960, 1248, 40]);
+  if (trailingText)
+    row.childNodes.push({
+      nodeType: 3,
+      nodeValue: " and the rest of the sentence",
+      rect: { left: 16, top: 1960, width: 1248, height: 80 },
+    });
   const page = el("div", [0, 60, 1280, 1964], {}, [el("h1", [16, 80, 400, 32]), row], "24px");
   const main = el("main", [0, 60, 1280, 740], { id: "main-content" }, [
     el("div", [0, 60, 1280, 2090], {}, [page, footer]),
@@ -331,6 +350,18 @@ function fakeDom(viewport: number) {
   for (const node of [body, ...all()]) api(node);
   const document = {
     body,
+    createRange: () => {
+      let target: FakeElement | FakeText | null = null;
+      return {
+        selectNodeContents: (node: FakeElement | FakeText) => {
+          target = node;
+        },
+        getBoundingClientRect: () => {
+          const rect = target?.rect ?? { left: 0, top: 0, width: 0, height: 0 };
+          return { ...rect, bottom: rect.top + rect.height };
+        },
+      };
+    },
     documentElement: { classList: { contains: (name: string) => name === "dark" } },
     querySelectorAll: (selector: string) => all().filter((n) => matches(n, selector)),
   };
@@ -399,5 +430,32 @@ describe("INIT_SCRIPT in the page", () => {
       belowFold: 0.063,
       all: 0.083,
     });
+  });
+
+  it("measures text after an inline link, not only the link's box", () => {
+    const { document } = fakeDom(800, { trailingText: true });
+    const window: Record<string, unknown> = { innerHeight: 800 };
+    window.top = window;
+    class PerformanceObserver {
+      observe() {}
+    }
+    const globals = {
+      window,
+      document,
+      getComputedStyle: (node: FakeElement) => ({
+        visibility: "visible",
+        paddingBottom: node.paddingBottom,
+      }),
+      PerformanceObserver,
+      performance: { now: () => 0 },
+      requestAnimationFrame: () => 0,
+    };
+    new Function(...Object.keys(globals), INIT_SCRIPT)(...Object.values(globals));
+    const read = new Function(...Object.keys(globals), `return ${READ}`)(
+      ...Object.values(globals),
+    ) as string;
+    const recording = JSON.parse(read) as ShellRecording;
+    // The text's 2040px plus the page's 24px padding (the link alone ends at 1980px).
+    assert.equal(recording.final.contentEnd, 2064);
   });
 });

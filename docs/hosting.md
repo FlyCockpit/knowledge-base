@@ -8,7 +8,7 @@ Dokploy on a VPS is the documented deployment target. Production and container d
 - Production requires that identity before first-user bootstrap, including when `SIGNUP_ENABLED=true`. A different first signup fails without creating a user.
 - Dev/test may bootstrap the first valid account when `ADMIN_EMAIL` is unset.
 - After `BootstrapState` completes, the email never re-promotes a demoted user.
-- Disabled public signup still accepts admin invitations. When SMTP is off, invite returns the one-time link privately.
+- Disabled public signup still accepts admin invitations. When SMTP is off, invite returns the one-time link privately, and spending it verifies the address. When SMTP is configured but the invite mail fails, the admin also gets the link, but it only sets the password: the invitee confirms the address through the mail sign-in sends them.
 
 ### First admin without email (`SETUP_KEY`)
 

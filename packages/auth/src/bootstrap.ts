@@ -1,6 +1,7 @@
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import { ADMIN_EMAIL, env, SIGNUP_ENABLED } from "@knowledge-base/env/server";
 import type { BetterAuthOptions } from "better-auth";
+import { BASE_ERROR_CODES } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import {
@@ -17,6 +18,11 @@ import {
   withOutgoingTwoFactorMcpSettlement,
 } from "./ban.js";
 import { canonicalizeEmail } from "./email.js";
+import {
+  admitResetSpend,
+  RESET_PASSWORD_IDENTIFIER_PREFIX,
+  type ResetSpendTx,
+} from "./reset-link-rules.js";
 import { isAdminRole, isImpersonatedSession } from "./roles.js";
 import { getAdminMutationActor, readLiveAdminPolicy } from "./session-authority.js";
 import { sanitizeUserCreateData, sanitizeUserUpdateData } from "./user-columns.js";
@@ -333,6 +339,8 @@ type AdapterDeleteMany = {
 type AdapterLike = AdapterCreate &
   AdapterDelete &
   AdapterDeleteMany & {
+    consumeOne: (args: AdapterDeleteArgs) => Promise<unknown>;
+    findOne: (args: AdapterDeleteArgs) => Promise<unknown>;
     update: (args: AdapterUpdateArgs) => Promise<unknown>;
     updateMany: (args: AdapterUpdateArgs) => Promise<unknown>;
     transaction: <R>(callback: (trx: AdapterLike) => Promise<R>) => Promise<R>;
@@ -524,8 +532,38 @@ function bindBootstrapPolicy<T extends AdapterLike>(
       ? startTransaction((tx) => write(tx, createPrismaAdapter(tx, options)))
       : write(txClient, inner);
   };
+  // Better Auth spends a password-reset token with `consumeOne` (by id) as the
+  // first write of the transaction that then sets the password. Whether that
+  // spend is allowed, the email verification it proves and the deletion of
+  // the user's other links are decided there, under the per-user setup lock
+  // and the authority lock held to commit (password-reset-links.ts
+  // `admitResetSpend`).
+  const consumeVerification = (args: AdapterDeleteArgs) => {
+    const run = async (tx: BootstrapPrismaTx, writer: AdapterLike) => {
+      const row = (await writer.findOne({ model: args.model, where: args.where })) as {
+        identifier?: unknown;
+      } | null;
+      const identifier = typeof row?.identifier === "string" ? row.identifier : "";
+      if (identifier.startsWith(RESET_PASSWORD_IDENTIFIER_PREFIX)) {
+        // Fails closed: a reset spend is never consumed without the check.
+        if (!hasResetSpendDelegates(tx)) {
+          throw new Error("reset token consumption needs the Prisma verification delegate");
+        }
+        const token = identifier.slice(RESET_PASSWORD_IDENTIFIER_PREFIX.length);
+        if (!(await admitResetSpend(tx, token))) {
+          throw APIError.from("BAD_REQUEST", BASE_ERROR_CODES.INVALID_TOKEN);
+        }
+      }
+      return writer.consumeOne(args);
+    };
+    return startTransaction
+      ? startTransaction((tx) => run(tx, createPrismaAdapter(tx, options)))
+      : run(txClient, inner);
+  };
   const adapter = {
     ...inner,
+    consumeOne: (args: AdapterDeleteArgs) =>
+      isVerificationModel(args.model) ? consumeVerification(args) : inner.consumeOne(args),
     update: (args: AdapterUpdateArgs) => updateUser("update", args),
     updateMany: (args: AdapterUpdateArgs) => updateUser("updateMany", args),
     create: async (args: AdapterCreateArgs) => {
@@ -589,6 +627,14 @@ function bindBootstrapPolicy<T extends AdapterLike>(
     },
   };
   return adapter as T;
+}
+
+function isVerificationModel(model: string): boolean {
+  return model === "verification" || model === "Verification";
+}
+
+function hasResetSpendDelegates(tx: BootstrapPrismaTx): tx is BootstrapPrismaTx & ResetSpendTx {
+  return "verification" in tx && "user" in tx;
 }
 
 export function createBootstrapDatabaseAdapter(prisma: BootstrapPrisma) {

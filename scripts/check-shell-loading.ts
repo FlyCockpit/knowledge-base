@@ -68,8 +68,9 @@ export interface LoadedFrame extends ShellFrame {
   footer: Box | null;
   vh: number;
   /**
-   * Where the content ends: the lowest visible box without children in `<main>`
-   * (the footer's excluded), plus the bottom padding of the boxes around it.
+   * Where the content ends: the lowest visible box without children, or run
+   * of text beside child elements, in `<main>` (the footer's excluded), plus
+   * the bottom padding of the boxes around it.
    */
   contentEnd: number;
 }
@@ -238,21 +239,34 @@ export const INIT_SCRIPT = `(() => {
   // and shows the fallback beside it, so the first match may have no box.
   // A box alone is not enough: visibility:hidden keeps the box.
   const seen = (selector) => [...document.querySelectorAll(selector)].find((el) => box(el) && getComputedStyle(el).visibility === "visible") || null;
-  // The lowest visible childless box in <main> outside the footer, plus the
-  // bottom padding of the boxes around it (up to <main>, whose own padding
-  // is the cookie banner's room).
+  // The lowest visible content in <main> outside the footer: a childless
+  // box, or a run of text beside child elements (a paragraph with an early
+  // inline link), plus the bottom padding of the boxes around it (up to
+  // <main>, whose own padding is the cookie banner's room).
+  const textBox = (node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect();
+  };
   const contentEnd = (main) => {
     let end = 0;
-    let lowest = null;
+    let padFrom = null;
     if (main) for (const el of main.querySelectorAll("*")) {
-      if (el.children.length || el.closest("[data-public-footer]") || getComputedStyle(el).visibility !== "visible") continue;
-      const r = el.getBoundingClientRect();
-      if ((r.width || r.height) && r.bottom > end) {
-        end = r.bottom;
-        lowest = el;
-      }
+      if (el.closest("[data-public-footer]") || getComputedStyle(el).visibility !== "visible") continue;
+      // A childless box includes its own padding; text inside a box with
+      // children sits above that box's padding. Only whether a text run is
+      // blank is read here, never the text itself (a signed-in page shows the
+      // user's own data).
+      const boxes = el.children.length
+        ? [...el.childNodes].filter((n) => n.nodeType === 3 && /\\S/.test(n.nodeValue)).map((n) => [textBox(n), el])
+        : [[el.getBoundingClientRect(), el.parentElement]];
+      for (const [r, from] of boxes)
+        if ((r.width || r.height) && r.bottom > end) {
+          end = r.bottom;
+          padFrom = from;
+        }
     }
-    for (let el = lowest && lowest.parentElement; el && el !== main; el = el.parentElement) end += parseFloat(getComputedStyle(el).paddingBottom) || 0;
+    for (let el = padFrom; el && el !== main; el = el.parentElement) end += parseFloat(getComputedStyle(el).paddingBottom) || 0;
     return Math.round(end);
   };
   const snap = () => {

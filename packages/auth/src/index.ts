@@ -9,11 +9,16 @@ import {
   renderVerifyEmail,
   sendEmail,
 } from "@knowledge-base/mailer";
-import { type BetterAuthPlugin, betterAuth } from "better-auth";
+import { BASE_ERROR_CODES, type BetterAuthPlugin, betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { admin, genericOAuth, twoFactor } from "better-auth/plugins";
 import { defaultAc, userAc } from "better-auth/plugins/admin/access";
+import {
+  afterAccountCreate,
+  afterUserUpdate,
+  noteVerificationWrite,
+} from "./account-activation.js";
 import { assertOrdinaryAccountDeletionAllowed } from "./account-deletion-policy.js";
 import { authLogger } from "./auth-logger";
 import {
@@ -26,16 +31,23 @@ import {
   revokeCredentialsAfterPasswordReset,
 } from "./credential-revocation.js";
 import { resolveDevicePlugins } from "./device-approval";
+import { refuseEmailChange } from "./email-change-policy.js";
 import { resolveMcpPlugins } from "./mcp-plugins.js";
 import { createPasswordPepper } from "./password-pepper.js";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
+import {
+  isResetLinkRedeemable,
+  recordResetLinkProof,
+  resetTokenOf,
+} from "./password-reset-links.js";
+import { RESET_PASSWORD_PATH } from "./reset-link-rules.js";
 import { knowledgeBaseAdminPermissions } from "./roles";
 import { createSessionCacheVersion } from "./session-authority";
 import { resolveSignupLocale } from "./signup-locale.js";
 import { markUserCreatedInRequest, neutralSignUpResponse } from "./signup-response.js";
 import { TWO_FACTOR_ALLOW_PASSWORDLESS_ENROLLMENT } from "./two-factor-policy.js";
 import { ADMIN_CREATE_USER_PATH } from "./user-columns.js";
-import { getGrantedUserLocale } from "./user-creation-policy.js";
+import { getGrantedUserLocale, refuseUngrantedAdminCreateUser } from "./user-creation-policy.js";
 import { withVerificationCallback } from "./verification-callback.js";
 import { sendVerificationMailAfterCommit } from "./verification-mail.js";
 
@@ -167,7 +179,27 @@ export const auth = betterAuth({
         }
         ctx.context.session = live;
       }
-      if (ctx.path !== "/reset-password") return;
+      if (ctx.path !== RESET_PASSWORD_PATH) return;
+      // A reset link that was not mailed to the account's own address is
+      // spendable only while the account is a pending invite: one left over
+      // after activation is refused (and deleted) here, before the sweep below
+      // could sign the account out, exactly like an expired token, which the
+      // reset page already handles. The same rule is enforced again inside the
+      // spending transaction (reset-link-rules.ts `admitResetSpend`).
+      // A failed check answers like a failed sweep: 503, nothing changed, the
+      // same link can be retried.
+      const resetToken = resetTokenOf({ path: ctx.path, body: ctx.body, query: ctx.query });
+      let redeemable = true;
+      try {
+        if (resetToken) redeemable = await isResetLinkRedeemable(resetToken);
+      } catch (error) {
+        logRevocationFailure(undefined, error, "SECURITY.password_reset");
+        throw new APIError("SERVICE_UNAVAILABLE", {
+          message:
+            "We couldn't finish securing your account. Nothing was changed — try the link again.",
+        });
+      }
+      if (!redeemable) throw APIError.from("BAD_REQUEST", BASE_ERROR_CODES.INVALID_TOKEN);
       // Mirror the pinned endpoint, including its query-token fallback and expiry comparison.
       const token = ctx.body?.token || ctx.query?.token;
       if (!token) return;
@@ -317,10 +349,11 @@ export const auth = betterAuth({
     // (session-authority.ts versions the cache by the live session/user).
     // The reset hook also revokes every standing credential and pending CLI login.
     revokeSessionsOnPasswordReset: true,
-    // A redeemed reset link proves control of the mailbox it was sent to, so
-    // it also verifies the address. This is how an admin invitation's one-time
-    // "set your password" link verifies the invitee in the same step.
-    // Written through the adapter, so the identity authority lock applies.
+    // Spending a reset link verifies the email only when its proof was
+    // recorded (mailed, or a no-SMTP invite), and deletes the user's other
+    // reset links, in Better Auth's own spending transaction together with the
+    // password write (reset-link-rules.ts `admitResetSpend`, called from the
+    // bootstrap adapter's `consumeOne`). This callback runs after that commit.
     onPasswordReset: async ({ user }) => {
       // Sweep again after the password transaction as defense in depth.
       // The pre-sweep already prevents old browser sessions minting in the gap.
@@ -336,13 +369,9 @@ export const auth = betterAuth({
       await prisma.verification.deleteMany({
         where: { value: user.id, identifier: { startsWith: "reset-password:" } },
       });
-      if (!user.emailVerified) {
-        const context = await auth.$context;
-        await context.internalAdapter.updateUser(user.id, { emailVerified: true });
-      }
       if (revocationFailure) throw revocationFailure.error;
     },
-    sendResetPassword: async ({ user, url }) => {
+    sendResetPassword: async ({ user, url, token }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
       // callback `user` is typed against the base user shape, so `locale`
       // (an additionalField) isn't on it. Fetch the row via Prisma so the
@@ -366,6 +395,16 @@ export const auth = betterAuth({
         subject,
         html,
       });
+      // The link went to the mailbox, so spending it proves the address, and
+      // it stays spendable once the account is active (password-reset-links.ts).
+      // The mail is already out: a failed record must not fail the request.
+      // The link then counts as unproved (refused for an active account, fail
+      // closed); the user requests another.
+      try {
+        await recordResetLinkProof({ token, userId: user.id, email: user.email, proof: "mailbox" });
+      } catch (err) {
+        logInternalError("auth.reset-link-proof", err, { userId: user.id });
+      }
     },
   },
   emailVerification: {
@@ -495,9 +534,29 @@ export const auth = betterAuth({
     neutralSignUpResponse({ isBootstrapComplete: () => isBootstrapComplete(prisma) }),
   ],
   databaseHooks: {
+    account: {
+      create: {
+        // Linking an IdP identity activates an invited account: its leftover
+        // set-password links die (account-activation.ts).
+        after: async (account) => afterAccountCreate(account),
+      },
+    },
     user: {
+      // No email change on this server, and no admin-asserted verification
+      // (email-change-policy.ts). A write that verifies the email activates
+      // the account: its leftover set-password links die once it is committed
+      // (account-activation.ts).
+      update: {
+        before: async (data, context) => {
+          refuseEmailChange(data, context);
+          noteVerificationWrite(data, context);
+        },
+        after: async (user, context) => afterUserUpdate(user, context),
+      },
       create: {
         before: async (user, context) => {
+          // Only users.invite reaches /admin/create-user (user-creation-policy.ts).
+          refuseUngrantedAdminCreateUser(context);
           // An admin invite chooses the invitee's language; a sign-up uses the
           // locale the client is rendering.
           const locale = getGrantedUserLocale() ?? resolveSignupLocale(context?.headers);
