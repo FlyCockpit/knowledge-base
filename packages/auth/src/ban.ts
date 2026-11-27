@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { PrismaClient } from "@knowledge-base/db/client";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import {
   FORCE_2FA_DEFAULTS,
   FORCE_2FA_INTERNAL_USERS_SETTING_KEY,
@@ -353,14 +354,16 @@ export async function settleLapsedTwoFactorMcpGrants(
   db: Pick<PrismaClient, "$transaction">,
   userId: string | null = null,
 ): Promise<void> {
-  await db.$transaction(
-    async (tx) => {
-      await lockIdentityAuthority(tx);
-      await revokeLapsedTwoFactorMcpGrants(
-        (sql, params) => tx.$executeRawUnsafe(sql, ...params),
-        userId,
-      );
-    },
-    { timeout: 10000, maxWait: 5000 },
+  await withLockSlot(() =>
+    db.$transaction(
+      async (tx) => {
+        await lockIdentityAuthority(tx);
+        await revokeLapsedTwoFactorMcpGrants(
+          (sql, params) => tx.$executeRawUnsafe(sql, ...params),
+          userId,
+        );
+      },
+      { timeout: 10000, maxWait: 5000 },
+    ),
   );
 }

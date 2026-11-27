@@ -35,7 +35,8 @@ export const sharedVars = {
   // Default 10 matches the driver default — raise it only against the
   // database's connection budget, since every server/worker replica holds its
   // own pool.
-  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+  // Password writers reserve two lock connections, leaving one for handler work.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(3).default(10),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   // ---- Encrypted full-bundle backups (optional). The shell scripts under
   // scripts/ (backup.sh, backup/schedule.mjs) read these directly; the worker reads

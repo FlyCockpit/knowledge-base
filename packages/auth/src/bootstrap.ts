@@ -1,4 +1,5 @@
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { ADMIN_EMAIL, env, SIGNUP_ENABLED } from "@knowledge-base/env/server";
 import type { BetterAuthOptions } from "better-auth";
 import { BASE_ERROR_CODES } from "better-auth";
@@ -277,11 +278,13 @@ export async function adoptExistingUsers(
  * collision; this write has already committed so completion stays sticky.
  */
 export async function persistBootstrapAdoption(prisma: BootstrapPrisma): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    const state = await lockBootstrapState(tx);
-    if (state.completedAt != null) return;
-    await adoptExistingUsers(tx, currentPolicy());
-  });
+  await withLockSlot(() =>
+    prisma.$transaction(async (tx) => {
+      const state = await lockBootstrapState(tx);
+      if (state.completedAt != null) return;
+      await adoptExistingUsers(tx, currentPolicy());
+    }),
+  );
 }
 
 export async function lockBootstrapState(tx: BootstrapPrismaTx): Promise<BootstrapStateSnapshot> {
@@ -640,6 +643,8 @@ function hasResetSpendDelegates(tx: BootstrapPrismaTx): tx is BootstrapPrismaTx 
 export function createBootstrapDatabaseAdapter(prisma: BootstrapPrisma) {
   return (options: BetterAuthOptions) => {
     const inner = createPrismaAdapter(prisma, options);
-    return bindBootstrapPolicy(inner, prisma, options, prisma, (fn) => prisma.$transaction(fn));
+    return bindBootstrapPolicy(inner, prisma, options, prisma, (fn) =>
+      withLockSlot(() => prisma.$transaction(fn)),
+    );
   };
 }

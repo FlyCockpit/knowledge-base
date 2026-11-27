@@ -76,6 +76,14 @@ export const LOG_SITES = {
   // Libraries.
   "auth.library": ["warn", "authentication library reported a problem"],
   "auth.library.error": ["error", "authentication library reported an error"],
+  "auth.password-write-unconfirmed": [
+    "error",
+    "password write outlived its lock; quarantining the credential and revoking sessions",
+  ],
+  "auth.password-sign-in-stale": [
+    "warn",
+    "password sign-in completed after the password changed; its session and challenges were removed",
+  ],
   "auth.verification-email": ["error", "sign-up verification email could not be sent"],
   "auth.reset-link-proof": [
     "error",

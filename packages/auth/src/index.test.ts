@@ -1,3 +1,5 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import { createHmac } from "node:crypto";
 import prisma from "@knowledge-base/db";
 import { captureLog } from "@knowledge-base/env/log";
@@ -6,6 +8,7 @@ import { createAuthEndpoint, createAuthMiddleware } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  quarantineUntrustedPasswordWrite,
   revokeCredentialsAfterPasswordChange,
   revokeCredentialsAfterPasswordReset,
 } from "./credential-revocation";
@@ -33,12 +36,16 @@ vi.mock("@knowledge-base/mailer", () => ({
   renderVerifyEmail: vi.fn(),
   sendEmail: vi.fn(),
 }));
-vi.mock("./credential-revocation", () => ({
+vi.mock("./credential-revocation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./credential-revocation")>()),
+  quarantineUntrustedPasswordWrite: vi.fn(),
   revokeCredentialsAfterPasswordChange: vi.fn(),
   revokeCredentialsAfterPasswordReset: vi.fn(),
 }));
 const resetLinks = vi.hoisted(() => ({ deleteMany: vi.fn() }));
 const queryAuthority = vi.hoisted(() => vi.fn());
+const passwordLockTransaction = vi.hoisted(() => vi.fn());
+const sessionRows = vi.hoisted(() => ({ findFirst: vi.fn(), deleteMany: vi.fn() }));
 
 vi.mock("@knowledge-base/db", () => {
   const delegate = new Proxy(
@@ -59,9 +66,13 @@ vi.mock("@knowledge-base/db", () => {
             ? undefined
             : prop === "verification"
               ? resetLinks
-              : prop === "$queryRaw"
-                ? queryAuthority
-                : delegate,
+              : prop === "session"
+                ? sessionRows
+                : prop === "$transaction"
+                  ? passwordLockTransaction
+                  : prop === "$queryRaw"
+                    ? queryAuthority
+                    : delegate,
       },
     ),
   };
@@ -169,6 +180,12 @@ beforeEach(() => {
   vi.mocked(revokeCredentialsAfterPasswordChange).mockReset();
   resetLinks.deleteMany.mockReset().mockResolvedValue({ count: 0 });
   queryAuthority.mockReset().mockResolvedValue([{ identity: null, authorityVersion: 0 }]);
+  sessionRows.findFirst.mockReset().mockResolvedValue(null);
+  sessionRows.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+  passwordLockTransaction
+    .mockReset()
+    .mockImplementation(async (run) => run({ $queryRaw: async () => [{ locked: true }] }));
+  vi.mocked(quarantineUntrustedPasswordWrite).mockReset();
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -186,7 +203,6 @@ async function resetFixture(emailVerified = true) {
   });
   const context = await resetAuth.$context;
   let tokenLive = true;
-  let otherLinkLive = true;
   let password = "old-password-hash";
   let sessionLive = true;
   const verification = {
@@ -201,11 +217,7 @@ async function resetFixture(emailVerified = true) {
   const lookup = vi
     .spyOn(context.internalAdapter, "findVerificationValue")
     .mockImplementation(async (id) =>
-      id === "reset-password:other-token" && otherLinkLive
-        ? { ...verification, identifier: id }
-        : tokenLive && id === verification.identifier
-          ? verification
-          : null,
+      tokenLive && id === verification.identifier ? verification : null,
     );
   const consume = vi
     .spyOn(context.internalAdapter, "consumeVerificationValue")
@@ -260,14 +272,6 @@ async function resetFixture(emailVerified = true) {
     consume,
     deleteSessions,
     updatePassword,
-    otherLinkLive: () => otherLinkLive,
-    finishOtherLinks: () => {
-      resetLinks.deleteMany.mockImplementation(async ({ where }) => {
-        if (where.value === "user" && where.identifier.startsWith === "reset-password:")
-          otherLinkLive = false;
-        return { count: 1 };
-      });
-    },
     state: () => ({ tokenLive, password, sessionLive }),
   };
 }
@@ -354,10 +358,9 @@ describe("password reset", () => {
     expect(revokeCredentialsAfterPasswordReset).toHaveBeenCalledTimes(2);
   });
 
-  it("kills another reset link before reporting post-sweep failure, and verifies nothing itself", async () => {
+  it("propagates post-sweep failure without post-commit verification or unlocked link deletion", async () => {
     const f = await resetFixture(false);
     const context = await auth.$context;
-    f.finishOtherLinks();
     // The pinned endpoint calls the hook after its password transaction commits.
     const resetContextUser = { ...(await fixture()).data.user, emailVerified: false };
     const updateUser = vi
@@ -372,11 +375,9 @@ describe("password reset", () => {
     // A proved link verifies inside the spending transaction (admitResetSpend);
     // this callback never asserts the address.
     expect(updateUser).not.toHaveBeenCalled();
-    expect(prisma.verification.deleteMany).toHaveBeenCalledExactlyOnceWith({
-      where: { value: "user", identifier: { startsWith: "reset-password:" } },
-    });
-    expect(f.otherLinkLive()).toBe(false);
-    expect((await f.post("other-token")).status).toBe(400);
+    // Sibling retirement belongs to consumeOne's transaction, covered by
+    // bootstrap/password-reset-links tests and real Postgres races.
+    expect(prisma.verification.deleteMany).not.toHaveBeenCalled();
   });
 
   it("revokes every session and checks cached snapshots against live authority", () => {
@@ -754,7 +755,7 @@ describe("Better Auth write session authority", () => {
         (entry) => withCache || entry?.startsWith(`${context.authCookies.sessionToken.name}=`),
       )
       .join("; ");
-    const post = (path = "/update-user", expected?: string) =>
+    const post = (path = "/update-user", expected?: string, revokeOtherSessions = false) =>
       writeAuth.handler(
         new Request(`https://api.example.test/api/auth${path}`, {
           method: "POST",
@@ -770,13 +771,18 @@ describe("Better Auth write session authority", () => {
             token: "invalid",
             newPassword: "long-enough-password",
             currentPassword: "current-password",
+            revokeOtherSessions,
           }),
         }),
       );
-    const changePassword = () =>
+    const changePassword = (revokeOtherSessions = false) =>
       writeAuth.api.changePassword({
         headers: new Headers({ cookie, origin: "https://web.example.test" }),
-        body: { currentPassword: "current-password", newPassword: "long-enough-password" },
+        body: {
+          currentPassword: "current-password",
+          newPassword: "long-enough-password",
+          revokeOtherSessions,
+        },
       });
     return { context, data, findSession, updateUser, post, changePassword };
   }
@@ -815,10 +821,52 @@ describe("Better Auth write session authority", () => {
     expect(f.updateUser).not.toHaveBeenCalled();
   });
 
-  it.each(["success", "sweep failure", "wrong password"])(
-    "change-password sweeps only after commit and logs/rethrows failure: %s",
+  it.each(["success", "wrong password"])(
+    "change-password without other-session revocation leaves credentials alone: %s",
     async (kind) => {
       const f = await writeFixture();
+      let committed = false;
+      f.context.adapter.transaction = async (run) => {
+        const result = await run(f.context.adapter);
+        committed = true;
+        return result;
+      };
+      const account = {
+        id: "account",
+        userId: "user",
+        providerId: "credential",
+        accountId: "user",
+        password: "old-hash",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      vi.spyOn(f.context.internalAdapter, "findCredentialAccount").mockResolvedValue(account);
+      vi.spyOn(f.context.password, "hash").mockResolvedValue("new-hash");
+      vi.spyOn(f.context.password, "verify").mockResolvedValue(kind !== "wrong password");
+      const updateAccount = vi
+        .spyOn(f.context.internalAdapter, "updateAccount")
+        .mockResolvedValue({ ...account, password: "new-hash" });
+      expect((await f.post("/change-password")).status).toBe(kind === "success" ? 200 : 400);
+      if (kind === "wrong password") {
+        expect(committed).toBe(false);
+        expect(updateAccount).not.toHaveBeenCalled();
+      } else {
+        expect(committed).toBe(true);
+        expect(updateAccount).toHaveBeenCalledExactlyOnceWith("account", { password: "new-hash" });
+      }
+      expect(revokeCredentialsAfterPasswordChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["success", "sweep failure", "wrong password"])(
+    "change-password with explicit revocation sweeps only after commit and logs/rethrows failure: %s",
+    async (kind) => {
+      const f = await writeFixture();
+      vi.spyOn(f.context.internalAdapter, "deleteUserSessions").mockResolvedValue(undefined);
+      vi.spyOn(f.context.internalAdapter, "createSession").mockResolvedValue({
+        ...f.data.session,
+        token: "rotated-token",
+      });
       let committed = false;
       f.context.adapter.transaction = async (run) => {
         const result = await run(f.context.adapter);
@@ -848,7 +896,7 @@ describe("Better Auth write session authority", () => {
       const log = captureLog();
       try {
         if (kind === "sweep failure") {
-          await expect(f.changePassword()).rejects.toBe(failure);
+          await expect(f.changePassword(true)).rejects.toBe(failure);
           expect(log.records).toContainEqual(
             expect.objectContaining({
               level: "error",
@@ -859,7 +907,9 @@ describe("Better Auth write session authority", () => {
           );
           expect(JSON.stringify(log.records)).not.toContain(failure.message);
         } else {
-          expect((await f.post("/change-password")).status).toBe(kind === "success" ? 200 : 400);
+          expect((await f.post("/change-password", undefined, true)).status).toBe(
+            kind === "success" ? 200 : 400,
+          );
         }
         if (kind === "wrong password") {
           expect(committed).toBe(false);
@@ -869,7 +919,10 @@ describe("Better Auth write session authority", () => {
           expect(updateAccount).toHaveBeenCalledExactlyOnceWith("account", {
             password: "new-hash",
           });
-          expect(revokeCredentialsAfterPasswordChange).toHaveBeenCalledExactlyOnceWith("user");
+          expect(revokeCredentialsAfterPasswordChange).toHaveBeenCalledExactlyOnceWith({
+            userId: "user",
+            keepSessionToken: "rotated-token",
+          });
         }
       } finally {
         log.restore();
@@ -1047,5 +1100,276 @@ describe("reset links and activation wiring", () => {
         { path: "/admin/create-user", headers: new Headers() },
       ),
     ).rejects.toMatchObject({ body: { code: "ADMIN_CREATE_USER_UNSUPPORTED" } });
+  });
+});
+
+// Base adapter fallback contract. The KB bootstrap wrapper supplies explicit
+// transactions; these two real-handler tests pin failure direction if absent.
+describe("password reset without adapter transactions", { timeout: 20_000 }, () => {
+  it.each([400, 500])(
+    "fails closed when the password write fails after the token was spent (%i)",
+    async (status) => {
+      const { APIError } = await import("better-auth/api");
+      const { betterAuth: realBetterAuth } =
+        await vi.importActual<typeof import("better-auth")>("better-auth");
+      const { memoryAdapter } = await import("better-auth/adapters/memory");
+      const now = new Date();
+      const db: Record<string, Record<string, unknown>[]> = {
+        user: [
+          {
+            id: "u1",
+            email: "reset@example.test",
+            name: "Reset",
+            emailVerified: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        account: [],
+        session: [
+          {
+            id: "s1",
+            userId: "u1",
+            token: "session-token",
+            expiresAt: new Date(now.getTime() + 3_600_000),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        verification: [
+          {
+            id: "v1",
+            identifier: "reset-password:the-token",
+            value: "u1",
+            expiresAt: new Date(now.getTime() + 3_600_000),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      };
+      const memory = memoryAdapter(db);
+      // Like chess's Prisma adapter: `transaction` just runs the work, so every
+      // write commits as it happens. The account (password) write fails.
+      const nonTransactional = ((adapterOptions: Parameters<typeof memory>[0]) => {
+        const inner = memory(adapterOptions);
+        const adapter: typeof inner = new Proxy(inner, {
+          get(target, key, receiver) {
+            if (key === "transaction")
+              return (work: (trx: typeof inner) => unknown) => work(adapter);
+            const value = Reflect.get(target, key, receiver);
+            if ((key === "update" || key === "updateMany") && typeof value === "function") {
+              return (args: { model: string }) => {
+                if (args.model === "account") {
+                  if (status === 400)
+                    throw new APIError("BAD_REQUEST", { message: "password write failed" });
+                  throw new Error("password write failed");
+                }
+                return Reflect.apply(value, target, [args]);
+              };
+            }
+            return value;
+          },
+        });
+        return adapter;
+      }) as typeof memory;
+      vi.mocked(revokeCredentialsAfterPasswordReset).mockClear();
+      const instance = realBetterAuth({
+        baseURL: "https://app.example.test",
+        secret: "disposable-unit-test-secret-with-no-external-use",
+        database: nonTransactional,
+        rateLimit: { enabled: false },
+        user: auth.options.user,
+        emailAndPassword: { ...auth.options.emailAndPassword, enabled: true },
+        logger: { disabled: true },
+      } as Parameters<typeof realBetterAuth>[0]);
+      const ctx = await instance.$context;
+      const oldHash = await ctx.password.hash("old-password-12345");
+      db.account?.push({
+        id: "a1",
+        userId: "u1",
+        accountId: "u1",
+        providerId: "credential",
+        password: oldHash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await instance.handler(
+        new Request("https://app.example.test/api/auth/reset-password", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "https://app.example.test" },
+          body: JSON.stringify({ token: "the-token", newPassword: "new-password-12345" }),
+        }),
+      );
+
+      expect(res.status).toBe(status);
+      expect(db.verification).toHaveLength(0); // the link is spent
+      expect(db.session).toHaveLength(0); // existing sessions were deleted
+      expect(db.account?.[0]?.password).toBe(oldHash); // the old password stays
+      expect(revokeCredentialsAfterPasswordReset).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("password change revocation target", () => {
+  it.each(["success", "sweep failure"])(
+    "rotated change sweeps after commit and propagates %s",
+    async (kind) => {
+      const base = await auth.$context;
+      const failure = new Error("sweep failure");
+      vi.mocked(revokeCredentialsAfterPasswordChange).mockImplementation(async () => {
+        if (kind === "sweep failure") throw failure;
+      });
+      const call = () =>
+        Reflect.apply(auth.options.hooks.after, undefined, [
+          {
+            path: "/change-password",
+            body: { revokeOtherSessions: true },
+            context: { ...base, returned: { token: "rotated-token", user: { id: "user" } } },
+          },
+        ]);
+      if (kind === "sweep failure") await expect(call()).rejects.toBe(failure);
+      else await call();
+      expect(revokeCredentialsAfterPasswordChange).toHaveBeenCalledExactlyOnceWith({
+        userId: "user",
+        keepSessionToken: "rotated-token",
+      });
+    },
+  );
+});
+
+describe("production password account/session hooks", () => {
+  it.each(["create", "update"] as const)(
+    "account %s.after awaits quarantine after the password-write lock lapses",
+    async (kind) => {
+      const hooks = auth.options.databaseHooks!.account![kind]!;
+      const { withPasswordWriteLock } = await import("./password-write-lock");
+      let releaseQuarantine!: () => void;
+      const quarantineGate = new Promise<void>((resolve) => {
+        releaseQuarantine = resolve;
+      });
+      let started!: () => void;
+      const quarantineStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      vi.mocked(quarantineUntrustedPasswordWrite).mockImplementationOnce(async () => {
+        started();
+        await quarantineGate;
+      });
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      try {
+        const account = {
+          id: "account",
+          userId: "user",
+          accountId: "user",
+          providerId: "credential",
+          password: "hash",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        let settled = false;
+        const write = withPasswordWriteLock(
+          "/admin/set-user-password",
+          new Request("https://api.example.test/api/auth/admin/set-user-password", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ userId: "user" }),
+          }),
+          async () => {
+            await Reflect.apply(hooks.before!, undefined, [account, null]);
+            await vi.advanceTimersByTimeAsync(25_000);
+            await Reflect.apply(hooks.after!, undefined, [account, null]);
+            return new Response("written");
+          },
+          { getSession: async () => null },
+        ).then(
+          () => {
+            settled = true;
+            return { completed: true };
+          },
+          (error: unknown) => {
+            settled = true;
+            return error;
+          },
+        );
+        expect(
+          await Promise.race([quarantineStarted.then(() => true), write.then(() => false)]),
+        ).toBe(true);
+        expect(quarantineUntrustedPasswordWrite).toHaveBeenCalledExactlyOnceWith("user", {
+          hash: passwordPepper.hash,
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(settled).toBe(false);
+        releaseQuarantine();
+        await expect(write).resolves.toMatchObject({
+          status: "CONFLICT",
+          body: { code: "PASSWORD_WRITE_UNCONFIRMED" },
+        });
+      } finally {
+        releaseQuarantine();
+        errorLog.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("session.after removes a rotation whose parent was revoked after its before-check", async () => {
+    const hooks = auth.options.databaseHooks!.session!.create!;
+    const context = {
+      path: "/two-factor/disable",
+      context: { session: { session: { id: "parent" } } },
+    };
+    const session = {
+      id: "replacement",
+      userId: "user",
+      token: "replacement-token",
+      expiresAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    sessionRows.findFirst.mockResolvedValueOnce({ id: "parent" }).mockResolvedValueOnce(null);
+    await Reflect.apply(hooks.before!, undefined, [session, context]);
+    await expect(Reflect.apply(hooks.after!, undefined, [session, context])).rejects.toThrow(
+      /Session refused/,
+    );
+    expect(sessionRows.deleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "replacement" },
+    });
+  });
+
+  it("refuses password-bearing creates, updates and parentless sessions outside their proof", async () => {
+    const hooks = auth.options.databaseHooks!;
+    const account = {
+      id: "account",
+      userId: "user",
+      accountId: "user",
+      providerId: "credential",
+      password: "hash",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await expect(hooks.account!.create!.before!(account, null)).rejects.toThrow(
+      /password-write lock/,
+    );
+    await expect(hooks.account!.update!.before!({ password: "hash" })).rejects.toThrow(
+      /password-write lock/,
+    );
+    await expect(
+      hooks.session!.create!.before!(
+        {
+          id: "session",
+          userId: "user",
+          token: "token",
+          expiresAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        null,
+      ),
+    ).rejects.toThrow(/Session refused/);
+    await expect(
+      hooks.account!.create!.before!({ ...account, password: null }, null),
+    ).resolves.toBeUndefined();
   });
 });

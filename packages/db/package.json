@@ -24,6 +24,9 @@
     },
     "./data-deletion-notices": {
       "default": "./src/data-deletion-notices.ts"
+    },
+    "./lock-slots": {
+      "default": "./src/lock-slots.ts"
     }
   },
   "scripts": {

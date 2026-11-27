@@ -72,6 +72,9 @@
     },
     "./sealed-recipient": {
       "default": "./src/sealed-recipient.ts"
+    },
+    "./password-auth-handler": {
+      "default": "./src/password-auth-handler.ts"
     }
   },
   "scripts": {

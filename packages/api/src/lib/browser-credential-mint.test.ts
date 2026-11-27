@@ -1,3 +1,5 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { revokeCredentialsAfterPasswordReset } from "../../../auth/src/credential-revocation";
 import { mintBrowserApiKey } from "./api-keys";

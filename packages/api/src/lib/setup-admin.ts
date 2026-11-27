@@ -12,6 +12,7 @@ import {
 import { DEFAULT_LOCALE } from "@knowledge-base/config/locales";
 import prisma, { type Prisma } from "@knowledge-base/db";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { env } from "@knowledge-base/env/server";
 
 /**
@@ -145,16 +146,18 @@ export async function issueSetupLink(
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
   // 32 random bytes, URL-safe: the token rides in a URL.
   const token = randomBytes(32).toString("base64url");
-  const outcome = await prisma.$transaction(async (tx) => {
-    const decided = await lockAndDecide(tx, email);
-    if (decided.kind !== "open") return decided;
-    await deleteSetupLinks(tx);
-    await tx.verification.create({
-      data: { identifier: setupTokenIdentifier(token), value: decided.email, expiresAt },
-      select: { id: true },
-    });
-    return decided;
-  });
+  const outcome = await withLockSlot(() =>
+    prisma.$transaction(async (tx) => {
+      const decided = await lockAndDecide(tx, email);
+      if (decided.kind !== "open") return decided;
+      await deleteSetupLinks(tx);
+      await tx.verification.create({
+        data: { identifier: setupTokenIdentifier(token), value: decided.email, expiresAt },
+        select: { id: true },
+      });
+      return decided;
+    }),
+  );
   if (outcome.kind !== "open") return outcome;
   return { kind: "ready", url: setupLinkUrl(token), expiresAt, email: outcome.email };
 }
@@ -196,51 +199,53 @@ export async function claimSetupLink({
   const passwordHash = await authContext.password.hash(newPassword);
 
   try {
-    return await prisma.$transaction(async (tx): Promise<ClaimSetupLinkResult> => {
-      // Same order as every identity write: authority lock, then the singleton.
-      await lockIdentityAuthority(tx);
-      // The link is read only once the singleton is locked: an issue that
-      // replaced it holds that lock until it commits, so a replaced link is
-      // never seen as live here.
-      const state = await lockBootstrapState(tx);
-      const link = await tx.verification.findFirst({
-        where: { identifier, expiresAt: { gt: clock() } },
-        select: { value: true },
-      });
-      if (!link) return { kind: "invalid_token" };
-      const decided = await decideLocked(tx, state, link.value);
-      if (decided.kind !== "open") return { kind: "invalid_token" };
-      const user = await tx.user.create({
-        data: {
-          email: decided.email,
-          name: bootstrapAdminName(decided.email),
-          emailVerified: true,
-          role: FIRST_USER_ROLE,
-        },
-        select: { id: true },
-      });
-      // Forced 2FA covers admins: the grace starts at createdAt, as for any
-      // user the policy covers at creation (packages/auth/src/ban.ts).
-      await recordTwoFactorGraceStartAtCreation(
-        (sql, params) => tx.$executeRawUnsafe(sql, ...params),
-        user.id,
-      );
-      await tx.account.create({
-        data: {
-          userId: user.id,
-          providerId: CREDENTIAL_PROVIDER_ID,
-          accountId: user.id,
-          password: passwordHash,
-        },
-        select: { id: true },
-      });
-      await tx.bootstrapState.update({
-        where: { id: BOOTSTRAP_STATE_ID },
-        data: { completedAt: clock(), userId: user.id },
-      });
-      await deleteSetupLinks(tx);
-      return { kind: "claimed", userId: user.id };
-    });
+    return await withLockSlot(() =>
+      prisma.$transaction(async (tx): Promise<ClaimSetupLinkResult> => {
+        // Same order as every identity write: authority lock, then the singleton.
+        await lockIdentityAuthority(tx);
+        // The link is read only once the singleton is locked: an issue that
+        // replaced it holds that lock until it commits, so a replaced link is
+        // never seen as live here.
+        const state = await lockBootstrapState(tx);
+        const link = await tx.verification.findFirst({
+          where: { identifier, expiresAt: { gt: clock() } },
+          select: { value: true },
+        });
+        if (!link) return { kind: "invalid_token" };
+        const decided = await decideLocked(tx, state, link.value);
+        if (decided.kind !== "open") return { kind: "invalid_token" };
+        const user = await tx.user.create({
+          data: {
+            email: decided.email,
+            name: bootstrapAdminName(decided.email),
+            emailVerified: true,
+            role: FIRST_USER_ROLE,
+          },
+          select: { id: true },
+        });
+        // Forced 2FA covers admins: the grace starts at createdAt, as for any
+        // user the policy covers at creation (packages/auth/src/ban.ts).
+        await recordTwoFactorGraceStartAtCreation(
+          (sql, params) => tx.$executeRawUnsafe(sql, ...params),
+          user.id,
+        );
+        await tx.account.create({
+          data: {
+            userId: user.id,
+            providerId: CREDENTIAL_PROVIDER_ID,
+            accountId: user.id,
+            password: passwordHash,
+          },
+          select: { id: true },
+        });
+        await tx.bootstrapState.update({
+          where: { id: BOOTSTRAP_STATE_ID },
+          data: { completedAt: clock(), userId: user.id },
+        });
+        await deleteSetupLinks(tx);
+        return { kind: "claimed", userId: user.id };
+      }),
+    );
   } catch (err) {
     // Defense in depth: a user insert that bypassed the bootstrap lock took
     // the address after the checks above. Roll back, never promote.

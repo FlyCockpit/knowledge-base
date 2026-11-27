@@ -1,3 +1,4 @@
+import { configureLockSlots, tryAcquireSlots, withLockSlot } from "@knowledge-base/db/lock-slots";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OWNED_ACTIVE_KB_BLOCK_MESSAGE } from "./account-deletion-policy";
 import {
@@ -17,8 +18,11 @@ import {
   runBootstrappedUserCreate,
 } from "./bootstrap";
 import { canonicalizeEmail } from "./email";
+import { proofIdentifier, proofRow } from "./reset-link-rules";
 import { runWithAdminMutationActor } from "./session-authority";
 import { runWithAllowedUserCreation, SIGNUP_DISABLED_MESSAGE } from "./user-creation-policy";
+
+configureLockSlots(3);
 
 const envState = vi.hoisted(() => ({
   NODE_ENV: "test",
@@ -36,15 +40,21 @@ vi.mock("@knowledge-base/env/server", () => ({
   },
 }));
 
+const adapterConfigs = vi.hoisted(() => [] as unknown[]);
 vi.mock("better-auth/adapters/prisma", () => ({
-  prismaAdapter:
-    (client: {
+  prismaAdapter: (
+    client: {
       insertUser: (data: Record<string, unknown>) => Promise<unknown>;
+      findRow?: (args: { model: string; where: unknown }) => Promise<unknown>;
+      consumeRow?: (args: { model: string; where: unknown }) => Promise<unknown>;
       deleteUser?: (args: { model: string; where: unknown }) => Promise<unknown>;
       deleteManyRows?: (args: { model: string; where: unknown }) => Promise<unknown>;
       updateRow?: (args: { model: string; where: unknown; update: unknown }) => Promise<unknown>;
-    }) =>
-    () => {
+    },
+    config: unknown,
+  ) => {
+    adapterConfigs.push(config);
+    return () => {
       const adapter = {
         create: async ({ model, data }: { model: string; data: Record<string, unknown> }) => {
           if (model !== "user" && model !== "User") return { id: "other", ...data };
@@ -54,12 +64,16 @@ vi.mock("better-auth/adapters/prisma", () => ({
           client.deleteUser?.(args) ?? { id: "deleted" },
         deleteMany: async (args: { model: string; where: unknown }) =>
           client.deleteManyRows?.(args) ?? { count: 0 },
+        findOne: async (args: { model: string; where: unknown }) => client.findRow?.(args) ?? null,
+        consumeOne: async (args: { model: string; where: unknown }) =>
+          client.consumeRow?.(args) ?? null,
         update: async (args: { model: string; where: unknown; update: unknown }) =>
           client.updateRow?.(args) ?? {},
         transaction: async (callback: (trx: unknown) => Promise<unknown>) => callback(adapter),
       };
       return adapter;
-    },
+    };
+  },
 }));
 
 const MATCH = "owner@example.com";
@@ -1147,5 +1161,174 @@ describe("lockBootstrapState", () => {
     expect(calls[1]?.startsWith("lock:")).toBe(true);
     expect(calls[1]).toContain("FOR UPDATE");
     expect(calls[2]).toBe("read");
+  });
+});
+
+it("keeps the base Prisma adapter transaction option off beneath the explicit bootstrap wrapper", () => {
+  createBootstrapDatabaseAdapter({} as never)({});
+  expect(adapterConfigs.at(-1)).toEqual({ provider: "postgresql" });
+});
+
+describe("reset consume transaction and password-write slot integration", () => {
+  function resetPrisma({ proved = true, active = false } = {}) {
+    const steps: string[] = [];
+    const token = "spend-token";
+    const identifier = `reset-password:${token}`;
+    let state = { link: true, sibling: true, proof: proved, verified: active, password: "old" };
+    const tx = {
+      bootstrapState: { findUnique: async () => ({ completedAt: new Date() }) },
+      $queryRaw: async () => [],
+      $executeRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
+        if (sql.join("").includes("pg_advisory_xact_lock")) {
+          steps.push(values[0] === "set-password-link:u1" ? "setup" : "authority");
+        }
+        return 0;
+      },
+      user: {
+        findUnique: async () => ({ emailVerified: state.verified, accounts: [], sessions: [] }),
+        updateMany: async () => {
+          steps.push("verify");
+          state.verified = true;
+          return { count: 1 };
+        },
+      },
+      verification: {
+        findFirst: async ({ where }: { where: { identifier: string } }) => {
+          if (where.identifier === identifier && state.link) return { id: "v1", value: "u1" };
+          if (where.identifier === proofIdentifier(token) && state.proof)
+            return proofRow(
+              token,
+              "u1",
+              "ada@example.com",
+              "mailbox",
+              new Date(Date.now() + 60_000),
+            );
+          return null;
+        },
+        deleteMany: async ({ where }: { where: { identifier: string | { not: string } } }) => {
+          if (typeof where.identifier === "string") {
+            state.proof = false;
+            steps.push("spend-proof");
+          } else {
+            state.sibling = false;
+            steps.push("retire-sibling");
+          }
+          return { count: 1 };
+        },
+      },
+      findRow: async () => (state.link ? { identifier } : null),
+      consumeRow: async () => {
+        steps.push("consume");
+        state.link = false;
+        return { id: "v1" };
+      },
+      updateRow: async () => {
+        steps.push("password");
+        state.password = "new";
+        return { id: "a1" };
+      },
+    };
+    const transaction = vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => {
+      const before = { ...state };
+      steps.push("begin");
+      try {
+        const result = await run(tx);
+        steps.push("commit");
+        return result;
+      } catch (error) {
+        state = before;
+        steps.push("rollback");
+        throw error;
+      }
+    });
+    const adapter = createBootstrapDatabaseAdapter({ ...tx, $transaction: transaction } as never)(
+      {},
+    );
+    return { adapter, transaction, steps, state: () => state };
+  }
+
+  it("reuses the transaction and reserved slot for consume, proof, sibling retirement and password", async () => {
+    const f = resetPrisma();
+    await withLockSlot(
+      async () => {
+        await f.adapter.transaction(async (tx) => {
+          // Nested adapter.transaction must reuse the current adapter/client.
+          await tx.transaction(async (same) => {
+            expect(same).toBe(tx);
+            expect(tryAcquireSlots()).toBe(false);
+            await same.consumeOne({ model: "verification", where: [{ field: "id", value: "v1" }] });
+            await same.update({ model: "account", where: [], update: { password: "new" } });
+          });
+        });
+      },
+      { nested: 1 },
+    );
+    expect(f.transaction).toHaveBeenCalledTimes(2); // adoption, then one spending transaction
+    expect(f.steps).toEqual([
+      "begin",
+      "commit",
+      "begin",
+      "setup",
+      "authority",
+      "retire-sibling",
+      "spend-proof",
+      "verify",
+      "consume",
+      "password",
+      "commit",
+    ]);
+    expect(f.state()).toEqual({
+      link: false,
+      sibling: false,
+      proof: false,
+      verified: true,
+      password: "new",
+    });
+  });
+
+  it("password failure rolls back consumption, proof, verification and sibling retirement together", async () => {
+    const f = resetPrisma();
+    await expect(
+      f.adapter.transaction(async (tx) => {
+        await tx.consumeOne({ model: "verification", where: [] });
+        await tx.update({ model: "account", where: [], update: { password: "new" } });
+        throw new Error("password transaction failed");
+      }),
+    ).rejects.toThrow("password transaction failed");
+    expect(f.state()).toEqual({
+      link: true,
+      sibling: true,
+      proof: true,
+      verified: false,
+      password: "old",
+    });
+    expect(f.steps.at(-1)).toBe("rollback");
+  });
+
+  it("an active account's unproved link is refused under setup then authority before consumption", async () => {
+    const f = resetPrisma({ proved: false, active: true });
+    await expect(
+      f.adapter.transaction((tx) => tx.consumeOne({ model: "verification", where: [] })),
+    ).rejects.toMatchObject({ body: { code: "INVALID_TOKEN" } });
+    expect(f.steps).toEqual(["begin", "commit", "begin", "setup", "authority", "rollback"]);
+    expect(f.state().link).toBe(true);
+  });
+
+  it("an outer consumeOne also runs admission in one centrally admitted transaction", async () => {
+    const f = resetPrisma();
+    await withLockSlot(() => f.adapter.consumeOne({ model: "verification", where: [] }), {
+      nested: 1,
+    });
+    expect(f.transaction).toHaveBeenCalledOnce();
+    expect(f.steps).toEqual([
+      "begin",
+      "setup",
+      "authority",
+      "retire-sibling",
+      "spend-proof",
+      "verify",
+      "consume",
+      "commit",
+    ]);
   });
 });

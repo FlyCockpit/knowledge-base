@@ -27,6 +27,7 @@ import {
   rejectImpersonatedSession,
 } from "./bootstrap.js";
 import {
+  passwordChangeRevocationTarget,
   revokeCredentialsAfterPasswordChange,
   revokeCredentialsAfterPasswordReset,
 } from "./credential-revocation.js";
@@ -40,6 +41,16 @@ import {
   recordResetLinkProof,
   resetTokenOf,
 } from "./password-reset-links.js";
+import {
+  fencePasswordSessionAfter,
+  fencePasswordSessionBefore,
+  recordTwoFactorChallenge,
+} from "./password-sign-in-fence.js";
+import {
+  confirmPasswordWriteLocked,
+  guardPasswordAccountCreate,
+  guardPasswordAccountUpdate,
+} from "./password-write-lock.js";
 import { RESET_PASSWORD_PATH } from "./reset-link-rules.js";
 import { knowledgeBaseAdminPermissions } from "./roles";
 import { createSessionCacheVersion } from "./session-authority";
@@ -141,6 +152,13 @@ function logRevocationFailure(
 }
 
 export const auth = betterAuth({
+  // The base Prisma adapter keeps Better Auth's default transaction:false.
+  // This app's bootstrap/identity wrapper deliberately supplies explicit
+  // transactions for singleton selection and identity writes (bootstrap.ts).
+  // Sign-up's locale lookup and SMTP delivery are queued after commit and
+  // detached (verification-mail.ts). Mail has 10 s setup + 10 s send per
+  // attempt (three attempts); awaiting it plus DB work inside Prisma's default
+  // 5 s transaction risks expiry and cannot see the new locale row.
   database: createBootstrapDatabaseAdapter(prisma),
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
@@ -263,10 +281,16 @@ export const auth = betterAuth({
         // Better Auth verifies the old password before its transaction. This
         // sweep runs only after the new password commits, so a failure cannot
         // roll it back: log SECURITY and propagate the failure to the caller.
-        if (isAPIError(ctx.context.returned) || !ctx.context.session) return;
-        const userId = ctx.context.session.user.id;
+        if (isAPIError(ctx.context.returned)) return;
+        const target = passwordChangeRevocationTarget({
+          path: ctx.path,
+          body: ctx.body,
+          returned: ctx.context.returned,
+        });
+        if (!target) return;
+        const { userId } = target;
         try {
-          await revokeCredentialsAfterPasswordChange(userId);
+          await revokeCredentialsAfterPasswordChange(target);
         } catch (error) {
           logRevocationFailure(userId, error, "SECURITY.password_change");
           throw error;
@@ -393,19 +417,12 @@ export const auth = betterAuth({
     onPasswordReset: async ({ user }) => {
       // Sweep again after the password transaction as defense in depth.
       // The pre-sweep already prevents old browser sessions minting in the gap.
-      let revocationFailure: { error: unknown } | undefined;
       try {
         await revokeCredentialsAfterPasswordReset(user.id);
       } catch (error) {
         logRevocationFailure(user.id, error, "SECURITY.password_reset");
-        revocationFailure = { error };
+        throw error;
       }
-      // Core consumes only the redeemed token. Retire every other reset/invite
-      // link for this user, including when the post-sweep failed after commit.
-      await prisma.verification.deleteMany({
-        where: { value: user.id, identifier: { startsWith: "reset-password:" } },
-      });
-      if (revocationFailure) throw revocationFailure.error;
     },
     sendResetPassword: async ({ user, url, token }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
@@ -570,11 +587,29 @@ export const auth = betterAuth({
     neutralSignUpResponse({ isBootstrapComplete: () => isBootstrapComplete(prisma) }),
   ],
   databaseHooks: {
+    session: {
+      create: {
+        before: async (session, context) => fencePasswordSessionBefore(session, context),
+        after: async (session, context) => fencePasswordSessionAfter(session, context),
+      },
+    },
     account: {
       create: {
-        // Linking an IdP identity activates an invited account: its leftover
-        // set-password links die (account-activation.ts).
-        after: async (account) => afterAccountCreate(account),
+        before: async (account, context) => guardPasswordAccountCreate(account, context),
+        after: async (account) => {
+          await confirmPasswordWriteLocked({ hash: passwordPepper.hash });
+          // IdP activation cleanup runs after the write committed, with no authority lock held.
+          await afterAccountCreate(account);
+        },
+      },
+      update: {
+        before: async (data) => guardPasswordAccountUpdate(data),
+        after: async () => confirmPasswordWriteLocked({ hash: passwordPepper.hash }),
+      },
+    },
+    verification: {
+      create: {
+        after: async (verification, context) => recordTwoFactorChallenge(verification, context),
       },
     },
     user: {

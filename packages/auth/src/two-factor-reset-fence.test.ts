@@ -1,3 +1,4 @@
+import { configureLockSlots } from "@knowledge-base/db/lock-slots";
 import { renderTwoFactorOtp } from "@knowledge-base/mailer";
 import { betterAuth } from "better-auth";
 import type { twoFactor } from "better-auth/plugins";
@@ -5,6 +6,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { createBootstrapDatabaseAdapter } from "./bootstrap";
 import { revokeCredentialsAfterPasswordReset } from "./credential-revocation";
 import { auth } from "./index";
+import { proofRow } from "./reset-link-rules";
+
+configureLockSlots(10);
 
 const { Secret } = await vi.hoisted(() => import("@knowledge-base/env/secret"));
 const db = vi.hoisted(() => ({
@@ -68,7 +72,42 @@ async function fixture() {
   const client = {
     rows,
     bootstrapState: { findUnique: async () => ({ completedAt: now }) },
-    user: { findUnique: async () => ({ locale: "en-US" }) },
+    user: {
+      findUnique: async () => ({ ...rows.user![0], locale: "en-US" }),
+      updateMany: async () => ({ count: 0 }),
+    },
+    verification: {
+      findFirst: async ({
+        where,
+      }: {
+        where: { identifier: string; value?: string; expiresAt?: { gt: Date } };
+      }) =>
+        rows.verification!.find(
+          (row) =>
+            row.identifier === where.identifier &&
+            (where.value === undefined || row.value === where.value) &&
+            (!where.expiresAt || (row.expiresAt as Date) > where.expiresAt.gt),
+        ) ?? null,
+      deleteMany: async ({
+        where,
+      }: {
+        where: { identifier: string | { startsWith: string; not: string }; value?: string };
+      }) => {
+        const before = rows.verification!;
+        const identifier = where.identifier;
+        rows.verification = before.filter(
+          (row) =>
+            !(
+              (where.value === undefined || row.value === where.value) &&
+              (typeof identifier === "string"
+                ? row.identifier === identifier
+                : String(row.identifier).startsWith(identifier.startsWith) &&
+                  row.identifier !== identifier.not)
+            ),
+        );
+        return { count: before.length - rows.verification.length };
+      },
+    },
   };
   Object.assign(db, client);
   db.$transaction.mockImplementation(async (run: (tx: unknown) => Promise<unknown>) => {
@@ -105,9 +144,12 @@ async function fixture() {
       },
       deviceCode: { deleteMany: async () => ({ count: 0 }) },
       session: {
-        deleteMany: async () => {
-          rows.session = [];
-          return { count: 1 };
+        deleteMany: async ({ where }: { where: { userId: string; token?: { not: string } } }) => {
+          const before = rows.session!;
+          rows.session = before.filter(
+            (row) => row.userId !== where.userId || (where.token && row.token === where.token.not),
+          );
+          return { count: before.length - rows.session.length };
         },
       },
     };
@@ -349,3 +391,70 @@ it("change-password keeps its rotated caller session, revokes others and uses th
   expect(f.rows.account![0]!.password).toBe("new-hash");
   expect(f.rows.verification).toEqual(pendingTwoFactor);
 });
+
+it.each([400, 500])(
+  "KB's explicit adapter transaction rolls back reset token/password on write failure (%s), keeping the independent pre-sweep",
+  async (status) => {
+    const { APIError } = await import("better-auth/api");
+    const f = await fixture();
+    const now = new Date();
+    f.rows.account!.push({
+      id: "credential",
+      userId: "user",
+      accountId: "user",
+      providerId: "credential",
+      password: "old-hash",
+      createdAt: now,
+      updatedAt: now,
+    });
+    f.rows.session!.push({
+      id: "existing",
+      userId: "user",
+      token: "old-session",
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    f.rows.verification!.push({
+      id: "reset-link",
+      identifier: "reset-password:failure-token",
+      value: "user",
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Active account recovery carries mailbox proof, like production mail.
+    f.rows.verification!.push({
+      id: "reset-proof",
+      ...proofRow(
+        "failure-token",
+        "user",
+        "user@example.test",
+        "mailbox",
+        new Date(Date.now() + 60_000),
+      ),
+    });
+    vi.spyOn(f.context.password, "hash").mockResolvedValue("new-hash");
+    vi.spyOn(f.context.internalAdapter, "updatePassword").mockRejectedValueOnce(
+      status === 400
+        ? new APIError("BAD_REQUEST", { message: "password write failed" })
+        : new Error("password write failed"),
+    );
+    const response = await f.instance.handler(
+      new Request("https://kb.example.test/api/auth/reset-password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "failure-token", newPassword: "long-enough-password" }),
+      }),
+    );
+    expect(response.status).toBe(status);
+    expect(f.rows.account![0]!.password).toBe("old-hash");
+    expect(
+      f.rows.verification!.some((row) => row.identifier === "reset-password:failure-token"),
+    ).toBe(true);
+    expect(f.rows.session).toEqual([]);
+    expect(f.rows.verification!.some((row) => String(row.identifier).startsWith("2fa-"))).toBe(
+      false,
+    );
+  },
+);

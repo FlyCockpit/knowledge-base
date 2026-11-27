@@ -54,6 +54,7 @@ const holder = database.createPrismaClient("runtime");
 db.client = prisma;
 
 const { auth } = await import("./index");
+const { handlePasswordAuthRequest } = await import("./password-auth-handler");
 const links = await import("./password-reset-links");
 const rules = await import("./reset-link-rules");
 
@@ -92,7 +93,8 @@ async function withPassword(userId: string, password = OLD_PASSWORD) {
 }
 
 async function spend(token: string, newPassword = "new-password-123456") {
-  const res = await auth.handler(
+  const res = await handlePasswordAuthRequest(
+    auth,
     new Request(`${ORIGIN}/api/auth/reset-password`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: ORIGIN },
@@ -181,6 +183,120 @@ describe("reset and invite links against real Postgres and the real handler", ()
     const token = row.identifier.slice("reset-password:".length);
     expect((await spend(token)).status).toBe(200);
     expect(await verified(user.id)).toBe(true);
+  });
+
+  it("Postgres reset cleanup removes every owned 2FA proof, preserves peers and refuses a delayed challenge session", async () => {
+    const user = await invitee();
+    const peer = await invitee();
+    await withPassword(user.id);
+    const link = await mint(user.id);
+    // This case intentionally creates an existing session below. Use a mailed
+    // reset proof so the reset remains eligible after the invite becomes active.
+    expect(
+      await links.recordResetLinkProof({
+        ...link,
+        userId: user.id,
+        email: user.email,
+        proof: "mailbox",
+      }),
+    ).toBe(true);
+    const { recordTwoFactorChallenge, fencePasswordSessionBefore, fencePasswordSessionAfter } =
+      await import("./password-sign-in-fence");
+    const expiresAt = new Date(Date.now() + 60_000);
+    const challenge = `2fa-${randomUUID()}`;
+    const secondChallenge = `2fa-${randomUUID()}`;
+    const peerChallenge = `2fa-${randomUUID()}`;
+    const orphan = `2fa-${randomUUID()}`;
+    const oldToken = randomUUID();
+    const peerToken = randomUUID();
+    const target = [
+      { identifier: challenge, value: user.id },
+      { identifier: secondChallenge, value: user.id },
+      { identifier: `2fa-attempts-${challenge}`, value: "2" },
+      { identifier: `2fa-otp-${challenge}`, value: "hashed-target-otp" },
+      { identifier: `2fa-attempts-${secondChallenge}`, value: "1" },
+      { identifier: `2fa-otp-${secondChallenge}`, value: "hashed-second-otp" },
+      { identifier: `trust-device-${randomUUID()}`, value: user.id },
+      { identifier: `2fa-otp-${user.id}!${oldToken}`, value: "hashed-session-otp" },
+    ];
+    const controls = [
+      { identifier: peerChallenge, value: peer.id },
+      { identifier: `${peerChallenge}:credential:peer-fingerprint`, value: peer.id },
+      { identifier: `2fa-attempts-${peerChallenge}`, value: "2" },
+      { identifier: `2fa-otp-${peerChallenge}`, value: "hashed-peer-otp" },
+      { identifier: `trust-device-${randomUUID()}`, value: peer.id },
+      { identifier: `2fa-otp-${peer.id}!${peerToken}`, value: "hashed-peer-session-otp" },
+      // Matching a user-id prefix is insufficient; the session delimiter matters.
+      { identifier: `2fa-otp-${user.id}suffix!session-token`, value: "lookalike-owner" },
+      // No owned parent: dependent-looking rows are not this user's proofs.
+      { identifier: `2fa-attempts-${orphan}`, value: "3" },
+      { identifier: `2fa-otp-${orphan}`, value: "unlinked-otp" },
+      { identifier: `unrelated-${randomUUID()}`, value: user.id },
+      { identifier: `trust-device-lookalike-${randomUUID()}`, value: `${user.id}suffix` },
+    ];
+    await prisma.verification.createMany({
+      data: [...target, ...controls].map((row) => ({ ...row, expiresAt })),
+    });
+    // Use the production recorder for a real credential fingerprint. The SSO
+    // context permits recording outside a password request's AsyncLocalStorage.
+    await recordTwoFactorChallenge(
+      { identifier: challenge, value: user.id, expiresAt },
+      { path: "/callback/sso" },
+    );
+    const fingerprint = await prisma.verification.findFirstOrThrow({
+      where: { value: user.id, identifier: { startsWith: `${challenge}:credential:` } },
+      select: { identifier: true, value: true },
+    });
+    target.push(fingerprint);
+    const identifiers = [...target, ...controls].map((row) => row.identifier);
+    const rows = () =>
+      prisma.verification.findMany({
+        where: { identifier: { in: identifiers } },
+        orderBy: { identifier: "asc" },
+        take: identifiers.length,
+        select: { identifier: true, value: true, expiresAt: true },
+      });
+    const before = await rows();
+    expect(before).toHaveLength(identifiers.length);
+    const expectedControls = before.filter((row) =>
+      controls.some((control) => control.identifier === row.identifier),
+    );
+    const context = {
+      path: "/two-factor/verify-otp",
+      context: {
+        secret: SECRET,
+        createAuthCookie: () => ({ name: "two_factor" }),
+      },
+      getSignedCookie: async () => challenge,
+    };
+    // A code step passed its before-hook, but has not inserted its session yet.
+    await expect(fencePasswordSessionBefore({ userId: user.id }, context)).resolves.toBeUndefined();
+    const peerSession = await prisma.session.create({
+      data: { userId: peer.id, token: peerToken, expiresAt },
+    });
+    const oldSession = await prisma.session.create({
+      data: { userId: user.id, token: oldToken, expiresAt },
+    });
+    // Actual handler/reset hooks execute the production raw SQL on Postgres.
+    expect((await spend(link.token)).status).toBe(200);
+    expect(await rows(), "Postgres cleanup must remove only owned proofs").toEqual(
+      expectedControls,
+    );
+    expect(await prisma.session.findUnique({ where: { id: oldSession.id } })).toBeNull();
+    expect(await prisma.session.findUnique({ where: { id: peerSession.id } })).toEqual(peerSession);
+    await expect(fencePasswordSessionBefore({ userId: user.id }, context)).rejects.toThrow(
+      /Session refused/,
+    );
+    // The delayed insert commits after reset; the production after-hook must
+    // remove it and refuse the request because its challenge proof was revoked.
+    const delayed = await prisma.session.create({
+      data: { userId: user.id, token: randomUUID(), expiresAt },
+    });
+    await expect(fencePasswordSessionAfter(delayed, context)).rejects.toThrow(/Session refused/);
+    expect(await prisma.session.findUnique({ where: { id: delayed.id } })).toBeNull();
+    expect(await rows(), "Postgres cleanup must remove only owned proofs").toEqual(
+      expectedControls,
+    );
   });
 
   it("a leftover shown link is dead once the account is active, cleanup or not", async () => {
@@ -327,9 +443,11 @@ describe("reset and invite links against real Postgres and the real handler", ()
         spend(shown.token, "holder-password-123456"),
       ]);
       if (release) {
-        // Both spends wait on the lock: the mailed one in its spending
-        // transaction, the shown one in the before-hook or its transaction.
-        await waitingOnLocks(2);
+        // The password-write lock serializes the HTTP spends. One reaches
+        // setup admission while the other polls password-write; requiring two
+        // PostgreSQL lock waiters would deadlock this test's release gate.
+        // The direct transaction race below still tests atomic admission.
+        await waitingOnLocks(1);
         await release();
       }
       const [invitee_, holder_] = await results;
@@ -428,7 +546,15 @@ describe("reset and invite links against real Postgres and the real handler", ()
       },
     });
     const context = await auth.$context;
-    const session = await context.internalAdapter.createSession(admin.id);
+    // Seed the already authenticated admin; production refuses parentless
+    // internal session creation outside a proved sign-in request.
+    const session = await prisma.session.create({
+      data: {
+        userId: admin.id,
+        token: randomUUID(),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
     const signature = createHmac("sha256", SECRET).update(session.token).digest("base64");
     const email = `${randomUUID()}@example.test`;
     const res = await auth.handler(

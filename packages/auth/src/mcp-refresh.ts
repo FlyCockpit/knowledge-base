@@ -1,5 +1,6 @@
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { PrismaClient } from "@knowledge-base/db/client";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { authoringModeFromDb } from "./mcp-authoring-mode";
 import { approvedConsentScopes, assertConsentIdentity, McpConsentError } from "./mcp-consent";
 
@@ -33,62 +34,65 @@ export async function issueMcpGenerationClaims(
   const fail = (): never => {
     throw new McpConsentError();
   };
-  return db.$transaction(
-    async (tx) => {
-      await lockIdentityAuthority(tx);
-      const now = clock();
-      await assertConsentIdentity(tx, input.userId);
-      const intent = await tx.consentIntent.findUnique({
-        where: { referenceId: input.referenceId },
-        include: { grant: true },
-      });
-      const grant = intent?.grant;
-      if (
-        !intent?.approvedAt ||
-        !grant ||
-        grant.revokedAt ||
-        grant.kind !== "OAUTH" ||
-        grant.userId !== input.userId ||
-        intent.userId !== input.userId ||
-        intent.clientId !== input.clientId ||
-        intent.resource !== input.resource ||
-        grant.clientId !== input.clientId ||
-        (input.grantId !== undefined && grant.id !== input.grantId)
-      )
-        return fail();
-      if (input.grantType === "authorization_code") {
-        if (intent.expiresAt <= now) return fail();
-      } else if (input.grantType === "refresh_token") {
+  return withLockSlot(() =>
+    db.$transaction(
+      async (tx) => {
+        await lockIdentityAuthority(tx);
+        const now = clock();
+        await assertConsentIdentity(tx, input.userId);
+        const intent = await tx.consentIntent.findUnique({
+          where: { referenceId: input.referenceId },
+          include: { grant: true },
+        });
+        const grant = intent?.grant;
         if (
-          !input.tokenExpiresAt ||
-          !Number.isFinite(input.tokenExpiresAt.getTime()) ||
-          input.tokenExpiresAt <= now ||
-          !input.tokenScopes?.includes("offline_access") ||
-          !intent.scopes.includes("offline_access") ||
-          !grant.scopes.includes("offline_access") ||
-          !input.scopes.every((s) => input.tokenScopes?.includes(s))
+          !intent?.approvedAt ||
+          !grant ||
+          grant.revokedAt ||
+          grant.kind !== "OAUTH" ||
+          grant.userId !== input.userId ||
+          intent.userId !== input.userId ||
+          intent.clientId !== input.clientId ||
+          intent.resource !== input.resource ||
+          grant.clientId !== input.clientId ||
+          (input.grantId !== undefined && grant.id !== input.grantId)
         )
           return fail();
-      } else return fail();
-      // The grant row holds the write mode, so a selection without one still
-      // refreshes; unknown keys are ignored.
-      const approvedScopes = approvedConsentScopes(
-        intent.selection,
-        authoringModeFromDb(grant.authoringMode),
-      );
-      if (!approvedScopes) return fail();
-      if (
-        input.scopes.length === 0 ||
-        !input.scopes.some((s) => s === "mcp:read" || s === "mcp:write") ||
-        !input.scopes.every(
-          (s) =>
-            approvedScopes.some((approvedScope) => approvedScope === s) && grant.scopes.includes(s),
+        if (input.grantType === "authorization_code") {
+          if (intent.expiresAt <= now) return fail();
+        } else if (input.grantType === "refresh_token") {
+          if (
+            !input.tokenExpiresAt ||
+            !Number.isFinite(input.tokenExpiresAt.getTime()) ||
+            input.tokenExpiresAt <= now ||
+            !input.tokenScopes?.includes("offline_access") ||
+            !intent.scopes.includes("offline_access") ||
+            !grant.scopes.includes("offline_access") ||
+            !input.scopes.every((s) => input.tokenScopes?.includes(s))
+          )
+            return fail();
+        } else return fail();
+        // The grant row holds the write mode, so a selection without one still
+        // refreshes; unknown keys are ignored.
+        const approvedScopes = approvedConsentScopes(
+          intent.selection,
+          authoringModeFromDb(grant.authoringMode),
+        );
+        if (!approvedScopes) return fail();
+        if (
+          input.scopes.length === 0 ||
+          !input.scopes.some((s) => s === "mcp:read" || s === "mcp:write") ||
+          !input.scopes.every(
+            (s) =>
+              approvedScopes.some((approvedScope) => approvedScope === s) &&
+              grant.scopes.includes(s),
+          )
         )
-      )
-        return fail();
-      return { mcp_grant_id: grant.id };
-    },
-    { timeout: 10000 },
+          return fail();
+        return { mcp_grant_id: grant.id };
+      },
+      { timeout: 10000 },
+    ),
   );
 }
 

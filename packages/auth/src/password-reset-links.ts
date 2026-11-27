@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import prisma, { type Prisma } from "@knowledge-base/db";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { logInternalError } from "@knowledge-base/env/log";
 import {
   deleteResetLinks,
@@ -97,25 +98,31 @@ export async function mintSetPasswordLink({
   // URL-safe: the token rides in a URL path segment.
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(now.getTime() + ttlMs);
-  await prisma.$transaction(async (tx) => {
-    await lockCredentialSetup(tx, userId);
-    const state = await tx.user.findUnique({
-      where: { id: userId },
-      select: inviteStateSelect(now),
-    });
-    if (!state || !isInvitePending(state)) throw new SetPasswordLinkRefusedError();
-    await deleteResetLinks(tx, userId);
-    await tx.verification.create({
-      data: { identifier: `${RESET_PASSWORD_IDENTIFIER_PREFIX}${token}`, value: userId, expiresAt },
-      select: { id: true },
-    });
-    if (noSmtpInviteFor !== undefined) {
+  await withLockSlot(() =>
+    prisma.$transaction(async (tx) => {
+      await lockCredentialSetup(tx, userId);
+      const state = await tx.user.findUnique({
+        where: { id: userId },
+        select: inviteStateSelect(now),
+      });
+      if (!state || !isInvitePending(state)) throw new SetPasswordLinkRefusedError();
+      await deleteResetLinks(tx, userId);
       await tx.verification.create({
-        data: proofRow(token, userId, noSmtpInviteFor, "no-smtp-invite", expiresAt),
+        data: {
+          identifier: `${RESET_PASSWORD_IDENTIFIER_PREFIX}${token}`,
+          value: userId,
+          expiresAt,
+        },
         select: { id: true },
       });
-    }
-  });
+      if (noSmtpInviteFor !== undefined) {
+        await tx.verification.create({
+          data: proofRow(token, userId, noSmtpInviteFor, "no-smtp-invite", expiresAt),
+          select: { id: true },
+        });
+      }
+    }),
+  );
   return { token, expiresAt };
 }
 
@@ -135,23 +142,25 @@ export async function recordResetLinkProof(input: {
   now?: Date;
 }): Promise<boolean> {
   const now = input.now ?? new Date();
-  return prisma.$transaction(async (tx) => {
-    await lockCredentialSetup(tx, input.userId);
-    const link = await tx.verification.findFirst({
-      where: {
-        identifier: `${RESET_PASSWORD_IDENTIFIER_PREFIX}${input.token}`,
-        value: input.userId,
-        expiresAt: { gt: now },
-      },
-      select: { expiresAt: true },
-    });
-    if (!link) return false;
-    await tx.verification.create({
-      data: proofRow(input.token, input.userId, input.email, input.proof, link.expiresAt),
-      select: { id: true },
-    });
-    return true;
-  });
+  return withLockSlot(() =>
+    prisma.$transaction(async (tx) => {
+      await lockCredentialSetup(tx, input.userId);
+      const link = await tx.verification.findFirst({
+        where: {
+          identifier: `${RESET_PASSWORD_IDENTIFIER_PREFIX}${input.token}`,
+          value: input.userId,
+          expiresAt: { gt: now },
+        },
+        select: { expiresAt: true },
+      });
+      if (!link) return false;
+      await tx.verification.create({
+        data: proofRow(input.token, input.userId, input.email, input.proof, link.expiresAt),
+        select: { id: true },
+      });
+      return true;
+    }),
+  );
 }
 
 /**
@@ -194,19 +203,21 @@ export async function isResetLinkRedeemable(token: string, now = new Date()): Pr
   if (!link) return true;
   const userId = link.value;
   if (await mailedFor(prisma, userId)) return true;
-  return prisma.$transaction(async (tx) => {
-    await lockCredentialSetup(tx, userId);
-    // Again under the lock: a record whose writer held the lock while we
-    // waited has committed now, and must not be refused as unproved.
-    if (await mailedFor(tx, userId)) return true;
-    const state = await tx.user.findUnique({
-      where: { id: userId },
-      select: inviteStateSelect(now),
-    });
-    if (state && isInvitePending(state)) return true;
-    await tx.verification.deleteMany({ where: { identifier, value: userId } });
-    return false;
-  });
+  return withLockSlot(() =>
+    prisma.$transaction(async (tx) => {
+      await lockCredentialSetup(tx, userId);
+      // Again under the lock: a record whose writer held the lock while we
+      // waited has committed now, and must not be refused as unproved.
+      if (await mailedFor(tx, userId)) return true;
+      const state = await tx.user.findUnique({
+        where: { id: userId },
+        select: inviteStateSelect(now),
+      });
+      if (state && isInvitePending(state)) return true;
+      await tx.verification.deleteMany({ where: { identifier, value: userId } });
+      return false;
+    }),
+  );
 }
 
 /** Attempts, and the pause before each retry (ms). */
@@ -230,10 +241,12 @@ export async function deleteResetLinksOnActivation(
   for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
     if (attempt > 0) await sleep(BACKOFF_MS[attempt - 1] ?? 400);
     try {
-      await prisma.$transaction([
-        lockCredentialSetup(prisma, userId),
-        deleteResetLinks(prisma, userId),
-      ]);
+      await withLockSlot(() =>
+        prisma.$transaction([
+          lockCredentialSetup(prisma, userId),
+          deleteResetLinks(prisma, userId),
+        ]),
+      );
       return;
     } catch (error) {
       lastError = error;

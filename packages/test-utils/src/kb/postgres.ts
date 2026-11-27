@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@knowledge-base/db/client";
+import { configureLockSlots } from "@knowledge-base/db/lock-slots";
 import { createPrismaPgAdapter } from "@knowledge-base/db/prisma-adapter";
+import { sharedVars } from "@knowledge-base/env/vars/shared";
 import { Client, type QueryResult } from "pg";
 import { buildArtifactPath } from "./build-artifacts.mjs";
 
@@ -334,7 +336,13 @@ async function provisionDatabase(
     },
     createPrismaClient(role = "applier") {
       assertTestDatabaseUrl(urls[role], id);
-      const adapter = createPrismaPgAdapter({ connectionString: urls[role], max: 8 });
+      // Match the later production pool without validating application URLs
+      // before the fixture has installed them. Shared env treats empty as unset.
+      const poolMax = sharedVars.DATABASE_POOL_MAX.parse(
+        process.env.DATABASE_POOL_MAX || undefined,
+      );
+      configureLockSlots(poolMax);
+      const adapter = createPrismaPgAdapter({ connectionString: urls[role], max: poolMax });
       return new PrismaClient({ adapter });
     },
     async close() {

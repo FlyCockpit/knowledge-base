@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { Prisma, PrismaClient } from "@knowledge-base/db/client";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { z } from "zod";
 import { isUserBanned } from "./ban";
 import {
@@ -435,45 +436,47 @@ export function createMcpConsentService(options: {
     query: ReturnType<typeof verifyOAuthQuery>,
     run: (tx: Prisma.TransactionClient) => Promise<T>,
   ) {
-    return db.$transaction(
-      async (tx) => {
-        await lockIdentityAuthority(tx);
-        await assertConsentIdentity(tx, actor.userId);
-        const session = await tx.session.findUnique({
-          where: { id: actor.sessionId },
-          select: { userId: true, expiresAt: true, impersonatedBy: true },
-        });
-        const client = await tx.oauthClient.findUnique({
-          where: { clientId: query.clientId },
-          select: { disabled: true, redirectUris: true, scopes: true, grantTypes: true },
-        });
-        const link = await tx.oauthClientResource.findUnique({
-          where: { clientId_resourceId: { clientId: query.clientId, resourceId: resource } },
-          select: { resource: { select: { disabled: true, allowedScopes: true } } },
-        });
-        const allowedScopes = link?.resource.allowedScopes;
-        if (
-          query.expiresAt <= now() ||
-          !session ||
-          isImpersonatedSession({ session }) ||
-          session.userId !== actor.userId ||
-          session.expiresAt <= now() ||
-          !client ||
-          client.disabled ||
-          // The rule Better Auth applied before signing: only a loopback port may differ.
-          !isRegisteredRedirectUri(client.redirectUris, query.redirectUri) ||
-          !client.grantTypes.includes("authorization_code") ||
-          !subset(query.scopes, client.scopes) ||
-          !link ||
-          link.resource.disabled ||
-          (allowedScopes !== null &&
-            (!Array.isArray(allowedScopes) ||
-              !query.scopes.every((s) => allowedScopes.includes(s))))
-        )
-          reject();
-        return run(tx);
-      },
-      { timeout: 10000 },
+    return withLockSlot(() =>
+      db.$transaction(
+        async (tx) => {
+          await lockIdentityAuthority(tx);
+          await assertConsentIdentity(tx, actor.userId);
+          const session = await tx.session.findUnique({
+            where: { id: actor.sessionId },
+            select: { userId: true, expiresAt: true, impersonatedBy: true },
+          });
+          const client = await tx.oauthClient.findUnique({
+            where: { clientId: query.clientId },
+            select: { disabled: true, redirectUris: true, scopes: true, grantTypes: true },
+          });
+          const link = await tx.oauthClientResource.findUnique({
+            where: { clientId_resourceId: { clientId: query.clientId, resourceId: resource } },
+            select: { resource: { select: { disabled: true, allowedScopes: true } } },
+          });
+          const allowedScopes = link?.resource.allowedScopes;
+          if (
+            query.expiresAt <= now() ||
+            !session ||
+            isImpersonatedSession({ session }) ||
+            session.userId !== actor.userId ||
+            session.expiresAt <= now() ||
+            !client ||
+            client.disabled ||
+            // The rule Better Auth applied before signing: only a loopback port may differ.
+            !isRegisteredRedirectUri(client.redirectUris, query.redirectUri) ||
+            !client.grantTypes.includes("authorization_code") ||
+            !subset(query.scopes, client.scopes) ||
+            !link ||
+            link.resource.disabled ||
+            (allowedScopes !== null &&
+              (!Array.isArray(allowedScopes) ||
+                !query.scopes.every((s) => allowedScopes.includes(s))))
+          )
+            reject();
+          return run(tx);
+        },
+        { timeout: 10000 },
+      ),
     );
   }
   async function prepareIn(

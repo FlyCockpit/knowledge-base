@@ -1,3 +1,5 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import type { PrismaClient } from "@knowledge-base/db/client";
 import { describe, expect, it, vi } from "vitest";
 import {

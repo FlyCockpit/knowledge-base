@@ -3,6 +3,7 @@ import { isAdminRole, isImpersonatedSession } from "@knowledge-base/auth/roles";
 import { readLiveAdminPolicy } from "@knowledge-base/auth/session-authority";
 import prisma from "@knowledge-base/db";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import { ORPCError, os } from "@orpc/server";
 import type { Context } from "./context";
 import { mapUserChangeConflict } from "./lib/admin-presence";
@@ -140,8 +141,8 @@ export const adminOr404Procedure = publicProcedure.use(requireAdminOr404);
  * so relaxing the policy cannot authorize an actor whose grace just ended.
  */
 const requireLiveAdminOr404 = o.middleware(async ({ context, next }) => {
-  const result = await prisma
-    .$transaction(
+  const result = await withLockSlot(() =>
+    prisma.$transaction(
       async (tx) => {
         await lockIdentityAuthority(tx);
         const { actor, check } = await readLiveAdminPolicy(
@@ -154,11 +155,11 @@ const requireLiveAdminOr404 = o.middleware(async ({ context, next }) => {
         return response;
       },
       { isolationLevel: "ReadCommitted" },
-    )
-    .catch((error: unknown) => {
-      mapUserChangeConflict(error);
-      throw error;
-    });
+    ),
+  ).catch((error: unknown) => {
+    mapUserChangeConflict(error);
+    throw error;
+  });
   invalidateForceTwoFactorSettingsCache();
   return result;
 });

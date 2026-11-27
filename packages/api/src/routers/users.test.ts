@@ -1,3 +1,5 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import type { Session } from "@knowledge-base/auth";
 import { getAdminMutationActor } from "@knowledge-base/auth/session-authority";
 import { getGrantedUserLocale } from "@knowledge-base/auth/user-creation-policy";
@@ -31,6 +33,13 @@ vi.mock("@knowledge-base/env/server", () => ({
 
 // Mock @knowledge-base/auth so the router's `auth.api.createUser` call hits a stub
 // instead of pulling in the real better-auth (which needs an env, prisma, etc).
+const budget = vi.hoisted(() => ({ consume: vi.fn(), options: [] as Record<string, unknown>[] }));
+vi.mock("../lib/procedure-budget", () => ({
+  createProcedureBudget: (options: Record<string, unknown>) => {
+    budget.options.push(options);
+    return budget.consume;
+  },
+}));
 vi.mock("@knowledge-base/auth", () => ({
   auth: {
     api: {
@@ -155,6 +164,7 @@ function buildContext(
 
 describe("usersRouter", () => {
   beforeEach(() => {
+    budget.consume.mockReset().mockResolvedValue(undefined);
     vi.clearAllMocks();
     mail.configured = true;
     mail.host = true;
@@ -820,4 +830,32 @@ describe("last active verified admin and durable role audit", () => {
       data: { reason: "USER_CHANGE_CONFLICT" },
     });
   });
+});
+
+describe("invite procedure mail budget", () => {
+  it("uses a fail-closed 30/hour admin bucket", () => {
+    expect(budget.options).toContainEqual(
+      expect.objectContaining({
+        keyPrefix: "rl:users-invite-mail",
+        points: 30,
+        durationSeconds: 3600,
+        failClosed: true,
+      }),
+    );
+  });
+  it.each(["TOO_MANY_REQUESTS", "SERVICE_UNAVAILABLE"] as const)(
+    "%s refuses before any write or mail",
+    async (code) => {
+      budget.consume.mockRejectedValueOnce(new ORPCError(code));
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      await expect(
+        client.invite({ email: "new@example.test", name: "New", locale: "en-US", role: "user" }),
+      ).rejects.toMatchObject({ code });
+      expect(budget.consume).toHaveBeenCalledExactlyOnceWith("admin:admin-user-id");
+      expect(auth.api.createUser).not.toHaveBeenCalled();
+      expect(links.mintSetPasswordLink).not.toHaveBeenCalled();
+      expect(links.recordResetLinkProof).not.toHaveBeenCalled();
+      expect(sendEmail).not.toHaveBeenCalled();
+    },
+  );
 });

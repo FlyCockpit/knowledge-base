@@ -503,6 +503,7 @@ export const SUITES = {
       "packages/auth/src/signup-response.integration.test.ts",
       "packages/auth/src/verification-mail.integration.test.ts",
       "packages/auth/src/password-reset-links.integration.test.ts",
+      "packages/test-utils/src/kb/pool-capacity.test.ts",
     ],
     services: ["postgres"],
   },

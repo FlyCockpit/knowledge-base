@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
+import {
+  configureLockSlots,
+  releaseSlots,
+  tryAcquireSlots,
+  withLockSlot,
+} from "@knowledge-base/db/lock-slots";
 import { captureLog } from "@knowledge-base/env/log";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+configureLockSlots(3);
 
 // Never a real DB: an in-memory verification table and user table, enough to
 // see which rows a reset reads, writes and consumes, and in which order under
@@ -509,5 +517,70 @@ describe("resetTokenOf", () => {
     expect(resetTokenOf({ path: "/reset-password", body: {}, query: { token: "q" } })).toBe("q");
     expect(resetTokenOf({ path: "/reset-password", body: { token: "" } })).toBeNull();
     expect(resetTokenOf({ path: "/sign-in/email", body: { token: "b" } })).toBeNull();
+  });
+});
+
+describe("reset-link transactions share central pool admission", () => {
+  const operations = [
+    ["mint", () => mintSetPasswordLink({ userId: "u1", ttlMs: 1000, now })],
+    [
+      "proof",
+      () =>
+        recordResetLinkProof({
+          token: "tok",
+          userId: "u1",
+          email: "ada@example.com",
+          proof: "mailbox",
+          now,
+        }),
+    ],
+    ["early check", () => isResetLinkRedeemable("tok", now)],
+    ["activation cleanup", () => deleteResetLinksOnActivation("u1")],
+  ] as const;
+
+  it.each(operations)(
+    "%s waits without starting a transaction when all slots are occupied",
+    async (_name, run) => {
+      link("tok");
+      await withLockSlot(async () => {}); // initialize the central min-3 pool
+      expect(tryAcquireSlots(2)).toBe(true);
+      let pending: Promise<unknown> | undefined;
+      try {
+        pending = run();
+        // Let the early check finish its unlocked reads before testing admission.
+        for (let i = 0; i < 20; i += 1) await Promise.resolve();
+        expect(db.$transaction).not.toHaveBeenCalled();
+        expect(state.calls).not.toContain(SETUP_LOCK);
+      } finally {
+        releaseSlots(2);
+        await pending;
+      }
+      expect(db.$transaction).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("all helpers reuse a password writer's one reserved nested slot at pool minimum 3", async () => {
+    await withLockSlot(
+      async () => {
+        expect(tryAcquireSlots()).toBe(false);
+        const minted = await mintSetPasswordLink({ userId: "u1", ttlMs: 1000, now });
+        expect(
+          await recordResetLinkProof({
+            token: minted.token,
+            userId: "u1",
+            email: "ada@example.com",
+            proof: "no-smtp-invite",
+            now,
+          }),
+        ).toBe(true);
+        expect(await isResetLinkRedeemable(minted.token, now)).toBe(true);
+        await deleteResetLinksOnActivation("u1");
+        expect(resetRows()).toEqual([]);
+        expect(tryAcquireSlots()).toBe(false);
+      },
+      { nested: 1 },
+    );
+    expect(tryAcquireSlots(2)).toBe(true);
+    releaseSlots(2);
   });
 });

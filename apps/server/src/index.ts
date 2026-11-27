@@ -19,6 +19,7 @@ import { auth, drainVerificationMail, passwordPepper, type Session } from "@know
 import { isUserBanned } from "@knowledge-base/auth/ban";
 import { createDeviceApprovalService } from "@knowledge-base/auth/device-approval";
 import { canonicalMcpResource } from "@knowledge-base/auth/mcp-config";
+import { handlePasswordAuthRequest } from "@knowledge-base/auth/password-auth-handler";
 import { syncPasswordPepper } from "@knowledge-base/auth/password-pepper-store";
 import { isImpersonatedSession } from "@knowledge-base/auth/roles";
 import { CANONICAL_ORIGIN_HEADER } from "@knowledge-base/config/locales";
@@ -186,7 +187,7 @@ mountSetupRoutes(app, { setupKey: env.SETUP_KEY, passwordSignInEnabled: !FORCE_S
 const mcpAuthHandler = mountMcpOAuth(app, {
   baseUrl: env.BETTER_AUTH_URL,
   webOrigin: env.CORS_ORIGIN,
-  handler: auth.handler,
+  handler: (request) => handlePasswordAuthRequest(auth, request),
 });
 
 // Catch any uncaught error from a route/middleware so admins get a fixed record

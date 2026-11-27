@@ -1,5 +1,8 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  quarantineUntrustedPasswordWrite,
   revokeCredentialsAfterPasswordChange,
   revokeCredentialsAfterPasswordReset,
 } from "./credential-revocation";
@@ -10,6 +13,7 @@ const { tx, transaction } = vi.hoisted(() => ({
     $executeRawUnsafe: vi.fn(),
     deviceCode: { deleteMany: vi.fn() },
     session: { deleteMany: vi.fn() },
+    account: { updateMany: vi.fn() },
   },
   transaction: vi.fn(),
 }));
@@ -22,6 +26,7 @@ beforeEach(() => {
   tx.$executeRawUnsafe.mockResolvedValue(1);
   tx.deviceCode.deleteMany.mockResolvedValue({ count: 1 });
   tx.session.deleteMany.mockResolvedValue({ count: 2 });
+  tx.account.updateMany.mockResolvedValue({ count: 1 });
   transaction.mockImplementation(async (run: (client: typeof tx) => Promise<void>) => run(tx));
 });
 
@@ -79,7 +84,10 @@ describe("password-reset credential revocation", () => {
   });
 
   it("change-password revokes standing credentials under the lock without reset cleanup", async () => {
-    await revokeCredentialsAfterPasswordChange("user-1");
+    await revokeCredentialsAfterPasswordChange({
+      userId: "user-1",
+      keepSessionToken: "kept-token",
+    });
     expect(transaction).toHaveBeenCalledExactlyOnceWith(expect.any(Function), {
       timeout: 10000,
       maxWait: 5000,
@@ -96,7 +104,9 @@ describe("password-reset credential revocation", () => {
     expect(tx.deviceCode.deleteMany).toHaveBeenCalledExactlyOnceWith({
       where: { userId: "user-1" },
     });
-    expect(tx.session.deleteMany).not.toHaveBeenCalled();
+    expect(tx.session.deleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { userId: "user-1", token: { not: "kept-token" } },
+    });
   });
 
   it.each(["lock", "tombstones", "device codes", "two-factor", "sessions", "commit"])(
@@ -117,4 +127,40 @@ describe("password-reset credential revocation", () => {
       expect(transaction).toHaveBeenCalledTimes(3);
     },
   );
+});
+
+describe("unconfirmed password write quarantine", () => {
+  it("scrambles with the application's hasher under authority before revoking every session/challenge and standing credential", async () => {
+    const hash = vi.fn(async () => "unusable-peppered-hash");
+    await quarantineUntrustedPasswordWrite("user-1", { hash });
+    expect(hash).toHaveBeenCalledExactlyOnceWith(expect.any(String));
+    expect(tx.account.updateMany).toHaveBeenCalledExactlyOnceWith({
+      where: { userId: "user-1", providerId: "credential" },
+      data: { password: "unusable-peppered-hash" },
+    });
+    expect(tx.$executeRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.account.updateMany.mock.invocationCallOrder[0]!,
+    );
+    expect(tx.account.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$executeRawUnsafe.mock.invocationCallOrder[0]!,
+    );
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('FROM "verification" v'),
+      "user-1",
+    );
+    expect(tx.session.deleteMany).toHaveBeenCalledExactlyOnceWith({ where: { userId: "user-1" } });
+    expect(tx.deviceCode.deleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { userId: "user-1" },
+    });
+  });
+  it("retries and propagates scramble failure before claiming any revocation", async () => {
+    const error = new Error("scramble unavailable");
+    tx.account.updateMany.mockRejectedValue(error);
+    await expect(
+      quarantineUntrustedPasswordWrite("user-1", { hash: async () => "unusable-hash" }),
+    ).rejects.toBe(error);
+    expect(transaction).toHaveBeenCalledTimes(3);
+    expect(tx.deviceCode.deleteMany).not.toHaveBeenCalled();
+    expect(tx.session.deleteMany).not.toHaveBeenCalled();
+  });
 });

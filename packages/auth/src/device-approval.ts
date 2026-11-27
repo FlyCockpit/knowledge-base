@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DEFAULT_LOCALE } from "@knowledge-base/config/locales";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import type { Prisma, PrismaClient } from "@knowledge-base/db/client";
+import { withLockSlot } from "@knowledge-base/db/lock-slots";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { deviceAuthorization } from "better-auth/plugins";
@@ -93,12 +94,14 @@ export function createDeviceApprovalService(options: {
   const { db, resource } = options;
   const now = options.now ?? (() => new Date());
   async function transaction<T>(run: (tx: Prisma.TransactionClient) => Promise<T>) {
-    return db.$transaction(
-      async (tx) => {
-        await lockIdentityAuthority(tx);
-        return run(tx);
-      },
-      { timeout: 10000, maxWait: 5000 },
+    return withLockSlot(() =>
+      db.$transaction(
+        async (tx) => {
+          await lockIdentityAuthority(tx);
+          return run(tx);
+        },
+        { timeout: 10000, maxWait: 5000 },
+      ),
     );
   }
   async function identity(tx: Prisma.TransactionClient, actor: Actor) {

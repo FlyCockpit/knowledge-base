@@ -287,3 +287,72 @@ describe("push renewal", () => {
     expect(response.status).toBe(status);
   });
 });
+
+const passwordWrappers = vi.hoisted(() => ({
+  fence: vi.fn(async (_request: Request, run: () => Promise<Response>) => run()),
+  write: vi.fn(
+    async (_path: string, _request: Request, run: () => Promise<Response>, _options: unknown) =>
+      run(),
+  ),
+}));
+vi.mock("../../../packages/auth/src/password-sign-in-fence.js", () => ({
+  withPasswordSignInFence: passwordWrappers.fence,
+}));
+vi.mock("../../../packages/auth/src/password-write-lock.js", () => ({
+  PASSWORD_WRITE_PATHS: new Set([
+    "/change-password",
+    "/reset-password",
+    "/admin/set-user-password",
+  ]),
+  withPasswordWriteLock: passwordWrappers.write,
+}));
+describe("password security server mount", () => {
+  it.each([
+    "/sign-in/email",
+    "/change-password",
+    "/reset-password",
+    "/admin/set-user-password",
+    "/get-session",
+  ])("dispatches %s through the shared boundary", async (path) => {
+    const { handlePasswordAuthRequest } = await import(
+      "../../../packages/auth/src/password-auth-handler.js"
+    );
+    passwordWrappers.fence.mockClear();
+    passwordWrappers.write.mockClear();
+    const auth = {
+      handler: vi.fn(async (request: Request) => Response.json(await request.json())),
+      api: { getSession: vi.fn(async () => null) },
+    };
+    let mounted!: (request: Request) => Promise<Response>;
+    const start = source.indexOf("const mcpAuthHandler = mountMcpOAuth(");
+    const end = source.indexOf("\n});", start) + "\n});".length;
+    runInNewContext(stripTypeScriptTypes(source.slice(start, end)), {
+      app: {},
+      env: { BETTER_AUTH_URL: "https://kb.example.test" },
+      auth,
+      handlePasswordAuthRequest,
+      mountMcpOAuth: (_app: unknown, options: { handler: typeof mounted }) => {
+        mounted = options.handler;
+      },
+    });
+    const request = new Request(`https://kb.example.test/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ marker: "preserved" }),
+    });
+    const response = await mounted(request);
+    expect(await response.json()).toEqual({ marker: "preserved" });
+    expect(auth.handler).toHaveBeenCalledExactlyOnceWith(request);
+    expect(passwordWrappers.fence).toHaveBeenCalledTimes(path === "/sign-in/email" ? 1 : 0);
+    expect(passwordWrappers.write).toHaveBeenCalledTimes(
+      ["/change-password", "/reset-password", "/admin/set-user-password"].includes(path) ? 1 : 0,
+    );
+    if (passwordWrappers.write.mock.calls.length) {
+      const options = passwordWrappers.write.mock.calls[0]![3] as {
+        getSession: (headers: Headers) => Promise<unknown>;
+      };
+      await options.getSession(request.headers);
+      expect(auth.api.getSession).toHaveBeenCalledExactlyOnceWith({ headers: request.headers });
+    }
+  });
+});

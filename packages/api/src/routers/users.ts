@@ -31,6 +31,7 @@ import { prismaAssetQuery } from "../lib/kb/asset-authz";
 import { recordAuditEvent } from "../lib/kb/audit";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { cursorPage, cursorPageInput, pageTake, withCursor } from "../lib/pagination";
+import { createProcedureBudget } from "../lib/procedure-budget";
 
 // Roles surfaced in the admin UI. Better-auth itself stores `role` as a free-
 // form string (and supports comma-separated lists), but the admin dashboard
@@ -113,6 +114,17 @@ async function recordMailedInviteLink(
     logInternalError("users.invite-link-proof", err);
   }
 }
+
+const consumeInviteMailBudget = createProcedureBudget({
+  keyPrefix: "rl:users-invite-mail",
+  points: 30,
+  durationSeconds: 3600,
+  failClosed: true,
+  overBudgetMessage: (retryAfterSeconds) =>
+    `Too many invites sent. Try again in ${retryAfterSeconds}s.`,
+  unavailableMessage: "Invites are temporarily unavailable. Please try again in a moment.",
+  unavailableLog: "[users] invite mail limiter unavailable, failing closed:",
+});
 
 const USER_SELECT = {
   id: true,
@@ -203,6 +215,7 @@ export const usersRouter = {
       }),
     )
     .handler(async ({ input, context }) => {
+      await consumeInviteMailBudget(`admin:${context.session.user.id}`);
       // `auth.api.createUser` is the only admin-plugin endpoint that accepts
       // server-side calls without a session in headers (verified in the
       // better-auth source). It enforces email uniqueness and writes through

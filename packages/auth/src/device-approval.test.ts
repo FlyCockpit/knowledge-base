@@ -1,5 +1,7 @@
+vi.mock("@knowledge-base/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
+
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { deviceSelection, digestDeviceCode, resolveDevicePlugins } from "./device-approval";
 import { authoringModeWithin, deviceWriteModeCeiling } from "./mcp-authoring-mode";
 

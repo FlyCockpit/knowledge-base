@@ -158,16 +158,17 @@ describe("shared env — DATABASE_POOL_MAX", () => {
     expect(mod.env.DATABASE_POOL_MAX).toBe(10);
   });
 
-  it("accepts a positive integer", async () => {
-    const mod = await importServerEnv({ DATABASE_POOL_MAX: "25" });
-    expect(mod.env.DATABASE_POOL_MAX).toBe(25);
+  it.each([3, 25])("accepts a pool of %s", async (size) => {
+    const mod = await importServerEnv({ DATABASE_POOL_MAX: String(size) });
+    expect(mod.env.DATABASE_POOL_MAX).toBe(size);
   });
 
-  it("rejects zero, negative, and non-numeric values", async () => {
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "0" })).rejects.toThrow();
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "-5" })).rejects.toThrow();
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "many" })).rejects.toThrow();
-  });
+  it.each(["1", "2", "0", "-5", "many"])(
+    "rejects pools below 3 and non-numeric values (%s)",
+    async (value) => {
+      await expect(importServerEnv({ DATABASE_POOL_MAX: value })).rejects.toThrow();
+    },
+  );
 });
 
 describe("server env startup guards — admin lockout", () => {
