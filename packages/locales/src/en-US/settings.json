@@ -613,7 +613,7 @@
         "other": "For a client's private settings file only: it contains the token. Never commit or share it."
       }
     },
-    "protocol": "Clients must speak MCP {{version}} over Streamable HTTP. Current Claude Code and Codex do; an older client gets \"Unsupported protocol version\".",
+    "protocol": "Speaks MCP {{version}} over Streamable HTTP as primary, with stateless {{legacyVersion}} compatibility for older clients. Tested with Claude Code 2.1.332 and Codex 0.172.0.",
     "useToken": "Use a token instead",
     "docs": "MCP guide",
     "opensInNewTab": "(opens in a new tab)"

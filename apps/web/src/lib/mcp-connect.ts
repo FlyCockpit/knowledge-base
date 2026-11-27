@@ -20,8 +20,10 @@ export const MCP_SERVER_NAME = "kb";
 export const MCP_TOKEN_ENV = "KB_MCP_TOKEN";
 /** Where the REST snippets keep an API key. */
 export const API_KEY_ENV = "KB_API_KEY";
-/** The one MCP wire profile the server speaks (docs/mcp.md, "Wire profile"). */
+/** The primary MCP wire profile the server speaks (docs/mcp.md, "Wire profile"). */
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
+/** Stateless legacy MCP wire profile supported for older clients. */
+export const MCP_LEGACY_PROTOCOL_VERSION = "2025-06-18";
 
 const DOCS_BASE = "https://github.com/FlyCockpit/knowledge-base/blob/main/docs";
 /** The operator and integrator guides, in the public repository. */

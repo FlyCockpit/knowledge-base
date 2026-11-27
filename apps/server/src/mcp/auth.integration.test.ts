@@ -1,5 +1,9 @@
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { generateApiKeySecret } from "@knowledge-base/api/lib/api-keys";
 import type { LockQuery } from "@knowledge-base/api/lib/kb/lock";
+import { kbRecoveryGateOpen, setKbRecoveryComplete } from "@knowledge-base/api/lib/kb/recovery";
+import type { KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
+import { digestPatSecret, generatePatSecret } from "@knowledge-base/api/lib/mcp-token-access";
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
@@ -44,21 +48,23 @@ async function fixture(mode: "keys" | "failure" | "stall" = "keys") {
       ? reserved.has(values[0])
         ? []
         : [{ id: reserved.add(values[0]) && values[0] }]
-      : sql.includes('FROM "mcp_grant"')
-        ? [
-            {
-              id: grantId,
-              kind: "OAUTH",
-              userId: "owner",
-              clientId: "client",
-              scopes: ["mcp:read"],
-              toolGroups: ["read", "export"],
-              revokedAt: null,
-            },
-          ]
-        : sql.includes('FROM "user"')
-          ? [{ banned: false, twoFactorEnabled: true }]
-          : []) as R[],
+      : sql.includes('FROM "grant_kb_acl"')
+        ? [{ bits: ["read"] }]
+        : sql.includes('FROM "mcp_grant"')
+          ? [
+              {
+                id: grantId,
+                kind: "OAUTH",
+                userId: "owner",
+                clientId: "client",
+                scopes: ["mcp:read"],
+                toolGroups: ["read", "export"],
+                revokedAt: null,
+              },
+            ]
+          : sql.includes('FROM "user"')
+            ? [{ banned: false, twoFactorEnabled: true }]
+            : []) as R[],
     rowCount: ++queries,
   });
   // Production shape: the bearer admitter and the MCP endpoint share one gate.
@@ -257,6 +263,376 @@ describe("real OAuth resource I/O", () => {
         f.admit(f.request(f.jwt(false), "/mcp", "POST", undefined, "Bearer")),
       ).resolves.toBeDefined();
     } finally {
+      await f.close();
+    }
+  });
+  it("serves legacy 2025-06-18 initialize, notifications/initialized, tools/list, and tools/call under real OAuth DPoP, OAuth Bearer, and PAT admission", async () => {
+    const previousRecovery = kbRecoveryGateOpen();
+    setKbRecoveryComplete(true);
+    const f = await fixture();
+    const kbId = "a".repeat(24);
+    const kbRow = {
+      id: kbId,
+      slug: "notes",
+      name: "Notes",
+      description: "Integration fixture KB",
+      ownerId: "owner",
+      state: "ACTIVE" as const,
+      headSha: "0".repeat(40),
+      activeGenerationId: null,
+      metadataVersion: 1,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+    };
+    const runtime = () =>
+      ({
+        canonicalOrigin: f.origin,
+        prisma: {
+          $queryRaw: async (strings: TemplateStringsArray) => {
+            const sql = strings.join(" ");
+            if (sql.includes("grant_kb_acl") && sql.includes("array_agg")) {
+              return [{ kbId, bits: ["read"] }];
+            }
+            return [kbRow];
+          },
+          knowledgeBase: {
+            findUnique: async () => ({ id: kbId, ownerId: "owner", state: "ACTIVE" }),
+          },
+          kbShare: {
+            findUnique: async () => null,
+          },
+          user: {
+            findUnique: async () => ({
+              banned: false,
+              banExpires: null,
+              twoFactorEnabled: true,
+              role: "user",
+              createdAt: new Date(0),
+              twoFactorGraceStartedAt: null,
+            }),
+          },
+          appSetting: {
+            findMany: async () => [],
+          },
+        },
+      }) as unknown as KbRuntimeConfig;
+
+    // Extend the fixture query with a live PAT row and grant ACL bits so PAT, OAuth Bearer, and OAuth DPoP all run end-to-end.
+    const pat = generatePatSecret();
+    const patGrantId = randomUUID();
+    const oauthToken = f.jwt();
+    const bearerToken = f.jwt(false);
+    const apiKey = generateApiKeySecret();
+    let patRevoked = false;
+    const patQuery: LockQuery = async <R>(sql: string) => ({
+      rows: (sql.includes('FROM "mcp_personal_token"')
+        ? patRevoked
+          ? []
+          : [
+              {
+                id: "pat-1",
+                grantId: patGrantId,
+                userId: "owner",
+                kind: "PAT",
+                clientId: "pat:pat-1",
+                scopes: ["mcp:read"],
+                toolGroups: ["read", "export"],
+                secretDigest: digestPatSecret(pat.secret),
+                expiresAt: new Date("2099-01-01"),
+                revokedAt: null,
+                tokenRevokedAt: null,
+                tokenExpiresAt: new Date("2099-01-01"),
+                tokenId: "pat-1",
+                resource: `${f.origin}/mcp`,
+                parentApiKeyId: null,
+                parentLive: null,
+                apiKeyId: null,
+                apiKeyLive: null,
+              },
+            ]
+        : sql.includes('FROM "grant_kb_acl"')
+          ? [{ bits: ["read"] }]
+          : sql.includes('FROM "mcp_grant"')
+            ? [
+                {
+                  id: patGrantId,
+                  kind: "PAT",
+                  userId: "owner",
+                  clientId: "pat:pat-1",
+                  scopes: ["mcp:read"],
+                  toolGroups: ["read", "export"],
+                  revokedAt: patRevoked ? new Date() : null,
+                  tokenRevokedAt: patRevoked ? new Date() : null,
+                  tokenExpiresAt: new Date("2099-01-01"),
+                  tokenId: "pat-1",
+                  resource: `${f.origin}/mcp`,
+                  parentApiKeyId: null,
+                  parentLive: null,
+                  apiKeyId: null,
+                  apiKeyLive: null,
+                },
+              ]
+            : sql.includes('FROM "user"')
+              ? [{ banned: false, twoFactorEnabled: true }]
+              : []) as R[],
+      rowCount: 1,
+    });
+    const patGate = createAdmissionGate();
+    const patAdmit = createBearerAdmission({
+      origin: f.origin,
+      query: patQuery,
+      gate: patGate,
+      isClosing: () => patGate.closed,
+    });
+    const sseJson = async (response: Response) => {
+      expect(response.headers.get("content-type")).toMatch(/^text\/event-stream\b/i);
+      const text = await response.text();
+      const data = text
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .pop();
+      return JSON.parse(data!) as Record<string, unknown>;
+    };
+    const makeEndpoint = (admit: typeof f.admit, gate: typeof f.gate) =>
+      createMcpEndpoint({
+        admit,
+        gate,
+        origin: f.origin,
+        runtime,
+        masterKey: () => undefined,
+        discover: async (actor, publish) =>
+          publish(
+            buildDiscovery({
+              toolGroups: (await actor.recheck()).toolGroups ?? [],
+              scopes: actor.principal.scopes,
+              aclBits: ["read"],
+              allowCreate: false,
+              createdKbBits: [],
+              kbs: null,
+            }),
+          ),
+      });
+    try {
+      const oauthEndpoint = makeEndpoint(f.admit, f.gate);
+      const patEndpoint = makeEndpoint(patAdmit, patGate);
+      try {
+        // 1. OAuth DPoP full lifecycle including real tools/call.
+        const dpopHeaders = (extra: Record<string, string> = {}) => ({
+          authorization: `DPoP ${oauthToken}`,
+          dpop: f.proof(oauthToken, "/mcp", "POST"),
+          accept: "text/event-stream, application/json",
+          "content-type": "application/json",
+          ...extra,
+        });
+        const initRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: dpopHeaders(),
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                clientInfo: { name: "codex-mcp-client", version: "0.172.0" },
+              },
+            }),
+          }),
+        );
+        expect(initRes.status).toBe(200);
+        expect(initRes.headers.get("cache-control")).toBe("private, no-store");
+        expect(await sseJson(initRes)).toMatchObject({
+          result: { protocolVersion: "2025-06-18", serverInfo: { name: "knowledge-base" } },
+        });
+
+        const notifRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: dpopHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+          }),
+        );
+        expect(notifRes.status).toBe(202);
+        expect(await notifRes.text()).toBe("");
+
+        const listRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: dpopHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+          }),
+        );
+        expect(listRes.status).toBe(200);
+        const listBody = (await sseJson(listRes)) as { result: { tools: unknown[] } };
+        expect(listBody.result.tools).toHaveLength(11);
+
+        // OAuth DPoP tools/call returns the real kb/1 list result with the fixture KB.
+        const dpopCallRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: dpopHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 3,
+              method: "tools/call",
+              params: { name: "knowledge_bases_list", arguments: {} },
+            }),
+          }),
+        );
+        expect(dpopCallRes.status).toBe(200);
+        const dpopCallBody = (await sseJson(dpopCallRes)) as {
+          result: {
+            isError: boolean;
+            structuredContent: {
+              schemaVersion: string;
+              data: { items: { id: string; name: string }[] };
+            };
+          };
+        };
+        expect(dpopCallBody.result.isError).toBe(false);
+        expect(dpopCallBody.result.structuredContent.schemaVersion).toBe("kb/1");
+        expect(dpopCallBody.result.structuredContent.data.items).toHaveLength(1);
+        expect(dpopCallBody.result.structuredContent.data.items[0]).toMatchObject({
+          id: kbId,
+          name: "Notes",
+        });
+
+        // 2. OAuth Bearer (unbound JWT) legacy tools/call returns the real fixture KB.
+        const bearerCallRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${bearerToken}`,
+              accept: "text/event-stream, application/json",
+              "content-type": "application/json",
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 4,
+              method: "tools/call",
+              params: { name: "knowledge_bases_list", arguments: {} },
+            }),
+          }),
+        );
+        expect(bearerCallRes.status).toBe(200);
+        const bearerCallBody = (await sseJson(bearerCallRes)) as {
+          result: {
+            isError: boolean;
+            structuredContent: {
+              schemaVersion: string;
+              data: { items: { id: string; name: string }[] };
+            };
+          };
+        };
+        expect(bearerCallBody.result.isError).toBe(false);
+        expect(bearerCallBody.result.structuredContent.schemaVersion).toBe("kb/1");
+        expect(bearerCallBody.result.structuredContent.data.items).toHaveLength(1);
+        expect(bearerCallBody.result.structuredContent.data.items[0]).toMatchObject({
+          id: kbId,
+          name: "Notes",
+        });
+
+        // 3. PAT legacy initialize -> tools/list -> tools/call returning real fixture KB, then denied when revoked.
+        const patHeaders = (extra: Record<string, string> = {}) => ({
+          authorization: `Bearer ${pat.secret}`,
+          accept: "text/event-stream, application/json",
+          "content-type": "application/json",
+          ...extra,
+        });
+        const patCallRes = await patEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: patHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 5,
+              method: "tools/call",
+              params: { name: "knowledge_bases_list", arguments: {} },
+            }),
+          }),
+        );
+        expect(patCallRes.status).toBe(200);
+        const patCallBody = (await sseJson(patCallRes)) as {
+          result: {
+            isError: boolean;
+            structuredContent: {
+              schemaVersion: string;
+              data: { items: { id: string; name: string }[] };
+            };
+          };
+        };
+        expect(patCallBody.result.isError).toBe(false);
+        expect(patCallBody.result.structuredContent.data.items).toHaveLength(1);
+        expect(patCallBody.result.structuredContent.data.items[0]).toMatchObject({
+          id: kbId,
+          name: "Notes",
+        });
+
+        patRevoked = true;
+        const patRevokedRes = await patEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: patHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 6,
+              method: "tools/call",
+              params: { name: "knowledge_bases_list", arguments: {} },
+            }),
+          }),
+        );
+        expect(patRevokedRes.status).toBe(401);
+
+        // 4. Refusals: missing token, cookie-only request, and REST API key all get 401 with WWW-Authenticate.
+        for (const headers of [
+          {
+            accept: "text/event-stream, application/json",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+          },
+          {
+            cookie: "better-auth.session_token=forged-browser-cookie",
+            accept: "text/event-stream, application/json",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+          },
+          {
+            authorization: `Bearer ${apiKey.secret}`,
+            accept: "text/event-stream, application/json",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+          },
+        ]) {
+          const refused = await oauthEndpoint.fetch(
+            new Request(`${f.origin}/mcp`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }),
+            }),
+          );
+          expect(refused.status).toBe(401);
+          expect(refused.headers.get("www-authenticate")).toContain("oauth-protected-resource/mcp");
+        }
+
+        // 5. Authenticated batch on legacy request is refused 400 -32600.
+        const batchRes = await oauthEndpoint.fetch(
+          new Request(`${f.origin}/mcp`, {
+            method: "POST",
+            headers: dpopHeaders({ "mcp-protocol-version": "2025-06-18" }),
+            body: JSON.stringify([{ jsonrpc: "2.0", id: 8, method: "tools/list", params: {} }]),
+          }),
+        );
+        expect(batchRes.status).toBe(400);
+        expect(await batchRes.json()).toMatchObject({ error: { code: -32600 } });
+      } finally {
+        await oauthEndpoint.close();
+        await patEndpoint.close();
+      }
+    } finally {
+      setKbRecoveryComplete(previousRecovery);
       await f.close();
     }
   });

@@ -4,7 +4,7 @@ import { CredentialCapacityError } from "@knowledge-base/api/lib/kb/credential-q
 import { KbAdmissionError } from "@knowledge-base/api/lib/kb/principal";
 import { getKbRuntime, type KbRuntimeConfig } from "@knowledge-base/api/lib/kb/runtime";
 import { logInternalError } from "@knowledge-base/env/log";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { classifyInboundRequest, createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import pkg from "../../package.json" with { type: "json" };
 import { createAdmissionGate } from "./admission";
 import type { BearerAdmission, BearerAdmitter } from "./context";
@@ -13,6 +13,50 @@ import { admissionErrorResponse } from "./errors";
 import { bindTools } from "./tools";
 
 const REQUEST_BYTES = 1024 * 1024;
+const MODERN_DISCOVERY_METHODS = new Set(["server/discover", "tools/list"]);
+const LEGACY_DISCOVERY_METHODS = new Set(["initialize", "server/discover", "tools/list"]);
+
+function parseJsonBody(bytes: Uint8Array): { ok: true; parsed: unknown } | { ok: false } {
+  if (bytes.byteLength === 0) return { ok: false };
+  try {
+    return {
+      ok: true,
+      parsed: JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function isDiscoveryRequest(canonical: Request, body: unknown): boolean {
+  const classified = classifyInboundRequest({
+    httpMethod: "POST",
+    protocolVersionHeader: canonical.headers.get("mcp-protocol-version") ?? undefined,
+    mcpMethodHeader: canonical.headers.get("mcp-method") ?? undefined,
+    mcpNameHeader: canonical.headers.get("mcp-name") ?? undefined,
+    body,
+  });
+  if (classified.kind === "modern") {
+    return (
+      classified.classification.era === "modern" &&
+      classified.messageKind === "request" &&
+      MODERN_DISCOVERY_METHODS.has(classified.message.method) &&
+      canonical.headers.get("mcp-method")?.trim() === classified.message.method &&
+      canonical.headers.has("mcp-protocol-version")
+    );
+  }
+  if (
+    classified.kind === "legacy" &&
+    (classified.reason === "initialize" || classified.reason === "no-claim")
+  ) {
+    const method =
+      body !== null && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>).method
+        : undefined;
+    return typeof method === "string" && LEGACY_DISCOVERY_METHODS.has(method);
+  }
+  return false;
+}
 function isAdmissionDenial(error: unknown): boolean {
   return (
     error instanceof KbAdmissionError &&
@@ -144,9 +188,10 @@ export function createMcpEndpoint(options: {
       return server;
     },
     {
-      legacy: "reject",
+      legacy: "stateless",
       responseMode: "json",
       maxSubscriptions: 0,
+      maxRequestBodySize: REQUEST_BYTES,
       onerror: (error: unknown) => logInternalError("mcp.endpoint", error),
     },
   );
@@ -186,6 +231,45 @@ export function createMcpEndpoint(options: {
         const canonical = canonicalRequest();
         const actor = await options.admit(canonical);
         permit.signal.throwIfAborted();
+        const parsedBody = parseJsonBody(bytes);
+        // Never forward empty, malformed UTF-8, BOM-prefixed, or invalid JSON
+        // bodies to the SDK: its nonfatal decoder would otherwise replace
+        // invalid bytes and could parse an array that skipped our batch guard.
+        if (!parsedBody.ok) {
+          return Response.json(
+            {
+              jsonrpc: "2.0",
+              id: null,
+              error: {
+                code: -32700,
+                message: "Parse error: Invalid JSON",
+              },
+            },
+            {
+              status: 400,
+              headers: { "cache-control": "private, no-store" },
+            },
+          );
+        }
+        // Reject JSON-RPC batch arrays: legacy Streamable HTTP allows up to 100
+        // messages per POST, which would multiply per-HTTP-request rate limits
+        // and mix discovery with tool calls in one transaction.
+        if (Array.isArray(parsedBody.parsed)) {
+          return Response.json(
+            {
+              jsonrpc: "2.0",
+              id: null,
+              error: {
+                code: -32600,
+                message: "Invalid Request: JSON-RPC batching is not supported",
+              },
+            },
+            {
+              status: 400,
+              headers: { "cache-control": "private, no-store" },
+            },
+          );
+        }
         const deliver = async (discovery: Discovery | null) => {
           const response = await admissions.run(
             { actor, pending, discovery, requestId, deadlineAt: permit.deadlineAt },
@@ -196,13 +280,12 @@ export function createMcpEndpoint(options: {
             body: await boundedBytes(response.body, RESPONSE_BYTES, permit.signal),
           };
         };
-        // Only discovery requests pay for the live KB mapping. Its inputs, the
-        // admission recheck they start with and the finished response are one
-        // boundary decision; a failure (a lost admission included) is this
-        // endpoint's error response. The SDK rejects a header that does not
-        // match the body, so a mislabelled request gets no list.
-        const method = canonical.headers.get("mcp-method");
-        const discovering = method === "server/discover" || method === "tools/list";
+        // Only discovery requests pay for the live KB mapping (modern
+        // server/discover & tools/list, and legacy initialize, server/discover &
+        // tools/list). Its inputs, the admission recheck they start with and the
+        // finished response are one boundary decision; a failure (a lost
+        // admission included) is this endpoint's error response.
+        const discovering = isDiscoveryRequest(canonical, parsedBody.parsed);
         const { response, body } = discovering
           ? await discover(actor, deliver)
           : await deliver(null);
@@ -211,6 +294,7 @@ export function createMcpEndpoint(options: {
         const responseHeaders = new Headers(response.headers);
         responseHeaders.delete("set-cookie");
         responseHeaders.delete("mcp-session-id");
+        responseHeaders.delete("connection");
         // Every result depends on the credential (the tool list most of all).
         responseHeaders.set("cache-control", "private, no-store");
         responseHeaders.set("content-length", String(body.byteLength));

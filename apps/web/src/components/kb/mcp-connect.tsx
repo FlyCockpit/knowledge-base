@@ -9,6 +9,7 @@ import { SegmentedControl } from "@/components/segmented-control";
 import {
   KB_DOCS,
   MCP_CLIENTS,
+  MCP_LEGACY_PROTOCOL_VERSION,
   MCP_PROTOCOL_VERSION,
   MCP_SERVER_NAME,
   MCP_TOKEN_ENV,
@@ -85,7 +86,10 @@ export function McpConnectCard({
       </div>
       <McpClientSetup serverUrl={serverUrl} />
       <p className="text-sm text-muted-foreground">
-        {t("connect.protocol", { version: MCP_PROTOCOL_VERSION })}
+        {t("connect.protocol", {
+          version: MCP_PROTOCOL_VERSION,
+          legacyVersion: MCP_LEGACY_PROTOCOL_VERSION,
+        })}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" className="min-h-[44px]" onClick={onUseToken}>

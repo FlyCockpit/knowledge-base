@@ -38,6 +38,7 @@ describe("McpConnectCard", () => {
       markupText(enSettings.connect.hints.oauth.claude.replace("{{name}}", "kb")),
     );
     expect(html).toContain("2026-07-28");
+    expect(html).toContain("2025-06-18");
     expect(html).toContain(enSettings.connect.useToken);
     expect(html).toContain(`href="${KB_DOCS.mcp}"`);
     expect(html).toContain('rel="noopener noreferrer"');
@@ -60,6 +61,14 @@ describe("McpConnectCard", () => {
       );
       expect(html).toContain(esSettings.connect.title);
       expect(html).toContain(esSettings.connect.useToken);
+      expect(html).toContain(
+        markupText(
+          esSettings.connect.protocol
+            .replace("{{version}}", "2026-07-28")
+            .replace("{{legacyVersion}}", "2025-06-18"),
+        ),
+      );
+      expect(html).not.toContain("{{");
     } finally {
       await i18n.changeLanguage("en-US");
     }

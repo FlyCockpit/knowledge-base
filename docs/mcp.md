@@ -257,9 +257,11 @@ key itself is refused on `/mcp`, and an MCP token is refused on the REST API.
 
 ## Wire profile, examples and retries
 
-Streamable HTTP is stateless JSON POST, protocol `2026-07-28`, kb/1 envelopes,
-SDK per-request `Mcp-Method`/`Mcp-Name` metadata. No sessions, SSE, legacy transport
-or subscriptions. Limits: 1 MiB request, 8 MiB encoded response, list pages
+Streamable HTTP uses stateless POST with kb/1 envelopes: MCP `2026-07-28` JSON
+responses with SDK per-request `Mcp-Method`/`Mcp-Name` metadata as primary, plus
+stateless legacy `2025-06-18` compatibility (per-request SSE responses, no
+sessions, no GET/DELETE streams, no JSON-RPC batching, no subscriptions) for
+older clients. Tested with Claude Code 2.1.332 and Codex 0.172.0. Limits: 1 MiB request, 8 MiB encoded response, list pages
 1–50 (default 20), search limit 1–20 (default 6). Follow opaque `nextCursor`;
 cursors bind principal, filter and pinned revision/generation and expire in
 15 minutes. Reauthorize independently. Unsupported framing uses JSON-RPC errors;
