@@ -12,17 +12,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
  *
  * A holder that will itself run a nested lock transaction (a password write
  * runs the credential revocation inside its handler) reserves the nested slot
- * up front, together with its own, so it can never wait for a slot while
- * holding one. That is why `DATABASE_POOL_MAX` is at least 3.
+ * up front, together with its own, so its children never wait globally
+ * behind slots held by their own parent. That is why `DATABASE_POOL_MAX` is at least 3.
  */
 // Safe before a lazy pool factory runs, including inside the first admitted
 // callback. All participating pools must have at least three connections.
 let lockSlots = 2;
 let configuredPoolMax: number | undefined;
-let slotsInUse = 0;
-type SlotWaiter = { count: number; resolve: () => void };
-const slotWaiters: SlotWaiter[] = [];
-
 /**
  * Configure admission at the pool construction boundary, using the same max
  * passed to the adapter. One process-wide queue requires matching pool sizes:
@@ -41,6 +37,22 @@ export function configureLockSlots(poolMax: number): void {
   lockSlots = poolMax - 1;
   admitWaiters();
 }
+let slotsInUse = 0;
+type Reservation = {
+  capacity: number;
+  spare: number;
+  active: boolean;
+  valid: boolean;
+  parent?: Reservation;
+  children: Set<Reservation>;
+  waiters: SlotWaiter[];
+};
+type SlotWaiter = {
+  count: number;
+  reservation?: Reservation;
+  resolve: (reservation: Reservation | undefined) => void;
+};
+const slotWaiters: SlotWaiter[] = [];
 
 /** Take `count` slots now, or answer false (never jumps the queue). */
 export function tryAcquireSlots(count = 1): boolean {
@@ -55,7 +67,7 @@ function admitWaiters(): void {
     if (slotsInUse + next.count > lockSlots) break;
     slotWaiters.shift();
     slotsInUse += next.count;
-    next.resolve();
+    next.resolve(undefined);
   }
 }
 
@@ -79,26 +91,32 @@ export class LockSlotTimeoutError extends Error {
  * holds up the ones behind it) and the wait rejects with
  * {@link LockSlotTimeoutError}.
  */
-function waitForSlots(count: number, deadline: number | undefined): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+function waitForSlots(
+  count: number,
+  deadline: number | undefined,
+  reservation?: Reservation,
+): Promise<Reservation | undefined> {
+  return new Promise((resolve, reject) => {
     let timer: NodeJS.Timeout | undefined;
     const waiter: SlotWaiter = {
       count,
-      resolve: () => {
+      reservation,
+      resolve: (source) => {
         clearTimeout(timer);
-        resolve();
+        resolve(source);
       },
     };
-    slotWaiters.push(waiter);
+    (reservation?.waiters ?? slotWaiters).push(waiter);
     if (deadline === undefined) return;
     timer = setTimeout(
       () => {
-        const at = slotWaiters.indexOf(waiter);
+        // A closed reservation moves its queued children into the global FIFO.
+        const queue = waiter.reservation?.waiters ?? slotWaiters;
+        const at = queue.indexOf(waiter);
         if (at < 0) return; // already admitted
-        slotWaiters.splice(at, 1);
-        // A large request at the head may have been all that held back
-        // smaller ones behind it.
-        admitWaiters();
+        queue.splice(at, 1);
+        if (waiter.reservation) admitReservedWaiters(waiter.reservation);
+        else admitWaiters();
         reject(new LockSlotTimeoutError());
       },
       Math.max(0, deadline - performance.now()),
@@ -106,37 +124,119 @@ function waitForSlots(count: number, deadline: number | undefined): Promise<void
   });
 }
 
-/** Slots a holder reserved for the nested lock transaction it runs. */
-const reservedFor = new AsyncLocalStorage<{ spare: number }>();
+/** Slots a holder reserved for its children; siblings compete in arrival order. */
+const reservedFor = new AsyncLocalStorage<Reservation>();
+
+function admitReservedWaiters(reservation: Reservation): void {
+  for (let next = reservation.waiters[0]; next; next = reservation.waiters[0]) {
+    if (next.count > reservation.spare) break;
+    reservation.waiters.shift();
+    reservation.spare -= next.count;
+    next.resolve(reservation);
+  }
+}
+
+function invalidateReservation(reservation: Reservation): void {
+  reservation.valid = false;
+  for (const waiter of reservation.waiters) {
+    waiter.reservation = undefined;
+    slotWaiters.push(waiter);
+  }
+  reservation.waiters.length = 0;
+  // An ancestor's exit invalidates still-active children too. Their idle
+  // spares can no longer be borrowed locally, so return them immediately;
+  // only work already admitted remains charged until it actually finishes.
+  if (reservation.active && reservation.spare > 0) {
+    const idle = reservation.spare;
+    reservation.spare = 0;
+    returnSlots(reservation.parent, idle);
+  }
+  for (const child of reservation.children) invalidateReservation(child);
+}
+
+/** Return only slots whose work finished, even if an ancestor already exited. */
+function returnSlots(reservation: Reservation | undefined, count: number): void {
+  if (!reservation) {
+    releaseSlots(count);
+  } else if (reservation.active && reservation.valid) {
+    reservation.spare += count;
+    if (reservation.valid) admitReservedWaiters(reservation);
+  } else {
+    returnSlots(reservation.parent, count);
+  }
+}
 
 /**
- * Run `fn` (a transaction that takes, and may wait for, an advisory lock) in
- * a lock slot. Waits for the slot in memory, holding no connection. Inside a
- * holder that reserved a nested slot, the reserved one is used instead (never
- * waited for, so a nested revocation cannot be starved or time out).
- * `nested` reserves that many extra slots for `fn`'s own nested lock
- * transactions. `deadline` (a `performance.now()` timestamp) bounds the wait
- * for a slot: past it the call rejects with {@link LockSlotTimeoutError}
- * without running `fn`.
+ * Run an advisory-lock transaction in a slot, waiting in memory before checkout.
+ * `nested` prepays extra slots for children; competing children use that
+ * reservation's FIFO rather than waiting globally behind their own holder.
+ * A child must fit the reservation (including its own `nested` slots), otherwise
+ * it fails closed before checkout. Each child's scope has only its own spares.
+ *
+ * `deadline` bounds admission, including reservation-local waits. When a holder
+ * exits, its reservation and tickets expire for future descendants. Queued
+ * children join the global FIFO with their original deadlines; active children
+ * keep their slots charged until they finish, even after their ancestors exit.
  */
 export async function withLockSlot<T>(
   fn: () => Promise<T>,
   { nested = 0, deadline }: { nested?: number; deadline?: number } = {},
 ): Promise<T> {
-  const reservation = reservedFor.getStore();
-  if (nested === 0 && reservation && reservation.spare > 0) {
-    reservation.spare -= 1;
-    try {
-      return await fn();
-    } finally {
-      reservation.spare += 1;
-    }
-  }
   const count = 1 + nested;
-  if (!tryAcquireSlots(count)) await waitForSlots(count, deadline);
-  try {
-    return nested > 0 ? await reservedFor.run({ spare: nested }, fn) : await fn();
-  } finally {
-    releaseSlots(count);
+  if (!Number.isInteger(nested) || nested < 0 || count > lockSlots)
+    throw new RangeError("Lock slot request exceeds the available reservation.");
+  if (deadline !== undefined && deadline <= performance.now()) throw new LockSlotTimeoutError();
+  let parent = reservedFor.getStore();
+  if (parent?.valid) {
+    if (count > parent.capacity)
+      throw new RangeError("Nested lock slot request exceeds the outer reservation.");
+    if (parent.waiters.length === 0 && parent.spare >= count) parent.spare -= count;
+    else parent = await waitForSlots(count, deadline, parent);
+  } else {
+    parent = undefined;
+    if (!tryAcquireSlots(count)) await waitForSlots(count, deadline);
   }
+  const allocation: Reservation = {
+    capacity: nested,
+    spare: nested,
+    active: true,
+    // A local admission can race its parent's completion before this continuation.
+    valid: parent?.valid ?? true,
+    parent,
+    children: new Set(),
+    waiters: [],
+  };
+  // An expired parent cannot lend these idle spares, even before registration.
+  if (!allocation.valid) invalidateReservation(allocation);
+  parent?.children.add(allocation);
+  try {
+    return await reservedFor.run(allocation, () => withTransactionTicket(fn, allocation));
+  } finally {
+    allocation.active = false;
+    invalidateReservation(allocation);
+    parent?.children.delete(allocation);
+    returnSlots(parent, 1 + allocation.spare);
+    // Promoted children may fit globally even when returns stayed in a live parent.
+    admitWaiters();
+  }
+}
+
+// A high-level lock wrapper prepaid the next shared-client transaction. Consume
+// that ticket once; a nested transaction must use its own (reserved) slot.
+const transactionSlot = new AsyncLocalStorage<{ available: boolean; allocation: Reservation }>();
+async function withTransactionTicket<T>(fn: () => Promise<T>, allocation: Reservation): Promise<T> {
+  const ticket = { available: true, allocation };
+  try {
+    return await transactionSlot.run(ticket, fn);
+  } finally {
+    ticket.available = false;
+  }
+}
+export async function withTransactionSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const ticket = transactionSlot.getStore();
+  if (ticket?.available && ticket.allocation.valid) {
+    ticket.available = false;
+    return fn();
+  }
+  return withLockSlot(() => withTransactionSlot(fn));
 }

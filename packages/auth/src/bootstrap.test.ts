@@ -1,4 +1,10 @@
-import { configureLockSlots, tryAcquireSlots, withLockSlot } from "@knowledge-base/db/lock-slots";
+import { queueAfterTransactionHook, runWithTransaction } from "@better-auth/core/context";
+import {
+  configureLockSlots,
+  releaseSlots,
+  tryAcquireSlots,
+  withLockSlot,
+} from "@knowledge-base/db/lock-slots";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OWNED_ACTIVE_KB_BLOCK_MESSAGE } from "./account-deletion-policy";
 import {
@@ -40,11 +46,19 @@ vi.mock("@knowledge-base/env/server", () => ({
   },
 }));
 
+const activationSweep = vi.hoisted(() => vi.fn(async (_id: string) => {}));
+vi.mock("@knowledge-base/db", () => ({ default: {} }));
+vi.mock("./credential-revocation.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./credential-revocation.js")>()),
+  revokeCredentialsAfterPasswordReset: activationSweep,
+}));
+
 const adapterConfigs = vi.hoisted(() => [] as unknown[]);
 vi.mock("better-auth/adapters/prisma", () => ({
   prismaAdapter: (
     client: {
       insertUser: (data: Record<string, unknown>) => Promise<unknown>;
+      insertAccount?: (data: Record<string, unknown>) => Promise<unknown>;
       findRow?: (args: { model: string; where: unknown }) => Promise<unknown>;
       consumeRow?: (args: { model: string; where: unknown }) => Promise<unknown>;
       deleteUser?: (args: { model: string; where: unknown }) => Promise<unknown>;
@@ -56,7 +70,10 @@ vi.mock("better-auth/adapters/prisma", () => ({
     adapterConfigs.push(config);
     return () => {
       const adapter = {
+        options: { adapterConfig: { transaction: false } },
         create: async ({ model, data }: { model: string; data: Record<string, unknown> }) => {
+          if (model.toLowerCase() === "account" && client.insertAccount)
+            return client.insertAccount(data);
           if (model !== "user" && model !== "User") return { id: "other", ...data };
           return client.insertUser(data);
         },
@@ -69,6 +86,8 @@ vi.mock("better-auth/adapters/prisma", () => ({
           client.consumeRow?.(args) ?? null,
         update: async (args: { model: string; where: unknown; update: unknown }) =>
           client.updateRow?.(args) ?? {},
+        updateMany: async (args: { model: string; where: unknown; update: unknown }) =>
+          client.updateRow?.(args) ?? { count: 0 },
         transaction: async (callback: (trx: unknown) => Promise<unknown>) => callback(adapter),
       };
       return adapter;
@@ -471,7 +490,6 @@ describe("isBootstrapComplete", () => {
   it("is false when the singleton is empty and no users exist", async () => {
     expect(
       await isBootstrapComplete({
-        $transaction: async (fn) => fn({} as never),
         bootstrapState: { findUnique: async () => null },
         user: { findFirst: async () => null },
       }),
@@ -481,7 +499,6 @@ describe("isBootstrapComplete", () => {
   it("is true when completedAt is set", async () => {
     expect(
       await isBootstrapComplete({
-        $transaction: async (fn) => fn({} as never),
         bootstrapState: { findUnique: async () => ({ completedAt: new Date("2026-01-01") }) },
         user: { findFirst: async () => null },
       }),
@@ -491,7 +508,6 @@ describe("isBootstrapComplete", () => {
   it("is true when users exist even if the singleton is empty", async () => {
     expect(
       await isBootstrapComplete({
-        $transaction: async (fn) => fn({} as never),
         bootstrapState: { findUnique: async () => ({ completedAt: null }) },
         user: { findFirst: async () => ({ id: "existing" }) },
       }),
@@ -621,6 +637,7 @@ function createFakePrisma(options?: {
   return {
     ...tx,
     users,
+    knowledgeBase: { count: async () => 0 },
     state: () => state,
     insertUser: tx.insertUser,
     $transaction: runTransaction,
@@ -636,6 +653,7 @@ describe("createBootstrapDatabaseAdapter", () => {
 
   it("returns a Better Auth adapter factory", () => {
     const factory = createBootstrapDatabaseAdapter({
+      knowledgeBase: { count: async () => 0 },
       $transaction: async (fn) => fn({} as never),
       $queryRaw: async () => [],
       $executeRaw: async () => 0,
@@ -1314,6 +1332,18 @@ describe("reset consume transaction and password-write slot integration", () => 
     expect(f.state().link).toBe(true);
   });
 
+  it("refuses reset admission after authority instead of taking setup in reverse order", async () => {
+    const f = resetPrisma();
+    await expect(
+      f.adapter.transaction(async (tx) => {
+        await tx.deleteMany({ model: "session", where: [] });
+        await tx.consumeOne({ model: "verification", where: [] });
+      }),
+    ).rejects.toThrow("Reset cannot acquire setup after authority");
+    expect(f.steps).not.toContain("setup");
+    expect(f.state().link).toBe(true);
+  });
+
   it("an outer consumeOne also runs admission in one centrally admitted transaction", async () => {
     const f = resetPrisma();
     await withLockSlot(() => f.adapter.consumeOne({ model: "verification", where: [] }), {
@@ -1330,5 +1360,277 @@ describe("reset consume transaction and password-write slot integration", () => 
       "consume",
       "commit",
     ]);
+  });
+});
+
+describe("bound activation transactions", () => {
+  function activationPrisma({ active = false, credential = true } = {}) {
+    const steps: string[] = [];
+    let state = {
+      verified: active,
+      password: credential ? "old" : null,
+      linked: false,
+      links: true,
+    };
+    const tx = {
+      bootstrapState: { findUnique: async () => ({ completedAt: new Date() }) },
+      $queryRaw: async () => [],
+      $executeRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
+        if (sql.join("").includes("pg_advisory_xact_lock")) {
+          steps.push(typeof values[0] === "number" ? "authority" : String(values[0]));
+        }
+        return 0;
+      },
+      $executeRawUnsafe: async (sql: string) => {
+        if (sql.startsWith('UPDATE "mcp_personal_token"')) steps.push("revoke");
+        return 0;
+      },
+      user: {
+        findUnique: async () => ({
+          emailVerified: state.verified,
+          accounts: state.linked
+            ? [{ providerId: "sso" }]
+            : credential
+              ? [{ providerId: "credential" }]
+              : [],
+          sessions: [],
+        }),
+      },
+      account: {
+        updateMany: async () => {
+          steps.push("clear-password");
+          state.password = null;
+          return { count: 1 };
+        },
+      },
+      deviceCode: { deleteMany: async () => ({ count: 0 }) },
+      session: { deleteMany: async () => ({ count: 0 }) },
+      verification: {
+        deleteMany: async () => {
+          steps.push("delete-links");
+          state.links = false;
+          return { count: 1 };
+        },
+      },
+      findRow: vi.fn(async () => ({ id: "InviteA" })),
+      updateRow: vi.fn(async () => {
+        steps.push("verify");
+        state.verified = true;
+        return { id: "InviteA", emailVerified: true };
+      }),
+      insertAccount: async () => {
+        steps.push("insert-idp");
+        state.linked = true;
+        return { id: "idp" };
+      },
+    };
+    const transaction = vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => {
+      const before = { ...state };
+      steps.push("begin");
+      try {
+        const result = await run(tx);
+        steps.push("commit");
+        return result;
+      } catch (error) {
+        state = before;
+        steps.push("rollback");
+        throw error;
+      }
+    });
+    const adapter = createBootstrapDatabaseAdapter({ ...tx, $transaction: transaction } as never)(
+      {},
+    );
+    return { adapter, tx, transaction, steps, state: () => state };
+  }
+
+  for (const method of ["update", "updateMany"] as const) {
+    for (const where of [
+      [],
+      [{ field: "name", value: "InviteA" }],
+      [{ field: "id", value: "InviteA", operator: "ne" }],
+      [{ field: "id", value: "InviteA", mode: "insensitive" }],
+      [{ field: "email", value: "invite@example.test", mode: "insensitive" }],
+      [{ field: "email", value: ["invite@example.test"] }],
+      [{ field: "id", value: ["InviteA"] }],
+      [{ field: "id", value: "" }],
+      [
+        { field: "id", value: "InviteA" },
+        { field: "email", value: "invite@example.test" },
+      ],
+      { id: "InviteA" },
+    ]) {
+      it(`${method} refuses unsupported selector ${JSON.stringify(where)} before lookup/checkout`, async () => {
+        const f = activationPrisma();
+        await expect(async () =>
+          f.adapter[method]({ model: "user", where, update: { emailVerified: true } }),
+        ).rejects.toThrow("Activation requires an exact user selector");
+        expect(f.transaction).not.toHaveBeenCalled();
+        expect(f.tx.findRow).not.toHaveBeenCalled();
+        expect(f.tx.updateRow).not.toHaveBeenCalled();
+      });
+    }
+    for (const field of ["id", "email"]) {
+      it(`${method} verifies using exact ${field} with password -> setup -> authority on one client`, async () => {
+        const f = activationPrisma();
+        await f.adapter[method]({
+          model: "user",
+          where: [{ field, value: "InviteA", operator: "eq", mode: "sensitive" }],
+          update: { emailVerified: true },
+        });
+        expect(f.steps).toEqual([
+          "begin",
+          "password-write:InviteA",
+          "set-password-link:InviteA",
+          "authority",
+          "verify",
+          "delete-links",
+          "commit",
+        ]);
+        expect(f.transaction).toHaveBeenCalledOnce();
+        expect(f.state().links).toBe(false);
+      });
+    }
+  }
+
+  it("failed verification rolls back its link retirement and retries", async () => {
+    const f = activationPrisma();
+    const write = (tx: typeof f.adapter) =>
+      tx.update({
+        model: "user",
+        where: [{ field: "id", value: "InviteA" }],
+        update: { emailVerified: true },
+      });
+    await expect(
+      f.adapter.transaction(async (tx) => {
+        await write(tx);
+        throw new Error("failed write");
+      }),
+    ).rejects.toThrow("failed write");
+    expect(f.state()).toMatchObject({ verified: false, links: true });
+    await f.adapter.transaction(write);
+    expect(f.state()).toMatchObject({ verified: true, links: false });
+  });
+
+  it("reports real transactions to pinned Better Auth, discards failed hooks and flushes successful hooks after release", async () => {
+    const f = activationPrisma();
+    const hook = vi.fn(async () => {
+      const acquired = tryAcquireSlots();
+      expect(acquired).not.toBe(false);
+      if (acquired) releaseSlots();
+    });
+    const write = async () => {
+      await queueAfterTransactionHook(hook);
+      throw new Error("rolled back");
+    };
+    await expect(runWithTransaction(f.adapter as never, write)).rejects.toThrow("rolled back");
+    expect(hook).not.toHaveBeenCalled();
+    await runWithTransaction(f.adapter as never, () => queueAfterTransactionHook(hook));
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  it.each([true, false])(
+    "clears pending invite (credential=%s) before IdP insert and completes sweep after commit",
+    async (credential) => {
+      activationSweep.mockClear();
+      const f = activationPrisma({ credential });
+      activationSweep.mockImplementationOnce(async () => {
+        f.steps.push("post-sweep");
+        expect(f.state().password).toBeNull();
+      });
+      await f.adapter.create({ model: "account", data: { userId: "InviteA", providerId: "sso" } });
+      expect(f.steps).toEqual([
+        "begin",
+        "password-write:InviteA",
+        "set-password-link:InviteA",
+        "authority",
+        "clear-password",
+        "revoke",
+        "insert-idp",
+        "delete-links",
+        "commit",
+        "post-sweep",
+      ]);
+      expect(activationSweep).toHaveBeenCalledExactlyOnceWith("InviteA");
+    },
+  );
+
+  it("does not clear active SSO credentials", async () => {
+    activationSweep.mockClear();
+    const f = activationPrisma({ active: true });
+    await f.adapter.create({ model: "account", data: { userId: "InviteA", providerId: "sso" } });
+    expect(f.state().password).toBe("old");
+    expect(f.steps).not.toContain("clear-password");
+    expect(activationSweep).not.toHaveBeenCalled();
+  });
+
+  it("nested IdP insertion uses the same client, rolls back clearing, and sweeps only after successful commit", async () => {
+    activationSweep.mockClear();
+    const f = activationPrisma();
+    const create = (tx: typeof f.adapter) =>
+      tx.create({ model: "account", data: { userId: "InviteA", providerId: "sso" } });
+    await expect(
+      f.adapter.transaction(async (tx) => {
+        await create(tx);
+        throw new Error("IdP insert failed");
+      }),
+    ).rejects.toThrow("IdP insert failed");
+    expect(f.state()).toEqual({ verified: false, password: "old", linked: false, links: true });
+    expect(activationSweep).not.toHaveBeenCalled();
+    await f.adapter.transaction(create);
+    expect(f.state()).toEqual({ verified: false, password: null, linked: true, links: false });
+    expect(activationSweep).toHaveBeenCalledOnce();
+  });
+
+  it("refuses taking activation locks after authority instead of inverting the order", async () => {
+    const f = activationPrisma();
+    await expect(
+      f.adapter.transaction(async (tx) => {
+        await tx.deleteMany({ model: "session", where: [] });
+        await tx.update({
+          model: "user",
+          where: [{ field: "id", value: "InviteA" }],
+          update: { emailVerified: true },
+        });
+      }),
+    ).rejects.toThrow("Activation cannot acquire password/setup after authority");
+    expect(f.steps).not.toContain("password-write:InviteA");
+  });
+
+  it("activation reuses the password handler's reserved nested slot at pool minimum three", async () => {
+    const f = activationPrisma();
+    f.tx.updateRow.mockImplementationOnce(async () => {
+      expect(tryAcquireSlots()).toBe(false);
+      return { id: "InviteA", emailVerified: true };
+    });
+    await withLockSlot(
+      () =>
+        f.adapter.update({
+          model: "user",
+          where: [{ field: "id", value: "InviteA" }],
+          update: { emailVerified: true },
+        }),
+      { nested: 1 },
+    );
+    const acquired = tryAcquireSlots(2);
+    expect(acquired).toBe(true);
+    if (acquired) releaseSlots(2);
+  });
+
+  it("fresh OAuth JIT user and account creation reuse the bootstrap transaction without activation locks", async () => {
+    envState.SIGNUP_ENABLED = true;
+    try {
+      const prisma = createFakePrisma();
+      const adapter = createBootstrapDatabaseAdapter(prisma)({});
+      await adapter.transaction(async (tx) => {
+        const user = (await tx.create({ model: "user", data: { email: "jit@example.test" } })) as {
+          id: string;
+        };
+        await tx.create({ model: "account", data: { userId: user.id, providerId: "sso" } });
+      });
+      expect(prisma.users).toHaveLength(1);
+      expect(prisma.state().completedAt).toBeInstanceOf(Date);
+    } finally {
+      envState.SIGNUP_ENABLED = false;
+    }
   });
 });

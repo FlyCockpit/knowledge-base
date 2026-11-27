@@ -1,4 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { runWithEndpointContext } from "@better-auth/core/context";
+import { handleOAuthUserInfo } from "better-auth/oauth2";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type KbPostgresDatabase,
@@ -101,7 +103,11 @@ async function spend(token: string, newPassword = "new-password-123456") {
       body: JSON.stringify({ token, newPassword }),
     }),
   );
-  return { status: res.status, body: (await res.json()) as { code?: string } };
+  const text = await res.text();
+  return {
+    status: res.status,
+    body: (text === "" ? {} : JSON.parse(text)) as { code?: string },
+  };
 }
 
 async function passwordWorks(email: string, password: string) {
@@ -535,6 +541,539 @@ describe("reset and invite links against real Postgres and the real handler", ()
     await activation;
     expect(await admitted).toBe(false);
   });
+
+  function barrier() {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { entered, enter, released, release };
+  }
+
+  async function bounded<T>(promise: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("activation fixture barrier timed out")),
+            8_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  it.each([
+    { first: "shown", activation: "verify" },
+    { first: "activation", activation: "verify" },
+    { first: "shown", activation: "sso" },
+    { first: "activation", activation: "sso" },
+  ])(
+    "Postgres serializes $first first against $activation activation",
+    async ({ first, activation }) => {
+      const user = await invitee();
+      await withPassword(user.id);
+      const link = await mint(user.id);
+      const context = await auth.$context;
+      const gate = barrier();
+      const originalHash = context.password.hash;
+      const hash =
+        first === "shown"
+          ? vi.spyOn(context.password, "hash").mockImplementationOnce(async (password) => {
+              gate.enter();
+              await gate.released;
+              return originalHash(password);
+            })
+          : undefined;
+      if (first === "activation") {
+        db.client = prisma.$extends({
+          query: {
+            user: {
+              async update({ args, query }) {
+                const result = await query(args);
+                if (
+                  activation === "verify" &&
+                  args.where.id === user.id &&
+                  args.data.emailVerified === true
+                ) {
+                  gate.enter();
+                  await gate.released;
+                }
+                return result;
+              },
+            },
+            account: {
+              async create({ args, query }) {
+                const result = await query(args);
+                if (
+                  activation === "sso" &&
+                  args.data.userId === user.id &&
+                  args.data.providerId === "sso"
+                ) {
+                  gate.enter();
+                  await gate.released;
+                }
+                return result;
+              },
+            },
+          },
+        });
+      }
+      const activate = () =>
+        activation === "verify"
+          ? context.internalAdapter.updateUser(user.id, { emailVerified: true })
+          : context.internalAdapter.linkAccount({
+              userId: user.id,
+              providerId: "sso",
+              accountId: `race-${user.id}`,
+            });
+      const winner =
+        first === "shown" ? spend(link.token, "shown-first-password-123456") : activate();
+      let loser: Promise<unknown> | undefined;
+      try {
+        await bounded(gate.entered);
+        loser = first === "shown" ? activate() : spend(link.token);
+        // At pool minimum three the competitor waits in slot admission,
+        // before PostgreSQL checkout. The winner already owns password-write.
+        gate.release();
+        const [winning, losing] = await bounded(Promise.all([winner, loser]));
+        const reset = (first === "shown" ? winning : losing) as Awaited<ReturnType<typeof spend>>;
+        expect(reset.status).toBe(first === "shown" ? 200 : 400);
+        if (first === "activation") expect(reset.body.code).toBe("INVALID_TOKEN");
+        expect(await verified(user.id)).toBe(activation === "verify");
+        expect(
+          await passwordWorks(
+            user.email,
+            first === "shown" ? "shown-first-password-123456" : OLD_PASSWORD,
+          ),
+        ).toBe(activation === "verify");
+        if (activation === "sso")
+          expect(
+            await prisma.account.findFirst({
+              where: { userId: user.id, providerId: "credential" },
+              select: { password: true },
+            }),
+          ).toEqual({ password: null });
+        expect(await resetRows(user.id)).toBe(0);
+      } finally {
+        gate.release();
+        await Promise.allSettled([winner, ...(loser ? [loser] : [])]);
+        hash?.mockRestore();
+        db.client = prisma;
+      }
+    },
+  );
+
+  it("Postgres minimum-pool reset and activation competitors finish and release admission", async () => {
+    // Run this case on Boat with DATABASE_POOL_MAX=3 (all factories use that same setting).
+    const resetting = await invitee();
+    const verifyingUser = await invitee();
+    const ssoUser = await invitee();
+    const link = await mint(resetting.id);
+    await links.recordResetLinkProof({
+      ...link,
+      userId: resetting.id,
+      email: resetting.email,
+      proof: "mailbox",
+    });
+    await withPassword(ssoUser.id);
+    const context = await auth.$context;
+    const [reset] = await bounded(
+      Promise.all([
+        spend(link.token),
+        context.internalAdapter.updateUser(verifyingUser.id, { emailVerified: true }),
+        context.internalAdapter.linkAccount({
+          userId: ssoUser.id,
+          providerId: "sso",
+          accountId: `capacity-${ssoUser.id}`,
+        }),
+      ]),
+    );
+    expect(reset.status).toBe(200);
+    expect(await verified(resetting.id)).toBe(true);
+    expect(await verified(verifyingUser.id)).toBe(true);
+    expect(await passwordWorks(ssoUser.email, OLD_PASSWORD)).toBe(false);
+    const { tryAcquireSlots, releaseSlots } = await import("./lock-slots");
+    const acquired = tryAcquireSlots(2);
+    expect(acquired).toBe(true);
+    if (acquired) releaseSlots(2);
+  });
+
+  it("Postgres password-write failure rolls back proof, sibling retirement, verification and token; same link retries", async () => {
+    const user = await invitee();
+    await withPassword(user.id);
+    const link = await mint(user.id);
+    await links.recordResetLinkProof({
+      ...link,
+      userId: user.id,
+      email: user.email,
+      proof: "mailbox",
+    });
+    const sibling = `sibling-${randomUUID()}`;
+    await prisma.verification.create({
+      data: { identifier: `reset-password:${sibling}`, value: user.id, expiresAt: link.expiresAt },
+    });
+    let failed = false;
+    db.client = prisma.$extends({
+      query: {
+        account: {
+          async updateMany({ args, query }) {
+            const result = await query(args);
+            if (!failed && result.count === 1 && typeof args.data.password === "string") {
+              failed = true;
+              throw new Error("fixture password write failed after SQL");
+            }
+            return result;
+          },
+        },
+      },
+    });
+    try {
+      expect((await spend(link.token)).status).toBe(500);
+      expect(failed).toBe(true);
+      expect(await verified(user.id)).toBe(false);
+      expect(await passwordWorks(user.email, OLD_PASSWORD)).toBe(true);
+      expect(await resetRows(user.id)).toBe(2);
+      expect(
+        await prisma.verification.count({
+          where: { identifier: rules.proofIdentifier(link.token) },
+        }),
+      ).toBe(1);
+      expect((await spend(link.token)).status).toBe(200);
+      expect(await verified(user.id)).toBe(true);
+      expect(await resetRows(user.id)).toBe(0);
+      expect(
+        await prisma.verification.count({
+          where: { identifier: rules.proofIdentifier(link.token) },
+        }),
+      ).toBe(0);
+    } finally {
+      db.client = prisma;
+    }
+  });
+
+  it("Postgres verifying updateMany uses the exact email selector and retires reset links", async () => {
+    const user = await invitee();
+    await mint(user.id);
+    const context = await auth.$context;
+    await context.adapter.updateMany({
+      model: "user",
+      where: [{ field: "email", value: user.email }],
+      update: { emailVerified: true },
+    });
+    expect(await verified(user.id)).toBe(true);
+    expect(await resetRows(user.id)).toBe(0);
+  });
+
+  async function standingCredentials(userId: string) {
+    const expiresAt = new Date(Date.now() + 60_000);
+    const grant = (kind: "PAT" | "API_KEY" | "OAUTH") =>
+      prisma.mcpGrant.create({
+        data: {
+          id: randomUUID(),
+          actorUserIdSnapshot: userId,
+          userId,
+          kind,
+          clientId: randomUUID(),
+          referenceId: randomUUID(),
+          scopes: [],
+          toolGroups: ["read"],
+          createdKbBits: [],
+        },
+      });
+    const [patGrant, apiGrant, oauth] = await Promise.all([
+      grant("PAT"),
+      grant("API_KEY"),
+      grant("OAUTH"),
+    ]);
+    const key = await prisma.apiKey.create({
+      data: {
+        userId,
+        userIdSnapshot: userId,
+        name: "fixture-key",
+        lookupPrefix: randomUUID(),
+        secretDigest: randomUUID(),
+        grantId: apiGrant.id,
+        reach: "SELECTED",
+        bits: [],
+        childToolGroups: ["read"],
+        expiresAt,
+      },
+    });
+    const pat = await prisma.mcpPersonalToken.create({
+      data: {
+        userId,
+        userIdSnapshot: userId,
+        name: "fixture-cli-child",
+        lookupPrefix: randomUUID(),
+        secretDigest: randomUUID(),
+        grantId: patGrant.id,
+        scopes: [],
+        resource: ORIGIN,
+        parentApiKeyId: key.id,
+      },
+    });
+    const device = await prisma.deviceCode.create({
+      data: {
+        deviceCodeDigest: randomUUID(),
+        userCode: randomUUID(),
+        userId,
+        status: "approved",
+        expiresAt,
+      },
+    });
+    return { patGrant, apiGrant, oauth, key, pat, device };
+  }
+
+  it.each([false, true])(
+    "Postgres pending IdP activation clears owned credentials, preserves peers and new SSO session (prior credential=%s)",
+    async (priorCredential) => {
+      const user = await invitee();
+      const peer = await invitee({ emailVerified: true });
+      if (priorCredential) {
+        const shown = await mint(user.id);
+        expect((await spend(shown.token, "earlier-shown-password-123456")).status).toBe(200);
+      }
+      const link = await mint(user.id);
+      const owned = await standingCredentials(user.id);
+      const control = await standingCredentials(peer.id);
+      const context = await auth.$context;
+      await context.internalAdapter.linkAccount({
+        userId: user.id,
+        providerId: "sso",
+        accountId: `pending-${user.id}`,
+      });
+      expect(
+        await prisma.account.findFirst({
+          where: { userId: user.id, providerId: "credential" },
+          select: { password: true },
+        }),
+      ).toEqual(priorCredential ? { password: null } : null);
+      for (const id of [owned.patGrant.id, owned.apiGrant.id, owned.oauth.id]) {
+        expect(
+          (await prisma.mcpGrant.findUniqueOrThrow({ where: { id } })).revokedAt,
+        ).not.toBeNull();
+      }
+      expect(
+        (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: owned.pat.id } }))
+          .revokedAt,
+      ).not.toBeNull();
+      expect(
+        (await prisma.apiKey.findUniqueOrThrow({ where: { id: owned.key.id } })).revokedAt,
+      ).not.toBeNull();
+      expect(await prisma.deviceCode.findUnique({ where: { id: owned.device.id } })).toBeNull();
+      for (const id of [control.patGrant.id, control.apiGrant.id, control.oauth.id]) {
+        expect((await prisma.mcpGrant.findUniqueOrThrow({ where: { id } })).revokedAt).toBeNull();
+      }
+      expect(
+        await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: control.pat.id } }),
+      ).toEqual(control.pat);
+      expect(await prisma.apiKey.findUniqueOrThrow({ where: { id: control.key.id } })).toEqual(
+        control.key,
+      );
+      expect(
+        await prisma.deviceCode.findUniqueOrThrow({ where: { id: control.device.id } }),
+      ).toEqual(control.device);
+      expect((await spend(link.token)).body.code).toBe("INVALID_TOKEN");
+      const session = await runWithEndpointContext(
+        { path: "/callback/sso", context } as never,
+        () => context.internalAdapter.createSession(user.id),
+      );
+      expect(session).not.toBeNull();
+      expect(await prisma.session.findUnique({ where: { id: session!.id } })).not.toBeNull();
+    },
+  );
+
+  it("Postgres pending IdP insert failure restores earlier password and credentials; linking retries", async () => {
+    const user = await invitee();
+    await withPassword(user.id);
+    const link = await mint(user.id);
+    const credentials = await standingCredentials(user.id);
+    const context = await auth.$context;
+    let failed = false;
+    db.client = prisma.$extends({
+      query: {
+        account: {
+          async create({ args, query }) {
+            const result = await query(args);
+            if (!failed && args.data.providerId === "sso") {
+              failed = true;
+              throw new Error("fixture IdP insert failed after SQL");
+            }
+            return result;
+          },
+        },
+      },
+    });
+    const linkAccount = () =>
+      context.internalAdapter.linkAccount({
+        userId: user.id,
+        providerId: "sso",
+        accountId: `retry-${user.id}`,
+      });
+    try {
+      await expect(linkAccount()).rejects.toThrow("fixture IdP insert failed after SQL");
+      expect(await passwordWorks(user.email, OLD_PASSWORD)).toBe(true);
+      expect(
+        (await prisma.mcpPersonalToken.findUniqueOrThrow({ where: { id: credentials.pat.id } }))
+          .revokedAt,
+      ).toBeNull();
+      expect(await resetRows(user.id)).toBe(1);
+      await linkAccount();
+      expect(await passwordWorks(user.email, OLD_PASSWORD)).toBe(false);
+      expect((await spend(link.token)).body.code).toBe("INVALID_TOKEN");
+    } finally {
+      db.client = prisma;
+    }
+  });
+
+  it("Postgres SSO post-sweep removes old-proof rows inserted while its clearing transaction was uncommitted", async () => {
+    const user = await invitee();
+    await withPassword(user.id);
+    const context = await auth.$context;
+    const gate = barrier();
+    const expiresAt = new Date(Date.now() + 60_000);
+    db.client = prisma.$extends({
+      query: {
+        account: {
+          async create({ args, query }) {
+            const result = await query(args);
+            if (args.data.userId === user.id && args.data.providerId === "sso") {
+              gate.enter();
+              await gate.released;
+            }
+            return result;
+          },
+        },
+      },
+    });
+    const link = context.internalAdapter.linkAccount({
+      userId: user.id,
+      providerId: "sso",
+      accountId: `late-${user.id}`,
+    });
+    try {
+      await bounded(gate.entered);
+      const late = await holder.session.create({
+        data: { userId: user.id, token: randomUUID(), expiresAt },
+      });
+      const challenge = await holder.verification.create({
+        data: { identifier: `2fa-${randomUUID()}`, value: user.id, expiresAt },
+      });
+      gate.release();
+      await bounded(link);
+      expect(await prisma.session.findUnique({ where: { id: late.id } })).toBeNull();
+      expect(await prisma.verification.findUnique({ where: { id: challenge.id } })).toBeNull();
+    } finally {
+      gate.release();
+      await Promise.allSettled([link]);
+      db.client = prisma;
+    }
+  });
+
+  it("Postgres delayed old-password session and challenge cannot survive SSO activation", async () => {
+    const user = await invitee();
+    await withPassword(user.id);
+    const context = await auth.$context;
+    const {
+      withPasswordSignInFence,
+      fencePasswordSessionBefore,
+      fencePasswordSessionAfter,
+      recordTwoFactorChallenge,
+    } = await import("./password-sign-in-fence");
+    const expiresAt = new Date(Date.now() + 60_000);
+    const challenge = `2fa-${randomUUID()}`;
+    let sessionId: string | undefined;
+    const response = await withPasswordSignInFence(
+      new Request(`${ORIGIN}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: user.email, password: OLD_PASSWORD }),
+      }),
+      async () => {
+        await fencePasswordSessionBefore({ userId: user.id }, { path: "/sign-in/email" });
+        await context.internalAdapter.linkAccount({
+          userId: user.id,
+          providerId: "sso",
+          accountId: `delayed-${user.id}`,
+        });
+        const session = await prisma.session.create({
+          data: { userId: user.id, token: randomUUID(), expiresAt },
+        });
+        sessionId = session.id;
+        await fencePasswordSessionAfter(session, { path: "/sign-in/email" });
+        await prisma.verification.create({
+          data: { identifier: challenge, value: user.id, expiresAt },
+        });
+        await recordTwoFactorChallenge(
+          { identifier: challenge, value: user.id, expiresAt },
+          { path: "/sign-in/email" },
+        );
+        return Response.json({ status: true });
+      },
+    );
+    expect(response.status).toBe(401);
+    expect(sessionId).toBeTruthy();
+    expect(await prisma.session.findUnique({ where: { id: sessionId! } })).toBeNull();
+    expect(
+      await prisma.verification.count({
+        where: { value: user.id, identifier: { startsWith: challenge } },
+      }),
+    ).toBe(0);
+  });
+
+  it("pinned OAuth default refuses implicit linking to an unverified local account on Postgres", async () => {
+    const user = await invitee();
+    await withPassword(user.id);
+    const context = await auth.$context;
+    const result = await handleOAuthUserInfo({ context } as never, {
+      userInfo: {
+        id: `default-${user.id}`,
+        email: user.email,
+        name: "Invitee",
+        emailVerified: true,
+      },
+      account: { providerId: "sso", accountId: `default-${user.id}` },
+      callbackURL: ORIGIN,
+    });
+    expect(result.error).toBe("account not linked");
+    expect(await passwordWorks(user.email, OLD_PASSWORD)).toBe(true);
+    expect(await prisma.account.count({ where: { userId: user.id } })).toBe(1);
+    expect(await verified(user.id)).toBe(false);
+  });
+
+  it.each(["active", "fresh"] as const)(
+    "pinned OAuth preserves %s SSO on Postgres",
+    async (mode) => {
+      const user =
+        mode === "active"
+          ? await invitee({ emailVerified: true })
+          : { email: `${randomUUID()}@example.test` };
+      if ("id" in user) await withPassword(user.id);
+      const context = await auth.$context;
+      const endpoint = { path: "/callback/sso", context };
+      const accountId = randomUUID();
+      const result = await runWithEndpointContext(endpoint as never, () =>
+        handleOAuthUserInfo(endpoint as never, {
+          userInfo: { id: accountId, email: user.email, name: "SSO", emailVerified: true },
+          account: { providerId: "sso", accountId },
+          callbackURL: ORIGIN,
+        }),
+      );
+      expect(result.error).toBeNull();
+      expect(result.data?.session).toBeTruthy();
+      if ("id" in user) expect(await passwordWorks(user.email, OLD_PASSWORD)).toBe(true);
+      expect(await prisma.account.count({ where: { providerId: "sso", accountId } })).toBe(1);
+    },
+  );
 
   it("refuses Better Auth's /admin/create-user over HTTP, even for a verified admin", async () => {
     const admin = await prisma.user.create({

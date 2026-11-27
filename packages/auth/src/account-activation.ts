@@ -2,29 +2,10 @@ import { deleteResetLinksOnActivation } from "./password-reset-links.js";
 import { CREDENTIAL_PROVIDER_ID } from "./reset-link-rules.js";
 
 /**
- * An invited account becomes active when its email is verified or an IdP
- * identity is linked to it. Set-password links minted while it was a pending
- * invite (one an admin was shown) must die at that moment, by whatever route
- * it happened: ordinary `/verify-email`, an SSO sign-in that links the account
- * and copies the IdP's verified claim. (A proved reset link verifies and
- * deletes the others itself, password-reset-links.ts `admitResetSpend`.)
- *
- * This is tidy-up, not the guarantee. What stops the holder of a leftover link
- * from replacing the active account's password is the spending transaction's
- * own check (password-reset-links.ts `admitResetSpend`): a link that was not
- * mailed is spendable only while the account is a pending invite. So
- * a failed cleanup is logged, never surfaced: the activation is already
- * committed.
- *
- * These run as Better Auth database after-hooks, which Better Auth queues
- * until the write's transaction committed. Each takes the per-user
- * credential-setup lock that minting takes and deletes every reset link of
- * the user, so a mint racing the activation either re-reads the user under the
- * lock after the activation committed and refuses, or committed its link
- * before this took the lock, and this deletes it.
- *
- * A forgot-password link the user has out also goes when an IdP identity is
- * linked to an already-verified account; they can request another.
+ * Commit-only defense-in-depth cleanup. Bootstrap's bound adapter now locks
+ * activation and deletes links in the SAME transaction as the verifying write
+ * or IdP insert. Reset admission remains authoritative in its password transaction.
+ * These hooks retry cleanup only; they never establish proof or undo passwords.
  */
 
 /** Endpoint contexts whose user update set `emailVerified: true`. */

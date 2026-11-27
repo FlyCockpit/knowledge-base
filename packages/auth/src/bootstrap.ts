@@ -1,5 +1,6 @@
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import { withLockSlot } from "@knowledge-base/db/lock-slots";
+import { logInternalError } from "@knowledge-base/env/log";
 import { ADMIN_EMAIL, env, SIGNUP_ENABLED } from "@knowledge-base/env/server";
 import type { BetterAuthOptions } from "better-auth";
 import { BASE_ERROR_CODES } from "better-auth";
@@ -21,11 +22,15 @@ import {
 import { canonicalizeEmail } from "./email.js";
 import {
   admitResetSpend,
+  CREDENTIAL_PROVIDER_ID,
+  deleteResetLinks,
+  lockCredentialSetup,
   RESET_PASSWORD_IDENTIFIER_PREFIX,
   type ResetSpendTx,
 } from "./reset-link-rules.js";
 import { isAdminRole, isImpersonatedSession } from "./roles.js";
 import { getAdminMutationActor, readLiveAdminPolicy } from "./session-authority.js";
+import type { PendingInviteActivationTx } from "./sso-invite-activation.js";
 import { sanitizeUserCreateData, sanitizeUserUpdateData } from "./user-columns.js";
 import {
   getAllowedUserCreationMode,
@@ -342,6 +347,7 @@ type AdapterDeleteMany = {
 type AdapterLike = AdapterCreate &
   AdapterDelete &
   AdapterDeleteMany & {
+    options?: { adapterConfig: Record<string, unknown> };
     consumeOne: (args: AdapterDeleteArgs) => Promise<unknown>;
     findOne: (args: AdapterDeleteArgs) => Promise<unknown>;
     update: (args: AdapterUpdateArgs) => Promise<unknown>;
@@ -462,13 +468,80 @@ function extractAccountCascadeUserId(args: AdapterDeleteManyArgs): string | unde
   return undefined;
 }
 
+type TransactionState = {
+  written: boolean;
+  adminChecks: Array<() => void>;
+  authorityLocked: boolean;
+  activationUserId?: string;
+  createdUsers: Set<string>;
+  pendingActivations: Set<string>;
+};
+
+function transactionState(): TransactionState {
+  return {
+    written: false,
+    adminChecks: [],
+    authorityLocked: false,
+    createdUsers: new Set(),
+    pendingActivations: new Set(),
+  };
+}
+
+/** Validate BEFORE checkout/lookup, equally for update and updateMany. Email is immutable. */
+function assertActivationSelector(where: unknown): void {
+  if (!Array.isArray(where) || where.length !== 1) {
+    throw new Error("Activation requires an exact user selector");
+  }
+  const row = where[0] as {
+    field?: unknown;
+    value?: unknown;
+    operator?: unknown;
+    mode?: unknown;
+  } | null;
+  if (
+    !row ||
+    (row.field !== "id" && row.field !== "email") ||
+    (row.operator !== undefined && row.operator !== "eq") ||
+    (row.mode !== undefined && row.mode !== "sensitive") ||
+    typeof row.value !== "string" ||
+    row.value.length === 0
+  ) {
+    throw new Error("Activation requires an exact user selector");
+  }
+}
+
+/** One client; global identity authority substitutes for the template's credential authority. */
+async function lockActivation(tx: BootstrapPrismaTx, userId: string, state: TransactionState) {
+  if (state.createdUsers.has(userId) || state.activationUserId === userId) return;
+  if (state.authorityLocked)
+    throw new Error("Activation cannot acquire password/setup after authority");
+  const { passwordWriteLockKey } = await import("./password-write-lock.js");
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${passwordWriteLockKey(userId)}))`;
+  if (!hasResetSpendDelegates(tx)) throw new Error("activation needs the verification delegate");
+  await lockCredentialSetup(tx, userId);
+  state.activationUserId = userId;
+}
+
+async function sweepPendingActivations(state: TransactionState) {
+  if (state.pendingActivations.size === 0) return;
+  const { revokeCredentialsAfterPasswordReset } = await import("./credential-revocation.js");
+  for (const userId of state.pendingActivations) {
+    try {
+      await revokeCredentialsAfterPasswordReset(userId);
+    } catch (error) {
+      logInternalError("auth.library.error", error, { userId, reason: "SECURITY.password_reset" });
+      throw error;
+    }
+  }
+}
+
 function bindBootstrapPolicy<T extends AdapterLike>(
   inner: T,
   txClient: BootstrapPrismaTx,
   options: BetterAuthOptions,
   root: BootstrapPrisma,
   startTransaction: (<R>(fn: (tx: BootstrapPrismaTx) => Promise<R>) => Promise<R>) | null,
-  outgoingState?: { written: boolean; adminChecks: Array<() => void> },
+  outgoingState?: TransactionState,
 ): T {
   // Better Auth's admin role/ban endpoints and 2FA/email-verification flows
   // all write through these methods, including on its transactional adapter.
@@ -477,8 +550,25 @@ function bindBootstrapPolicy<T extends AdapterLike>(
     if (!isUserModel(rawArgs.model)) return inner[method](rawArgs);
     // Server-owned columns are never written through Better Auth (user-columns.ts).
     const args = { ...rawArgs, update: sanitizeUserUpdateData(rawArgs.update) };
-    const write = async (tx: BootstrapPrismaTx, writer: AdapterLike) => {
+    const verifying = args.update.emailVerified === true;
+    if (verifying) assertActivationSelector(args.where);
+    const write = async (
+      tx: BootstrapPrismaTx,
+      writer: AdapterLike,
+      state = outgoingState ?? transactionState(),
+    ) => {
+      let activationId: string | undefined;
+      if (verifying) {
+        const target = (await writer.findOne({ model: args.model, where: args.where })) as {
+          id: string;
+        } | null;
+        if (target) {
+          activationId = target.id;
+          await lockActivation(tx, activationId, state);
+        }
+      }
       await lockIdentityAuthority(tx);
+      state.authorityLocked = true;
       const check = await checkAdminMutation(tx, outgoingState?.adminChecks);
       const exec = tx.$executeRawUnsafe?.bind(tx);
       if (!exec) throw new Error("identity write cannot settle MCP lapse");
@@ -513,6 +603,11 @@ function bindBootstrapPolicy<T extends AdapterLike>(
         if (!userId) throw new Error("ban write cannot revoke MCP grants");
         await revokeUserMcpGrants((sql, params) => exec(sql, ...params), userId, "ban");
       }
+      if (activationId) {
+        if (!hasResetSpendDelegates(tx))
+          throw new Error("activation needs the verification delegate");
+        await deleteResetLinks(tx, activationId);
+      }
       check?.();
       return result;
     };
@@ -526,6 +621,7 @@ function bindBootstrapPolicy<T extends AdapterLike>(
   const deleteSession = (method: "delete" | "deleteMany", args: AdapterDeleteArgs) => {
     const write = async (tx: BootstrapPrismaTx, writer: AdapterLike) => {
       await lockIdentityAuthority(tx);
+      if (outgoingState) outgoingState.authorityLocked = true;
       const check = await checkAdminMutation(tx, outgoingState?.adminChecks);
       const result = await writer[method](args);
       check?.();
@@ -545,6 +641,7 @@ function bindBootstrapPolicy<T extends AdapterLike>(
     const run = async (tx: BootstrapPrismaTx, writer: AdapterLike) => {
       const row = (await writer.findOne({ model: args.model, where: args.where })) as {
         identifier?: unknown;
+        value?: unknown;
       } | null;
       const identifier = typeof row?.identifier === "string" ? row.identifier : "";
       if (identifier.startsWith(RESET_PASSWORD_IDENTIFIER_PREFIX)) {
@@ -553,7 +650,15 @@ function bindBootstrapPolicy<T extends AdapterLike>(
           throw new Error("reset token consumption needs the Prisma verification delegate");
         }
         const token = identifier.slice(RESET_PASSWORD_IDENTIFIER_PREFIX.length);
-        if (!(await admitResetSpend(tx, token))) {
+        if (outgoingState?.authorityLocked) {
+          throw new Error("Reset cannot acquire setup after authority");
+        }
+        const admitted = await admitResetSpend(tx, token);
+        if (outgoingState && typeof row?.value === "string") {
+          outgoingState.activationUserId = row.value;
+          outgoingState.authorityLocked = true;
+        }
+        if (!admitted) {
           throw APIError.from("BAD_REQUEST", BASE_ERROR_CODES.INVALID_TOKEN);
         }
       }
@@ -565,6 +670,12 @@ function bindBootstrapPolicy<T extends AdapterLike>(
   };
   const adapter = {
     ...inner,
+    // Every wrapper transaction really rolls back, including JIT and reset.
+    // BA consults this metadata AFTER failure before flushing queued hooks.
+    options: inner.options && {
+      ...inner.options,
+      adapterConfig: { ...inner.options.adapterConfig, transaction: inner.transaction },
+    },
     consumeOne: (args: AdapterDeleteArgs) =>
       isVerificationModel(args.model) ? consumeVerification(args) : inner.consumeOne(args),
     update: (args: AdapterUpdateArgs) => updateUser("update", args),
@@ -573,9 +684,53 @@ function bindBootstrapPolicy<T extends AdapterLike>(
       if (args.model.toLowerCase() === "session" && args.data.impersonatedBy) {
         throw new APIError("FORBIDDEN");
       }
+      if (
+        args.model.toLowerCase() === "account" &&
+        args.data.providerId !== CREDENTIAL_PROVIDER_ID
+      ) {
+        const userId = args.data.userId;
+        if (typeof userId !== "string" || !userId) throw new Error("IdP link requires a user id");
+        const write = async (
+          tx: BootstrapPrismaTx,
+          writer: AdapterLike,
+          state: TransactionState,
+        ) => {
+          // A fresh JIT row is private to this transaction and has no earlier credentials.
+          if (state.createdUsers.has(userId)) return writer.create(args);
+          await lockActivation(tx, userId, state);
+          await lockIdentityAuthority(tx);
+          state.authorityLocked = true;
+          const { clearPendingInvitePassword } = await import("./sso-invite-activation.js");
+          if (!hasActivationDelegates(tx))
+            throw new Error("IdP activation needs credential revocation delegates");
+          const pending = await clearPendingInvitePassword(tx, userId);
+          const result = await writer.create(args);
+          if (!hasResetSpendDelegates(tx))
+            throw new Error("IdP activation needs the verification delegate");
+          await deleteResetLinks(tx, userId);
+          if (pending) state.pendingActivations.add(userId);
+          return result;
+        };
+        if (!startTransaction) return write(txClient, inner, outgoingState!);
+        const state = transactionState();
+        const result = await startTransaction((tx) =>
+          write(tx, createPrismaAdapter(tx, options), state),
+        );
+        // After commit, before Better Auth continues to mint the legitimate SSO session.
+        await sweepPendingActivations(state);
+        return result;
+      }
       if (!isUserModel(args.model)) return inner.create(args);
       if (!startTransaction) {
-        return runUserCreateOnClient(args, txClient, inner, outgoingState?.adminChecks);
+        if (getAdminMutationActor() && outgoingState) outgoingState.authorityLocked = true;
+        const result = await runUserCreateOnClient(
+          args,
+          txClient,
+          inner,
+          outgoingState?.adminChecks,
+        );
+        if (typeof result.id === "string") outgoingState?.createdUsers.add(result.id);
+        return result;
       }
       await persistBootstrapAdoption(root);
       return startTransaction((tx) =>
@@ -610,9 +765,9 @@ function bindBootstrapPolicy<T extends AdapterLike>(
     transaction: async <R>(callback: (trx: AdapterLike) => Promise<R>): Promise<R> => {
       if (!startTransaction) return callback(adapter);
       await persistBootstrapAdoption(root);
-      return startTransaction(async (tx) => {
+      const outgoingState = transactionState();
+      const result = await startTransaction(async (tx) => {
         const txInner = createPrismaAdapter(tx, options);
-        const outgoingState = { written: false, adminChecks: [] as Array<() => void> };
         const result = await callback(
           bindBootstrapPolicy(txInner, tx, options, root, null, outgoingState),
         );
@@ -627,6 +782,8 @@ function bindBootstrapPolicy<T extends AdapterLike>(
         for (const check of outgoingState.adminChecks) check();
         return result;
       });
+      await sweepPendingActivations(outgoingState);
+      return result;
     },
   };
   return adapter as T;
@@ -638,6 +795,17 @@ function isVerificationModel(model: string): boolean {
 
 function hasResetSpendDelegates(tx: BootstrapPrismaTx): tx is BootstrapPrismaTx & ResetSpendTx {
   return "verification" in tx && "user" in tx;
+}
+
+function hasActivationDelegates(
+  tx: BootstrapPrismaTx,
+): tx is BootstrapPrismaTx & PendingInviteActivationTx {
+  return (
+    typeof tx.$executeRawUnsafe === "function" &&
+    "account" in tx &&
+    "deviceCode" in tx &&
+    "session" in tx
+  );
 }
 
 export function createBootstrapDatabaseAdapter(prisma: BootstrapPrisma) {

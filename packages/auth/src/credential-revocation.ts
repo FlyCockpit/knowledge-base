@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import prisma from "@knowledge-base/db";
+import prisma, { type Prisma } from "@knowledge-base/db";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import { hashPassword } from "better-auth/crypto";
 import { revokeUserMcpGrants } from "./ban.js";
@@ -37,40 +37,7 @@ async function revokeCredentials(
         prisma.$transaction(
           async (tx) => {
             await lockIdentityAuthority(tx);
-            await revokeUserMcpGrants(
-              (sql, params) => tx.$executeRawUnsafe(sql, ...params),
-              userId,
-              reason,
-            );
-            await tx.deviceCode.deleteMany({ where: { userId } });
-            if (reason !== "password_reset") {
-              await tx.session.deleteMany({ where: { userId, token: { not: keepSessionToken } } });
-              return;
-            }
-            // Better Auth 1.7.18 two-factor: the challenge/trust rows hold the
-            // user id, but OTPs and attempt counters hold a hash/count instead.
-            // Capture the challenge identifiers in this statement before deleting
-            // their dependent records. Also clear OTPs bound to existing sessions.
-            // No secondary verification storage or identifier hashing is configured.
-            await tx.$executeRawUnsafe(
-              `WITH challenges AS (
-               SELECT identifier FROM "verification"
-               WHERE value = $1 AND starts_with(identifier, '2fa-')
-             )
-             DELETE FROM "verification" v
-             WHERE (v.value = $1 AND (
-               starts_with(v.identifier, '2fa-') OR starts_with(v.identifier, 'trust-device-')
-             ))
-             OR v.identifier IN (
-               SELECT '2fa-attempts-' || identifier FROM challenges
-               UNION ALL SELECT '2fa-otp-' || identifier FROM challenges
-             )
-             OR starts_with(v.identifier, '2fa-otp-' || $1 || '!')`,
-              userId,
-            );
-            // No secondary session storage is configured. The signed cookie
-            // cache checks the live session row, so deleting it invalidates it too.
-            await tx.session.deleteMany({ where: { userId } });
+            await revokeCredentialsInTransaction(tx, userId, reason, keepSessionToken);
           },
           { timeout: 10000, maxWait: 5000 },
         ),
@@ -80,6 +47,45 @@ async function revokeCredentials(
       if (attempt >= 2) throw error;
     }
   }
+}
+
+/** Caller already holds identity authority on this client. No checkout or lock inversion. */
+export async function revokeCredentialsInTransaction(
+  tx: Pick<Prisma.TransactionClient, "$executeRawUnsafe" | "deviceCode" | "session">,
+  userId: string,
+  reason: "password_reset" | "password_change" = "password_reset",
+  keepSessionToken?: string,
+): Promise<void> {
+  await revokeUserMcpGrants((sql, params) => tx.$executeRawUnsafe(sql, ...params), userId, reason);
+  await tx.deviceCode.deleteMany({ where: { userId } });
+  if (reason !== "password_reset") {
+    await tx.session.deleteMany({ where: { userId, token: { not: keepSessionToken } } });
+    return;
+  }
+  // Better Auth 1.7.18 two-factor: the challenge/trust rows hold the
+  // user id, but OTPs and attempt counters hold a hash/count instead.
+  // Capture the challenge identifiers in this statement before deleting
+  // their dependent records. Also clear OTPs bound to existing sessions.
+  // No secondary verification storage or identifier hashing is configured.
+  await tx.$executeRawUnsafe(
+    `WITH challenges AS (
+   SELECT identifier FROM "verification"
+   WHERE value = $1 AND starts_with(identifier, '2fa-')
+ )
+ DELETE FROM "verification" v
+ WHERE (v.value = $1 AND (
+   starts_with(v.identifier, '2fa-') OR starts_with(v.identifier, 'trust-device-')
+ ))
+ OR v.identifier IN (
+   SELECT '2fa-attempts-' || identifier FROM challenges
+   UNION ALL SELECT '2fa-otp-' || identifier FROM challenges
+ )
+ OR starts_with(v.identifier, '2fa-otp-' || $1 || '!')`,
+    userId,
+  );
+  // No secondary session storage is configured. The signed cookie
+  // cache checks the live session row, so deleting it invalidates it too.
+  await tx.session.deleteMany({ where: { userId } });
 }
 
 /** Who a finished password change revokes, and the session it keeps. */
