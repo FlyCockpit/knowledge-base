@@ -1,6 +1,7 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { KB_LIMITS } from "./limits";
 import {
   assertDiskFloor,
@@ -13,11 +14,18 @@ import {
   reserveQuota,
 } from "./quota";
 
-// Real directories for the filesystem-identity probe, anchored on this file so
-// the result does not depend on the runner's cwd (package dir under turbo, repo
-// root under a root-level vitest run).
-const testDir = dirname(fileURLToPath(import.meta.url));
-const parentDir = dirname(testDir);
+// Probe real allocation directories, rather than an immutable source mount
+// whose filesystem may intentionally have no usable identity (e.g. a snapshot).
+let parentDir = "";
+let testDir = "";
+beforeAll(() => {
+  parentDir = mkdtempSync(join(tmpdir(), "kb-quota-test-"));
+  testDir = join(parentDir, "allocations");
+  mkdirSync(testDir);
+});
+afterAll(() => {
+  if (parentDir) rmSync(parentDir, { recursive: true, force: true });
+});
 
 const plenty = {
   async freeBytes() {
