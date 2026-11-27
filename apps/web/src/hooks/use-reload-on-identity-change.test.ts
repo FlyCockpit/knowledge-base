@@ -599,6 +599,78 @@ describe("useReloadOnIdentityChange", () => {
     },
   );
 
+  it.each([false, true])(
+    "focus takes over a pending provenance retry (response held past deadline: %s)",
+    async (held) => {
+      vi.useFakeTimers();
+      useRenderWith(user("a"));
+      const [channel] = FakeChannel.open;
+      // The atom still carries an answer from before the peer invalidation.
+      boundary.checked = "a";
+      boundary.answerGeneration = identityVerificationGeneration();
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      await settle();
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+      expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+
+      await vi.advanceTimersByTimeAsync(100);
+      let finish!: () => void;
+      if (held) {
+        boundary.refetch.mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve;
+            }),
+        );
+      } else {
+        boundary.answerGeneration = identityVerificationGeneration();
+      }
+      fire("focus");
+      await settle();
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+      // A request that actually started owns verification even before it
+      // settles; the older timer must not join it at the old deadline.
+      if (held) expect(vi.getTimerCount()).toBe(0);
+      else expect(isDocumentIdentityUnverified()).toBe(false);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+      if (held) {
+        expect(isDocumentIdentityUnverified()).toBe(true);
+        expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+        boundary.answerGeneration = identityVerificationGeneration();
+        finish();
+        await settle();
+      }
+      expect(isDocumentIdentityUnverified()).toBe(false);
+      expect(channel?.messages.at(-1)).toEqual({ kind: "identity", id: "a" });
+      expect(boundary.reload).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("unmount cancels the sole pending provenance retry", async () => {
+    vi.useFakeTimers();
+    useRenderWith(user("a"));
+    const [channel] = FakeChannel.open;
+    boundary.checked = "a";
+    boundary.answerGeneration = identityVerificationGeneration();
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+    await settle();
+    expect(boundary.refetch).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    boundary.answerGeneration = identityVerificationGeneration();
+    await vi.advanceTimersByTimeAsync(1_000);
+    fire("focus");
+    expect(boundary.refetch).toHaveBeenCalledTimes(1);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(boundary.reload).not.toHaveBeenCalled();
+  });
+
   it("a check superseded by an automatic refresh checks again once that settles", async () => {
     vi.useFakeTimers();
     useRenderWith(user("a"));

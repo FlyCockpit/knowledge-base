@@ -56,6 +56,9 @@ function startIdentityChecks(refetch: () => unknown): { stop: () => void } {
         // The coordinator may wait for an older native refresh before starting
         // this fresh probe. Verify the generation it actually starts in.
         if (!connected) return;
+        // This probe now owns verification. A previously scheduled provenance
+        // retry must not outlive it; rejected automatic checks never get here.
+        clearTimeout(followUp);
         since = identityVerificationGeneration();
         return refetch();
       },
@@ -79,6 +82,9 @@ function startIdentityChecks(refetch: () => unknown): { stop: () => void } {
         }
         return;
       }
+      // A joined older completion may have queued a retry after this probe
+      // started. Its fresh, settled answer makes that retry unnecessary too.
+      clearTimeout(followUp);
       if (observeDocumentIdentity(checked)) replaceDocument();
       else {
         confirmDocumentIdentityFresh(since);
