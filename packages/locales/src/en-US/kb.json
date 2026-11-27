@@ -594,6 +594,11 @@
       "confirmBuiltinDescription": "The built-in model embeds documents on this server without sending requests to an external provider. A usable current index keeps serving search until the new one completes."
     },
     "sealed": {
+      "twoFactor": {
+        "title": "Two-factor authentication required",
+        "description": "Sealed values need two-factor authentication on your account. Turn it on in Security settings, then come back here.",
+        "action": "Open Security settings"
+      },
       "title": "Sealed values",
       "description": "Keep secrets out of your documents. A document holds a reference; only tokens you choose can read the secret.",
       "help": "A sealed value is a secret, such as an API key or a password, stored encrypted on the server. A document contains only its opaque reference ({{example}}). Giving a token access is a grant for exactly one record, one consumer (the token's grant ID) and one recipient key (an X25519 public key and its key ID), until an expiry. The token receives the value encrypted to that key, never in plain text. Only personal access tokens can be consumers; OAuth apps cannot.",

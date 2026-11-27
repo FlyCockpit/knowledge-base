@@ -1,6 +1,7 @@
-import { Button } from "@knowledge-base/ui/components/button";
+import { Button, buttonVariants } from "@knowledge-base/ui/components/button";
 import { toast } from "@knowledge-base/ui/components/sileo";
 import { useInfiniteQuery, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +29,7 @@ import {
   type UsageState,
 } from "@/components/kb/sealed/sealed-value-card";
 import { LoadMore } from "@/components/load-more";
+import { useAuthSession } from "@/hooks/use-auth-session";
 import { useKbAccessLoss, useRetireSealedOnDenied } from "@/hooks/use-kb-editor";
 import { useKbMutationSession } from "@/hooks/use-kb-mutation-session";
 import { useRenewableAttemptKey } from "@/hooks/use-renewable-attempt-key";
@@ -126,7 +128,32 @@ export function SealedPanel({
   kb: SealedKbLike;
   onInsertReference?: (reference: string) => void;
 } & Denied) {
+  const { state } = useAuthSession();
+  const { t, i18n } = useTranslation("kb");
   if (!sealedControls(kb.capabilities, kb.isOwner).visible) return null;
+  if (state.status === "authenticated" && state.session.user.twoFactorEnabled !== true) {
+    return (
+      <section className="space-y-3 rounded-lg border p-4" data-testid="sealed-needs-2fa">
+        <h2 className="font-semibold">{t("settings.sealed.twoFactor.title")}</h2>
+        <p className="text-sm">{t("settings.sealed.twoFactor.description")}</p>
+        <Link
+          to="/$lang/settings/security"
+          params={{ lang: i18n.language }}
+          className={buttonVariants({ size: "touch" })}
+        >
+          {t("settings.sealed.twoFactor.action")}
+        </Link>
+      </section>
+    );
+  }
+  if (state.status !== "authenticated") {
+    return (
+      <ul className="min-w-0 space-y-4" aria-busy="true">
+        <SealedValueCardSkeleton />
+        <SealedValueCardSkeleton />
+      </ul>
+    );
+  }
   return <SealedPanelBody kb={kb} onDenied={onDenied} onInsertReference={onInsertReference} />;
 }
 
@@ -159,6 +186,8 @@ function SealedPanelBody({
       initialPageParam: null,
       getNextPageParam: (last) => last.nextCursor,
       gcTime: 0,
+      meta: { skipGlobalErrorToast: true },
+      retry: (n, error) => !isQueryAccessError(error) && n < 3,
       enabled: !pickerDenied,
     }),
   );
@@ -172,6 +201,8 @@ function SealedPanelBody({
           input: { kbId: kb.id, recordIds: page.items.map((item) => item.recordId) },
         }),
         gcTime: 0,
+        meta: { skipGlobalErrorToast: true },
+        retry: (n: number, error: unknown) => !isQueryAccessError(error) && n < 3,
         enabled: !pickerDenied && !isQueryAccessError(listError),
       })),
   });

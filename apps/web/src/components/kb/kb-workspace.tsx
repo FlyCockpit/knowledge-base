@@ -52,6 +52,7 @@ import { agentBadges } from "@/lib/kb-workspace/agent-activity";
 import { isMacPlatform } from "@/lib/kb-workspace/shortcuts";
 import { retargetApplies, tabKey, type WorkspaceTab } from "@/lib/kb-workspace/tabs";
 import {
+  TREE_WIDTH_DEFAULT,
   useKbWorkspaceLayout,
   useKbWorkspaceStore,
   type WorkspaceFileRequest,
@@ -656,7 +657,7 @@ export function KbWorkspace({
             value={layout.treeWidth}
             min={200}
             max={640}
-            defaultValue={280}
+            defaultValue={TREE_WIDTH_DEFAULT}
             onChange={layout.setTreeWidth}
             label={t("workspace.resize.tree")}
           />

@@ -53,6 +53,7 @@ import {
   useKbAccessLoss,
   useKbEditor,
 } from "@/hooks/use-kb-editor";
+import { useMissingDocument } from "@/hooks/use-missing-document";
 import { useWorkspaceEditorRegistration } from "@/hooks/use-workspace-editor-registration";
 import { useWorkspaceFileRequest } from "@/hooks/use-workspace-file-request";
 import { useWorkspaceNoEditor } from "@/hooks/use-workspace-no-editor";
@@ -255,6 +256,10 @@ function DocumentPage() {
     retry: false,
     staleTime: target?.target.kind === "main" && !target.target.rev ? 0 : undefined,
   });
+  const missingDocument = useMissingDocument(
+    target && !isNew && proposalNumber === null ? editingTargetKey(target) : null,
+    documentRead,
+  );
   // Rule 2: a proposal head without this path is a state of its own. Its
   // base says which: deleted in the proposal, or never part of it.
   const missingAtHead = proposalNumber !== null && isPathNotFound(documentRead.error);
@@ -453,7 +458,6 @@ function DocumentPage() {
   const proposalFailed = proposalNumber !== null && proposalRead.isError;
   const retryProposal = () => void proposalRead.refetch();
   // A failed read of this target, other than the absence it reports.
-  const missingDocument = proposalNumber === null && isPathNotFound(documentRead.error);
   const readFailed = (documentRead.isError && !missingAtHead && !missingDocument) || missingFailed;
   const retryRead = () => void (missingFailed ? baseRead.refetch() : documentRead.refetch());
   // Main's head has no such document: when main deleted it, say so and offer

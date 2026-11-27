@@ -594,6 +594,11 @@
       "confirmBuiltinDescription": "El modelo integrado genera las representaciones de los documentos en este servidor sin enviar solicitudes a un proveedor externo. El índice actual sigue atendiendo las búsquedas hasta que se complete el nuevo."
     },
     "sealed": {
+      "twoFactor": {
+        "title": "Se requiere autenticación de dos factores",
+        "description": "Los valores sellados requieren autenticación de dos factores en tu cuenta. Actívala en la configuración de Seguridad y vuelve aquí.",
+        "action": "Abrir configuración de Seguridad"
+      },
       "title": "Valores sellados",
       "description": "Mantén los secretos fuera de tus documentos. Un documento guarda una referencia; solo los tokens que elijas pueden leer el secreto.",
       "help": "Un valor sellado es un secreto, como una clave de API o una contraseña, guardado cifrado en el servidor. Un documento solo contiene su referencia opaca ({{example}}). Dar acceso a un token es una autorización para exactamente un registro, un consumidor (el ID de autorización del token) y una clave de destinatario (una clave pública X25519 y su ID), hasta una fecha de vencimiento. El token recibe el valor cifrado para esa clave, nunca en texto plano. Solo los tokens de acceso personal pueden ser consumidores; las apps OAuth no.",

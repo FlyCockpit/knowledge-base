@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   SealedConsumerList,
   SealedKeyFound,
@@ -21,6 +21,29 @@ import {
   sealedControls,
 } from "@/components/kb/sealed-panel";
 import { renderWithTestRouter } from "@/lib/router-test-utils";
+
+const { sessionState, listQuery } = vi.hoisted(() => ({
+  sessionState: { twoFactorEnabled: true, status: "authenticated" },
+  listQuery: vi.fn(),
+}));
+vi.mock("@/hooks/use-auth-session", () => ({
+  useAuthSession: () => ({
+    state:
+      sessionState.status === "authenticated"
+        ? { status: "authenticated", session: { user: sessionState } }
+        : { status: "pending" },
+  }),
+}));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@tanstack/react-query")>();
+  return {
+    ...original,
+    useInfiniteQuery: (...args: Parameters<typeof original.useInfiniteQuery>) => {
+      listQuery();
+      return original.useInfiniteQuery(...args);
+    },
+  };
+});
 
 const i18n = createInstance();
 beforeAll(async () => {
@@ -228,11 +251,45 @@ describe("permission gating", () => {
       isOwner: false,
     };
     expect(render(<SealedPanel kb={kb} />)).toBe("");
+    listQuery.mockClear();
     const owner = render(<SealedPanel kb={{ ...kb, isOwner: true }} />);
+    expect(listQuery).toHaveBeenCalled();
     expect(owner).toContain('data-testid="sealed-panel"');
     // The first page is loading: a skeleton, never an empty state or a form.
     expect(owner).toContain('aria-busy="true"');
     expect(owner).not.toContain("<textarea");
+  });
+  it("shows skeletons without requesting sealed values while the session is pending", () => {
+    sessionState.status = "pending";
+    listQuery.mockClear();
+    try {
+      const html = render(
+        <SealedPanel
+          kb={{ id: KB_ID, capabilities: ["read", "manage"], sealedNamespace: "n", isOwner: true }}
+        />,
+      );
+      expect(html).toContain('aria-busy="true"');
+      expect(html.match(/<li /g)).toHaveLength(2);
+      expect(listQuery).not.toHaveBeenCalled();
+    } finally {
+      sessionState.status = "authenticated";
+    }
+  });
+  it("offers Security settings without requesting sealed values when 2FA is off", () => {
+    sessionState.twoFactorEnabled = false;
+    listQuery.mockClear();
+    try {
+      const html = render(
+        <SealedPanel
+          kb={{ id: KB_ID, capabilities: ["read", "manage"], sealedNamespace: "n", isOwner: true }}
+        />,
+      );
+      expect(html).toContain("Sealed values need two-factor authentication");
+      expect(html).toContain("/en-US/settings/security");
+      expect(listQuery).not.toHaveBeenCalled();
+    } finally {
+      sessionState.twoFactorEnabled = true;
+    }
   });
   it("reveals only the opaque reference after saving", () => {
     const html = render(<SealedReferenceReveal reference={REFERENCE} />);
