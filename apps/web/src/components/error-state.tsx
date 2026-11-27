@@ -15,12 +15,15 @@ import { friendly } from "../utils/friendly-error";
  * could not be reached; anything else is the generic error. See
  * docs/ui.md § Offline.
  */
-export default function ErrorState({ error, reset }: ErrorComponentProps) {
+export default function ErrorState({ error }: ErrorComponentProps) {
   const { t } = useTranslation(["common", "errors"]);
   const router = useRouter();
   const online = useNetworkStatus();
   // `invalidate` reloads the failed matches (a failed route chunk included)
-  // and gives them new identities, which resets this boundary.
+  // and gives them new identities, which resets this boundary. Every "Try
+  // again" uses it: the boundary's own `reset` would re-render the same
+  // errored match without re-running its `beforeLoad` (a session guard whose
+  // probe failed would fail again forever).
   const retry = () => void router.invalidate();
   useRetryOnReconnect(retry, !online);
 
@@ -55,7 +58,7 @@ export default function ErrorState({ error, reset }: ErrorComponentProps) {
         </p>
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-        <Button onClick={reset} variant="outline" className="min-h-[44px]">
+        <Button onClick={retry} variant="outline" className="min-h-[44px]">
           {t("common:actions.tryAgain")}
         </Button>
         <Button onClick={() => window.location.reload()} className="min-h-[44px]">

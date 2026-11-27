@@ -50,6 +50,27 @@ describe("ErrorState", () => {
     expect(fixture.reconnect.offline).toBe(false);
   });
 
+  it("generic Try again re-runs the failed matches (a failed session guard included)", () => {
+    // ErrorState's hooks are all mocked here, so it can be called directly.
+    const tree = ErrorState({
+      error: new Error("Route session unavailable"),
+      reset: () => {},
+      info: { componentStack: "" },
+    });
+    const buttons: { props: { onClick?: () => void; children?: unknown } }[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== "object" || !("props" in node)) return;
+      const element = node as { props: { onClick?: () => void; children?: unknown } };
+      if (element.props.onClick) buttons.push(element);
+      walk(element.props.children);
+    };
+    walk(tree);
+    const tryAgain = buttons.find((button) => button.props.children === "common:actions.tryAgain");
+    tryAgain?.props.onClick?.();
+    expect(fixture.invalidate).toHaveBeenCalledTimes(1);
+  });
+
   it("anything else online: the generic error with Try again and Reload", () => {
     const html = render(new Error("boom"));
     expect(html).toContain("common:somethingWentWrong");

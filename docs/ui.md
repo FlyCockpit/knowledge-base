@@ -132,7 +132,7 @@ Offline is a state, not an error: say so, say what happens next, and never leave
 
 ## Query cache follows identity
 
-The TanStack Query cache, Zustand stores, module state and every in-flight request callback belong to one identity: the one the document was used by. `apps/web/src/lib/document-identity.ts` keeps that identity at module scope for the whole life of the document (never in a component, which a public page, a standalone page or an error reset would unmount and make forget). When a confirmed identity differs from it, the document is replaced with a full load. A page load is asynchronous, so every replacement first quarantines the document synchronously: the page is hidden and the QueryClient sealed (emptied, and anything a late callback adds is removed again), so nothing of the previous identity stays on screen while the new page loads. Query keys therefore don't name the viewer, and no query needs `gcTime: 0` for privacy.
+The TanStack Query cache, Zustand stores, module state and every in-flight request callback belong to one identity: the one the document was used by. `apps/web/src/lib/document-identity.ts` keeps that identity at module scope for the whole life of the document (never in a component, which a public page, a standalone page or an error reset would unmount and make forget). When a confirmed identity differs from it, the document is replaced with a full load. A page load is asynchronous, so every replacement first quarantines the document synchronously: the page is hidden (`display: none !important` on the root, which no descendant can undo) and the QueryClient sealed (emptied, and anything a late callback adds is removed again), so nothing of the previous identity stays on screen while the new page loads. Query keys therefore don't name the viewer, and no query needs `gcTime: 0` for privacy.
 
 | Transition | What happens |
 |---|---|
@@ -143,6 +143,8 @@ The TanStack Query cache, Zustand stores, module state and every in-flight reque
 | `pending` / `error` | Never acted on: a flaky session check must not reload a signed-in page. |
 
 While a guard is still checking, the app shell's pending state (`_app/route.tsx` `AppShellPending`) names no account: it renders under `SessionUnconfirmed` (`apps/web/src/lib/session-unconfirmed.ts`), so `useAuthSession()` reports `pending` there and the account menu, nav and banners show their skeletons, never the session Better Auth's atom may still hold from before a switch made in another tab.
+
+The same holds after another tab announced a change (or a request got a 401) while no watcher was mounted to check it: `useAuthSession()` reports `pending` everywhere until a fresh check confirms this document's identity or replaces the document: a guard's server answer, or a refetch the watcher itself starts when it mounts (retried on focus, visibility and reconnect while unverified). An answer asked for before a newer invalidation never counts, so a guard error or an unguarded page never shows the stale account either, and a guard whose probe was overtaken by an announcement asks again before admitting anything (`resolveRouteSession`, at most 3 probes, then its retryable error state, whose "Try again" re-runs the guard). Only the watcher reads the session unmasked (`useAuthSession({ unmasked: true })`).
 
 Three observers feed it, and none can be skipped:
 
@@ -258,7 +260,7 @@ Every page has exactly one real `<h1>`, never a `role="heading"` stand-in. An au
 
 ## Signed-out forms survive a refocus
 
-Better Auth refetches the session when the tab regains focus and marks every refetch of an empty session `isPending`, the same snapshot as the first load. `useAuthSession` remembers, per document, that the session settled anonymous, so a refetch (or a failed one) keeps the anonymous state and the sign-in or sign-up form stays mounted with what the visitor typed. Only the first load shows the skeleton. Under `SessionUnconfirmed` (the app shell's pending state, § Query cache follows identity) the memory is neither read nor written, so that chrome stays pending. `apps/web/src/components/auth/auth-form-refocus.test.tsx` and `apps/web/src/hooks/use-auth-session.test.tsx` check it.
+Better Auth refetches the session when the tab regains focus and marks every refetch of an empty session `isPending`, the same snapshot as the first load. `useAuthSession` remembers, per document, that the session settled anonymous, so a refetch (or a failed one) keeps the anonymous state and the sign-in or sign-up form stays mounted with what the visitor typed. Only the first load shows the skeleton. Under `SessionUnconfirmed` (the app shell's pending state) and while the identity is unverified (both § Query cache follows identity) the memory is neither read nor written, so that chrome stays pending. `apps/web/src/components/auth/auth-form-refocus.test.tsx` and `apps/web/src/hooks/use-auth-session.test.tsx` check it.
 
 ## Admin invites and archive
 

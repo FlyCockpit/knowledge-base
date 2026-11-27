@@ -34,6 +34,8 @@ const documentIdentity = {
   heldPrivateState: false,
   /** The private UI was hidden and the cache dropped, ahead of the reload. */
   quarantined: false,
+  /** The replacing reload was requested (once is enough). */
+  reloading: false,
 };
 
 const replaceListeners = new Set<() => void>();
@@ -110,8 +112,28 @@ export function sealQueryClient(queryClient: QueryClient): void {
 }
 
 function hidePage(): void {
-  // CSSOM, not a style attribute: allowed under the strict style-src CSP.
-  if (typeof document !== "undefined") document.documentElement.style.visibility = "hidden";
+  // `display: none` on the root, important: no descendant can opt back in
+  // (`visibility: hidden` can be undone by any element that sets itself
+  // `visible`). CSSOM, not a style attribute: allowed under the strict
+  // style-src CSP.
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty("display", "none", "important");
+  blankTitle();
+}
+
+let titleBlanked = false;
+
+/**
+ * The tab title outlives a hidden page (route titles name private KBs): blank
+ * it, and keep it blank against a late head update until the page goes.
+ */
+function blankTitle(): void {
+  document.title = "";
+  if (titleBlanked || typeof MutationObserver === "undefined" || !document.head) return;
+  titleBlanked = true;
+  new MutationObserver(() => {
+    if (document.title !== "") document.title = "";
+  }).observe(document.head, { subtree: true, childList: true, characterData: true });
 }
 
 /**
@@ -138,7 +160,8 @@ function quarantineDocument(): void {
 export function replaceDocument(): void {
   if (typeof window === "undefined") return;
   quarantineDocument();
-  if (documentIdentity.leaving) return;
+  if (documentIdentity.leaving || documentIdentity.reloading) return;
+  documentIdentity.reloading = true;
   // An identity change discards all prior user cache and mounted client state.
   window.location.reload();
 }
@@ -165,10 +188,16 @@ type RouteIdentityResolution =
  * document, and the guard never settles, so no page renders the previous
  * identity's cached data even for a frame. A failed probe decides nothing.
  */
-export async function admitRouteIdentity(resolution: RouteIdentityResolution): Promise<void> {
+export async function admitRouteIdentity(
+  resolution: RouteIdentityResolution,
+  /** `identityVerificationGeneration()` taken before the probe started. */
+  since: number = verificationGeneration,
+): Promise<void> {
   if (resolution.status !== "resolved") return;
   const identity = resolution.session?.user.id ?? null;
   if (!observeDocumentIdentity(identity)) {
+    // The server just confirmed this document's own identity.
+    confirmDocumentIdentityFresh(since);
     announceDocumentIdentity(identity);
     return;
   }
@@ -243,6 +272,58 @@ export function skipErrorToastForIdentity(error: unknown, kind: "query" | "mutat
   return kind === "query";
 }
 
+/**
+ * Another tab announced an identity change (or a request was refused for
+ * having no session) while no watcher could check it: Better Auth's atom may
+ * still hold the previous account. Until a fresh check (a guard's server
+ * probe, or the watcher's refetch when it mounts) confirms this document's
+ * identity, `useAuthSession()` reports `pending`, so no chrome shows that
+ * stale account, even on a page a guard didn't admit (a guard error, an
+ * unguarded page).
+ */
+let identityUnverified = false;
+/** Bumped by every invalidation, so an answer that predates one can't settle it. */
+let verificationGeneration = 0;
+const verificationListeners = new Set<() => void>();
+
+function setIdentityUnverified(next: boolean): void {
+  // Module state is process-wide on the server: never written there.
+  if (typeof window === "undefined" || identityUnverified === next) return;
+  identityUnverified = next;
+  for (const listener of verificationListeners) listener();
+}
+
+function markIdentityUnverified(): void {
+  if (typeof window === "undefined") return;
+  verificationGeneration++;
+  setIdentityUnverified(true);
+}
+
+/** Taken before a check starts; pass it to `confirmDocumentIdentityFresh`. */
+export function identityVerificationGeneration(): number {
+  return verificationGeneration;
+}
+
+/**
+ * A fresh check confirmed this document's identity: the chrome may show it
+ * again, unless the identity was invalidated again after that check started
+ * (`since`, from `identityVerificationGeneration()`): its answer may predate
+ * the newer change.
+ */
+export function confirmDocumentIdentityFresh(since: number): void {
+  if (since !== verificationGeneration) return;
+  setIdentityUnverified(false);
+}
+
+export function isDocumentIdentityUnverified(): boolean {
+  return identityUnverified;
+}
+
+export function subscribeIdentityVerification(listener: () => void): () => void {
+  verificationListeners.add(listener);
+  return () => verificationListeners.delete(listener);
+}
+
 let sessionCheck: (() => unknown) | undefined;
 let sessionCheckPending = false;
 
@@ -250,11 +331,16 @@ let sessionCheckPending = false;
  * A request was rejected for having no session: ask Better Auth to check the
  * session once (however many queries failed together), so a session lost
  * elsewhere replaces the document instead of leaving one error toast per
- * query. Does nothing while no watcher is mounted.
+ * query. With no watcher mounted, the identity is left unverified until one
+ * (or a guard) checks it.
  */
 export function reportSessionRejected(): void {
   const check = sessionCheck;
-  if (!check || sessionCheckPending) return;
+  if (!check) {
+    markIdentityUnverified();
+    return;
+  }
+  if (sessionCheckPending) return;
   // One check at a time, until it settles: 401s that arrive in separate
   // network tasks while it runs share it.
   sessionCheckPending = true;
@@ -294,7 +380,12 @@ function peerChannel(): IdentityChannel | undefined {
   if (!peersOpened) {
     peersOpened = true;
     peers = openChannel();
-    if (peers) peers.onmessage = () => void sessionCheck?.();
+    if (peers) {
+      peers.onmessage = () => {
+        if (sessionCheck) void sessionCheck();
+        else markIdentityUnverified();
+      };
+    }
   }
   return peers;
 }
@@ -346,8 +437,12 @@ export function resetDocumentIdentityForTests(
     leaving: false,
     heldPrivateState: false,
     quarantined: false,
+    reloading: false,
   });
   replaceListeners.clear();
+  identityUnverified = false;
+  verificationGeneration = 0;
+  verificationListeners.clear();
   sessionCheck = undefined;
   sessionCheckPending = false;
   openChannel = open;
@@ -355,4 +450,5 @@ export function resetDocumentIdentityForTests(
   peersOpened = false;
   announced = undefined;
   restoreWatched = false;
+  titleBlanked = false;
 }
