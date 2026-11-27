@@ -27,7 +27,7 @@
     "@modelcontextprotocol/server": "catalog:",
     "hono": "catalog:",
     "@hono/node-server": "catalog:",
-    "jose": "6.2.16",
+    "jose": "6.2.18",
     "zod": "catalog:"
   },
   "scripts": {

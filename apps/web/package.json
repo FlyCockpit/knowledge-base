@@ -40,7 +40,7 @@
     "i18next-browser-languagedetector": "catalog:",
     "lucide-react": "catalog:",
     "next-themes": "catalog:",
-    "nuqs": "^2.10.2",
+    "nuqs": "^2.10.3",
     "pg": "catalog:",
     "qrcode.react": "catalog:",
     "react": "catalog:",
@@ -53,7 +53,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.65.0",
+    "@playwright/test": "1.65.1",
     "@tanstack/react-query-devtools": "catalog:",
     "@tanstack/react-router-devtools": "catalog:",
     "@types/node": "catalog:",
