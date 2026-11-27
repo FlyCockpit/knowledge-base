@@ -698,6 +698,7 @@ CREATE TABLE "provider_revision" (
     "endpointUrl" TEXT NOT NULL,
     "model" TEXT NOT NULL,
     "dimensions" INTEGER NOT NULL,
+    "calibrationFamily" TEXT,
     "ciphertext" TEXT,
     "aadVersion" INTEGER NOT NULL DEFAULT 1,
     "keyVersion" INTEGER NOT NULL DEFAULT 1,

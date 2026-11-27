@@ -48,6 +48,14 @@ DO $$ DECLARE before_version int; BEGIN
   RAISE EXCEPTION USING ERRCODE='P9999';
 EXCEPTION WHEN SQLSTATE 'P9999' THEN NULL;
 END $$;
+-- The folded calibration column stays nullable text with no default; fixture values survive.
+SELECT 'provider calibration column changed' WHERE NOT EXISTS
+ (SELECT FROM information_schema.columns WHERE table_schema='public' AND table_name='provider_revision'
+   AND column_name='calibrationFamily' AND data_type='text' AND is_nullable='YES' AND column_default IS NULL);
+SELECT 'uncalibrated provider lost' WHERE NOT EXISTS
+ (SELECT FROM provider_revision WHERE "providerId"='fx_provider' AND version=1 AND "calibrationFamily" IS NULL);
+SELECT 'calibrated provider lost' WHERE NOT EXISTS
+ (SELECT FROM provider_revision WHERE "providerId"='fx_provider' AND version=2 AND "calibrationFamily"='embeddinggemma-2-q8_0');
 -- MCP write modes: the fixture grants keep their modes, and the CHECK ties a mode to mcp:write.
 SELECT 'fixture grants lost' WHERE (SELECT count(*) FROM mcp_grant WHERE id::text LIKE '00000000-0000-4000-8000-0000000000a_') <> 4;
 SELECT 'write grant lost its mode' FROM mcp_grant WHERE 'mcp:write' = ANY(scopes) AND "authoringMode" IS DISTINCT FROM 'BOTH' AND id::text LIKE '00000000-0000-4000-8000-0000000000a_';

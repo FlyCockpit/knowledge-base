@@ -76,3 +76,9 @@ INSERT INTO api_key (id,"userIdSnapshot","userId",name,"lookupPrefix","secretDig
  ('fx_api_key','fx_owner','fx_owner','fixture','fx_api_key','fx_api_key_digest','00000000-0000-4000-8000-0000000000b1','CREATED',ARRAY['read'],ARRAY['read']);
 -- A pinned knowledge base of the fixture owner (sidebar order 0).
 INSERT INTO kb_pin (id,"userId","kbId",position) VALUES ('fx_pin','fx_owner','fx_kb',0);
+-- Provider revisions preserve both uncalibrated and explicitly calibrated families.
+INSERT INTO embedding_provider (id,"ownerId",name) VALUES ('fx_provider','fx_owner','Fixture provider');
+INSERT INTO provider_revision ("providerId",version,"endpointUrl",model,dimensions,"ownerSnapshot",fingerprint,"idempotencyKey","requestHash","jobId") VALUES
+ ('fx_provider',1,'https://example.test/v1','fixture',768,'fx_owner','fixture-unknown','fixture-unknown','fixture-unknown','fx_job');
+INSERT INTO provider_revision ("providerId",version,"endpointUrl",model,dimensions,"calibrationFamily","ownerSnapshot",fingerprint,"idempotencyKey","requestHash","jobId") VALUES
+ ('fx_provider',2,'https://example.test/v1','fixture',768,'embeddinggemma-2-q8_0','fx_owner','fixture-calibrated','fixture-calibrated','fixture-calibrated','fx_job');
