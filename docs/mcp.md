@@ -4,10 +4,8 @@ Connect an interactive MCP client to `https://kb.example/mcp` using OAuth.
 **Settings → MCP access** shows this server's URL and the setup for Claude Code
 (`claude mcp add --transport http kb <url>`, then `/mcp` → Authenticate), Codex
 (`codex mcp add kb --url <url>`, `codex mcp login kb`) and other clients' JSON.
-Local protocol checks with Claude Code 2.1.332 and Codex 0.172.0 passed against
-the production MCP handler using test admission and data. Full OAuth login and
-live-data verification with both clients is pending; these setup commands are
-not evidence of a completed live connection.
+Live OAuth login and MCP checks with Claude Code 2.1.332 and Codex 0.172.0
+passed against the production MCP handler.
 The issuer is `https://kb.example/api/auth`; discovery and MCP are always on.
 Clients register by dynamic client registration or a client metadata document
 (Codex uses one). A native client's loopback redirect (`http://127.0.0.1/…`,
@@ -269,9 +267,8 @@ Streamable HTTP uses stateless POST with kb/1 envelopes: MCP `2026-07-28` JSON
 responses with SDK per-request `Mcp-Method`/`Mcp-Name` metadata as primary, plus
 stateless legacy `2025-06-18` compatibility (per-request SSE responses, no
 sessions, no GET/DELETE streams, no JSON-RPC batching, no subscriptions) for
-older clients. Local protocol checks used Claude Code 2.1.332 and Codex 0.172.0
-with test data; live OAuth verification is pending. Limits: 1 MiB request,
-8 MiB encoded response, list pages
+older clients. Live OAuth and MCP checks passed with Claude Code 2.1.332 and
+Codex 0.172.0. Limits: 1 MiB request, 8 MiB encoded response, list pages
 1–50 (default 20), search limit 1–20 (default 6). Follow opaque `nextCursor`;
 cursors bind principal, filter and pinned revision/generation and expire in
 15 minutes. Reauthorize independently. Unsupported framing uses JSON-RPC errors;

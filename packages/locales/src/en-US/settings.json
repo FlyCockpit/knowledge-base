@@ -620,7 +620,7 @@
         "other": "For a client's private settings file only: it contains the token. Never commit or share it."
       }
     },
-    "protocol": "Speaks MCP {{version}} over Streamable HTTP as primary, with stateless {{legacyVersion}} compatibility for older clients. Local protocol checks passed with Claude Code 2.1.332 and Codex 0.172.0 using test data. Live OAuth verification is pending.",
+    "protocol": "Speaks MCP {{version}} over Streamable HTTP as primary, with stateless {{legacyVersion}} compatibility for older clients. Live OAuth and MCP checks passed with Claude Code 2.1.332 and Codex 0.172.0.",
     "useToken": "Use a token instead",
     "docs": "MCP guide",
     "opensInNewTab": "(opens in a new tab)"

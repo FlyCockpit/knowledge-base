@@ -620,7 +620,7 @@
         "other": "Solo para el archivo de configuración privado de un cliente: contiene el token. Nunca lo subas a un repositorio ni lo compartas."
       }
     },
-    "protocol": "Habla MCP {{version}} sobre Streamable HTTP como protocolo principal, con compatibilidad sin estado para {{legacyVersion}} en clientes anteriores. Las pruebas locales del protocolo pasaron con Claude Code 2.1.332 y Codex 0.172.0 usando datos de prueba. La verificación de OAuth en vivo está pendiente.",
+    "protocol": "Habla MCP {{version}} sobre Streamable HTTP como protocolo principal, con compatibilidad sin estado para {{legacyVersion}} en clientes anteriores. Las pruebas en vivo de OAuth y MCP pasaron con Claude Code 2.1.332 y Codex 0.172.0.",
     "useToken": "Usar un token en su lugar",
     "docs": "Guía de MCP",
     "opensInNewTab": "(se abre en una pestaña nueva)"

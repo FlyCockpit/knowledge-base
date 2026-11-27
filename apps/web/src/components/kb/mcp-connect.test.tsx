@@ -39,8 +39,8 @@ describe("McpConnectCard", () => {
     );
     expect(html).toContain("2026-07-28");
     expect(html).toContain("2025-06-18");
-    expect(html).toContain("Local protocol checks passed");
-    expect(html).toContain("using test data. Live OAuth verification is pending.");
+    expect(html).toContain("Live OAuth and MCP checks passed");
+    expect(html).toContain("Claude Code 2.1.332 and Codex 0.172.0.");
     expect(html).toContain(enSettings.connect.useToken);
     expect(html).toContain(`href="${KB_DOCS.mcp}"`);
     expect(html).toContain('rel="noopener noreferrer"');
