@@ -11,14 +11,78 @@ import {
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const account = vi.hoisted(() => ({
+  refetch: vi.fn(),
+  checkSession: vi.fn(),
+  error: null as null | { status: number },
+}));
+vi.mock("@/lib/auth-client", () => ({
+  checkDocumentSession: account.checkSession,
+  authClient: {
+    useSession: () => ({
+      data: {
+        user: { id: "A", name: "Alice Private", email: "alice@private.test", role: "admin" },
+      },
+      error: account.error,
+      isPending: false,
+      isRefetching: false,
+      refetch: account.refetch,
+    }),
+    $store: { atoms: { session: { get: () => undefined } } },
+  },
+}));
+vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: {}, isPending: false }) }));
+vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
+vi.mock("./app-brand", () => ({ AppBrand: () => <span>Brand</span> }));
+vi.mock("./main-nav", () => ({ MainNav: () => null }));
+vi.mock("./language-switcher", () => ({ LanguageSwitcher: () => null }));
+vi.mock("./mode-toggle", () => ({ ModeToggle: () => null }));
+vi.mock("@knowledge-base/ui/components/sileo", () => ({ toast: { error: vi.fn() } }));
+vi.mock("@knowledge-base/ui/components/dropdown-menu", () => {
+  const Part = ({ children }: { children?: import("react").ReactNode }) => <div>{children}</div>;
+  return {
+    DropdownMenu: Part,
+    DropdownMenuGroup: Part,
+    DropdownMenuLabel: Part,
+    DropdownMenuContent: ({ children }: { children?: import("react").ReactNode }) => (
+      <div role="menu">{children}</div>
+    ),
+    DropdownMenuSeparator: () => <hr />,
+    DropdownMenuItem: Part,
+    DropdownMenuTrigger: ({
+      render,
+      children,
+    }: {
+      render: import("react").ReactElement;
+      children?: import("react").ReactNode;
+    }) => (
+      <>
+        {render}
+        {children}
+      </>
+    ),
+  };
+});
+
 import {
   admitRouteIdentity,
+  confirmOutsideAppIdentity,
   connectIdentityPeers,
+  identityVerificationGeneration,
+  markRouteIdentityUnconfirmed,
   resetDocumentIdentityForTests,
 } from "@/lib/document-identity";
+import {
+  recordSessionRetryAfter,
+  resetSessionRetryForTests,
+  waitForSessionCooldown,
+} from "@/lib/session-retry";
+import Header from "./header";
 
 vi.mock("@knowledge-base/ui/components/button", () => ({
   Button: (props: import("react").ComponentProps<"button">) => <button {...props} />,
+  buttonVariants: () => "",
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@/hooks/use-network-status", () => ({ useNetworkStatus: () => true }));
@@ -217,6 +281,10 @@ describe("mounted guarded route recovery", () => {
   const reload = vi.fn();
   let peer: { onmessage: ((event: MessageEvent) => void) | null; postMessage: () => void };
   beforeEach(() => {
+    account.error = null;
+    account.refetch.mockReset();
+    account.checkSession.mockReset();
+    resetSessionRetryForTests();
     commits = [];
     reload.mockReset();
     peer = { onmessage: null, postMessage() {} };
@@ -250,6 +318,7 @@ describe("mounted guarded route recovery", () => {
   });
   afterEach(() => {
     act(() => root.unmount());
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -261,7 +330,14 @@ describe("mounted guarded route recovery", () => {
     mountedCase.renderError = renderError;
     mountedCase.parentError = parentError;
     mountedCase.commits = commits;
-    const rootRoute = createRootRoute({ component: Outlet });
+    const rootRoute = createRootRoute({
+      component: () => (
+        <>
+          <Header />
+          <Outlet />
+        </>
+      ),
+    });
     const guard = createRoute({
       getParentRoute: () => rootRoute,
       id: "_auth",
@@ -359,6 +435,116 @@ describe("mounted guarded route recovery", () => {
       expect(commits).not.toContain("A");
       expect(reload).toHaveBeenCalledTimes(1);
       expect(container.textContent).not.toContain("private email");
+    },
+  );
+  it.each(["A", "B"])(
+    "masks the mounted header and open account actions while a guard retries to %s",
+    async (owner) => {
+      let broken = false;
+      const probe = vi.fn<() => Promise<string | null>>().mockResolvedValue("A");
+      const router = await mount(probe, () => broken);
+      expect(container.textContent).toContain("Alice Private");
+      await import("./user-menu-content");
+      await act(async () => click(button(container, "Alice Private")));
+      await act(async () => {});
+      expect(container.textContent).toContain("alice@private.test");
+      broken = true;
+      await act(async () => {
+        await router.navigate({ href: "/private?broken=true" });
+      });
+      broken = false;
+      const next = deferred<string | null>();
+      probe.mockReturnValueOnce(next.promise);
+      await act(async () => click(button(container, "common:actions.tryAgain")));
+      expect(container.textContent).not.toContain("Alice Private");
+      expect(container.textContent).not.toContain("alice@private.test");
+      expect(container.textContent).not.toContain("userMenu.signOut");
+      await act(async () => next.resolve(owner));
+      if (owner === "A") expect(container.textContent).toContain("Alice Private");
+      else {
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(container.textContent).not.toContain("Alice Private");
+      }
+    },
+  );
+  it("shows queued feedback while a manual retry honors Retry-After", async () => {
+    account.error = { status: 429 };
+    account.refetch.mockImplementation(() => waitForSessionCooldown());
+    await mount(vi.fn().mockResolvedValue("A"));
+    vi.useFakeTimers();
+    recordSessionRetryAfter(new Response(null, { status: 429, headers: { "Retry-After": "30" } }));
+    await act(async () => click(button(container, "userMenu.accountUnavailable")));
+    const queued = button(container, "userMenu.retryQueued");
+    expect(queued).toBeDefined();
+    expect(queued?.getAttribute("aria-busy")).toBe("true");
+    expect(account.refetch).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(29_000);
+    });
+    expect(button(container, "userMenu.retryQueued")).toBeDefined();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(button(container, "userMenu.accountUnavailable")).toBeDefined();
+    expect(account.refetch).toHaveBeenCalledTimes(1);
+  });
+  it("only requests public recovery confirmation after private state was retained", async () => {
+    await markRouteIdentityUnconfirmed()();
+    expect(account.checkSession).not.toHaveBeenCalled();
+    await admitRouteIdentity({ status: "resolved", session: { user: { id: "A" } } });
+    await markRouteIdentityUnconfirmed()();
+    expect(account.checkSession).toHaveBeenCalledTimes(1);
+  });
+  it.each(["A", "B", null])(
+    "reconciles retained private identity on unguarded public recovery to %s",
+    async (owner) => {
+      await admitRouteIdentity({ status: "resolved", session: { user: { id: "A" } } });
+      let broken = true;
+      const rootRoute = createRootRoute({
+        component: () => (
+          <>
+            <Header />
+            <Outlet />
+          </>
+        ),
+      });
+      const page = createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/public",
+        component: () => {
+          if (broken) throw new Error("public error");
+          return <p>public content</p>;
+        },
+      });
+      const router = createRouter({
+        routeTree: rootRoute.addChildren([page]),
+        history: createMemoryHistory({ initialEntries: ["/public"] }),
+        defaultErrorComponent: ErrorState,
+        defaultPendingMs: 0,
+        defaultPendingMinMs: 0,
+        isServer: false,
+        origin: "http://localhost",
+      });
+      await act(async () => {
+        await router.load();
+        root.render(<RouterProvider router={router} />);
+      });
+      expect(container.textContent).toContain("Alice Private");
+      const next = deferred<string | null>();
+      account.checkSession.mockImplementation(async () => {
+        const since = identityVerificationGeneration();
+        confirmOutsideAppIdentity(await next.promise, since);
+      });
+      broken = false;
+      await act(async () => click(button(container, "common:actions.tryAgain")));
+      expect(account.checkSession).toHaveBeenCalledTimes(1);
+      expect(container.textContent).not.toContain("Alice Private");
+      await act(async () => next.resolve(owner));
+      if (owner === "A") expect(container.textContent).toContain("Alice Private");
+      else {
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(container.textContent).not.toContain("Alice Private");
+      }
     },
   );
 });

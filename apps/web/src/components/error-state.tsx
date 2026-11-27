@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { useNetworkStatus } from "@/hooks/use-network-status";
 import { useRetryOnReconnect } from "@/hooks/use-retry-on-reconnect";
+import { markRouteIdentityUnconfirmed } from "@/lib/document-identity";
 import { isFetchFailure } from "@/lib/network-failure";
 
 import { friendly } from "../utils/friendly-error";
@@ -25,7 +26,13 @@ export default function ErrorState({ error }: ErrorComponentProps) {
   // errored match without re-running its `beforeLoad` (a session guard whose
   // probe failed would fail again forever).
   // Keep successful children pending until their guarded ancestors re-admit them.
-  const retry = () => void router.invalidate({ forcePending: true }).catch(() => {});
+  const retry = () => {
+    const confirmRecovery = markRouteIdentityUnconfirmed();
+    void router
+      .invalidate({ forcePending: true })
+      .then(confirmRecovery)
+      .catch(() => {});
+  };
   useRetryOnReconnect(retry, !online);
 
   if (!online || isFetchFailure(error)) {

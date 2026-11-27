@@ -164,6 +164,19 @@ describe("sessionIdentity", () => {
 });
 
 describe("useReloadOnIdentityChange", () => {
+  it.each(["focus", "visibilitychange"])(
+    "does not probe settled anonymous on %s, but verifies a peer hint",
+    async (event) => {
+      boundary.checked = null;
+      useRenderWith({ status: "anonymous" });
+      fire(event);
+      await settle();
+      expect(boundary.refetch).not.toHaveBeenCalled();
+      FakeChannel.open[0]?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      await settle();
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+    },
+  );
   it("presentation continuity alone never announces an identity", async () => {
     boundary.checked = undefined; // no successful settled atom answer
     useRenderWith(user("a"));

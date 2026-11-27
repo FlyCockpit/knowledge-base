@@ -14,6 +14,7 @@ import {
   leaveDocument,
   markAnonymousOnlyRoute,
   markExplicitSignOut,
+  markRouteIdentityUnconfirmed,
   observeDocumentIdentity,
   onDocumentReplaced,
   replaceDocument,
@@ -79,6 +80,28 @@ async function settles(promise: Promise<unknown>): Promise<boolean> {
 
 const unauthorized = () =>
   Object.assign(new Error("no session"), { code: "UNAUTHORIZED", status: 401 });
+
+describe("route recovery identity mask", () => {
+  it("rejects old confirmation until the same owner is freshly admitted", async () => {
+    await admitRouteIdentity(resolved("a"));
+    const before = identityVerificationGeneration();
+    markRouteIdentityUnconfirmed();
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    await admitRouteIdentity(resolved("a"), before);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    await admitRouteIdentity(resolved("a"));
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate server state", () => {
+    vi.stubGlobal("window", undefined);
+    const before = identityVerificationGeneration();
+    markRouteIdentityUnconfirmed();
+    expect(identityVerificationGeneration()).toBe(before);
+    expect(isDocumentIdentityUnverified()).toBe(false);
+  });
+});
 
 describe("fetchWithExpectedIdentity", () => {
   it("intercepts an upload identity conflict before any caller callback", async () => {

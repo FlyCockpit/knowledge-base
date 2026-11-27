@@ -93,6 +93,7 @@ function startIdentityChecks(refetch: () => unknown): { stop: () => void } {
     });
   };
   const retry = () => {
+    if (readSessionIdentity() === null && !isDocumentIdentityUnverified()) return;
     if (document.visibilityState !== "hidden" && navigator.onLine !== false)
       void check().catch(() => {});
   };
