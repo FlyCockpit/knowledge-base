@@ -42,6 +42,7 @@ describe("ErrorState", () => {
     expect(fixture.reconnect.offline).toBe(true);
     fixture.reconnect.retry?.();
     expect(fixture.invalidate).toHaveBeenCalledTimes(1);
+    expect(fixture.invalidate).toHaveBeenCalledWith({ forcePending: true });
   });
 
   it("online fetch failure: says the server could not be reached", () => {
@@ -69,6 +70,7 @@ describe("ErrorState", () => {
     const tryAgain = buttons.find((button) => button.props.children === "common:actions.tryAgain");
     tryAgain?.props.onClick?.();
     expect(fixture.invalidate).toHaveBeenCalledTimes(1);
+    expect(fixture.invalidate).toHaveBeenCalledWith({ forcePending: true });
   });
 
   it("anything else online: the generic error with Try again and Reload", () => {

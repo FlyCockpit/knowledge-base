@@ -24,7 +24,8 @@ export default function ErrorState({ error }: ErrorComponentProps) {
   // again" uses it: the boundary's own `reset` would re-render the same
   // errored match without re-running its `beforeLoad` (a session guard whose
   // probe failed would fail again forever).
-  const retry = () => void router.invalidate();
+  // Keep successful children pending until their guarded ancestors re-admit them.
+  const retry = () => void router.invalidate({ forcePending: true }).catch(() => {});
   useRetryOnReconnect(retry, !online);
 
   if (!online || isFetchFailure(error)) {

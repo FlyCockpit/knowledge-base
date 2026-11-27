@@ -16,9 +16,9 @@ vi.mock("@/server/auth-session", () => ({
 import {
   admitRouteIdentity,
   announceDocumentIdentity,
+  connectIdentityPeers,
   identityVerificationGeneration,
   isDocumentIdentityUnverified,
-  reportSessionRejected,
   resetDocumentIdentityForTests,
 } from "./document-identity";
 import { resolveRouteSession } from "./route-session";
@@ -33,6 +33,7 @@ beforeEach(() => {
   probe.answers = [];
   vi.stubGlobal("window", { location: { reload: vi.fn() } });
   resetDocumentIdentityForTests(() => channel);
+  connectIdentityPeers(() => {});
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -60,7 +61,7 @@ describe("resolveRouteSession", () => {
 
   it("a guard's answer for the same account confirms an unverified identity", async () => {
     announceDocumentIdentity(null);
-    reportSessionRejected(); // no watcher mounted
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     expect(isDocumentIdentityUnverified()).toBe(true);
     const guard = resolveRouteSession();
     probe.answers[0]?.(resolved("a"));
@@ -70,7 +71,7 @@ describe("resolveRouteSession", () => {
 
   it("an announcement that arrives while the probe runs makes the guard ask again", async () => {
     announceDocumentIdentity(null);
-    reportSessionRejected();
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     let admitted = false;
     const guard = resolveRouteSession().then((resolution) => {
       admitted = true;
@@ -91,7 +92,7 @@ describe("resolveRouteSession", () => {
 
   it("asks at most three times, then admits nothing (a retryable failed probe)", async () => {
     announceDocumentIdentity(null);
-    reportSessionRejected();
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     const guard = resolveRouteSession();
     for (let i = 0; i < 3; i++) {
       await settle();

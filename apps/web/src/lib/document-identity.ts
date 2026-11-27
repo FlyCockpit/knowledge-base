@@ -15,8 +15,8 @@
  * (`useReloadOnIdentityChange`), for a change while a page is open.
  * docs/ui.md § Query cache follows identity.
  *
- * No runtime imports, so the router and the route guards use it without
- * loading Better Auth.
+ * No eager runtime imports: public loads listen for peers without loading
+ * Better Auth; an event without a watcher loads its verifier lazily.
  */
 import type { QueryClient } from "@tanstack/react-query";
 
@@ -262,6 +262,11 @@ export async function admitRouteIdentity(
   since: number = verificationGeneration,
 ): Promise<void> {
   if (resolution.status !== "resolved" || since !== verificationGeneration) return;
+  if (authoritativeSessionRequired) {
+    await (await import("./auth-client")).checkDocumentSession();
+    if (authoritativeSessionRequired) throw new Error("Route session unavailable");
+    if (since !== verificationGeneration) return;
+  }
   const identity = resolution.session?.user.id ?? null;
   if (!observeDocumentIdentity(identity)) {
     // The server just confirmed this document's own identity.
@@ -305,6 +310,8 @@ let restoreWatched = false;
 export function watchDocumentRestore(): void {
   if (typeof window === "undefined" || restoreWatched) return;
   restoreWatched = true;
+  // Public/error/404 documents also receive peers, without an initial auth probe.
+  peerChannel();
   const holdsPrivateState = () => documentIdentity.heldPrivateState || documentIdentity.replaced;
   window.addEventListener("pagehide", (event) => {
     if (event.persisted && holdsPrivateState()) hidePage();
@@ -337,7 +344,7 @@ export function skipErrorToastForIdentity(error: unknown, kind: "query" | "mutat
   if (isIdentityChangedError(error)) replaceDocument();
   if (documentIdentity.replaced) return true;
   if (!isSessionRejection(error)) return false;
-  reportSessionRejected();
+  reportSessionRejected(error);
   return kind === "query";
 }
 
@@ -401,24 +408,69 @@ let sessionCheckPending = false;
  * A request was rejected for having no session: ask Better Auth to check the
  * session once (however many queries failed together), so a session lost
  * elsewhere replaces the document instead of leaving one error toast per
- * query. With no watcher mounted, the identity is left unverified until one
- * (or a guard) checks it.
+ * query. Without an app watcher, the lazy document verifier handles it.
  */
-export function reportSessionRejected(): void {
-  const check = sessionCheck;
-  if (!check) {
+let authoritativeSessionRequired = false;
+export function needsAuthoritativeSessionCheck(): boolean {
+  return authoritativeSessionRequired;
+}
+
+export function confirmAuthoritativeSessionCheck(since: number): void {
+  if (since === verificationGeneration) authoritativeSessionRequired = false;
+}
+
+let reportedRejections = new WeakSet<object>();
+
+/** Keep normal retry limits, but reconcile the first decoded auth failure. */
+export function retryQueryAfterFailure(failureCount: number, error: unknown): boolean {
+  return !isSessionRejection(error) && failureCount < (typeof window === "undefined" ? 0 : 3);
+}
+
+export function reportSessionRejected(error?: unknown): void {
+  // The server shares this module across requests; only a browser owns this state.
+  if (typeof window === "undefined") return;
+  if (error && typeof error === "object") {
+    if (reportedRejections.has(error)) return;
+    reportedRejections.add(error);
+  }
+  // Delayed batch items and a failure retry join the same obligation. They
+  // cannot invalidate the fresh authoritative probe already satisfying it.
+  if (!authoritativeSessionRequired) {
+    authoritativeSessionRequired = true;
     markIdentityUnverified();
+  }
+  requestSessionCheck();
+}
+
+function requestSessionCheck(): void {
+  if (sessionCheckPending) return;
+  sessionCheckPending = true;
+  const check =
+    sessionCheck ??
+    (() => import("./auth-client").then(({ checkDocumentSession }) => checkDocumentSession()));
+  let result: unknown;
+  try {
+    result = check();
+  } catch {
+    sessionCheckPending = false;
     return;
   }
-  if (sessionCheckPending) return;
-  // One check at a time, until it settles: 401s that arrive in separate
-  // network tasks while it runs share it.
-  sessionCheckPending = true;
-  void Promise.resolve(check())
+  void Promise.resolve(result)
     .catch(() => {})
     .finally(() => {
       sessionCheckPending = false;
     });
+}
+
+/** A lazy verifier may finish or retry after the app watcher has mounted. */
+export function confirmOutsideAppIdentity(identity: string | null, since: number): void {
+  if (since !== verificationGeneration) return;
+  if (observeDocumentIdentity(identity) || (!sessionCheck && peerChangePending)) {
+    replaceDocument();
+  } else {
+    confirmDocumentIdentityFresh(since);
+    announceDocumentIdentity(identity);
+  }
 }
 
 /** The channel the open tabs use to tell each other the signed-in identity changed. */
@@ -466,7 +518,7 @@ function peerChannel(): IdentityChannel | undefined {
         // Every announcement invalidates requests already in flight, including
         // native refreshes. The watcher follows a stale answer with one fresh probe.
         markIdentityUnverified();
-        reportSessionRejected();
+        requestSessionCheck();
       };
     }
   }
@@ -538,4 +590,6 @@ export function resetDocumentIdentityForTests(
   announced = undefined;
   restoreWatched = false;
   titleBlanked = false;
+  authoritativeSessionRequired = false;
+  reportedRejections = new WeakSet<object>();
 }

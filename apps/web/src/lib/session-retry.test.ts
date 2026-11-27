@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reportSessionRejected, resetDocumentIdentityForTests } from "./document-identity";
+import {
+  confirmDocumentIdentityFresh,
+  connectIdentityPeers,
+  identityVerificationGeneration,
+  reportSessionRejected,
+  resetDocumentIdentityForTests,
+} from "./document-identity";
 import {
   connectSessionRetry,
   isNativeSessionCheckPending,
@@ -57,6 +63,15 @@ function fail() {
 }
 
 describe("document session retry", () => {
+  it("does not spend a scheduled probe after a deferred obligation was confirmed elsewhere", async () => {
+    disconnects.push(connectIdentityPeers(() => {}));
+    reportSessionRejected();
+    mount();
+    confirmDocumentIdentityFresh(identityVerificationGeneration());
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(check).not.toHaveBeenCalled();
+  });
+
   it("shares a native atom refresh until it settles", async () => {
     const finish = trackNativeSessionCheck();
     const first = runSessionCheck(check);

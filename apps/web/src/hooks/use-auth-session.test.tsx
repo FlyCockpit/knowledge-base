@@ -152,8 +152,10 @@ describe("failed initial session", () => {
   it("a retry superseded by an invalidation never confirms or announces its retained account", async () => {
     const identity = await import("@/lib/document-identity");
     const postMessage = vi.fn();
-    identity.resetDocumentIdentityForTests(() => ({ postMessage, onmessage: null }));
+    const peer = { postMessage, onmessage: null as ((event: MessageEvent) => void) | null };
+    identity.resetDocumentIdentityForTests(() => peer);
     vi.stubGlobal("window", {});
+    identity.connectIdentityPeers(() => Promise.resolve());
     let finish!: () => void;
     atom.refetch.mockImplementationOnce(
       () =>
@@ -172,7 +174,7 @@ describe("failed initial session", () => {
       identity.reportSessionRejected();
       renderToStaticMarkup(<RetrySession />);
       const retry = retrySession?.();
-      identity.reportSessionRejected();
+      peer.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
       finish();
       await retry;
       expect(identity.isDocumentIdentityUnverified()).toBe(true);

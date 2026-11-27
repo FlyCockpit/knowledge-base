@@ -1,7 +1,7 @@
 import type { AppRouterClient } from "@knowledge-base/api/routers/index";
 import { KB_EXPORT_ACK_TIMEOUT_MS, ORPC_BATCH_MAX_SIZE } from "@knowledge-base/config/orpc-batch";
 import { env } from "@knowledge-base/env/web";
-import { createORPCClient } from "@orpc/client";
+import { createORPCClient, onError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import {
   BatchLinkPlugin,
@@ -11,7 +11,7 @@ import {
 } from "@orpc/client/plugins";
 import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 
-import { fetchWithExpectedIdentity } from "@/lib/document-identity";
+import { fetchWithExpectedIdentity, reportSessionRejected } from "@/lib/document-identity";
 
 const isExportAcknowledgement = (path: readonly string[]) =>
   path[0] === "kbExports" && path[1] === "complete";
@@ -22,6 +22,16 @@ const isUploadFrame = (path: readonly string[]) => path[0] === "kbUploads" && pa
 const link = new RPCLink({
   url: `${env.VITE_SERVER_URL}/rpc`,
   interceptors: [
+    // Decoded single/streaming-batch failures arrive before Query retry/error callbacks.
+    onError((error) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        (("code" in error && error.code === "UNAUTHORIZED") ||
+          ("status" in error && error.status === 401))
+      )
+        reportSessionRejected(error);
+    }),
     ({ next, ...options }) => {
       const { path, signal } = options;
       if (!isExportAcknowledgement(path)) return next();
