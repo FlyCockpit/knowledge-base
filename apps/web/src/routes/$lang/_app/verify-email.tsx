@@ -80,10 +80,20 @@ function VerifyEmailPage() {
     return (
       <AuthCard
         title={error ? t("auth:verifyEmail.invalidTitle") : t("auth:verifyEmail.pendingTitle")}
+        // "Enter your email" only when the resend form is there; otherwise
+        // the paragraph below names what verifies the address instead.
         description={
           error
-            ? t("auth:verifyEmail.invalidDescription")
-            : t("auth:verifyEmail.pendingDescription")
+            ? t(
+                canResend
+                  ? "auth:verifyEmail.invalidDescription"
+                  : "auth:verifyEmail.invalidDescriptionNoResend",
+              )
+            : t(
+                canResend
+                  ? "auth:verifyEmail.pendingDescription"
+                  : "auth:verifyEmail.pendingDescriptionNoResend",
+              )
         }
       >
         {configPending ? (
@@ -109,8 +119,12 @@ function VerifyEmailPage() {
         ) : canResend ? (
           <ResendVerification />
         ) : (
+          // An SSO-only server confirms addresses through the IdP: point at
+          // sign-in, not at email setup, which would not help.
           <p className="text-center text-sm text-muted-foreground">
-            {t("auth:verifyEmail.emailUnavailable")}
+            {configData?.forceSso === true
+              ? t("auth:login.ssoRequiredDescription")
+              : t("auth:verifyEmail.emailUnavailable")}
           </p>
         )}
         <div className="text-center">

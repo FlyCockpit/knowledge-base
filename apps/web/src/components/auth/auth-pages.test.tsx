@@ -1,6 +1,7 @@
 import enAuth from "@knowledge-base/locales/src/en-US/auth.json";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
 import enNav from "@knowledge-base/locales/src/en-US/nav.json";
+import esAuth from "@knowledge-base/locales/src/es-MX/auth.json";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -74,6 +75,7 @@ const { Route: LandingRoute } = await import("@/routes/$lang/_public/index");
 const { Route: ForgotPasswordRoute } = await import("@/routes/$lang/_app/forgot-password");
 const { Route: ResetPasswordRoute } = await import("@/routes/$lang/_app/reset-password");
 const { Route: VerifyEmailRoute } = await import("@/routes/$lang/_app/verify-email");
+const { SignupCreatedCard } = await import("@/components/auth/signup-created-card");
 
 const i18n = createInstance();
 beforeAll(async () => {
@@ -285,5 +287,114 @@ describe("one h1 per auth page: the card's title", () => {
     fixture.config = config;
     fixture.search = search;
     expect(h1s(await render(route))).toEqual([title]);
+  });
+});
+
+// Only mailbox proof verifies a self-registered address (docs/hosting.md
+// § Bootstrap): no admin can mark an account verified, so the no-email states
+// name what works for the user: email setup, then a new link. (An admin's
+// alternative, removal and a no-SMTP invite, is in the hosting doc.)
+describe("verify email without a way to resend", () => {
+  const plain = (html: string) => html.replaceAll("&#x27;", "'");
+
+  it("words the no-email copy as email setup, then a new link", () => {
+    for (const text of [
+      enAuth.verifyEmail.emailUnavailable,
+      enAuth.verifyEmail.accountCreatedNoEmail,
+    ]) {
+      expect(text).toMatch(/set up email, then request a new verification link/);
+      expect(text).not.toMatch(/verify your account/i);
+    }
+    for (const text of [
+      esAuth.verifyEmail.emailUnavailable,
+      esAuth.verifyEmail.accountCreatedNoEmail,
+    ]) {
+      expect(text).toMatch(/configure el correo y luego solicita un nuevo enlace de verificación/);
+      expect(text).not.toMatch(/verifique tu cuenta/i);
+    }
+    for (const text of [
+      enAuth.verifyEmail.pendingDescriptionNoResend,
+      enAuth.verifyEmail.invalidDescriptionNoResend,
+      esAuth.verifyEmail.pendingDescriptionNoResend,
+      esAuth.verifyEmail.invalidDescriptionNoResend,
+    ]) {
+      expect(text).not.toMatch(/enter your email|ingresa tu correo/i);
+    }
+  });
+
+  it.each([
+    ["pending", {}, enAuth.verifyEmail.pendingDescriptionNoResend],
+    ["expired link", { error: "INVALID_TOKEN" }, enAuth.verifyEmail.invalidDescriptionNoResend],
+  ])(
+    "/verify-email (%s) without mail asks for email setup, with no email field",
+    async (_n, search, description) => {
+      fixture.config = { ...OPEN, emailEnabled: false };
+      fixture.search = search;
+      const html = plain(await render(VerifyEmailRoute));
+      expect(html).toContain(description);
+      expect(html).toContain(enAuth.verifyEmail.emailUnavailable);
+      expect(html).not.toContain("<input");
+    },
+  );
+
+  it.each([
+    ["pending", {}, enAuth.verifyEmail.pendingDescriptionNoResend],
+    ["expired link", { error: "INVALID_TOKEN" }, enAuth.verifyEmail.invalidDescriptionNoResend],
+  ])(
+    "/verify-email (%s) on an SSO-only server points at sign-in",
+    async (_n, search, description) => {
+      fixture.config = { ...FORCE_SSO, emailEnabled: true };
+      fixture.search = search;
+      const html = plain(await render(VerifyEmailRoute));
+      expect(html).toContain(description);
+      expect(html).toContain(enAuth.login.ssoRequiredDescription);
+      expect(html).not.toContain(enAuth.verifyEmail.emailUnavailable);
+      expect(html).not.toContain("<input");
+    },
+  );
+
+  it("keeps the resend form and its description when mail works", async () => {
+    fixture.config = { ...OPEN, emailEnabled: true };
+    fixture.search = {};
+    const html = plain(await render(VerifyEmailRoute));
+    expect(html).toContain(enAuth.verifyEmail.pendingDescription);
+    expect(html).toContain("<input");
+    expect(html).not.toContain(enAuth.verifyEmail.emailUnavailable);
+  });
+
+  it("the sign-up confirmation without mail names the way out once, with no resend", () => {
+    const html = plain(
+      renderToStaticMarkup(
+        <I18nextProvider i18n={i18n}>
+          <SignupCreatedCard
+            lang="en-US"
+            email="a@example.com"
+            canResend={false}
+            redirectTo={undefined}
+          />
+        </I18nextProvider>,
+      ),
+    );
+    expect(html).toContain(
+      enAuth.verifyEmail.accountCreatedNoEmail.replace("{{email}}", "a@example.com"),
+    );
+    expect(html).toContain(enAuth.verifyEmail.pendingTitle);
+    expect(html).not.toContain(enAuth.verifyEmail.emailUnavailable);
+    expect(html).not.toContain(enAuth.verifyEmail.resend);
+  });
+
+  it("the sign-up confirmation with mail says the link was sent and offers a resend", () => {
+    const html = plain(
+      renderToStaticMarkup(
+        <I18nextProvider i18n={i18n}>
+          <SignupCreatedCard lang="en-US" email="a@example.com" canResend redirectTo={undefined} />
+        </I18nextProvider>,
+      ),
+    );
+    expect(html).toContain(
+      enAuth.verifyEmail.sentDescription.replace("{{email}}", "a@example.com"),
+    );
+    expect(html).toContain(enAuth.verifyEmail.resend);
+    expect(html).not.toContain(enAuth.verifyEmail.accountCreatedNoEmail.split("{{email}}")[0]);
   });
 });

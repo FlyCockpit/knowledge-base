@@ -11,7 +11,7 @@ import z from "zod";
 
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
-import { ResendVerification } from "@/components/auth/resend-verification";
+import { SignupCreatedCard } from "@/components/auth/signup-created-card";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
 import { markAnonymousOnlyRoute } from "@/lib/document-identity";
@@ -100,34 +100,13 @@ function SignupPage() {
       </AuthCard>
     );
   } else if (pendingEmail) {
-    // Terminal state after a successful signup: the account exists but is inert
-    // until the emailed link is clicked, so say that plainly instead of dropping
-    // the user back on a form or bouncing them off an authenticated route.
     body = (
-      <AuthCard
-        title={canResend ? t("auth:verifyEmail.sentTitle") : t("auth:verifyEmail.pendingTitle")}
-        description={
-          canResend
-            ? t("auth:verifyEmail.sentDescription", { email: pendingEmail })
-            : t("auth:verifyEmail.accountCreatedNoEmail", { email: pendingEmail })
-        }
-      >
-        <Link
-          to="/$lang/login"
-          params={{ lang }}
-          search={{ redirectTo }}
-          className={cn(buttonVariants(), "min-h-[44px] w-full")}
-        >
-          {t("auth:verifyEmail.signIn")}
-        </Link>
-        {canResend ? (
-          <ResendVerification email={pendingEmail} />
-        ) : (
-          <p className="text-center text-sm text-muted-foreground">
-            {t("auth:verifyEmail.emailUnavailable")}
-          </p>
-        )}
-      </AuthCard>
+      <SignupCreatedCard
+        lang={lang}
+        email={pendingEmail}
+        canResend={canResend}
+        redirectTo={redirectTo}
+      />
     );
   } else if (mode === "closed") {
     // Invite-only: say so, and point at the one thing this visitor can do here.
