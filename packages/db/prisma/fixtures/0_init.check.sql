@@ -59,3 +59,17 @@ DO $$ BEGIN
   BEGIN UPDATE mcp_grant SET "allKbsBits"=ARRAY['read'] WHERE id='00000000-0000-4000-8000-0000000000a1'; RAISE EXCEPTION 'missing API-key-only every-KB reach check'; EXCEPTION WHEN check_violation THEN NULL; END;
   BEGIN INSERT INTO mcp_personal_token (id,"userIdSnapshot",name,"lookupPrefix","secretDigest","grantId",resource,"idempotencyKey") VALUES ('fx_pat','fx_owner','pat','fx_pat','fx_pat_digest','00000000-0000-4000-8000-0000000000a1','https://kb.example.test/mcp','k'); RAISE EXCEPTION 'missing child-only idempotency check'; EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
+-- KB pins: one pin per user and KB, cascading with the user and the KB, and a pin needs a real KB.
+SELECT 'pin lost' WHERE NOT EXISTS (SELECT FROM kb_pin WHERE id='fx_pin' AND "userId"='fx_owner' AND "kbId"='fx_kb' AND position=0);
+SELECT 'kb_pin one pin per user and base lost' WHERE NOT EXISTS
+ (SELECT FROM pg_indexes WHERE tablename='kb_pin' AND indexname='kb_pin_user_kb_unique'
+   AND indexdef LIKE 'CREATE UNIQUE INDEX%');
+SELECT 'kb_pin user cascade lost' WHERE NOT EXISTS
+ (SELECT FROM pg_constraint WHERE conname='kb_pin_userId_fkey' AND confdeltype='c');
+SELECT 'kb_pin base cascade lost' WHERE NOT EXISTS
+ (SELECT FROM pg_constraint WHERE conname='kb_pin_kbId_fkey' AND confdeltype='c');
+SELECT 'kb_pin row without a position' FROM kb_pin WHERE position IS NULL OR position < 0;
+DO $$ BEGIN
+  BEGIN INSERT INTO kb_pin (id,"userId","kbId",position) VALUES ('fx_pin_dup','fx_owner','fx_kb',1); RAISE EXCEPTION 'missing pin uniqueness'; EXCEPTION WHEN unique_violation THEN NULL; END;
+  BEGIN INSERT INTO kb_pin (id,"userId","kbId",position) VALUES ('fx_pin_bad','fx_owner','missing-kb',1); RAISE EXCEPTION 'missing pin KB FK'; EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+END $$;

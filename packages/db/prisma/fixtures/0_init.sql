@@ -74,3 +74,5 @@ INSERT INTO mcp_grant (id,"actorUserIdSnapshot","userId",kind,"clientId","refere
  ('00000000-0000-4000-8000-0000000000b1','fx_owner','fx_owner','API_KEY','kb-api-key','fx_api_key',ARRAY['mcp:read'],ARRAY['read'],ARRAY[]::text[]);
 INSERT INTO api_key (id,"userIdSnapshot","userId",name,"lookupPrefix","secretDigest","grantId",reach,bits,"childToolGroups") VALUES
  ('fx_api_key','fx_owner','fx_owner','fixture','fx_api_key','fx_api_key_digest','00000000-0000-4000-8000-0000000000b1','CREATED',ARRAY['read'],ARRAY['read']);
+-- A pinned knowledge base of the fixture owner (sidebar order 0).
+INSERT INTO kb_pin (id,"userId","kbId",position) VALUES ('fx_pin','fx_owner','fx_kb',0);

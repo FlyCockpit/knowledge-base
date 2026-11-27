@@ -720,6 +720,7 @@ CREATE TABLE "sealed_record" (
     "ownerSnapshot" TEXT NOT NULL,
     "version" INTEGER NOT NULL DEFAULT 1,
     "ciphertext" TEXT,
+    "label" TEXT,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "revokedAt" TIMESTAMPTZ(3),
 
@@ -798,6 +799,17 @@ CREATE TABLE "kb_share" (
     "revokedAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "kb_share_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "kb_pin" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userId" TEXT NOT NULL,
+    "kbId" TEXT NOT NULL,
+    "position" INTEGER NOT NULL,
+
+    CONSTRAINT "kb_pin_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -925,6 +937,8 @@ CREATE TABLE "mcp_personal_token" (
     "userIdSnapshot" TEXT NOT NULL,
     "userId" TEXT,
     "name" TEXT NOT NULL,
+    "recipientKeyId" UUID,
+    "recipientPublicKey" TEXT,
     "lookupPrefix" TEXT NOT NULL,
     "secretDigest" TEXT NOT NULL,
     "grantId" UUID NOT NULL,
@@ -1398,6 +1412,15 @@ CREATE INDEX "kb_share_userId_idx" ON "kb_share"("userId");
 CREATE UNIQUE INDEX "kb_share_kb_user_unique" ON "kb_share"("kbId", "userId");
 
 -- CreateIndex
+CREATE INDEX "kb_pin_userId_position_idx" ON "kb_pin"("userId", "position");
+
+-- CreateIndex
+CREATE INDEX "kb_pin_kbId_idx" ON "kb_pin"("kbId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "kb_pin_user_kb_unique" ON "kb_pin"("userId", "kbId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "share_invitation_requestId_key" ON "share_invitation"("requestId");
 
 -- CreateIndex
@@ -1726,6 +1749,12 @@ ALTER TABLE "kb_share" ADD CONSTRAINT "kb_share_kbId_fkey" FOREIGN KEY ("kbId") 
 
 -- AddForeignKey
 ALTER TABLE "kb_share" ADD CONSTRAINT "kb_share_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "kb_pin" ADD CONSTRAINT "kb_pin_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "kb_pin" ADD CONSTRAINT "kb_pin_kbId_fkey" FOREIGN KEY ("kbId") REFERENCES "knowledge_base"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "share_invitation" ADD CONSTRAINT "share_invitation_kbId_fkey" FOREIGN KEY ("kbId") REFERENCES "knowledge_base"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
