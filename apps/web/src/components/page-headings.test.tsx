@@ -76,6 +76,7 @@ vi.mock("@/server/auth-session", () => ({
   getSessionCookieHint: vi.fn(async () => false),
 }));
 vi.mock("@/hooks/use-auth-session", () => ({
+  readSessionIdentityGeneration: () => 0,
   getAuthActorKey: () => null,
   useAuthSession: () =>
     fixture.session === "anonymous"

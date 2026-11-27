@@ -11,6 +11,8 @@ import {
 } from "@orpc/client/plugins";
 import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 
+import { fetchWithExpectedIdentity } from "@/lib/document-identity";
+
 const isExportAcknowledgement = (path: readonly string[]) =>
   path[0] === "kbExports" && path[1] === "complete";
 // Upload frames go unbatched to their own path, which the server counts in a
@@ -57,7 +59,7 @@ const link = new RPCLink({
     new ClientRetryPlugin(),
   ],
   fetch(url, options) {
-    return fetch(url, {
+    return fetchWithExpectedIdentity(url, {
       ...options,
       credentials: "include",
     });

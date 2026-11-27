@@ -4,8 +4,8 @@ import { readLiveAdminPolicy } from "@knowledge-base/auth/session-authority";
 import prisma from "@knowledge-base/db";
 import { lockIdentityAuthority } from "@knowledge-base/db/authority-lock";
 import { ORPCError, os } from "@orpc/server";
-
 import type { Context } from "./context";
+import { mapUserChangeConflict } from "./lib/admin-presence";
 import {
   invalidateForceTwoFactorSettingsCache,
   isTwoFactorPolicySatisfied,
@@ -134,21 +134,31 @@ export const adminOr404Procedure = publicProcedure.use(requireAdminOr404);
 
 /** Committing policy/identity writers share a live gate on their owning transaction.
  * Keep the outer registered snapshot gate, then reauthorize after acquiring
- * authority. The outgoing policy is checked again after any effect/row waits,
+ * authority. READ COMMITTED reads the actor after any authority-lock wait,
+ * rather than reusing a snapshot from before it. The outgoing policy is checked
+ * again after any effect/row waits,
  * so relaxing the policy cannot authorize an actor whose grace just ended.
  */
 const requireLiveAdminOr404 = o.middleware(async ({ context, next }) => {
-  const result = await prisma.$transaction(async (tx) => {
-    await lockIdentityAuthority(tx);
-    const { actor, check } = await readLiveAdminPolicy(
-      tx,
-      context.session!.user.id,
-      () => new ORPCError("NOT_FOUND", { message: "Not found" }),
-    );
-    const response = await next({ context: { authorityTx: tx, liveAdmin: actor } });
-    check();
-    return response;
-  });
+  const result = await prisma
+    .$transaction(
+      async (tx) => {
+        await lockIdentityAuthority(tx);
+        const { actor, check } = await readLiveAdminPolicy(
+          tx,
+          context.session!.user.id,
+          () => new ORPCError("NOT_FOUND", { message: "Not found" }),
+        );
+        const response = await next({ context: { authorityTx: tx, liveAdmin: actor } });
+        check();
+        return response;
+      },
+      { isolationLevel: "ReadCommitted" },
+    )
+    .catch((error: unknown) => {
+      mapUserChangeConflict(error);
+      throw error;
+    });
   invalidateForceTwoFactorSettingsCache();
   return result;
 });

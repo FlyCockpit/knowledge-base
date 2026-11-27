@@ -1,9 +1,5 @@
 import { appShellHydrated } from "@/lib/app-shell-hydration";
-import {
-  admitRouteIdentity,
-  identityVerificationGeneration,
-  isDocumentIdentityUnverified,
-} from "@/lib/document-identity";
+import { admitRouteIdentity, identityVerificationGeneration } from "@/lib/document-identity";
 import {
   failedRouteSessionResolution,
   type RouteSessionResolution,
@@ -45,8 +41,8 @@ export async function resolveRouteSession(): Promise<RouteSessionResolution> {
     if (probe.status === "rejected") throw probe.reason;
     const resolution = probe.value;
     await admitRouteIdentity(resolution, since);
-    const superseded = since !== identityVerificationGeneration() && isDocumentIdentityUnverified();
-    if (resolution.status !== "resolved" || !superseded) return resolution;
+    const superseded = since !== identityVerificationGeneration();
+    if (!superseded) return resolution;
     if (attempt >= MAX_PROBES) return failedRouteSessionResolution();
   }
 }

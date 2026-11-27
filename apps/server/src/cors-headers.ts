@@ -28,6 +28,7 @@ export const CORS_ALLOW_HEADERS = [
   "Content-Type",
   "Authorization",
   "DPoP",
+  "X-Expected-User",
   "x-csrf-token",
   "x-device-approval-nonce",
   APP_LOCALE_HEADER,

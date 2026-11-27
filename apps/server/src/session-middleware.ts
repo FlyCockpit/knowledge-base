@@ -1,4 +1,5 @@
 import { auth, type Session } from "@knowledge-base/auth";
+import { isUserBanned } from "@knowledge-base/auth/ban";
 import { isImpersonatedSession } from "@knowledge-base/auth/roles";
 import { logInternalError } from "@knowledge-base/env/log";
 import type { Context, Next } from "hono";
@@ -24,13 +25,18 @@ import type { Context, Next } from "hono";
 // relax this.
 export async function sessionMiddleware(c: Context, next: Next) {
   let session: Session | null = null;
+  c.set("sessionLookupFailed", false);
+  c.set("sessionCookieOwner", null);
   try {
     const cookieOnly = new Headers(c.req.raw.headers);
     cookieOnly.delete("authorization");
     session = (await auth.api.getSession({ headers: cookieOnly })) as Session | null;
+    c.set("sessionCookieOwner", session?.user.id ?? null);
+    if (session?.user && isUserBanned(session.user)) session = null;
   } catch (err) {
     logInternalError("session.lookup", err);
     session = null;
+    c.set("sessionLookupFailed", true);
   }
   c.set("session", isImpersonatedSession(session) ? null : (session ?? null));
   await next();

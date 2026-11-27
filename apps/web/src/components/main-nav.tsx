@@ -13,7 +13,7 @@ export function MainNav() {
   const authSession = useAuthSession();
   const { t } = useTranslation("nav");
 
-  if (authSession.state.status === "pending" || authSession.state.status === "error") {
+  if (authSession.state.status === "pending") {
     return (
       <nav
         aria-label={t("mainNav.ariaLabel")}
@@ -27,6 +27,9 @@ export function MainNav() {
       </nav>
     );
   }
+
+  if (authSession.state.status === "error")
+    return <div className="hidden min-w-0 flex-1 md:block" />;
 
   // Signed-in users navigate with the sidebar (desktop) and the BottomNav.
   // Hidden below md so it adds no flex gap to the phone header; the controls use ml-auto.

@@ -13,6 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { pageHead } from "@/lib/page-title";
 import { ensureRouteQuery } from "@/lib/route-query";
 import { resolveRouteSession } from "@/lib/route-session";
@@ -47,12 +48,17 @@ export const Route = createFileRoute("/$lang/_app/forgot-password")({
 });
 
 function ForgotPasswordPage() {
+  markAnonymousOnlyRoute();
+  // A peer tab's sign-in replaces this page instead of putting that account in the
+  // header above the form (lib/document-identity.ts).
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   const authSession = useAuthSession();
   const {
     isPending: configPending,
-    isError: configError,
+    // Only a first load that failed: a failed background refetch (refocus,
+    // reconnect) keeps the loaded config and the form with what was typed.
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

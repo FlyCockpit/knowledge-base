@@ -8,10 +8,10 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
-
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { pageHead } from "@/lib/page-title";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { ensureRouteQuery } from "@/lib/route-query";
@@ -64,13 +64,14 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
 });
 
 function ResetPasswordPage() {
+  markAnonymousOnlyRoute();
   const { lang } = Route.useParams();
   const { token, error, invite, setup } = Route.useSearch();
   const isSetup = setup === 1;
   const isInvite = invite === 1 && !isSetup;
   const {
     isPending: configPending,
-    isError: configError,
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

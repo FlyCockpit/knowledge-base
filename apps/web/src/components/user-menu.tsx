@@ -1,14 +1,17 @@
 import { Button, buttonVariants } from "@knowledge-base/ui/components/button";
+import { toast } from "@knowledge-base/ui/components/sileo";
 import { Skeleton } from "@knowledge-base/ui/components/skeleton";
 import { cn } from "@knowledge-base/ui/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { LogIn, User, UserPlus } from "lucide-react";
+import { LogIn, LogOut, RefreshCw, User, UserPlus } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { signOutAndLeave, signOutFailureKey } from "@/lib/explicit-sign-out";
+import { runSessionCheck } from "@/lib/session-retry";
 import { signupMode } from "@/lib/signup-mode";
 import { orpc } from "@/utils/orpc";
 
@@ -37,25 +40,38 @@ export default function UserMenu() {
   // mounted in the header — returns to the closed shell instead of reusing the
   // lazy menu, which mounts `defaultOpen`, already open for the new user.
   const [openedFor, setOpenedFor] = useState<string | null>(null);
-  // Whether an identity was ever confirmed in this mount, so a later error
-  // shows the account control (disabled) instead of a loading skeleton.
-  const [hadIdentity, setHadIdentity] = useState(false);
   const state = authSession.state;
-  if (state.status === "authenticated" && !hadIdentity) setHadIdentity(true);
 
   if (state.status === "pending") {
     return <Skeleton className="h-11 w-24" />;
   }
 
-  // A known identity whose session check is failing (offline, server
-  // unreachable): the account control stays where it was, disabled. It is not
-  // loading, so no skeleton; and it is not signed out, so no Sign In.
-  if (state.status === "error") {
-    if (!hadIdentity) return <Skeleton className="h-11 w-24" />;
+  if (state.status === "error" || authSession.meta.isDegraded) {
     return (
-      <Button variant="outline" size="icon-touch" disabled aria-label={t("userMenu.open")}>
-        <User className="size-4" aria-hidden="true" />
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="touch"
+          aria-label={t("userMenu.accountUnavailable")}
+          className="w-11 px-0 sm:w-auto sm:px-3.5"
+          disabled={authSession.meta.isRefetching}
+          onClick={() => void runSessionCheck(authSession.actions.retry).catch(() => {})}
+        >
+          <RefreshCw className="size-4" aria-hidden="true" />
+          <span className="hidden sm:inline">{t("userMenu.accountUnavailable")}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-touch"
+          aria-label={t("userMenu.signOut")}
+          onClick={async () => {
+            const result = await signOutAndLeave(`/${lang}/login`);
+            if (!result.ok) toast.error(t(signOutFailureKey(result.error)));
+          }}
+        >
+          <LogOut className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
     );
   }
 

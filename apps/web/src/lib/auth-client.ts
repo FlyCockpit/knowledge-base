@@ -5,7 +5,17 @@ import { adminClient, inferAdditionalFields, twoFactorClient } from "better-auth
 import { createAuthClient } from "better-auth/react";
 
 import i18n from "@/i18n";
-import { announceSessionChange } from "@/lib/document-identity";
+import {
+  announceSessionChange,
+  guardIdentityResponse,
+  identityVerificationGeneration,
+  withExpectedIdentity,
+} from "@/lib/document-identity";
+import {
+  recordSessionRetryAfter,
+  trackNativeSessionCheck,
+  waitForSessionCooldown,
+} from "@/lib/session-retry";
 
 export const authClient = createAuthClient({
   baseURL: env.VITE_SERVER_URL,
@@ -24,15 +34,36 @@ export const authClient = createAuthClient({
     // The header name is shared with the server's CORS `allowHeaders` list via
     // APP_LOCALE_HEADER — a custom header the server doesn't allow fails
     // preflight and blocks every auth request on a split-origin deploy.
-    onRequest(context) {
+    async onRequest(context) {
       context.headers.set(APP_LOCALE_HEADER, i18n.language);
+      const path = new URL(context.url).pathname;
+      // Native reconnect/storage/mount refreshes bypass runSessionCheck.
+      // Share their entire atom update with it, including cooldown waits.
+      if (path.endsWith("/get-session")) {
+        const signal = context.signal;
+        if (signal) trackSessionAtomRefresh(signal);
+        await waitForSessionCooldown(signal);
+      }
+      if (!/\/(get-session|sign-out)\/?$/.test(path)) {
+        context.headers = withExpectedIdentity(context.headers);
+      }
       return context;
+    },
+    async onResponse({ response, request }) {
+      const path = new URL(request.url).pathname;
+      // An explicit sign-out owns its navigation even if a peer replaced the
+      // identity meanwhile. Its success callback must still leave for login.
+      if (path.endsWith("/sign-out")) return;
+      if (path.endsWith("/get-session")) {
+        recordSessionRetryAfter(response);
+      }
+      await guardIdentityResponse(response);
     },
   },
   sessionOptions: {
-    // Better Auth owns session revalidation. Keep event-driven refreshes on,
-    // skip requests while offline, and avoid periodic polling.
-    refetchOnWindowFocus: true,
+    // The watcher owns focus/visibility checks through the document scheduler.
+    // Native reconnect and storage refreshes share its cooldown in onRequest.
+    refetchOnWindowFocus: false,
     refetchWhenOffline: false,
     refetchInterval: 0,
   },
@@ -45,6 +76,36 @@ export const authClient = createAuthClient({
     twoFactorClient(),
   ],
 });
+
+// Keep the request generation with its settled snapshot even when no watcher
+// is mounted. A route guard can verify the document without updating this atom.
+const sessionAnswerGenerations = new WeakMap<object, number>();
+
+export function readSessionIdentityGeneration(): number | undefined {
+  const snapshot = authClient.$store.atoms.session?.get();
+  return snapshot ? sessionAnswerGenerations.get(snapshot) : undefined;
+}
+
+function trackSessionAtomRefresh(signal: AbortSignal): void {
+  const session = authClient.$store.atoms.session;
+  // Reading value avoids mounting the atom for an imperative getSession().
+  if (!session?.value.isRefetching) return;
+  const since = identityVerificationGeneration();
+  const finish = trackNativeSessionCheck();
+  const stop = () => {
+    unlisten();
+    signal.removeEventListener("abort", stop);
+    finish();
+  };
+  const unlisten = session.listen((snapshot) => {
+    if (!snapshot.isPending && !snapshot.isRefetching) {
+      sessionAnswerGenerations.set(snapshot, since);
+      stop();
+    }
+  });
+  signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
+}
 
 // A session change made in this tab (sign-in, 2FA, sign-up, …: Better Auth's
 // session signal) is announced to the other open tabs before the flow
@@ -60,7 +121,13 @@ export const consentAuthClient = createAuthClient({
   fetchOptions: {
     onRequest(context) {
       context.headers.set(APP_LOCALE_HEADER, i18n.language);
+      if (!/\/(get-session|sign-out)\/?$/.test(new URL(context.url).pathname)) {
+        context.headers = withExpectedIdentity(context.headers);
+      }
       return context;
+    },
+    async onResponse({ response }) {
+      await guardIdentityResponse(response);
     },
   },
 });

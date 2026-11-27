@@ -15,7 +15,7 @@ vi.mock("@/lib/document-identity", () => ({
   leaveDocument: auth.leave,
 }));
 
-const { signOutAndLeave } = await import("./explicit-sign-out");
+const { signOutAndLeave, signOutFailureKey } = await import("./explicit-sign-out");
 
 beforeEach(() => {
   for (const fn of Object.values(auth)) fn.mockReset();
@@ -46,5 +46,29 @@ describe("signOutAndLeave", () => {
     auth.signOut.mockRejectedValue(error);
     expect(await signOutAndLeave("/en-US/login")).toEqual({ ok: false, error });
     expect(auth.undo).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sign-out failure copy", () => {
+  it("says still signed in and when to retry while offline", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    try {
+      const copy = await import("../../../../packages/locales/src/en-US/nav.json");
+      expect(signOutFailureKey({ status: 503 })).toBe("userMenu.signOutOffline");
+      expect(copy.userMenu.signOutOffline).toBe(
+        "You're offline. You're still signed in — sign out again when you're back online.",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("uses offline copy for a network failure and generic copy for a server refusal", () => {
+    vi.stubGlobal("navigator", { onLine: true });
+    try {
+      expect(signOutFailureKey(new TypeError("Failed to fetch"))).toBe("userMenu.signOutOffline");
+      expect(signOutFailureKey({ status: 500 })).toBe("userMenu.signOutFailed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

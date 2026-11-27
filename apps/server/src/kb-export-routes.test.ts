@@ -52,7 +52,11 @@ describe("private ZIP browser route", () => {
     expect(
       (
         await routes.request(path, {
-          headers: { authorization: "Bearer fixture", cookie: "session=owner" },
+          headers: {
+            authorization: "Bearer fixture",
+            cookie: "session=owner",
+            "X-Expected-User": "previous-owner",
+          },
         })
       ).status,
     ).toBe(200);
@@ -62,6 +66,14 @@ describe("private ZIP browser route", () => {
       principal: { ...principal, toolGroupDemands: [["export"]] },
       verifier,
     });
+  });
+  it("rejects a switched cookie owner before looking up the prepared export", async () => {
+    const response = await app().request(path, {
+      headers: { "X-Expected-User": "previous-owner" },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ code: "IDENTITY_CHANGED" });
+    expect(downloadExport).not.toHaveBeenCalled();
   });
   it("streams exact artifact with final sandbox/no-store/attachment headers", async () => {
     vi.mocked(downloadExport).mockResolvedValue({
@@ -73,7 +85,7 @@ describe("private ZIP browser route", () => {
         },
       }),
     });
-    const response = await app().request(path);
+    const response = await app().request(path, { headers: { "X-Expected-User": "owner" } });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("zip");
     expect(response.headers.get("content-type")).toBe("application/zip");

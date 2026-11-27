@@ -44,8 +44,9 @@ describe("betterAuthAdminGate", () => {
     downstream.mockClear();
     app = new Hono();
     app.use("/api/auth/admin/*", betterAuthAdminGate);
-    app.all("/api/auth/admin/set-role", downstream);
+    app.all("/api/auth/admin/profile", downstream);
     app.all("/api/auth/admin/impersonate-user", downstream);
+    app.all("/api/auth/admin/*", downstream);
   });
 
   it("binds the verified actor only within the downstream admin request", async () => {
@@ -57,14 +58,14 @@ describe("betterAuthAdminGate", () => {
       return c.json({ ok: true });
     });
     expect(getAdminMutationActor()).toBeUndefined();
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(200);
     expect(getAdminMutationActor()).toBeUndefined();
   });
 
   it("rejects unauthenticated callers with 401", async () => {
     getSession.mockResolvedValue(null);
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({
       error: "unauthorized",
@@ -88,7 +89,7 @@ describe("betterAuthAdminGate", () => {
     getSession.mockResolvedValue({
       user: { id: "a1", role: "admin", emailVerified: false, twoFactorEnabled: true },
     });
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(403);
     expect(downstream).not.toHaveBeenCalled();
   });
@@ -119,7 +120,7 @@ describe("betterAuthAdminGate", () => {
         createdAt: new Date("2025-01-01"),
       },
     });
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
       error: "access_denied",
@@ -140,7 +141,7 @@ describe("betterAuthAdminGate", () => {
         createdAt: new Date(Date.now() - 60_000),
       },
     });
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(downstream).toHaveBeenCalledTimes(1);
@@ -151,7 +152,7 @@ describe("betterAuthAdminGate", () => {
       user: { id: "a1", role: "admin", emailVerified: true, twoFactorEnabled: false },
     });
     db.appSetting.findMany.mockResolvedValue([{ key: "force2faInternalUsers", value: "false" }]);
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(downstream).toHaveBeenCalledTimes(1);
@@ -192,7 +193,7 @@ describe("betterAuthAdminGate", () => {
             twoFactorGraceStartedAt: null,
           },
     );
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(403);
     expect(downstream).not.toHaveBeenCalled();
   });
@@ -214,7 +215,35 @@ describe("betterAuthAdminGate", () => {
       createdAt: old,
       twoFactorGraceStartedAt: new Date(),
     });
-    const res = await app.request("/api/auth/admin/set-role", { method: "POST" });
+    const res = await app.request("/api/auth/admin/profile", { method: "POST" });
     expect(res.status).toBe(200);
+  });
+});
+
+describe("parallel access writes", () => {
+  it.each([
+    ["set-role", {}],
+    ["ban-user", {}],
+    ["remove-user", {}],
+    ["update-user", { data: { role: "admin" } }],
+    ["update-user", { data: { banned: true } }],
+    ["update-user", { data: { banExpires: null } }],
+    ["update-user", { data: { emailVerified: false } }],
+  ])("blocks %s before the plugin can change access", async (path, body) => {
+    getSession.mockResolvedValue({
+      user: { id: "admin", role: "admin", emailVerified: true, twoFactorEnabled: true },
+    });
+    const downstream = vi.fn((c: Context) => c.json({ ok: true }));
+    const server = new Hono();
+    server.use("/api/auth/admin/*", betterAuthAdminGate);
+    server.all("*", downstream);
+    const response = await server.request(`/api/auth/admin/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "USE_ORPC_USER_MANAGEMENT" });
+    expect(downstream).not.toHaveBeenCalled();
   });
 });

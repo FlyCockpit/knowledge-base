@@ -40,6 +40,8 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
+    meta: { isRefetching: false, isDegraded: false },
+    actions: { retry: vi.fn() },
     state:
       fixture.status === "authenticated"
         ? {
@@ -130,11 +132,19 @@ describe("account control, signed in", () => {
   });
 
   it("is a skeleton while the session is first checked, or failing with no known identity", () => {
-    for (const status of ["pending", "error"] as const) {
+    for (const status of ["pending"] as const) {
       fixture.status = status;
       const html = render();
       expect(html).toMatch(/data-slot="skeleton"/);
       expect(html).not.toContain("data-to=");
     }
   });
+});
+
+it("offers Account unavailable, Retry and Sign out on a session failure", () => {
+  fixture.status = "error";
+  const html = render();
+  expect(html).toContain(enNav.userMenu.accountUnavailable);
+  expect(html).toContain(enNav.userMenu.signOut);
+  expect(html).not.toContain('data-slot="skeleton"');
 });

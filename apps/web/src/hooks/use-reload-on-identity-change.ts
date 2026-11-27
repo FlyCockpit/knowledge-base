@@ -3,6 +3,7 @@ import { useLayoutEffect } from "react";
 import {
   isSessionFetchInFlight,
   readSessionIdentity,
+  readSessionIdentityGeneration,
   useAuthSession,
 } from "@/hooks/use-auth-session";
 import type { AuthSessionState } from "@/lib/auth-session-state";
@@ -12,10 +13,13 @@ import {
   connectIdentityPeers,
   identityVerificationGeneration,
   isDocumentIdentityUnverified,
+  isDocumentReplaced,
   observeDocumentIdentity,
   replaceDocument,
   type SessionIdentity,
 } from "@/lib/document-identity";
+
+import { runSessionCheck } from "@/lib/session-retry";
 
 /**
  * `undefined` (session pending or errored) is never acted on: a flaky session
@@ -33,46 +37,65 @@ export function sessionIdentity(
  * The watcher's session checks while it is mounted: for a peer tab's
  * announcement, a 401, and an unverified identity (another tab announced a
  * change while no watcher was mounted: the chrome shows no account until a
- * check settles it). Only a check started here can settle that state:
- * Better Auth's refetch cancels any fetch already in flight, so the answer it
- * settles with was asked for after `since`, never inherited from before a
- * newer invalidation. A failed check is retried when the tab regains focus,
+ * check settles it). Checks share the document's retry coordinator and must
+ * start after the invalidation they verify (`since`). The adapter's stable
+ * refetch wrapper also verifies retries started by the header or scheduler.
+ * A failed check is retried with backoff and when the tab regains focus,
  * visibility or the network; one superseded by another fetch still running is
- * followed up (at most 3 times, 250 ms apart; one follow-up pending at a time,
- * the newest check's). `stop()` drops every pending completion, timer and
- * listener, and nothing refetches after it.
+ * followed up (at most 3 times, 250 ms apart). `stop()` drops every pending
+ * completion, timer and listener.
  */
 function startIdentityChecks(refetch: () => unknown): { stop: () => void } {
   let connected = true;
   let followUp: ReturnType<typeof setTimeout> | undefined;
   const check = (superseded = 0): Promise<void> => {
-    if (!connected) return Promise.resolve();
-    const since = identityVerificationGeneration();
-    return Promise.resolve(refetch()).then(
+    if (!connected || isDocumentReplaced()) return Promise.resolve();
+    let since = identityVerificationGeneration();
+    return runSessionCheck(
       () => {
-        if (!connected || !isDocumentIdentityUnverified()) return;
-        const checked = readSessionIdentity();
-        if (checked === undefined) {
-          if (isSessionFetchInFlight() && superseded < 3) {
-            // Overlapping checks share the one slot, so `stop()` clears it.
-            clearTimeout(followUp);
-            followUp = setTimeout(() => void check(superseded + 1), 250);
-          }
-          return;
+        // The coordinator may wait for an older native refresh before starting
+        // this fresh probe. Verify the generation it actually starts in.
+        if (!connected) return;
+        since = identityVerificationGeneration();
+        return refetch();
+      },
+      { automatic: true },
+    ).then((ran) => {
+      if (!ran || !connected || isDocumentReplaced()) return;
+      // A joined completion can belong to a disconnected producer that
+      // skipped its probe. Its retained atom answer still needs provenance.
+      if (since !== identityVerificationGeneration() || readSessionIdentityGeneration() !== since) {
+        if (superseded < 3) {
+          clearTimeout(followUp);
+          followUp = setTimeout(() => void check(superseded + 1).catch(() => {}), 250);
         }
-        if (observeDocumentIdentity(checked)) replaceDocument();
-        else confirmDocumentIdentityFresh(since);
-      },
-      () => {
-        // A failed check decides nothing; focus, visibility or the network retries it.
-      },
-    );
+        return;
+      }
+      const checked = readSessionIdentity();
+      if (checked === undefined) {
+        if (isSessionFetchInFlight() && superseded < 3) {
+          clearTimeout(followUp);
+          followUp = setTimeout(() => void check(superseded + 1).catch(() => {}), 250);
+        }
+        return;
+      }
+      if (observeDocumentIdentity(checked)) replaceDocument();
+      else {
+        confirmDocumentIdentityFresh(since);
+        announceDocumentIdentity(checked);
+      }
+    });
   };
   const retry = () => {
-    if (isDocumentIdentityUnverified() && document.visibilityState !== "hidden") void check();
+    if (document.visibilityState !== "hidden" && navigator.onLine !== false)
+      void check().catch(() => {});
   };
   const disconnectPeers = connectIdentityPeers(() => check());
-  if (isDocumentIdentityUnverified()) void check();
+  if (
+    isDocumentIdentityUnverified() ||
+    readSessionIdentityGeneration() !== identityVerificationGeneration()
+  )
+    void check().catch(() => {});
   window.addEventListener("focus", retry);
   window.addEventListener("online", retry);
   document.addEventListener("visibilitychange", retry);
@@ -94,20 +117,22 @@ function startIdentityChecks(refetch: () => unknown): { stop: () => void } {
  * signing in). The identity the document belongs to lives in
  * `lib/document-identity.ts`, not here, so it survives this shell unmounting;
  * the route guards check the same baseline before anything renders, which
- * covers a change made while no watching page was open. Mounted by the `_app`
- * shell and by each standalone page that shows private data outside it (device
- * approval, MCP consent); one of them at a time.
+ * covers a change made while no watching page was open. Mounted by the
+ * `_app` shell and standalone device/consent pages (one watcher at a time).
  *
  * It also connects the other open tabs: an identity this tab confirms (a
- * sign-in included, which Better Auth does not broadcast) makes them check
- * their session, and a request rejected for having no session
- * (`reportSessionRejected`) checks it here.
+ * sign-in included, which Better Auth does not broadcast) asks conflicting
+ * peers to verify their session here, alongside change hints and requests
+ * rejected for having no session (`reportSessionRejected`).
  */
 export function useReloadOnIdentityChange(): void {
   // Raw, never masked: the identity effect below must see the session even
   // while the chrome is held neutral.
   const authSession = useAuthSession({ unmasked: true });
   const identity = sessionIdentity(authSession.state);
+  const since = identityVerificationGeneration();
+  const answerGeneration = readSessionIdentityGeneration();
+  const { isDegraded, isRefetching } = authSession.meta;
   const { refetch } = authSession.actions;
 
   // Connected first (effects run in order), so the first identity below is
@@ -120,11 +145,23 @@ export function useReloadOnIdentityChange(): void {
   // Layout effect: replace the document before the browser paints a frame
   // that pairs the new identity's chrome with the old identity's cached data.
   useLayoutEffect(() => {
-    if (identity === undefined) return;
+    // Retained presentation data is not a new confirmation. In particular a
+    // remount after a peer invalidation must wait for its own current probe.
+    if (
+      identity === undefined ||
+      isDegraded ||
+      isRefetching ||
+      isDocumentIdentityUnverified() ||
+      answerGeneration !== since ||
+      since !== identityVerificationGeneration()
+    )
+      return;
     if (observeDocumentIdentity(identity)) {
       replaceDocument();
       return;
     }
-    announceDocumentIdentity(identity);
-  }, [identity]);
+    // Only the settled, successful atom answer can be broadcast. The
+    // presentation adapter may retain an identity through a failed check.
+    if (readSessionIdentity() === identity) announceDocumentIdentity(identity);
+  }, [identity, isDegraded, isRefetching, since, answerGeneration]);
 }

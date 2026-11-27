@@ -1,5 +1,6 @@
 import enAuth from "@knowledge-base/locales/src/en-US/auth.json";
 import enCommon from "@knowledge-base/locales/src/en-US/common.json";
+import enErrors from "@knowledge-base/locales/src/en-US/errors.json";
 import enNav from "@knowledge-base/locales/src/en-US/nav.json";
 import esAuth from "@knowledge-base/locales/src/es-MX/auth.json";
 import esCommon from "@knowledge-base/locales/src/es-MX/common.json";
@@ -42,9 +43,13 @@ const fixture = vi.hoisted(() => ({
     error: null,
   } as Snapshot,
   config: { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: true },
+  online: true,
+  configState: "success" as "success" | "refetch-error" | "load-error",
 }));
 
 /** Every TanStack form instance the pages created: a remount makes a new one. */
+const signUpEmail = vi.hoisted(() => vi.fn());
+const toastError = vi.hoisted(() => vi.fn());
 const formApis = vi.hoisted(() => new Set<unknown>());
 vi.mock("@tanstack/react-form", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-form")>();
@@ -81,7 +86,13 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@tanstack/react-query", () => ({
   queryOptions: (options: unknown) => options,
-  useQuery: () => ({ data: fixture.config, isPending: false, isError: false, refetch: vi.fn() }),
+  useQuery: () => ({
+    data: fixture.configState === "load-error" ? undefined : fixture.config,
+    isPending: false,
+    isError: fixture.configState !== "success",
+    isLoadingError: fixture.configState === "load-error",
+    refetch: vi.fn(),
+  }),
   useMutation: () => ({ mutateAsync: vi.fn() }),
   useQueryClient: () => ({}),
 }));
@@ -95,12 +106,13 @@ vi.mock("@/lib/auth-client", () => ({
   authClient: {
     useSession: () => ({ ...fixture.snapshot, refetch: vi.fn() }),
     resetPassword: fixture.resetPassword,
+    signUp: { email: signUpEmail },
   },
 }));
 vi.mock("@knowledge-base/ui/components/sileo", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: toastError, success: vi.fn() },
 }));
-vi.mock("@/hooks/use-network-status", () => ({ useNetworkStatus: () => true }));
+vi.mock("@/hooks/use-network-status", () => ({ useNetworkStatus: () => fixture.online }));
 vi.mock("@knowledge-base/env/web", () => ({ env: { VITE_APP_NAME: "Northwind" } }));
 vi.mock("@/server/auth-session", () => ({
   getRouteSession: vi.fn(async () => ({ status: "resolved", session: null })),
@@ -109,6 +121,8 @@ vi.mock("@/server/auth-session", () => ({
 
 const { resetAuthSessionMemoryForTests } = await import("@/hooks/use-auth-session");
 const { Route: LoginRoute } = await import("@/routes/$lang/_app/login");
+const { Route: ForgotRoute } = await import("@/routes/$lang/_app/forgot-password");
+const { Route: VerifyRoute } = await import("@/routes/$lang/_app/verify-email");
 const { Route: ResetRoute } = await import("@/routes/$lang/_app/reset-password");
 const { Route: SignupRoute } = await import("@/routes/$lang/_app/signup");
 const { default: UserMenu } = await import("@/components/user-menu");
@@ -118,7 +132,7 @@ beforeAll(async () => {
   await i18n.init({
     lng: "en-US",
     resources: {
-      "en-US": { auth: enAuth, common: enCommon, nav: enNav },
+      "en-US": { auth: enAuth, common: enCommon, nav: enNav, errors: enErrors },
       "es-MX": { auth: esAuth, common: esCommon, nav: enNav },
     },
     interpolation: { escapeValue: false },
@@ -132,6 +146,8 @@ beforeEach(() => {
   // The hook only remembers browser snapshots (the server's never settle).
   vi.stubGlobal("window", {});
   resetAuthSessionMemoryForTests();
+  fixture.online = true;
+  fixture.configState = "success";
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -165,6 +181,8 @@ async function pageComponent(route: unknown): Promise<() => ReactNode> {
 const LoginPage = await pageComponent(LoginRoute);
 const SignupPage = await pageComponent(SignupRoute);
 const ResetPage = await pageComponent(ResetRoute);
+const ForgotPage = await pageComponent(ForgotRoute);
+const VerifyPage = await pageComponent(VerifyRoute);
 
 describe.each([
   ["sign-in", LoginPage],
@@ -185,9 +203,31 @@ describe.each([
     expect(render(Page, FAILED_REFETCH)).toBe(settled);
     expect(render(Page, ANONYMOUS)).toBe(settled);
   });
+
+  it("keeps the form through a failed config refetch; a failed first load offers a retry", () => {
+    const settled = render(Page, ANONYMOUS);
+    fixture.configState = "refetch-error";
+    expect(render(Page, ANONYMOUS)).toBe(settled);
+    fixture.configState = "load-error";
+    const failed = render(Page, ANONYMOUS);
+    expect(failed).not.toContain('type="email"');
+    expect(failed).toContain(enAuth.login.unableToConnect);
+  });
 });
 
 describe("header account control across a refocus refetch", () => {
+  it("a get-session 429 offers Account unavailable, Retry and Sign out", () => {
+    const html = render(UserMenu, {
+      data: null,
+      isPending: false,
+      isRefetching: false,
+      error: { status: 429 },
+    });
+    expect(html).toContain(enNav.userMenu.accountUnavailable);
+    expect(html).toContain(enNav.userMenu.signOut);
+    expect(html).not.toContain('data-slot="skeleton"');
+  });
+
   it("is a skeleton only on the first load", () => {
     const first = render(UserMenu, FIRST_LOAD);
     expect(first).toContain('data-slot="skeleton"');
@@ -371,7 +411,10 @@ function findInput(node: FakeNode, type: string): FakeElement | undefined {
   return undefined;
 }
 
-type FormApi = { setFieldValue: (name: string, value: string) => void };
+type FormApi = {
+  setFieldValue: (name: string, value: string) => void;
+  handleSubmit: () => Promise<void>;
+};
 
 describe.each([
   ["sign-in", LoginPage],
@@ -402,8 +445,9 @@ describe.each([
     act(() => root.unmount());
   });
 
-  async function show(snapshot: Snapshot) {
+  async function show(snapshot: Snapshot, online = true) {
     fixture.snapshot = snapshot;
+    fixture.online = online;
     await act(async () => {
       root.render(
         <I18nextProvider i18n={i18n}>
@@ -444,6 +488,30 @@ describe.each([
     expect(formApis.size).toBe(1);
   });
 
+  it("keeps the typed values when the connection drops and comes back", async () => {
+    await show(FIRST_LOAD);
+    await show(ANONYMOUS);
+    await type("ada@example.com", "correct horse");
+    const email = findInput(container, "email");
+    const password = findInput(container, "password");
+
+    for (const [snapshot, online] of [
+      [ANONYMOUS, false],
+      [REFETCH, true],
+      [FAILED_REFETCH, true],
+      [REFETCH, true],
+      [ANONYMOUS, true],
+    ] as const) {
+      fixture.configState = snapshot === FAILED_REFETCH ? "refetch-error" : "success";
+      await show(snapshot, online);
+      expect(findInput(container, "email")).toBe(email);
+      expect(findInput(container, "password")).toBe(password);
+      expect(email?.value).toBe("ada@example.com");
+      expect(password?.value).toBe("correct horse");
+    }
+    expect(formApis.size).toBe(1);
+  });
+
   it("detects a remount: a forgotten anonymity drops the form and its values", async () => {
     await show(ANONYMOUS);
     await type("ada@example.com", "correct horse");
@@ -460,6 +528,111 @@ describe.each([
     expect(remounted).not.toBe(email);
     expect(remounted?.value).toBe("");
     expect(formApis.size).toBe(2);
+  });
+});
+
+describe("sign-up page mounted in React DOM when the request cannot be sent", () => {
+  let container: FakeElement;
+  let root: Root;
+
+  beforeEach(() => {
+    const doc = new FakeDocument();
+    const classes = {
+      Node: FakeNode,
+      Element: FakeElement,
+      HTMLElement: FakeElement,
+      HTMLIFrameElement: class {},
+    };
+    const win = { ...classes, document: doc, addEventListener() {}, removeEventListener() {} };
+    doc.defaultView = win;
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", doc);
+    for (const [name, value] of Object.entries(classes)) vi.stubGlobal(name, value);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = doc.body.appendChild(doc.createElement("div"));
+    root = createRoot(container as unknown as Element);
+    formApis.clear();
+    signUpEmail.mockReset();
+    toastError.mockReset();
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+  });
+
+  it("a mounted form replaces an unannounced cookie switch before any toast or form error", async () => {
+    const identity = await import("@/lib/document-identity");
+    identity.resetDocumentIdentityForTests(() => undefined);
+    const reload = vi.fn();
+    Object.assign(window, { location: { pathname: "/en-US/signup", reload } });
+    identity.observeDocumentIdentity("a");
+    const transport = vi
+      .fn()
+      .mockResolvedValue(Response.json({ code: "IDENTITY_CHANGED" }, { status: 409 }));
+    vi.stubGlobal("fetch", transport);
+    signUpEmail.mockImplementation(async () => {
+      await identity.fetchWithExpectedIdentity("https://app.test/api/auth/sign-up/email", {
+        method: "POST",
+      });
+      return { error: { status: 409, code: "IDENTITY_CHANGED" } };
+    });
+    fixture.snapshot = ANONYMOUS;
+    let completed = false;
+    try {
+      await act(async () =>
+        root.render(
+          <I18nextProvider i18n={i18n}>
+            <SignupPage />
+          </I18nextProvider>,
+        ),
+      );
+      const [form] = [...formApis] as FormApi[];
+      await act(async () => {
+        form?.setFieldValue("name", "Ada");
+        form?.setFieldValue("email", "ada@example.com");
+        form?.setFieldValue("password", "correct horse battery");
+      });
+      const email = findInput(container, "email");
+      await act(async () => {
+        void form?.handleSubmit().then(() => {
+          completed = true;
+        });
+        await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+      });
+      expect(identity.isDocumentReplaced()).toBe(true);
+      expect(new Headers(transport.mock.calls[0]?.[1].headers).get("X-Expected-User")).toBe("a");
+      expect(toastError).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain(enAuth.errors.accountAlreadyRegistered);
+      expect(findInput(container, "email")).toBe(email);
+      expect(completed).toBe(false);
+    } finally {
+      identity.resetDocumentIdentityForTests(() => undefined);
+    }
+  });
+
+  it("says the server could not be reached and keeps the details for a resend", async () => {
+    fixture.snapshot = ANONYMOUS;
+    await act(async () => {
+      root.render(
+        <I18nextProvider i18n={i18n}>
+          <SignupPage />
+        </I18nextProvider>,
+      );
+    });
+    const [form] = [...formApis] as FormApi[];
+    await act(async () => {
+      form?.setFieldValue("name", "Ada");
+      form?.setFieldValue("email", "ada@example.com");
+      form?.setFieldValue("password", "correct horse battery");
+    });
+    signUpEmail.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => {
+      await form?.handleSubmit();
+    });
+    expect(signUpEmail).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith(enErrors.unreachable);
+    expect(findInput(container, "email")?.value).toBe("ada@example.com");
+    expect(findInput(container, "password")?.value).toBe("correct horse battery");
+    expect(formApis.size).toBe(1);
   });
 });
 
@@ -550,5 +723,24 @@ describe.each(["en-US", "es-MX"])("reset-password errors in %s", (lang) => {
     expect(findInput(container, "password") === password).toBe(true);
     expect(password?.value).toBe("long-enough-password");
     expect(container.textContent).not.toContain(i18n.t("auth:resetPassword.invalidTitle"));
+  });
+});
+
+describe.each([
+  ["login", LoginPage],
+  ["signup", SignupPage],
+  ["forgot-password", ForgotPage],
+  ["reset-password", ResetPage],
+  ["verify-email", VerifyPage],
+])("%s config availability", (_name, Page) => {
+  it("keeps loaded content during a refetch failure and offers Retry only for a loading error", () => {
+    fixture.search = { token: "reset-link" };
+    const settled = render(Page, ANONYMOUS);
+    fixture.configState = "refetch-error";
+    expect(render(Page, ANONYMOUS)).toBe(settled);
+    fixture.configState = "load-error";
+    expect(render(Page, ANONYMOUS)).toContain(
+      renderToStaticMarkup(enAuth.login.unableToConnectDescription),
+    );
   });
 });

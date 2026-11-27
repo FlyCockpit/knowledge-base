@@ -14,6 +14,7 @@ import { AuthCard } from "@/components/auth/auth-screen";
 import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
@@ -51,13 +52,18 @@ export const Route = createFileRoute("/$lang/_app/signup")({
 });
 
 function SignupPage() {
+  markAnonymousOnlyRoute();
+  // A peer tab's sign-in replaces this page instead of putting that account in the
+  // header above the form (lib/document-identity.ts).
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   const authSession = useAuthSession();
   const {
     data: configData,
     isPending: configPending,
-    isError: configError,
+    // Only a first load that failed: a failed background refetch (refocus,
+    // reconnect) keeps the loaded config and the form with what was typed.
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

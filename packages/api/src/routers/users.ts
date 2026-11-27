@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { auth } from "@knowledge-base/auth";
 import { runWithAllowedAccountDeletion } from "@knowledge-base/auth/account-deletion-policy";
 import {
@@ -24,7 +25,10 @@ import { isEmailConfigured, renderInviteUser, sendEmail } from "@knowledge-base/
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { adminOr404Procedure, liveAdminOr404Procedure } from "../index";
+import { assertAdminRemovalAllowed, mapUserChangeConflict } from "../lib/admin-presence";
 import { mapAccountDeletionError, removeUserAccount } from "../lib/kb/account-removal";
+import { prismaAssetQuery } from "../lib/kb/asset-authz";
+import { recordAuditEvent } from "../lib/kb/audit";
 import { getKbRuntime } from "../lib/kb/runtime";
 import { cursorPage, cursorPageInput, pageTake, withCursor } from "../lib/pagination";
 
@@ -335,15 +339,15 @@ export const usersRouter = {
       if (input.userId === context.session.user.id && input.role !== "admin") {
         throw new ORPCError("FORBIDDEN", {
           message: "You cannot remove your own admin role.",
+          data: { reason: "SELF_DEMOTION" },
         });
       }
-      const target = await context.authorityTx.user.findUnique({
-        where: { id: input.userId },
-        select: { id: true },
-      });
-      if (!target) throw new ORPCError("NOT_FOUND", { message: "User not found" });
-
       const tx = context.authorityTx;
+      const target = await assertAdminRemovalAllowed(
+        prismaAssetQuery(tx),
+        input.userId,
+        input.role,
+      );
       const exec = (sql: string, params: unknown[]) => tx.$executeRawUnsafe(sql, ...params);
       await withOutgoingTwoFactorMcpSettlement(exec, input.userId, async () => {
         // A promotion that brings the user under forced 2FA starts their
@@ -351,6 +355,16 @@ export const usersRouter = {
         await recordTwoFactorGraceStartForRoleChange(exec, input.userId, input.role);
         return tx.user.update({ where: { id: input.userId }, data: { role: input.role } });
       });
+      if (target.role !== input.role)
+        await recordAuditEvent(prismaAssetQuery(tx), {
+          opId: randomUUID(),
+          action: "users.role_changed",
+          outcome: "SUCCESS",
+          actorKey: `user:${context.session.user.id}`,
+          actorUserId: context.session.user.id,
+          actorUserIdSnapshot: context.session.user.id,
+          metadata: { shareUserId: input.userId, before: target.role ?? "", after: input.role },
+        });
       return { success: true };
     }),
 
@@ -367,11 +381,8 @@ export const usersRouter = {
           message: "You cannot archive your own account.",
         });
       }
-      const target = await context.authorityTx.user.findUnique({
-        where: { id: input.userId },
-        select: { id: true },
-      });
-      if (!target) throw new ORPCError("NOT_FOUND", { message: "User not found" });
+      const tx = context.authorityTx;
+      await assertAdminRemovalAllowed(prismaAssetQuery(tx), input.userId);
 
       // Set banned=true so better-auth treats the user as locked, and revoke
       // every active session so the next page-load signs them out. We mirror
@@ -382,7 +393,6 @@ export const usersRouter = {
       // (an API key, a personal access token), revoke it here too: deleting
       // sessions does not touch it, so it would outlive the ban everywhere a
       // per-surface ban re-check does not reach.
-      const tx = context.authorityTx;
       await tx.user.update({
         where: { id: input.userId },
         data: {
@@ -445,6 +455,8 @@ export const usersRouter = {
         removeUserAccount(runtime, input.userId, { actingUserId: context.session.user.id }),
       );
     } catch (err) {
+      if (err instanceof ORPCError) throw err;
+      mapUserChangeConflict(err);
       const mapped = mapAccountDeletionError(err);
       if (mapped) {
         throw new ORPCError("CONFLICT", { message: mapped.message });
@@ -483,6 +495,8 @@ export const usersRouter = {
         removeUserAccount(runtime, input.userId, { actingUserId: context.session.user.id }),
       );
     } catch (err) {
+      if (err instanceof ORPCError) throw err;
+      mapUserChangeConflict(err);
       const mapped = mapAccountDeletionError(err);
       if (mapped) {
         throw new ORPCError("CONFLICT", { message: mapped.message });

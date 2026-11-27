@@ -184,7 +184,7 @@ export const AUDIT_MAP: Readonly<Record<string, AuditClassification>> = {
   ),
   "rpc:users.list": read,
   "rpc:users.invite": outOfBand("Better Auth admin invitation (instance administration)"),
-  "rpc:users.setRole": outOfBand("Better Auth admin role (instance administration)"),
+  "rpc:users.setRole": audited("users.role_changed"),
   "rpc:users.archive": outOfBand(
     "Better Auth ban; grant suspension/revocation it triggers is audited as grant_revoke",
   ),

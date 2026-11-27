@@ -697,7 +697,7 @@ it("uses the password pepper for Better Auth hashing and verification", async ()
 });
 
 describe("Better Auth write session authority", () => {
-  async function writeFixture() {
+  async function writeFixture(withCache = true) {
     const { data: sample } = await fixture();
     const data = { ...sample, user: { ...sample.user, role: "admin" } };
     const writeAuth = betterAuth({
@@ -750,8 +750,11 @@ describe("Better Auth write session authority", () => {
     const cookie = seeded.headers
       .getSetCookie()
       .map((entry) => entry.split(";")[0])
+      .filter(
+        (entry) => withCache || entry?.startsWith(`${context.authCookies.sessionToken.name}=`),
+      )
       .join("; ");
-    const post = (path = "/update-user") =>
+    const post = (path = "/update-user", expected?: string) =>
       writeAuth.handler(
         new Request(`https://api.example.test/api/auth${path}`, {
           method: "POST",
@@ -759,6 +762,7 @@ describe("Better Auth write session authority", () => {
             cookie,
             "content-type": "application/json",
             origin: "https://web.example.test",
+            ...(expected ? { "X-Expected-User": expected } : {}),
           },
           body: JSON.stringify({
             name: "Updated",
@@ -776,6 +780,40 @@ describe("Better Auth write session authority", () => {
       });
     return { context, data, findSession, updateUser, post, changePassword };
   }
+
+  it.each([false, true])(
+    "rejects a switched cookie before update even when banned: %s",
+    async (banned) => {
+      const f = await writeFixture();
+      f.findSession.mockResolvedValue({ ...f.data, user: { ...f.data.user, banned } });
+      const response = await f.post("/update-user", "previous-user");
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "IDENTITY_CHANGED" });
+      expect(f.updateUser).not.toHaveBeenCalled();
+    },
+  );
+  it.each([true, false])(
+    "looks up a matching write once per request and leaves sign-out usable (cache: %s)",
+    async (withCache) => {
+      const f = await writeFixture(withCache);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        f.findSession.mockClear();
+        expect((await f.post("/update-user", f.data.user.id)).status).toBe(200);
+        expect(f.findSession).toHaveBeenCalledExactlyOnceWith(f.data.session.token);
+      }
+      expect(f.updateUser).toHaveBeenCalledTimes(2);
+      f.findSession.mockClear().mockResolvedValue(null);
+      expect((await f.post("/update-user", f.data.user.id)).status).toBe(401);
+      expect(f.updateUser).toHaveBeenCalledTimes(2);
+      expect((await f.post("/sign-out", "previous-user")).status).toBe(200);
+    },
+  );
+  it("fails closed when the expected cookie owner lookup is unavailable", async () => {
+    const f = await writeFixture();
+    f.findSession.mockRejectedValue(new Error("offline"));
+    expect((await f.post("/update-user", "previous-user")).status).toBe(503);
+    expect(f.updateUser).not.toHaveBeenCalled();
+  });
 
   it.each(["success", "sweep failure", "wrong password"])(
     "change-password sweeps only after commit and logs/rethrows failure: %s",
@@ -874,7 +912,7 @@ describe("Better Auth write session authority", () => {
     f.findSession.mockClear();
     const response = await f.post();
     expect(response.status).toBe(200);
-    expect(f.findSession).toHaveBeenCalledWith(f.data.session.token);
+    expect(f.findSession).toHaveBeenCalledExactlyOnceWith(f.data.session.token);
     expect(f.updateUser).toHaveBeenCalledOnce();
     expect(
       response.headers

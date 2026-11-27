@@ -16,6 +16,7 @@ import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { APP_HOME, appHomeHref } from "@/lib/app-home";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { clearServerFieldError, setServerFieldError } from "@/lib/form-server-error";
 import { pageHead } from "@/lib/page-title";
 import { resolveRouteSession } from "@/lib/route-session";
@@ -74,6 +75,7 @@ const initialTwoFactorState = {
 };
 
 function LoginPage() {
+  markAnonymousOnlyRoute();
   const { lang } = Route.useParams();
   const { redirectTo, twoFactor: pendingTwoFactor } = Route.useSearch();
   const [twoFactor, setTwoFactor] = useState(() => ({
@@ -84,7 +86,9 @@ function LoginPage() {
   const {
     data: configData,
     isPending: configPending,
-    isError: configError,
+    // Only a first load that failed: a failed background refetch (refocus,
+    // reconnect) keeps the loaded config and the form with what was typed.
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

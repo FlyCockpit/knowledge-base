@@ -1,3 +1,4 @@
+import { type Context, Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { guardDeviceApproval } from "./device-approval-gate";
 
@@ -23,6 +24,53 @@ function fixture(session: typeof actor | null = actor) {
   };
 }
 describe("pre-plugin device gate", () => {
+  it.each(["approve", "deny"])(
+    "replaces a stale document before %s ownership can refuse it",
+    async (decision) => {
+      const f = fixture();
+      f.check.mockRejectedValue(new Error("Code belongs to the previous cookie owner"));
+      const plugin = vi.fn((c: Context) => c.json({ refused: true }, 403));
+      const app = new Hono();
+      app.use("/api/auth/*", async (c, next) => {
+        const rejected = await guardDeviceApproval(c.req.raw, f.options);
+        if (rejected) return rejected;
+        return next();
+      });
+      app.post("/api/auth/*", plugin);
+      const response = await app.request(
+        request(`/api/auth/device/${decision}`, { "X-Expected-User": "previous-human" }),
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ code: "IDENTITY_CHANGED" });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(f.options.getSession).toHaveBeenCalledTimes(1);
+      expect(f.check).not.toHaveBeenCalled();
+      expect(plugin).not.toHaveBeenCalled();
+    },
+  );
+  it("keeps ownership checks for a matching document", async () => {
+    const f = fixture();
+    f.check.mockRejectedValue(new Error("Missing selection"));
+    const response = await guardDeviceApproval(
+      request(undefined, { "X-Expected-User": "human" }),
+      f.options,
+    );
+    expect(response?.status).toBe(403);
+    expect(f.check).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["code", undefined],
+    ["token", 404],
+  ] as const)("keeps anonymous device/%s outside the cookie comparison", async (path, status) => {
+    const f = fixture();
+    const response = await guardDeviceApproval(
+      request(`/api/auth/device/${path}`, { "X-Expected-User": "previous-human" }),
+      f.options,
+    );
+    expect(response?.status).toBe(status);
+    expect(f.options.getSession).not.toHaveBeenCalled();
+    expect(f.check).not.toHaveBeenCalled();
+  });
   it("checks persisted intent before approving or denying", async () => {
     for (const decision of ["approve", "deny"] as const) {
       const f = fixture();

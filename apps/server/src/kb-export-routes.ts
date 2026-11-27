@@ -40,6 +40,9 @@ export function createKbExportRoutes(options: {
       } else {
         const session = await options.session(c.req.raw.headers);
         if (!session) return c.json({ error: "UNAUTHORIZED" }, 401);
+        const expected = c.req.header("X-Expected-User");
+        if (expected && expected !== session.user.id)
+          return c.json({ code: "IDENTITY_CHANGED" }, 409);
         actor = { principal: { kind: "browser", userId: session.user.id } };
       }
       const kbId = kbIdSchema.safeParse(c.req.param("kbId"));

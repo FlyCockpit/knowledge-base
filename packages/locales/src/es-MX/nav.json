@@ -23,7 +23,9 @@
     "openApp": "Abrir app",
     "signOut": "Cerrar sesión",
     "signOutFailed": "No se pudo cerrar la sesión. Inténtalo de nuevo.",
-    "signUp": "Registrarse"
+    "signUp": "Registrarse",
+    "accountUnavailable": "Cuenta no disponible — Reintentar",
+    "signOutOffline": "No tienes conexión. Tu sesión sigue abierta. Vuelve a cerrarla cuando tengas conexión."
   },
   "sidebar": {
     "collapse": "Contraer barra lateral",

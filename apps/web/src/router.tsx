@@ -5,6 +5,7 @@ import { createRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { getRequestHeader } from "@tanstack/react-start/server";
+import { userChangeErrorKey } from "@/components/admin/user-change-error";
 
 import ErrorState from "./components/error-state";
 import NotFoundState from "./components/not-found-state";
@@ -86,7 +87,8 @@ export function getRouter() {
         // forever. Server-side failures already surface through the loader →
         // defaultErrorComponent path.
         if (typeof window === "undefined") return;
-        // Before any opt-out: a 401 asks Better Auth to check the session once
+        // Before any opt-out: 409 IDENTITY_CHANGED replaces immediately;
+        // a 401 asks Better Auth to check the session once
         // (a session lost elsewhere then replaces the document,
         // lib/document-identity.ts) instead of toasting once per mounted query.
         if (skipErrorToastForIdentity(error, "query")) return;
@@ -124,10 +126,16 @@ export function getRouter() {
         // Same SSR guard as the query cache: no Toaster drains the queue on
         // the server.
         if (typeof window === "undefined") return;
-        // Before the opt-out, so a 401 on an action with its own error UI
+        // Before the opt-out: an identity conflict replaces without a toast;
+        // a 401 on an action with its own error UI
         // still checks the session.
         if (skipErrorToastForIdentity(error, "mutation")) return;
         if (mutation.meta?.skipGlobalErrorToast) return;
+        const reasonKey = userChangeErrorKey(error);
+        if (reasonKey) {
+          toast.error(i18n.t(reasonKey));
+          return;
+        }
         const fallback = mutation.meta?.errorFallbackKey
           ? i18n.t(mutation.meta.errorFallbackKey)
           : undefined;

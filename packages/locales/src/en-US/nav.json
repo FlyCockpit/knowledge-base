@@ -23,7 +23,9 @@
     "openApp": "Open app",
     "signUp": "Sign Up",
     "signOut": "Sign Out",
-    "signOutFailed": "Couldn't sign you out. Try again."
+    "signOutFailed": "Couldn't sign you out. Try again.",
+    "accountUnavailable": "Account unavailable — Retry",
+    "signOutOffline": "You're offline. You're still signed in — sign out again when you're back online."
   },
   "sidebar": {
     "collapse": "Collapse sidebar",

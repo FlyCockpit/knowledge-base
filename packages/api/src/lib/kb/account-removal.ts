@@ -6,6 +6,7 @@ import {
 } from "@knowledge-base/auth/account-deletion-policy";
 import { isAdminRole } from "@knowledge-base/auth/roles";
 import type { PrismaClient } from "@knowledge-base/db/client";
+import { assertAdminRemovalAllowed } from "../admin-presence";
 import { revokeUserGrantsForRemoval } from "../mcp-token-access";
 import { recordAuditEvent } from "./audit";
 import { KbDomainError } from "./errors";
@@ -170,6 +171,10 @@ export async function removeUserAccount(
     kind: kbIds.length ? "git-write" : "authority",
     kbIds,
     barrier: {
+      // The authority lock is acquired before this transaction and held through
+      // commit, so the last-admin check and deletion are serialized with policy
+      // writers. Keep READ COMMITTED: index cancellation must read reservation
+      // ids fresh after locking jobs, rather than from an earlier snapshot.
       async prepare(lease) {
         // A drained writer may have published Git but failed DB finalization.
         // Settle its journal with the owner still present, even if ordinary
@@ -208,6 +213,7 @@ export async function removeUserAccount(
         }
       },
       async reservePublication(ctx) {
+        await assertAdminRemovalAllowed(ctx.query, targetUserId);
         const unlocked = await ctx.query<{ id: string }>(
           `SELECT id FROM "knowledge_base"
             WHERE "ownerId" = $1 AND state <> 'TOMBSTONED'::"KnowledgeBaseState"

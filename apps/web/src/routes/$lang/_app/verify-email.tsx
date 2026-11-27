@@ -61,7 +61,9 @@ function VerifyEmailPage() {
   const {
     data: configData,
     isPending: configPending,
-    isError: configError,
+    // Only a first load that failed: a failed background refetch keeps the
+    // loaded config (and the resend button).
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

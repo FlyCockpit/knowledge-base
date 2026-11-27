@@ -15,9 +15,8 @@ import { useTranslation } from "react-i18next";
 
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
-import { signOutAndLeave } from "@/lib/explicit-sign-out";
+import { signOutAndLeave, signOutFailureKey } from "@/lib/explicit-sign-out";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
-import { friendly } from "@/utils/friendly-error";
 
 /**
  * The real Base UI account menu. Lazy-loaded by `user-menu.tsx` on first
@@ -102,7 +101,7 @@ export default function UserMenuContent() {
               // the public pages' session hint afresh. Still signed in after a
               // failure: say so. docs/ui.md § Query cache follows identity.
               const result = await signOutAndLeave(`/${lang}/login`);
-              if (!result.ok) toast.error(friendly(result.error, t("userMenu.signOutFailed")));
+              if (!result.ok) toast.error(t(signOutFailureKey(result.error)));
             }}
           >
             <LogOut className="size-4" />

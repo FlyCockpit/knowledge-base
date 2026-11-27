@@ -2907,7 +2907,7 @@ describe("outgoing lapse across real row contention", () => {
                     context: { session: { user: actor, session: {} } },
                   }).update({ key: "force2faInternalUsers", value: "false" })
                 : adapter.update(args);
-      // Observe the production UPDATE waiting while outgoing evidence is still live.
+      // Observe the production writer waiting while outgoing evidence is still live.
       const finished = mutation.then(
         () => null,
         (error: unknown) => error,
@@ -2915,9 +2915,13 @@ describe("outgoing lapse across real row contention", () => {
       try {
         await waitForDatabaseLock(
           "*",
-          // A writer's first user-row UPDATE may be the grace-start write-down
-          // (`UPDATE "user" u ...`) rather than Prisma's `UPDATE "public"."user"`.
-          mode === "policy" ? "app_setting" : 'UPDATE "%user"',
+          // Role removal first locks the eligible admins for the last-admin guard.
+          // Other writers may first block on the grace-start UPDATE.
+          mode === "policy"
+            ? "app_setting"
+            : mode === "role"
+              ? "AS active_admins"
+              : 'UPDATE "%user"',
         );
         expect(Date.now()).toBeLessThan(deadline);
         if (mode !== "before-deadline")

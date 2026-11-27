@@ -93,6 +93,7 @@ const db = prisma as unknown as {
   $transaction: MockInstance;
   $executeRaw: MockInstance;
   $queryRaw: MockInstance;
+  $queryRawUnsafe: MockInstance;
 };
 
 const authApi = auth as unknown as {
@@ -157,6 +158,14 @@ describe("usersRouter", () => {
     vi.clearAllMocks();
     mail.configured = true;
     mail.host = true;
+    db.$queryRawUnsafe.mockImplementation(async (sql: string, ...params: unknown[]) => {
+      if (sql.includes('SELECT id, role, "emailVerified"')) {
+        const target = await prisma.user.findUnique({ where: { id: String(params[0]) } });
+        return target ? [target] : [];
+      }
+      if (sql.includes("count(*)::int")) return [{ count: 2 }];
+      return [];
+    });
     db.$transaction.mockImplementation((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
   });
 
@@ -729,6 +738,65 @@ describe("usersRouter", () => {
         expect(e.code).toBe("CONFLICT");
         return true;
       });
+    });
+  });
+});
+
+describe("last active verified admin and durable role audit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db.$transaction.mockImplementation((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+  });
+  it.each(["setRole", "archive"] as const)(
+    "%s refuses the last usable admin before any write",
+    async (method) => {
+      db.$queryRawUnsafe.mockImplementation(async (sql: string) =>
+        sql.includes("SELECT id, role")
+          ? [{ id: "target", role: "user, Admin", emailVerified: true, banned: false }]
+          : [{ count: 1 }],
+      );
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      const write =
+        method === "setRole"
+          ? client.setRole({ userId: "target", role: "user" })
+          : client.archive({ userId: "target" });
+      await expect(write).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        data: { reason: "LAST_ACTIVE_ADMIN" },
+      });
+      expect(db.user.update).not.toHaveBeenCalled();
+      expect(db.session.deleteMany).not.toHaveBeenCalled();
+      expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: "ReadCommitted",
+      });
+    },
+  );
+  it("writes actor, target and old/new roles into the existing audit table in the role transaction", async () => {
+    db.$queryRawUnsafe.mockImplementation(async (sql: string) =>
+      sql.includes("SELECT id, role")
+        ? [{ id: "target", role: "user", emailVerified: true, banned: false }]
+        : [],
+    );
+    const client = createRouterClient(usersRouter, { context: buildContext() });
+    await client.setRole({ userId: "target", role: "admin" });
+    const calls = vi
+      .mocked(prisma.$queryRawUnsafe)
+      .mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO "audit_event"'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(
+      expect.arrayContaining([
+        "users.role_changed",
+        "admin-user-id",
+        JSON.stringify({ shareUserId: "target", before: "user", after: "admin" }),
+      ]),
+    );
+  });
+  it("maps a serialization conflict to a translated retry reason", async () => {
+    db.$transaction.mockRejectedValueOnce({ code: "P2034" });
+    const client = createRouterClient(usersRouter, { context: buildContext() });
+    await expect(client.setRole({ userId: "target", role: "admin" })).rejects.toMatchObject({
+      code: "CONFLICT",
+      data: { reason: "USER_CHANGE_CONFLICT" },
     });
   });
 });

@@ -21,6 +21,7 @@ export type AuthorityBarrierContext = {
 };
 
 export type AuthorityBarrier = {
+  isolationLevel?: "Serializable";
   /** Bounded local preparation under authority + KB locks, before the reservation transaction. */
   prepare?(lease: HeldLockLease): Promise<void>;
   /** Live ACL / ban / grant recheck, in the reservation transaction. */
@@ -43,6 +44,8 @@ export function assertAuthorityReservation(context: AuthorityBarrierContext, kbI
 async function reserve(lease: HeldLockLease, barrier: AuthorityBarrier): Promise<void> {
   await barrier.prepare?.(lease);
   await lease.transaction(async (query) => {
+    if (barrier.isolationLevel === "Serializable")
+      await query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
     const context = { query, signal: lease.scope.signal };
     activeReservations.set(context, lease);
     try {

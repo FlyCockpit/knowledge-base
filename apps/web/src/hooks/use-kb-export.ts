@@ -3,6 +3,7 @@ import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/reac
 import { useEffect, useMemo, useState } from "react";
 
 import { isAccessLoss, useKbAccessLoss } from "@/hooks/use-kb-editor";
+import { fetchWithExpectedIdentity } from "@/lib/document-identity";
 import { orpc } from "@/utils/orpc";
 
 export type ExportKind = "assets" | "whole";
@@ -176,7 +177,7 @@ export async function downloadPreparedExport(input: {
     return { status: "error", kind };
   }
   try {
-    const response = await (input.fetchImpl ?? fetch)(url, {
+    const response = await (input.fetchImpl ?? fetchWithExpectedIdentity)(url, {
       credentials: "same-origin",
       cache: "no-store",
     });

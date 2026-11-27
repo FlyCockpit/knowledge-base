@@ -320,6 +320,12 @@
     "deleteAction": "Eliminar…",
     "roleUpdated": "Rol actualizado",
     "roleUpdateFailed": "No se pudo actualizar ese rol. Intenta de nuevo.",
+    "roleErrors": {
+      "selfDemotion": "No puedes quitarte tu propio acceso de administrador.",
+      "lastActiveAdmin": "No puedes quitar al último administrador activo. Primero dale acceso de administrador a otra persona con correo verificado y cuenta activa.",
+      "userNotFound": "No se encontró a esta persona. Actualiza la lista e intenta de nuevo.",
+      "conflict": "Otra persona modificó una cuenta al mismo tiempo. Revisa la lista e intenta de nuevo."
+    },
     "userArchived": "Usuario archivado",
     "archiveFailed": "No se pudo archivar ese usuario. Intenta de nuevo.",
     "userRestored": "Usuario restaurado",

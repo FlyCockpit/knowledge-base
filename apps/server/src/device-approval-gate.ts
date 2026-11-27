@@ -32,6 +32,15 @@ export async function guardDeviceApproval(
   const headers = new Headers(request.headers);
   headers.delete("authorization");
   const session = await options.getSession({ headers });
+  // This middleware runs before Better Auth's identity hook. Compare the
+  // cookie owner before a stale document's persisted selection can yield 403.
+  const expected = headers.get("X-Expected-User");
+  if (expected && session && session.user.id !== expected) {
+    return Response.json(
+      { code: "IDENTITY_CHANGED" },
+      { status: 409, headers: { "cache-control": "no-store" } },
+    );
+  }
   if (!session) return deny(401);
   if (path === "/api/auth/device" && request.method === "GET") {
     const origin = headers.get("origin");

@@ -1,5 +1,15 @@
 import { leaveDocument, markExplicitSignOut } from "@/lib/document-identity";
 
+import { isBrowserOffline, isFetchFailure } from "@/lib/network-failure";
+
+export function signOutFailureKey(
+  error: unknown,
+): "userMenu.signOutOffline" | "userMenu.signOutFailed" {
+  return isBrowserOffline() || isFetchFailure(error)
+    ? "userMenu.signOutOffline"
+    : "userMenu.signOutFailed";
+}
+
 export type ExplicitSignOutResult = { ok: true } | { ok: false; error: unknown };
 
 /**

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
-
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cancelFailedFor,
   downloadPreparedExport,
@@ -15,12 +14,22 @@ import {
   statusPollInterval,
   visibleJob,
 } from "@/hooks/use-kb-export";
+import {
+  isDocumentReplaced,
+  observeDocumentIdentity,
+  resetDocumentIdentityForTests,
+} from "@/lib/document-identity";
 
 const KB = "d".repeat(24);
 const TRANSFER = "0b4f7c3e-1f2a-4b3c-8d4e-5f6a7b8c9d0e";
 const BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4, 5]);
 const hashOf = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const NOW = Date.parse("2026-09-26T12:00:00Z");
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetDocumentIdentityForTests();
+});
 
 function prepared(overrides: Partial<ExportPrepared> = {}): ExportPrepared {
   return {
@@ -62,6 +71,36 @@ describe("kbExportDownloadUrl", () => {
 });
 
 describe("downloadPreparedExport", () => {
+  it("sends the document owner and replaces a switched document before reporting an outcome", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("window", { location: { reload } });
+    resetDocumentIdentityForTests(() => undefined);
+    observeDocumentIdentity("a");
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ code: "IDENTITY_CHANGED" }, { status: 409 }),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    const save = vi.fn();
+    const acknowledge = vi.fn();
+    let settled = false;
+    void downloadPreparedExport({
+      kbId: KB,
+      kind: "whole",
+      prepared: prepared(),
+      now: () => NOW,
+      save,
+      acknowledge,
+    }).then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get("X-Expected-User")).toBe("a");
+    expect(isDocumentReplaced()).toBe(true);
+    expect(settled).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(acknowledge).not.toHaveBeenCalled();
+  });
+
   it("saves exactly the artifact bytes fetched from the authorized route", async () => {
     const fetchImpl = vi.fn(async () => new Response(BYTES, { status: 200 }));
     const { outcome, save } = run(fetchImpl as unknown as typeof fetch);

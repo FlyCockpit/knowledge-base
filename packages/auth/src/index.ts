@@ -144,6 +144,40 @@ export const auth = betterAuth({
   database: createBootstrapDatabaseAdapter(prisma),
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      const adapter = ctx.context.internalAdapter;
+      const expected =
+        ctx.path === "/get-session" || ctx.path === "/sign-out"
+          ? null
+          : (ctx.headers ?? ctx.request?.headers)?.get("X-Expected-User");
+      if (expected) {
+        // Read the signed cookie's live owner before any policy hides it.
+        const token = await ctx.getSignedCookie(
+          ctx.context.authCookies.sessionToken.name,
+          ctx.context.secret,
+        );
+        if (token) {
+          const session = await adapter.findSession(token).catch(() => {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              code: "SESSION_UNAVAILABLE",
+              message: "Session verification unavailable",
+            });
+          });
+          if (session && session.session.expiresAt > new Date() && session.user.id !== expected) {
+            throw new APIError("CONFLICT", {
+              code: "IDENTITY_CHANGED",
+              message: "Document identity changed",
+            });
+          }
+          // Keep the raw resolution through admission. Better Auth still
+          // applies its session policies, and the write check below validates
+          // the same live row instead of looking it up again.
+          ctx.context.internalAdapter = {
+            ...adapter,
+            findSession: async (candidate) =>
+              candidate === token ? session : adapter.findSession(candidate),
+          };
+        }
+      }
       await rejectImpersonatedSession(ctx);
       const method = ctx.method ?? ctx.request?.method;
       // Anonymous credential/recovery flows must remain usable with an old cookie.
@@ -179,6 +213,8 @@ export const auth = betterAuth({
         }
         ctx.context.session = live;
       }
+      // Endpoint work may mutate sessions and needs the original live adapter.
+      ctx.context.internalAdapter = adapter;
       if (ctx.path !== RESET_PASSWORD_PATH) return;
       // A reset link that was not mailed to the account's own address is
       // spendable only while the account is a pending invite: one left over

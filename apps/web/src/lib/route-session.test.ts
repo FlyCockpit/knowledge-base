@@ -14,7 +14,9 @@ vi.mock("@/server/auth-session", () => ({
 }));
 
 import {
+  admitRouteIdentity,
   announceDocumentIdentity,
+  identityVerificationGeneration,
   isDocumentIdentityUnverified,
   reportSessionRejected,
   resetDocumentIdentityForTests,
@@ -22,7 +24,7 @@ import {
 import { resolveRouteSession } from "./route-session";
 
 const channel = { postMessage: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null };
-const resolved = (id: string) => ({ status: "resolved", session: { user: { id } } });
+const resolved = (id: string) => ({ status: "resolved" as const, session: { user: { id } } });
 const settle = async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 };
@@ -38,6 +40,24 @@ afterEach(() => {
 });
 
 describe("resolveRouteSession", () => {
+  it("reprobes an old guard even after the watcher confirms the newer account", async () => {
+    await admitRouteIdentity({ status: "resolved", session: null });
+    let admitted = false;
+    const guard = resolveRouteSession().then((resolution) => {
+      admitted = true;
+      return resolution;
+    });
+    channel.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+    await admitRouteIdentity(resolved("b"), identityVerificationGeneration());
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    probe.answers[0]?.(resolved("a"));
+    await settle();
+    expect(admitted).toBe(false);
+    expect(probe.answers).toHaveLength(2);
+    probe.answers[1]?.(resolved("b"));
+    await expect(guard).resolves.toEqual(resolved("b"));
+  });
+
   it("a guard's answer for the same account confirms an unverified identity", async () => {
     announceDocumentIdentity(null);
     reportSessionRejected(); // no watcher mounted
@@ -57,7 +77,7 @@ describe("resolveRouteSession", () => {
       return resolution;
     });
     // Another tab announces mid-probe: this answer may carry the old cookie.
-    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     probe.answers[0]?.(resolved("a"));
     await settle();
     expect(admitted).toBe(false);
@@ -75,7 +95,7 @@ describe("resolveRouteSession", () => {
     const guard = resolveRouteSession();
     for (let i = 0; i < 3; i++) {
       await settle();
-      channel.onmessage?.({} as MessageEvent);
+      channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
       probe.answers[i]?.(resolved("a"));
     }
     await expect(guard).resolves.toEqual({ status: "error" });

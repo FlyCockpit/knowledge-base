@@ -14,6 +14,8 @@ const boundary = vi.hoisted(() => ({
   reload: vi.fn(),
   /** What the atom holds right after a refetch (`readSessionIdentity`). */
   checked: undefined as string | null | undefined,
+  /** Override provenance when the atom retains a pre-announcement answer. */
+  answerGeneration: undefined as number | undefined,
   refetching: false,
   degraded: false,
   inFlight: false,
@@ -49,15 +51,26 @@ vi.mock("@/hooks/use-auth-session", () => ({
     meta: { isRefetching: boundary.refetching, isDegraded: boundary.degraded },
   }),
   readSessionIdentity: () => boundary.checked,
+  readSessionIdentityGeneration: () =>
+    boundary.answerGeneration ?? identityVerificationGeneration(),
   isSessionFetchInFlight: () => boundary.inFlight,
 }));
 
 import {
   admitRouteIdentity,
+  identityVerificationGeneration,
   isDocumentIdentityUnverified,
   markExplicitSignOut,
   resetDocumentIdentityForTests,
 } from "@/lib/document-identity";
+
+import {
+  connectSessionRetry,
+  observeSessionRetry,
+  recordSessionRetryAfter,
+  resetSessionRetryForTests,
+  trackNativeSessionCheck,
+} from "@/lib/session-retry";
 
 import { sessionIdentity, useReloadOnIdentityChange } from "./use-reload-on-identity-change";
 
@@ -88,18 +101,20 @@ function fire(type: string) {
   for (const fn of events.get(type) ?? []) fn();
 }
 const settle = async () => {
-  for (let i = 0; i < 4; i++) await Promise.resolve();
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 };
 
 class FakeChannel {
   static open: FakeChannel[] = [];
   posted = 0;
+  messages: unknown[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
   constructor() {
     FakeChannel.open.push(this);
   }
-  postMessage() {
+  postMessage(message: unknown) {
     this.posted++;
+    this.messages.push(message);
   }
   close() {
     FakeChannel.open = FakeChannel.open.filter((c) => c !== this);
@@ -108,11 +123,13 @@ class FakeChannel {
 
 beforeEach(() => {
   resetDocumentIdentityForTests();
+  resetSessionRetryForTests();
   boundary.deps = [];
   boundary.cleanups = [];
   boundary.reload.mockReset();
   boundary.refetch.mockReset();
   boundary.checked = undefined;
+  boundary.answerGeneration = undefined;
   boundary.refetching = false;
   boundary.degraded = false;
   boundary.inFlight = false;
@@ -147,6 +164,76 @@ describe("sessionIdentity", () => {
 });
 
 describe("useReloadOnIdentityChange", () => {
+  it("presentation continuity alone never announces an identity", async () => {
+    boundary.checked = undefined; // no successful settled atom answer
+    useRenderWith(user("a"));
+    const [channel] = FakeChannel.open;
+    expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+    boundary.checked = "a";
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+    await settle();
+    expect(channel?.messages.at(-1)).toEqual({ kind: "identity", id: "a" });
+  });
+  it("never broadcasts retained A on verify-email after a newer B announcement", async () => {
+    useRenderWith({ status: "anonymous" });
+    const [channel] = FakeChannel.open;
+    unmount();
+    channel?.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+    let finish!: () => void;
+    boundary.refetch.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    Object.assign(window.location, { pathname: "/en-US/verify-email" });
+    // Presentation continuity still exposes old A before this mount's check.
+    useRenderWith(user("a"));
+    await settle();
+    expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    boundary.checked = "b";
+    finish();
+    await settle();
+    expect(channel?.messages.at(-1)).toEqual({ kind: "identity", id: "b" });
+    expect(boundary.reload).not.toHaveBeenCalled();
+    expect(isDocumentIdentityUnverified()).toBe(false);
+  });
+
+  it("never adopts a focus probe superseded by a peer invalidation", async () => {
+    vi.useFakeTimers();
+    useRenderWith({ status: "anonymous" });
+    const [channel] = FakeChannel.open;
+    let finish!: () => void;
+    let finishFresh!: () => void;
+    boundary.refetch.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    boundary.refetch.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFresh = resolve;
+        }),
+    );
+    fire("focus");
+    await settle();
+    channel?.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+    boundary.checked = "a";
+    finish();
+    await settle();
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+    boundary.checked = "b";
+    finishFresh();
+    await settle();
+    expect(boundary.reload).not.toHaveBeenCalled();
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    expect(channel?.messages.at(-1)).toEqual({ kind: "identity", id: "b" });
+  });
+
   it("does not reload on the first known identity or on sign-in", () => {
     useRenderWith({ status: "pending" });
     useRenderWith({ status: "anonymous" });
@@ -197,19 +284,23 @@ describe("useReloadOnIdentityChange", () => {
     expect(boundary.reload).toHaveBeenCalledTimes(1);
   });
 
-  it("tells the other tabs about a sign-in, and checks the session on theirs", () => {
+  it("tells the other tabs about a sign-in, and checks the session on theirs", async () => {
+    boundary.checked = null;
     useRenderWith({ status: "anonymous" });
     const [channel] = FakeChannel.open;
     expect(channel?.posted).toBe(1);
+    boundary.checked = "a";
     useRenderWith(user("a"));
     expect(channel?.posted).toBe(2);
     useRenderWith(user("a"));
     expect(channel?.posted).toBe(2);
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+    await settle();
     expect(boundary.refetch).toHaveBeenCalledTimes(1);
     // The channel is the document's, not the shell's: it stays open.
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+    await settle();
     expect(boundary.refetch).toHaveBeenCalledTimes(1);
     expect(FakeChannel.open).toHaveLength(1);
   });
@@ -220,27 +311,108 @@ describe("useReloadOnIdentityChange", () => {
     const [channel] = FakeChannel.open;
     unmount();
     // Another tab announces; nobody here can check it yet.
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     expect(isDocumentIdentityUnverified()).toBe(true);
     // Back into the app (a guard error or an unguarded page: no guard
     // confirmed anyone). The mount check refetches; the atom says B.
     boundary.checked = "b";
     useRenderWith({ status: "pending" });
+    await settle();
     expect(boundary.refetch).toHaveBeenCalledTimes(1);
-    await Promise.resolve();
-    await Promise.resolve();
     expect(boundary.reload).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["a", "b"])(
+    "rejects a pre-announcement watcher answer and runs one fresh probe answering %s",
+    async (freshIdentity) => {
+      vi.useFakeTimers();
+      const answers: (() => void)[] = [];
+      boundary.refetch.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            answers.push(resolve);
+          }),
+      );
+      useRenderWith(user("a"));
+      const [channel] = FakeChannel.open;
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      await settle();
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      channel?.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      expect(boundary.reload).not.toHaveBeenCalled();
+      // The check read A before the conflicting announcement arrived.
+      boundary.checked = "a";
+      answers[0]?.();
+      await settle();
+      useRenderWith(user("a"));
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(boundary.reload).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(249);
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+      boundary.checked = freshIdentity;
+      answers[1]?.();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(boundary.reload).toHaveBeenCalledTimes(freshIdentity === "b" ? 1 : 0);
+      if (freshIdentity === "a") expect(isDocumentIdentityUnverified()).toBe(false);
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([
+    { checked: "b", reloads: 0 },
+    { checked: "a", reloads: 1 },
+    { checked: null, reloads: 1 },
+    { checked: undefined, reloads: 0 },
+  ])(
+    "crossed confirmations: B receives stale A, server answers $checked, reloads $reloads times",
+    async ({ checked, reloads }) => {
+      vi.useFakeTimers();
+      // B has confirmed locally; another tab's older A probe finishes before
+      // that tab receives B's announcement and sends its crossed confirmation.
+      await admitRouteIdentity({ status: "resolved", session: { user: { id: "b" } } });
+      boundary.checked = "b";
+      useRenderWith(user("b"));
+      const [channel] = FakeChannel.open;
+      let finish!: () => void;
+      boundary.refetch.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      channel?.onmessage?.({ data: { kind: "identity", id: "a" } } as MessageEvent);
+      await settle();
+      channel?.onmessage?.({ data: { kind: "identity", id: "a" } } as MessageEvent);
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      expect(boundary.reload).not.toHaveBeenCalled();
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      boundary.checked = checked;
+      finish();
+      await settle();
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(boundary.reload).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(boundary.reload).toHaveBeenCalledTimes(reloads);
+      expect(boundary.refetch).toHaveBeenCalledTimes(2);
+      if (checked === "b") expect(isDocumentIdentityUnverified()).toBe(false);
+      if (checked === undefined) expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+    },
+  );
 
   it("a fresh check that confirms the same account lifts the neutral chrome", async () => {
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     boundary.checked = "a";
     useRenderWith({ status: "pending" });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     expect(isDocumentIdentityUnverified()).toBe(false);
     expect(boundary.reload).not.toHaveBeenCalled();
   });
@@ -249,11 +421,10 @@ describe("useReloadOnIdentityChange", () => {
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     boundary.checked = undefined;
     useRenderWith({ status: "pending" });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     expect(isDocumentIdentityUnverified()).toBe(true);
     await admitRouteIdentity({ status: "resolved", session: { user: { id: "a" } } });
     expect(isDocumentIdentityUnverified()).toBe(false);
@@ -263,7 +434,7 @@ describe("useReloadOnIdentityChange", () => {
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     // Back in the shell: the mount check gets no fresh answer (offline, 503).
     boundary.checked = undefined;
     useRenderWith(user("a"));
@@ -280,17 +451,55 @@ describe("useReloadOnIdentityChange", () => {
     await settle();
     expect(isDocumentIdentityUnverified()).toBe(false);
     expect(boundary.reload).not.toHaveBeenCalled();
-    // Settled: further focus events check nothing more.
+    // Healthy sessions also revalidate here: Better Auth's duplicate focus
+    // refresh is disabled so every event shares the cooldown coordinator.
     fire("visibilitychange");
     await settle();
-    expect(boundary.refetch).toHaveBeenCalledTimes(3);
+    expect(boundary.refetch).toHaveBeenCalledTimes(4);
   });
+
+  it.each(["focus", "visibilitychange", "online", "identity"])(
+    "%s during Retry-After cannot bypass cooldown with the watcher mounted",
+    async (event) => {
+      vi.useFakeTimers();
+      // The real useAuthSession adapter connects the same refetch to the
+      // coordinator. Keep that connection while this watcher is mounted.
+      const disconnect = connectSessionRetry(boundary.refetch);
+      boundary.refetch.mockImplementationOnce(() => {
+        recordSessionRetryAfter(
+          new Response(null, { status: 429, headers: { "Retry-After": "10" } }),
+        );
+        observeSessionRetry({ status: 429 }, false);
+      });
+      useRenderWith(user("a"));
+      try {
+        const [channel] = FakeChannel.open;
+        channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+        await settle();
+        expect(boundary.refetch).toHaveBeenCalledTimes(1);
+        expect(isDocumentIdentityUnverified()).toBe(true);
+        if (event === "identity") {
+          channel?.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+        } else fire(event);
+        await settle();
+        expect(boundary.reload).not.toHaveBeenCalled();
+        expect(boundary.refetch).toHaveBeenCalledTimes(1);
+        expect(isDocumentIdentityUnverified()).toBe(true);
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(boundary.refetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(boundary.refetch).toHaveBeenCalledTimes(2);
+      } finally {
+        disconnect();
+      }
+    },
+  );
 
   it("a retried check that answers another account replaces the document", async () => {
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     useRenderWith(user("a"));
     await settle();
     boundary.checked = "b";
@@ -310,55 +519,92 @@ describe("useReloadOnIdentityChange", () => {
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     // Back in the shell: check 1 starts; the shell unmounts before it
     // answers; another tab announces a newer change.
     useRenderWith({ status: "pending" });
+    await settle();
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
-    // The shell remounts while check 1 is still in flight: check 2 starts.
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+    // The shell remounts while check 1 runs: a fresh check waits its turn.
     useRenderWith({ status: "pending" });
-    expect(answers).toHaveLength(2);
+    await settle();
+    expect(answers).toHaveLength(1);
     // Check 1 answers A: it belongs to an unmounted watcher and predates the
     // newer change, so it settles nothing.
     boundary.checked = "a";
     answers[0]?.();
     await settle();
     expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(answers).toHaveLength(2);
     // Check 2, asked after the change, answers A: now it is settled.
     answers[1]?.();
     await settle();
     expect(isDocumentIdentityUnverified()).toBe(false);
   });
 
-  it("overlapping superseded checks leave no follow-up behind after unmount", async () => {
-    vi.useFakeTimers();
-    useRenderWith(user("a"));
-    const [channel] = FakeChannel.open;
-    unmount();
-    channel?.onmessage?.({} as MessageEvent);
-    // Every check is superseded by a fetch still running: each wants a follow-up.
-    boundary.checked = undefined;
-    boundary.inFlight = true;
-    useRenderWith(user("a"));
-    await settle();
-    fire("focus");
-    await settle();
-    fire("online");
-    await settle();
-    expect(boundary.refetch).toHaveBeenCalledTimes(3);
-    // The shell unmounts: no earlier follow-up may refetch afterwards.
-    unmount();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(boundary.refetch).toHaveBeenCalledTimes(3);
-  });
+  it.each(["b", "a", null])(
+    "retries a disconnected producer's skipped probe before accepting fresh %s",
+    async (freshIdentity) => {
+      vi.useFakeTimers();
+      boundary.checked = null;
+      useRenderWith({ status: "anonymous" });
+      const [channel] = FakeChannel.open;
+      const finishNative = trackNativeSessionCheck();
+      const nativeGeneration = identityVerificationGeneration();
+      // The old watcher queues a fresh probe behind a native request that
+      // started before this announcement, then disconnects before it runs.
+      channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
+      await settle();
+      unmount();
+      await admitRouteIdentity({ status: "resolved", session: { user: { id: "b" } } });
+      // A guard confirmed B without updating Better Auth's atom. The new
+      // watcher joins the same native wait, with obsolete A still retained.
+      boundary.checked = "a";
+      boundary.answerGeneration = nativeGeneration;
+      useRenderWith(user("a"));
+      expect(boundary.refetch).not.toHaveBeenCalled();
+      finishNative();
+      await settle();
+      expect(boundary.reload).not.toHaveBeenCalled();
+      expect(channel?.messages).not.toContainEqual({ kind: "identity", id: "a" });
+      expect(boundary.refetch).not.toHaveBeenCalled();
+
+      let finishFresh!: () => void;
+      boundary.refetch.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFresh = resolve;
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(249);
+      expect(boundary.refetch).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      // Focus/network events during that retry share the one actual probe.
+      fire("focus");
+      fire("online");
+      fire("visibilitychange");
+      await settle();
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+      expect(boundary.reload).not.toHaveBeenCalled();
+      boundary.checked = freshIdentity;
+      boundary.answerGeneration = identityVerificationGeneration();
+      finishFresh();
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(boundary.reload).toHaveBeenCalledTimes(freshIdentity === "b" ? 0 : 1);
+      expect(isDocumentIdentityUnverified()).toBe(false);
+      expect(boundary.refetch).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("a check superseded by an automatic refresh checks again once that settles", async () => {
     vi.useFakeTimers();
     useRenderWith(user("a"));
     const [channel] = FakeChannel.open;
     unmount();
-    channel?.onmessage?.({} as MessageEvent);
+    channel?.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     // The mount check is cancelled by Better Auth's own cross-tab refresh,
     // which is still running when the check's promise resolves.
     boundary.checked = undefined;

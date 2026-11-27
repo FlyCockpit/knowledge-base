@@ -56,6 +56,7 @@ import {
   SIGNUP_RECIPIENT_PATH,
   signinSentMail,
 } from "./email-recipient-limit.js";
+import { expectedIdentity } from "./expected-identity";
 import { createGitHttp } from "./git-http.js";
 import { httpServerOptions } from "./http-server-options.js";
 import { createKbAssetRoutes } from "./kb-asset-routes.js";
@@ -628,7 +629,9 @@ app.use("/sw/*", sessionMiddleware);
 // Uses Redis-backed limiter with in-memory insurance fallback (fail-open).
 // Upload frames count in their own bucket (rate-limit.ts `kbUploadFrameLimiter`).
 app.use("/rpc/*", createRpcRateLimiterMiddleware());
+app.use("/rpc/*", expectedIdentity);
 app.use("/api-reference/*", createRateLimiterMiddleware(rpcLimiter));
+app.use("/api-reference/*", expectedIdentity);
 
 // In production the OpenAPI reference is admin-only: it documents every
 // procedure and shouldn't be a public surface. Non-admins get a 404 (not
@@ -658,6 +661,7 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 // so this route uses a plain HTTP guard
 // instead: JSON-only body, same-site fetch metadata, and Origin allowlist.
 app.use("/sw/*", createRateLimiterMiddleware(rpcLimiter));
+app.use("/sw/*", expectedIdentity);
 app.post("/sw/push-renew", async (c) => {
   const rejected = validateSameSiteJsonRequest(c);
   if (rejected) return rejected;

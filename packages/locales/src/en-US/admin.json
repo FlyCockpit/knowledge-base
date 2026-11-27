@@ -320,6 +320,12 @@
     "deleteAction": "Delete…",
     "roleUpdated": "Role updated",
     "roleUpdateFailed": "Couldn't update that role. Try again.",
+    "roleErrors": {
+      "selfDemotion": "You cannot remove your own admin role.",
+      "lastActiveAdmin": "You cannot remove the last active admin. Make another verified, active user an admin first.",
+      "userNotFound": "This user was not found. Refresh the list and try again.",
+      "conflict": "Another user change happened at the same time. Review the users and try again."
+    },
     "userArchived": "User archived",
     "archiveFailed": "Couldn't archive that user. Try again.",
     "userRestored": "User restored",
