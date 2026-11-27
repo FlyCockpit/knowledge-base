@@ -303,6 +303,39 @@ afterAll(async () => {
 });
 
 describe("sealed real authority, PostgreSQL and Git", () => {
+  it("validates only written documents after a disjoint sealed reference is revoked", async () => {
+    const f = await setup();
+    const created = await f.enroll();
+    const base = await apply(f.kbId, f.owner.id, f.base, "# Beta\n", "beta.md");
+    const head = await apply(
+      f.kbId,
+      f.owner.id,
+      base.commitSha,
+      `# Alpha\n${created.reference}\n`,
+      "alpha.md",
+    );
+    await revoke(f, created.reference);
+    await expect(
+      apply(
+        f.kbId,
+        f.owner.id,
+        base.commitSha,
+        `# Beta\n${created.reference}\n`,
+        "beta.md",
+        "replace",
+      ),
+    ).rejects.toThrow();
+    const saved = await apply(
+      f.kbId,
+      f.owner.id,
+      base.commitSha,
+      "# Beta changed\n",
+      "beta.md",
+      "replace",
+    );
+    expect(saved.commitSha).not.toBe(head.commitSha);
+  });
+
   it("runs Rust host/projection and noop/merge ledger checks through production MCP with real PAT admission", async () => {
     const { createMcpEndpoint } = await import(
       new URL("../../../../apps/server/src/mcp/handler.ts", import.meta.url).href

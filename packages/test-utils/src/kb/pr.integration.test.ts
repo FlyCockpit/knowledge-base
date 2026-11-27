@@ -753,7 +753,7 @@ describe("PR publication boundary", () => {
     },
   );
   prFixtureTest(
-    "merge versus main write serializes with one winner and no lost update",
+    "merge versus an overlapping main write serializes with one winner and no lost update",
     async (f) => {
       const p = await apply(f.id, f.author, edit(f.base));
       return { p };
@@ -761,10 +761,13 @@ describe("PR publication boundary", () => {
     async (f, { p }) => {
       const outcomes = await Promise.allSettled([
         mutate(f.reviewer, review(f.id, 1, p.commitSha, f.base)),
-        apply(f.id, f.owner, edit(f.base, "racer.md")),
+        apply(f.id, f.owner, edit(f.base, "proposal.md", "racing main")),
       ]);
       expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
       expect(outcomes.filter((r) => r.status === "rejected")).toHaveLength(1);
+      expect(runGit(f.repo, ["show", "main:proposal.md"])).toBe(
+        human(outcomes[1]?.status === "fulfilled" ? "racing main" : "proposal"),
+      );
       expect((await effects(f.id)).kb?.headSha).toBe(readHeadSha(f.repo));
     },
   );
@@ -818,6 +821,102 @@ async function prRow(kbId: string, number = 1) {
 }
 const commitMessage = (repo: string, sha: string) =>
   runGit(repo, ["cat-file", "commit", sha]).split("\n\n").slice(1).join("\n\n");
+
+describe("path-scoped concurrent publications", () => {
+  it("serializes disjoint edits and rejects one of two same-path edits", async () => {
+    const f = await setup();
+    const seed = await apply(f.id, f.owner, {
+      ...edit(f.base),
+      changes: [
+        { op: "create", path: "alpha.md", content: { markdown: "alpha" } },
+        { op: "create", path: "beta.md", content: { markdown: "beta" } },
+      ],
+    });
+    const results = await Promise.all([
+      apply(f.id, f.owner, replace(seed.commitSha, "alpha.md", "alpha edited")),
+      apply(f.id, f.owner, replace(seed.commitSha, "beta.md", "beta edited")),
+    ]);
+    const head = readHeadSha(f.repo)!;
+    const first = results.find((result) => result.commitSha !== head)!;
+    expect(runGit(f.repo, ["rev-parse", `${head}^`])).toBe(first.commitSha);
+    expect(runGit(f.repo, ["rev-parse", `${first.commitSha}^`])).toBe(seed.commitSha);
+    expect(runGit(f.repo, ["show", `${head}:alpha.md`])).toContain("alpha edited");
+    expect(runGit(f.repo, ["show", `${head}:beta.md`])).toContain("beta edited");
+    const raced = await Promise.allSettled([
+      apply(f.id, f.owner, replace(head, "alpha.md", "one")),
+      apply(f.id, f.owner, replace(head, "alpha.md", "two")),
+    ]);
+    const winner = raced.find((result) => result.status === "fulfilled");
+    const loser = raced.find((result) => result.status === "rejected");
+    expect(winner?.status).toBe("fulfilled");
+    expect(loser?.status).toBe("rejected");
+    if (winner?.status === "fulfilled" && loser?.status === "rejected")
+      expect(loser.reason).toMatchObject({
+        code: "CONFLICT",
+        details: { headSha: winner.value.commitSha, proposalNumber: null },
+      });
+  });
+
+  it("fast-forwards stacked edits on a proposal but rejects a changed path", async () => {
+    const f = await setup();
+    const seed = await apply(f.id, f.owner, {
+      ...edit(f.base),
+      changes: [
+        { op: "create", path: "alpha.md", content: { markdown: "alpha" } },
+        { op: "create", path: "beta.md", content: { markdown: "beta" } },
+      ],
+    });
+    const first = await apply(f.id, f.author, replace(seed.commitSha, "alpha.md", "first"));
+    const second = await apply(f.id, f.author, {
+      ...replace(first.commitSha, "beta.md", "second"),
+      proposalNumber: 1,
+      proposalHeadSha: first.commitSha,
+    });
+    await expect(
+      apply(f.id, f.author, {
+        ...replace(first.commitSha, "beta.md", "stale"),
+        proposalNumber: 1,
+        proposalHeadSha: first.commitSha,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { headSha: second.commitSha, proposalNumber: 1 },
+    });
+    const third = await apply(f.id, f.author, {
+      ...replace(first.commitSha, "alpha.md", "third"),
+      proposalNumber: 1,
+      proposalHeadSha: first.commitSha,
+    });
+    expect(runGit(f.repo, ["rev-parse", `${third.commitSha}^`])).toBe(second.commitSha);
+  });
+
+  it("rejects a stale explicit proposal head even when based on unchanged main content", async () => {
+    const f = await setup();
+    const base = await apply(f.id, f.owner, edit(f.base, "untouched.md", "original"));
+    const proposed = await apply(f.id, f.author, edit(base.commitSha, "other.md", "proposal"));
+    await expect(
+      apply(f.id, f.author, {
+        ...replace(base.commitSha, "untouched.md", "stale"),
+        proposalNumber: 1,
+        proposalHeadSha: base.commitSha,
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { headSha: proposed.commitSha, proposalNumber: 1 },
+    });
+    expect(readRefSha(f.repo, "refs/heads/pr/1")).toBe(proposed.commitSha);
+  });
+
+  it("moves an open auto-proposal onto advanced main for a disjoint stale edit", async () => {
+    const f = await setup();
+    const proposal = await apply(f.id, f.author, edit(f.base, "proposal.md"));
+    const main = await apply(f.id, f.owner, edit(f.base, "main.md"));
+    const result = await apply(f.id, f.author, edit(f.base, "other.md"));
+    expect(result.proposal?.number).toBe(proposal.proposal?.number);
+    expect(runGit(f.repo, ["rev-parse", `${result.commitSha}^`])).toBe(main.commitSha);
+    expect(runGit(f.repo, ["show", `${result.commitSha}:proposal.md`])).toContain("proposal");
+  });
+});
 
 describe("PR conflicts, updates and ownership", () => {
   prFixtureTest(

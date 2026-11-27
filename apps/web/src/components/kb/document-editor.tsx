@@ -586,6 +586,7 @@ export function DocumentEditorView(props: DocumentEditorViewProps) {
         >
           <Button
             data-testid="editor-save"
+            focusableWhenDisabled
             className="min-h-[44px]"
             disabled={props.pending}
             aria-describedby={saveStatusId}

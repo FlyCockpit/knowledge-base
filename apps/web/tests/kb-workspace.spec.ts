@@ -167,6 +167,68 @@ test("desktop: tree → two tabs → edit → save → discard a dirty close →
   await expect(tabs(page).getByRole("tab", { name: "alpha.md" })).toBeVisible();
 });
 
+test("desktop: saves two tabs opened from the same revision", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  await go(page, `/en-US/kbs/${kb.id}`);
+  await tree(page).getByRole("treeitem", { name: "guides" }).click();
+  await tree(page).getByRole("treeitem", { name: "alpha.md" }).click();
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("First guide.");
+  await page.locator("body").press("e");
+  await markdown(page).fill("# Alpha\n\nAlpha tab edit.\n");
+  await tree(page).getByRole("treeitem", { name: "beta.md" }).click();
+  await expect(page.getByTestId("kb-rendered-document")).toContainText("Second guide.");
+  await page.locator("body").press("e");
+  await markdown(page).fill("# Beta\n\nBeta tab edit.\n");
+  await tabs(page)
+    .getByRole("tab", { name: /alpha\.md/ })
+    .click();
+  await page.getByTestId("editor-save").click();
+  await expect(page.getByTestId("editor-save-status")).toContainText(enKb.editor.saved);
+  await tabs(page)
+    .getByRole("tab", { name: /beta\.md/ })
+    .click();
+  await page.getByTestId("editor-save").click();
+  await expect(page.getByTestId("editor-save-status")).toContainText(enKb.editor.saved);
+  expect(await serverText(page, kb.id, ALPHA)).toContain("Alpha tab edit.");
+  expect(await serverText(page, kb.id, BETA)).toContain("Beta tab edit.");
+});
+
+test("two browser contexts still conflict on the same document", async ({ page, browser }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page);
+  const kb = await createKb(page);
+  const second = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  try {
+    const other = await second.newPage();
+    await other.addInitScript(() => window.sessionStorage.setItem("kb-harness-styled", "1"));
+    await other.addInitScript(
+      (id) => window.sessionStorage.setItem("kb-harness-viewer", id),
+      actors.ownerUserId ?? "",
+    );
+    await as(other);
+    await other.goto(`${fx.origin}/kb-editor`);
+    await expect(other.getByRole("button", { name: enKb.list.create, exact: true })).toBeVisible({
+      timeout: 25_000,
+    });
+    for (const current of [page, other]) {
+      await go(current, `/en-US/kbs/${kb.id}/documents?path=${encodeURIComponent(ALPHA)}`);
+      await expect(current.getByTestId("kb-rendered-document")).toContainText("First guide.");
+      await current.locator("body").press("e");
+    }
+    await markdown(page).fill("# Alpha\n\nFirst browser.\n");
+    await markdown(other).fill("# Alpha\n\nSecond browser.\n");
+    await page.getByTestId("editor-save").click();
+    await expect(page.getByTestId("editor-save-status")).toContainText(enKb.editor.saved);
+    await other.getByTestId("editor-save").click();
+    await expect(other.getByText(enKb.outcome.conflictBody)).toBeVisible();
+    expect(await serverText(page, kb.id, ALPHA)).toContain("First browser.");
+  } finally {
+    await second.close();
+  }
+});
+
 test("phone: drawer → read → edit → save → back → recent files", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(page);
@@ -499,6 +561,9 @@ test("desktop: a dirty tab whose file is gone closes with Discard; a failed save
   // Not saved: the dialog steps aside, the tab stays, focus is on the editor's Save.
   await expect(dialog).toHaveCount(0);
   await expect(tabs(page).getByRole("tab", { name: /readme\.md.*unsaved changes/ })).toBeVisible();
+  await expect(page.getByTestId("editor-save")).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(page.getByTestId("editor-save")).toBeEnabled();
   await expect(page.getByTestId("editor-save")).toBeFocused();
   expect(await serverText(page, kb.id, README)).toContain("Theirs.");
 });

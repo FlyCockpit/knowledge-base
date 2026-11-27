@@ -189,6 +189,7 @@ describe("changes publication receipts and rollback cleanup", () => {
       files: [
         ...gitWrite.initialMainTreeFiles("Changes fixture"),
         { segments: ["a.md"], content: Buffer.from("# Same\n") },
+        { segments: ["b.md"], content: Buffer.from("# Beta\n") },
       ],
     });
     execFileSync("git", ["--git-dir", repo, "update-ref", "refs/heads/main", headSha], {
@@ -332,6 +333,214 @@ describe("changes publication receipts and rollback cleanup", () => {
     };
     return { state, actorKey, query, lease, input };
   }
+
+  test("fast-forwards a disjoint edit and rejects a changed or unknown base", async (f) => {
+    const head = writeGitFixtureCommit(f.repo, {
+      parentSha: f.headSha,
+      message: "change alpha",
+      files: [
+        ...gitWrite.initialMainTreeFiles("Changes fixture"),
+        { segments: ["a.md"], content: Buffer.from("# Alpha changed\n") },
+        { segments: ["b.md"], content: Buffer.from("# Beta\n") },
+      ],
+    });
+    const git = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", f.repo, ...args], { env: hardenedGitEnv() }).toString();
+    git("update-ref", "refs/heads/main", head);
+    try {
+      {
+        const { input, lease } = context({ ...f, headSha: head });
+        try {
+          await expect(
+            createChangesPublication({
+              ...input,
+              request: {
+                mode: "dream",
+                baseRevision: f.headSha,
+                title: "dream",
+                changes: [],
+                sourceSessionIds: [grantId],
+                dream: {
+                  model: { provider: "fixture", model: "fixture" },
+                  redactionApplied: true,
+                  upserts: [
+                    {
+                      id: "idea",
+                      type: "concept",
+                      title: null,
+                      body: "idea",
+                      citations: [],
+                      provenance: "dream",
+                    },
+                  ],
+                },
+              },
+            }).barrier.prepare!(lease),
+          ).rejects.toMatchObject({
+            code: "CONFLICT",
+            details: { headSha: head, proposalNumber: null },
+          });
+        } finally {
+          await lease.close();
+        }
+      }
+      for (const [path, base] of [
+        ["a.md", f.headSha],
+        ["b.md", "0".repeat(40)],
+      ] as const) {
+        const { input, lease } = context({ ...f, headSha: head });
+        try {
+          input.request.baseRevision = base;
+          input.request.changes[0]!.path = path;
+          input.request.changes[0]!.content.markdown = "# Changed\n";
+          await expect(
+            createChangesPublication(input).barrier.prepare!(lease),
+          ).rejects.toMatchObject({
+            code: "CONFLICT",
+            details: { headSha: head, proposalNumber: null },
+          });
+        } finally {
+          await lease.close();
+        }
+      }
+      for (const change of [
+        { op: "delete" as const, path: "b.md" },
+        { op: "create" as const, path: "new.md", content: { markdown: "# New\n" } },
+      ]) {
+        const { input, lease, state } = context({ ...f, headSha: head });
+        try {
+          await createChangesPublication({
+            ...input,
+            request: { ...input.request, baseRevision: f.headSha, changes: [change] },
+          }).barrier.prepare!(lease);
+          const result = state.intent!.newRef!;
+          expect(git("rev-parse", `${result}^`).trim()).toBe(head);
+          expect(git("show", `${result}:a.md`)).toBe("# Alpha changed\n");
+          const paths = git("ls-tree", "-r", "--name-only", result).split("\n");
+          expect(paths.includes(change.path)).toBe(change.op === "create");
+        } finally {
+          await lease.close();
+        }
+      }
+      {
+        const { input, lease, state, query } = context({ ...f, headSha: head });
+        const journal = query.getMockImplementation()!;
+        query.mockImplementation(async (sql, values = []) => {
+          const result = await journal(sql, values);
+          if (sql.includes('INSERT INTO "operation_intent"') && state.intent)
+            state.intent.requestHash = String(values[7]);
+          return result;
+        });
+        const { operation: _op, request: _request, requestHash: _hash, ...rest } = input;
+        try {
+          await changesPublicationForDocument({
+            ...rest,
+            baseRevision: f.headSha,
+            request: {
+              operation: DOCUMENT_MOVE_OPERATION,
+              path: "b.md",
+              toPath: "moved.md",
+              idempotencyKey: "idempotency-test-key",
+            },
+          }).barrier.prepare!(lease);
+          const result = state.intent!.newRef!;
+          expect(git("rev-parse", `${result}^`).trim()).toBe(head);
+          expect(git("show", `${result}:moved.md`)).toBe("# Beta\n");
+          expect(git("show", `${result}:a.md`)).toBe("# Alpha changed\n");
+        } finally {
+          await lease.close();
+        }
+      }
+      const { input, lease, state } = context({ ...f, headSha: head });
+      input.request.baseRevision = f.headSha;
+      try {
+        input.request.changes[0]!.path = "b.md";
+        input.request.changes[0]!.content.markdown = "# Beta changed\n";
+        await createChangesPublication(input).barrier.prepare!(lease);
+        const result = state.intent!.newRef!;
+        expect(git("rev-parse", `${result}^`).trim()).toBe(head);
+        expect(git("show", `${result}:a.md`)).toBe("# Alpha changed\n");
+        expect(git("show", `${result}:b.md`)).toContain("# Beta changed");
+      } finally {
+        await lease.close();
+      }
+    } finally {
+      git("update-ref", "refs/heads/main", f.headSha);
+    }
+  });
+
+  test("conflicts on deleted, changed, or newly occupied move paths", async (f) => {
+    const git = (...args: string[]) =>
+      execFileSync("git", ["--git-dir", f.repo, ...args], { env: hardenedGitEnv() }).toString();
+    try {
+      for (const scenario of ["changed", "deleted", "renamed", "destination"] as const) {
+        const head = writeGitFixtureCommit(f.repo, {
+          parentSha: f.headSha,
+          message: scenario,
+          files: [
+            ...gitWrite.initialMainTreeFiles("Changes fixture"),
+            { segments: ["a.md"], content: Buffer.from("# Same\n") },
+            ...(scenario === "changed"
+              ? [{ segments: ["b.md"], content: Buffer.from("# Changed\n") }]
+              : []),
+            ...(scenario === "renamed"
+              ? [{ segments: ["elsewhere.md"], content: Buffer.from("# Beta\n") }]
+              : []),
+            ...(scenario === "destination"
+              ? [
+                  { segments: ["b.md"], content: Buffer.from("# Beta\n") },
+                  { segments: ["moved.md"], content: Buffer.from("# Occupied\n") },
+                ]
+              : []),
+          ],
+        });
+        git("update-ref", "refs/heads/main", head);
+        for (const op of scenario === "destination"
+          ? (["move"] as const)
+          : (["replace", "delete", "move"] as const)) {
+          const { input, lease } = context({ ...f, headSha: head });
+          try {
+            if (op === "move") {
+              const { operation: _op, request: _request, requestHash: _hash, ...rest } = input;
+              await expect(
+                changesPublicationForDocument({
+                  ...rest,
+                  baseRevision: f.headSha,
+                  request: {
+                    operation: DOCUMENT_MOVE_OPERATION,
+                    path: "b.md",
+                    toPath: "moved.md",
+                    idempotencyKey: "idempotency-test-key",
+                  },
+                }).barrier.prepare!(lease),
+              ).rejects.toMatchObject({
+                code: "CONFLICT",
+                details: { headSha: head, proposalNumber: null },
+              });
+            } else {
+              const change =
+                op === "delete"
+                  ? { op, path: "b.md" }
+                  : { op, path: "b.md", content: { markdown: "# Mine\n" } };
+              await expect(
+                createChangesPublication({
+                  ...input,
+                  request: { ...input.request, baseRevision: f.headSha, changes: [change] },
+                }).barrier.prepare!(lease),
+              ).rejects.toMatchObject({
+                code: "CONFLICT",
+                details: { headSha: head, proposalNumber: null },
+              });
+            }
+          } finally {
+            await lease.close();
+          }
+        }
+      }
+    } finally {
+      git("update-ref", "refs/heads/main", f.headSha);
+    }
+  });
 
   test("records and replays a token no-op under its grant actor key", async (f) => {
     const { state, actorKey, input, lease, query } = context(f);

@@ -268,6 +268,12 @@ describe("DocumentEditorView path rule and save state", () => {
     const status = /<span id="([^"]+)" role="status" data-testid="editor-save-status"/.exec(out);
     expect(save).toContain(`aria-describedby="${status?.[1]}"`);
   });
+  it("keeps Save focusable while a save is pending", () => {
+    const out = render({ pending: true });
+    const save = /<button[^>]*data-testid="editor-save"[^>]*>/.exec(out)?.[0] ?? "";
+    expect(save).toContain('aria-disabled="true"');
+    expect(save).not.toMatch(/\sdisabled(?:=|\s|>)/);
+  });
   it("says the last save landed once nothing is unsaved", () => {
     const out = render({
       dirty: false,

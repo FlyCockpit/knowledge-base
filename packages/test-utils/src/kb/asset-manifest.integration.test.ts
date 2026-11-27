@@ -13,7 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { assetValidationContext, prismaAssetQuery } from "@knowledge-base/api/lib/kb/asset-authz";
+import {
+  assetValidationContext,
+  manifestAtCommit,
+  prismaAssetQuery,
+} from "@knowledge-base/api/lib/kb/asset-authz";
 import { assetCacheBinding, createAssetCache } from "@knowledge-base/api/lib/kb/asset-cache";
 import { createAssetPublicationState } from "@knowledge-base/api/lib/kb/asset-publication-state";
 import { createAssetStorageLifecycle } from "@knowledge-base/api/lib/kb/asset-storage-lifecycle";
@@ -35,7 +39,11 @@ import {
 } from "@knowledge-base/api/lib/kb/changes";
 import { createCursorSigner } from "@knowledge-base/api/lib/kb/cursor";
 import { readDocumentAtRevision } from "@knowledge-base/api/lib/kb/documents-read";
-import { minimalWav, sha256Buffer } from "@knowledge-base/api/lib/kb/fixtures/media-bytes";
+import {
+  minimalPng,
+  minimalWav,
+  sha256Buffer,
+} from "@knowledge-base/api/lib/kb/fixtures/media-bytes";
 import { kbBareRepoPath, readHeadSha } from "@knowledge-base/api/lib/kb/git-read";
 import {
   createTreeReuseCommit,
@@ -152,6 +160,7 @@ async function upload(
   bytes = minimalWav(),
   kind: "markdown" | "asset" = "asset",
   ratePort = runtime.ratePort,
+  mime = kind === "asset" ? "audio/wav" : "text/markdown",
 ) {
   const uploadRuntime = { ...runtime, ratePort };
   const begun = await uploadBegin(uploadRuntime, userId, assetsDir, {
@@ -160,7 +169,7 @@ async function upload(
     kind,
     size: bytes.length,
     contentHash: sha256Buffer(bytes),
-    mime: kind === "asset" ? "audio/wav" : "text/markdown",
+    mime,
   });
   for (let offset = 0; offset < bytes.length; offset += UPLOAD_MAX_CHUNK_BYTES)
     await uploadWrite(uploadRuntime, userId, assetsDir, {
@@ -275,6 +284,91 @@ async function crashAfterRef(
 const staged = (id: string) => prisma.stagedUpload.findUniqueOrThrow({ where: { id } });
 
 describe("asset-manifest", () => {
+  it("preserves assets added after a document's base and conflicts on the same asset path", async () => {
+    const owner = await user();
+    const target = await kb(owner.id);
+    const base = await apply(
+      owner.id,
+      target.id,
+      edit(target.headSha!, [
+        { op: "create", path: "beta.md", content: { markdown: "# Beta\n" } },
+        { op: "create", path: "other.md", content: { markdown: "# Other\n" } },
+      ]),
+    );
+    const head = await apply(
+      owner.id,
+      target.id,
+      edit(base.commitSha, [
+        { op: "assetPut", path: "first.wav", uploadId: await upload(owner.id, target.id, wav(1)) },
+      ]),
+    );
+    await expect(
+      apply(
+        owner.id,
+        target.id,
+        edit(base.commitSha, [
+          {
+            op: "assetPut",
+            path: "first.wav",
+            uploadId: await upload(owner.id, target.id, wav(2)),
+          },
+        ]),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { headSha: head.commitSha, proposalNumber: null },
+    });
+    const plain = await apply(
+      owner.id,
+      target.id,
+      edit(base.commitSha, [
+        { op: "replace", path: "other.md", content: { markdown: "# Other saved\n" } },
+      ]),
+    );
+    expect(
+      manifestAtCommit(kbBareRepoPath(reposDir, target.id), plain.commitSha).map(
+        (entry) => entry.path,
+      ),
+    ).toEqual(["first.wav"]);
+    const png = minimalPng();
+    const imageUpload = await upload(
+      owner.id,
+      target.id,
+      png,
+      "asset",
+      runtime.ratePort,
+      "image/png",
+    );
+    const markdown = "# Beta saved\n\n![image](second.png)\n";
+    const saved = await apply(
+      owner.id,
+      target.id,
+      edit(base.commitSha, [
+        { op: "replace", path: "beta.md", content: { markdown } },
+        { op: "assetPut", path: "second.png", uploadId: imageUpload },
+      ]),
+    );
+    const entries = manifestAtCommit(kbBareRepoPath(reposDir, target.id), saved.commitSha);
+    expect(entries.map((entry) => entry.path).sort()).toEqual(["first.wav", "second.png"]);
+    expect(entries.find((entry) => entry.path === "first.wav")).toEqual(
+      manifestAtCommit(kbBareRepoPath(reposDir, target.id), head.commitSha)[0],
+    );
+    expect(entries.find((entry) => entry.path === "second.png")).toMatchObject({
+      hash: sha256Buffer(png),
+      size: png.length,
+      mime: "image/png",
+    });
+    const doc = await readDocumentAtRevision({
+      reposDir,
+      kbId: target.id,
+      commitSha: saved.commitSha,
+      path: "beta.md",
+      query: prismaAssetQuery(prisma),
+    });
+    expect(doc.markdown).toContain("![image](second.png)");
+    expect(doc.assetRefs).toEqual([entries.find((entry) => entry.path === "second.png")]);
+  });
+
   // These staged fixtures represent uploads collected across rate windows.
   // Each upload retains real per-call rate charging; publication is still one call.
   it("publishes 32 staged Markdown creates and replacements through the full upload path", async () => {

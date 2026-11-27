@@ -211,6 +211,7 @@ type PublicationOps = {
    */
   writes: ReadonlyMap<string, { kind: ConflictItem["kind"]; path: string; index: number | null }>;
   mayRebase: boolean;
+  allPathsValid: boolean;
 };
 
 const ASSET_OPS: ReadonlySet<string> = new Set(["assetPut", "assetRemove"]);
@@ -229,14 +230,16 @@ function classifyPublication(
     string,
     { kind: ConflictItem["kind"]; path: string; index: number | null }
   >();
+  let allPathsValid = true;
   const write = (path: string, kind: ConflictItem["kind"], index: number | null) => {
     const normalized = normalizeKbPath(path);
     if (normalized.ok)
       writes.set(writeKey(kind, normalized.path), { kind, path: normalized.path, index });
+    else allPathsValid = false;
   };
   if (request.mode === "import") {
     write(request.path, "asset", 0);
-    return { kind: "import", writes, mayRebase: true };
+    return { kind: "import", writes, mayRebase: true, allPathsValid };
   }
   const own = request.mode === "dream" ? [] : request.changes;
   for (const [index, change] of own.entries()) {
@@ -248,8 +251,8 @@ function classifyPublication(
     write(change.path, ASSET_OPS.has(change.op) ? "asset" : "document", null);
   // A dream proposal is pinned to the main it was generated against.
   return request.mode === "dream"
-    ? { kind: "dream", writes, mayRebase: false }
-    : { kind: "edit", writes, mayRebase: true };
+    ? { kind: "dream", writes, mayRebase: false, allPathsValid }
+    : { kind: "edit", writes, mayRebase: true, allPathsValid };
 }
 
 /**
@@ -297,6 +300,65 @@ async function isAncestorCommit(
     { ...options, resultExitCodes: [1] },
   );
   return exitCode !== 1;
+}
+
+async function isAncestorCommitSafe(
+  repoPath: string,
+  ancestor: string,
+  descendant: string,
+  options: GitReadOptions,
+): Promise<boolean> {
+  if (!/^[0-9a-f]{40}$/.test(ancestor) || !/^[0-9a-f]{40}$/.test(descendant)) return false;
+  const { exitCode } = await runGitAsync(
+    repoPath,
+    ["merge-base", "--is-ancestor", ancestor, descendant],
+    { ...options, resultExitCodes: [1, 128] },
+  );
+  return exitCode === 0;
+}
+
+async function canFastForwardToHead(
+  repoPath: string,
+  baseRevision: string,
+  targetHead: string,
+  ops: PublicationOps,
+  options: GitReadOptions,
+): Promise<boolean> {
+  if (!ops.mayRebase || !ops.allPathsValid || ops.writes.size === 0) return false;
+  if (!(await isAncestorCommitSafe(repoPath, baseRevision, targetHead, options))) return false;
+  const writes = [...ops.writes.values()];
+  const documents = writes.filter((write) => write.kind === "document");
+  const assets = writes.filter((write) => write.kind === "asset");
+  if (documents.length > 0) {
+    const base = await readCommitBlobsAsync(repoPath, baseRevision, options);
+    const head = await readCommitBlobsAsync(repoPath, targetHead, options);
+    if (documents.some(({ path }) => base.get(path) !== head.get(path))) return false;
+  }
+  if (assets.length > 0) {
+    const base = new Map(
+      (await manifestAtCommitAsync(repoPath, baseRevision, options)).map((entry) => [
+        entry.path,
+        entry,
+      ]),
+    );
+    const head = new Map(
+      (await manifestAtCommitAsync(repoPath, targetHead, options)).map((entry) => [
+        entry.path,
+        entry,
+      ]),
+    );
+    for (const { path } of assets) {
+      const a = base.get(path);
+      const b = head.get(path);
+      if (
+        a === undefined
+          ? b !== undefined
+          : b === undefined || a.hash !== b.hash || a.size !== b.size || a.mime !== b.mime
+      )
+        return false;
+    }
+  }
+  return true;
 }
 
 type AssetValidation = Pick<TreeValidationOptions, "trustedBlobs" | "lineageHashes">;
@@ -655,7 +717,7 @@ async function planPublication(input: {
   reclaim: { written: string[] };
   assetsDir?: string;
   canonicalOrigin?: string;
-  prepareAssets(): ReturnType<typeof prepareAssetChanges>;
+  prepareAssets(manifestRevision: string): ReturnType<typeof prepareAssetChanges>;
   /** The publication lease's deadline/cancellation, for the proposal rebase. */
   gitOptions: GitReadOptions;
   /** The person behind `actorKey` (they own the proposals any of their credentials opened). */
@@ -670,6 +732,7 @@ async function planPublication(input: {
   if (!mainHead) throw new OperationIntentError("NOT_FOUND", "missing git head");
 
   const baseRevision = input.request.baseRevision;
+  let effectiveBase = baseRevision;
   let targetRef = "refs/heads/main";
   let proposalNumber: number | null = null;
   let isAutoPr = false;
@@ -689,23 +752,68 @@ async function planPublication(input: {
     // The PR head the caller read: a PR that moved since is a stale read,
     // whatever main did (two editors of one PR never overwrite each other).
     const observed = input.request.proposalHeadSha;
-    if (observed !== undefined && observed !== pr.headSha)
+    if (observed !== undefined && observed !== pr.headSha) {
+      if (
+        observed === baseRevision &&
+        baseRevision !== mainHead &&
+        !pr.dreamMetadata &&
+        pendingConflictsOf(pr).length === 0 &&
+        (await canFastForwardToHead(
+          repoPath,
+          baseRevision,
+          pr.headSha,
+          input.ops,
+          input.gitOptions,
+        ))
+      ) {
+        effectiveBase = pr.headSha;
+        return;
+      }
       throw new KbDomainError("CONFLICT", "proposal head moved", undefined, {
         headSha: pr.headSha,
         proposalNumber: pr.number,
       });
+    }
     if (baseRevision === pr.headSha) return;
-    // Naming a PR against main (a deliberate overwrite of its paths) needs
-    // the head that choice was made on.
-    if (input.request.proposalNumber !== undefined && observed === undefined)
-      throw invalidArgument(
-        "proposalHeadSha is required against main",
-        "MISSING_ARGUMENT",
-        "/proposalHeadSha",
-      );
+    if (input.request.proposalNumber !== undefined && observed === undefined) {
+      if (baseRevision === mainHead)
+        throw invalidArgument(
+          "proposalHeadSha is required against main",
+          "MISSING_ARGUMENT",
+          "/proposalHeadSha",
+        );
+      if (
+        !pr.dreamMetadata &&
+        pendingConflictsOf(pr).length === 0 &&
+        (await canFastForwardToHead(
+          repoPath,
+          baseRevision,
+          pr.headSha,
+          input.ops,
+          input.gitOptions,
+        ))
+      ) {
+        effectiveBase = pr.headSha;
+        return;
+      }
+      throw new KbDomainError("CONFLICT", message, undefined, {
+        headSha: pr.headSha,
+        proposalNumber: pr.number,
+      });
+    }
     if (
       input.ops.mayRebase &&
-      baseRevision === mainHead &&
+      !pr.dreamMetadata &&
+      baseRevision !== mainHead &&
+      observed === undefined &&
+      (await canFastForwardToHead(repoPath, baseRevision, mainHead, input.ops, input.gitOptions))
+    ) {
+      effectiveBase = mainHead;
+      if (pr.headSha === mainHead) return;
+    }
+    if (
+      input.ops.mayRebase &&
+      effectiveBase === mainHead &&
       pr.headSha !== mainHead &&
       !pr.dreamMetadata
     ) {
@@ -724,6 +832,15 @@ async function planPublication(input: {
       // PR's own, so only a path the PR changed can be overwritten, which
       // the same guard as a move onto main refuses.
       rebase = { pr, step: "on-head" };
+      return;
+    }
+    if (
+      observed === undefined &&
+      !pr.dreamMetadata &&
+      pendingConflictsOf(pr).length === 0 &&
+      (await canFastForwardToHead(repoPath, baseRevision, pr.headSha, input.ops, input.gitOptions))
+    ) {
+      effectiveBase = pr.headSha;
       return;
     }
     // A stale read of the proposal (or a dream, pinned to its own main).
@@ -791,7 +908,12 @@ async function planPublication(input: {
     assertPrMutable(atOwnHead);
     await selectProposal(atOwnHead, "base revision does not match proposal head");
   } else if (input.canWrite) {
-    if (baseRevision !== mainHead) {
+    if (
+      baseRevision !== mainHead &&
+      (await canFastForwardToHead(repoPath, baseRevision, mainHead, input.ops, input.gitOptions))
+    ) {
+      effectiveBase = mainHead;
+    } else if (baseRevision !== mainHead) {
       throw new KbDomainError("CONFLICT", "base revision does not match main head", undefined, {
         headSha: mainHead,
         proposalNumber: null,
@@ -812,7 +934,12 @@ async function planPublication(input: {
       proposalVersion = existing.version + 1;
       isAutoPr = true;
     } else {
-      if (baseRevision !== mainHead) {
+      if (
+        baseRevision !== mainHead &&
+        (await canFastForwardToHead(repoPath, baseRevision, mainHead, input.ops, input.gitOptions))
+      ) {
+        effectiveBase = mainHead;
+      } else if (baseRevision !== mainHead) {
         throw new KbDomainError(
           "CONFLICT",
           "first proposed edit must target current main",
@@ -837,18 +964,18 @@ async function planPublication(input: {
   const rebasing = step?.pr ?? null;
   const updating = selected as PullRequestRow | null;
   // A rebased proposal replaces its branch head: the ref must still be the PR head.
-  const expectedRef = rebasing ? rebasing.headSha : baseRevision;
+  const expectedRef = rebasing ? rebasing.headSha : effectiveBase;
   if (!pendingNewAutoPr) {
     const existingRef = await readRefShaAsync(repoPath, targetRef, input.gitOptions);
     const oldRefCheck =
       existingRef ??
-      (targetRef.startsWith(PR_BRANCH_PREFIX) && baseRevision === mainHead
+      (targetRef.startsWith(PR_BRANCH_PREFIX) && effectiveBase === mainHead
         ? "0000000000000000000000000000000000000000"
         : null);
     if (!oldRefCheck || (existingRef && existingRef !== expectedRef)) {
       throw new KbDomainError("CONFLICT", "base revision is stale");
     }
-    if (!existingRef && baseRevision !== mainHead) {
+    if (!existingRef && effectiveBase !== mainHead) {
       throw new KbDomainError("CONFLICT", "base revision is stale");
     }
   }
@@ -856,8 +983,8 @@ async function planPublication(input: {
   let baseFiles: Map<string, Buffer> | undefined;
   // The tree the edit applies to and the commit it follows: main for a move
   // onto main, the PR head for a resolution step or a stacked edit.
-  let treeRevision = baseRevision;
-  let parentSha = baseRevision;
+  let treeRevision = effectiveBase;
+  let parentSha = effectiveBase;
   // Only a write of the same kind and path resolves a conflict.
   const writes = input.ops.writes;
   const writesItem = (item: { kind: ConflictItem["kind"]; path: string }) =>
@@ -943,7 +1070,7 @@ async function planPublication(input: {
     assets: new Set(resolved.filter((i) => i.kind === "asset").map((i) => i.path)),
   };
 
-  const assetPlan = await input.prepareAssets();
+  const assetPlan = await input.prepareAssets(treeRevision);
   // A rebased proposal keeps the assets it added: trust its head's manifest too.
   const assetValidation = rebasing
     ? unionAssetValidation(
@@ -1024,16 +1151,16 @@ async function planPublication(input: {
       : await readRefShaAsync(repoPath, targetRef, input.gitOptions);
   const oldRef =
     pendingNewAutoPr && planned.noop
-      ? baseRevision
+      ? effectiveBase
       : (existingRef ??
-        (targetRef.startsWith(PR_BRANCH_PREFIX) && baseRevision === mainHead
+        (targetRef.startsWith(PR_BRANCH_PREFIX) && effectiveBase === mainHead
           ? "0000000000000000000000000000000000000000"
           : null));
   if (!(pendingNewAutoPr && planned.noop)) {
     if (!oldRef || (existingRef && existingRef !== expectedRef)) {
       throw new KbDomainError("CONFLICT", "base revision is stale");
     }
-    if (!existingRef && baseRevision !== mainHead && !pendingNewAutoPr) {
+    if (!existingRef && effectiveBase !== mainHead && !pendingNewAutoPr) {
       throw new KbDomainError("CONFLICT", "base revision is stale");
     }
   }
@@ -1060,7 +1187,7 @@ async function planPublication(input: {
   // A noop names the revision it was evaluated on: the target ref's head (a
   // request against main may reach the caller's PR), never just the
   // request's base.
-  let headSha = planned.noop && oldRef ? oldRef : baseRevision;
+  let headSha = planned.noop && oldRef ? oldRef : effectiveBase;
   let binding: TreeValidationSuccess | undefined;
   if (!planned.noop) {
     const staged = stageCommitWithTreeFiles({
@@ -1445,14 +1572,14 @@ async function prepareChangesPublication(
               ? "agent"
               : "human"
             : undefined,
-        prepareAssets: () =>
+        prepareAssets: (manifestRevision) =>
           prepareAssetChanges(
             query,
             {
               ...input,
               actorKey,
               opId,
-              baseRevision: validatedRequest.baseRevision,
+              baseRevision: manifestRevision,
               gitOptions: { signal: lease.scope.signal, deadlineAt: lease.scope.deadlineAt },
             },
             resolved,
