@@ -8,7 +8,11 @@ import {
 } from "@knowledge-base/auth/ban";
 import { runWithAdminMutationActor } from "@knowledge-base/auth/session-authority";
 import { runWithAllowedUserCreation } from "@knowledge-base/auth/user-creation-policy";
-import { DEFAULT_LOCALE, isSupportedLocale } from "@knowledge-base/config/locales";
+import {
+  DEFAULT_LOCALE,
+  isSupportedLocale,
+  SUPPORTED_LOCALES,
+} from "@knowledge-base/config/locales";
 import prisma, { type Prisma } from "@knowledge-base/db";
 import { logInternalError } from "@knowledge-base/env/log";
 import { env } from "@knowledge-base/env/server";
@@ -141,6 +145,11 @@ export const usersRouter = {
         email: z.string().email().toLowerCase(),
         name: z.string().trim().min(1).max(100),
         role: assignableRoleSchema.default("user"),
+        // The invitee's language: the invite email, the set-password page it
+        // links to, and every later email use it, and it is saved as their
+        // `User.locale` (they can change it in settings). The admin UI
+        // defaults it to the admin's own language.
+        locale: z.enum(SUPPORTED_LOCALES),
       }),
     )
     .handler(async ({ input, context }) => {
@@ -150,30 +159,32 @@ export const usersRouter = {
       // the Prisma adapter so it stays in sync with any custom databaseHooks
       // and the bootstrap adapter wrap. No password: the account gets a
       // credential only when the invitee sets one through the emailed link.
+      //
+      // The account starts unverified, and the invite email is the only mail:
+      // createUser sends no verification mail, and sign-in's resend
+      // (`sendOnSignIn`) needs a password, which the account does not have
+      // until the link is spent. Spending it proves the inbox and marks the
+      // email verified then (`onPasswordReset`), so an invite to a mistyped
+      // address never yields a verified account.
       let userId: string;
-      let recipientLocale: string;
       try {
+        // The grant's locale seeds `User.locale` in the user-create hook
+        // (packages/auth): a server-side createUser carries no locale header.
         const created = await runWithAdminMutationActor(context.session.user.id, () =>
-          runWithAllowedUserCreation("admin-invite", () =>
-            auth.api.createUser({
-              body: {
-                email: input.email,
-                name: input.name,
-                role: input.role,
-              },
-            }),
+          runWithAllowedUserCreation(
+            "admin-invite",
+            () =>
+              auth.api.createUser({
+                body: {
+                  email: input.email,
+                  name: input.name,
+                  role: input.role,
+                },
+              }),
+            { locale: input.locale },
           ),
         );
         userId = created.user.id;
-        // The User row was just created with the Prisma `@default("en-US")`
-        // for `locale`. Read it back so a future change to the default (or a
-        // hook that overrides it) flows through to the email render without
-        // additional plumbing here.
-        const fresh = await prisma.user.findUnique({
-          where: { id: userId },
-          select: { locale: true },
-        });
-        recipientLocale = fresh?.locale ?? "en-US";
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to invite user";
         if (/already exists|already in use|duplicate/i.test(message)) {
@@ -200,7 +211,7 @@ export const usersRouter = {
       // password-reset token (single use, consumed with the password write),
       // with a longer expiry; using it also verifies the address
       // (`onPasswordReset` in packages/auth). Localized `/$lang/` URL.
-      const setPasswordUrl = await createInviteSetPasswordUrl(userId, recipientLocale);
+      const setPasswordUrl = await createInviteSetPasswordUrl(userId, input.locale);
 
       // Email send is best-effort: if SMTP is not configured (or fails) the
       // admin gets the link to hand over out of band. The failure is logged
@@ -213,7 +224,7 @@ export const usersRouter = {
           email: input.email,
           setPasswordUrl,
           expiresInHours: INVITE_SET_PASSWORD_TTL_MS / 3_600_000,
-          locale: recipientLocale,
+          locale: input.locale,
         });
         await sendEmail({ to: input.email, subject, html });
         emailSent = true;

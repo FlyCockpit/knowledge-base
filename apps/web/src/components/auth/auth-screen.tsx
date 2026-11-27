@@ -38,7 +38,12 @@ export function AuthCard({
           so the inputs' focus rings are not clipped at the edge. */}
       <Card className="w-full max-w-md max-sm:overflow-visible max-sm:bg-transparent max-sm:py-0 max-sm:ring-0">
         <CardHeader className="text-center max-sm:px-0">
-          <CardTitle className="text-2xl">{title}</CardTitle>
+          {/* The page's one h1: every auth page (and its unable-to-connect
+              and two-factor states) is this card. Preflight makes the h1
+              inherit the title's size and weight. */}
+          <CardTitle className="text-2xl">
+            <h1>{title}</h1>
+          </CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 max-sm:px-0">{children}</CardContent>

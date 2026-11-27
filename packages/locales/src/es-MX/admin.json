@@ -334,6 +334,8 @@
     "roleLabel": "Rol",
     "roleUser": "Usuario",
     "roleAdmin": "Administrador",
+    "localeLabel": "Idioma de los correos",
+    "localeDescription": "La invitación y todos los correos posteriores usan este idioma. La persona puede cambiarlo en su configuración.",
     "sendInvite": "Enviar invitación",
     "inviting": "Invitando…",
     "revealTitle": "Invitación enviada",

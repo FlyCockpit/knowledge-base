@@ -1,20 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionUnconfirmed } from "@/lib/session-unconfirmed";
 
-import { useAuthSession } from "./use-auth-session";
+import { resetAuthSessionMemoryForTests, useAuthSession } from "./use-auth-session";
 
+const atom = vi.hoisted(() => ({
+  // Better Auth's atom still holds the previous account.
+  snapshot: {
+    data: { user: { id: "a", name: "Ada" } } as { user: { id: string; name: string } } | null,
+    isPending: false,
+    isRefetching: false,
+    error: null as unknown,
+  },
+}));
 vi.mock("@/lib/auth-client", () => ({
   authClient: {
-    // Better Auth's atom still holds the previous account.
-    useSession: () => ({
-      data: { user: { id: "a", name: "Ada" } },
-      isPending: false,
-      isRefetching: false,
-      error: null,
-      refetch: vi.fn(),
-    }),
+    useSession: () => ({ ...atom.snapshot, refetch: vi.fn() }),
     $store: { atoms: {} },
   },
 }));
@@ -24,6 +26,17 @@ function Status() {
   const { state } = useAuthSession();
   return <>{state.status === "authenticated" ? state.session.user.id : state.status}</>;
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetAuthSessionMemoryForTests();
+  atom.snapshot = {
+    data: { user: { id: "a", name: "Ada" } },
+    isPending: false,
+    isRefetching: false,
+    error: null,
+  };
+});
 
 describe("useAuthSession", () => {
   it("reports the atom's session", () => {
@@ -38,5 +51,40 @@ describe("useAuthSession", () => {
         </SessionUnconfirmed>,
       ),
     ).toBe("pending");
+  });
+
+  it("keeps the pending shell pending even after this document settled signed out", () => {
+    // The browser remembers a settled anonymous session (refocus refetches
+    // stay anonymous), but under SessionUnconfirmed nobody is known yet, and
+    // what renders there must not teach the memory anything either.
+    vi.stubGlobal("window", {});
+    atom.snapshot = { data: null, isPending: false, isRefetching: false, error: null };
+    expect(renderToStaticMarkup(<Status />)).toBe("anonymous");
+    atom.snapshot = { data: null, isPending: true, isRefetching: true, error: null };
+    expect(renderToStaticMarkup(<Status />)).toBe("anonymous");
+    expect(
+      renderToStaticMarkup(
+        <SessionUnconfirmed>
+          <Status />
+        </SessionUnconfirmed>,
+      ),
+    ).toBe("pending");
+    // A session confirmed under the pending shell is not taken as "signed in"
+    // either, so the memory still holds for the page after it.
+    atom.snapshot = {
+      data: { user: { id: "b", name: "Bo" } },
+      isPending: false,
+      isRefetching: false,
+      error: null,
+    };
+    expect(
+      renderToStaticMarkup(
+        <SessionUnconfirmed>
+          <Status />
+        </SessionUnconfirmed>,
+      ),
+    ).toBe("pending");
+    atom.snapshot = { data: null, isPending: true, isRefetching: true, error: null };
+    expect(renderToStaticMarkup(<Status />)).toBe("anonymous");
   });
 });

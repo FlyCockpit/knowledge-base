@@ -37,8 +37,43 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 
-// One session per run: a just-closed session of the same name may still be shutting down.
-const SESSION = `check-layout-${process.pid}`;
+import { parseEvalOutput, sessionName } from "./browser-check-lib.ts";
+
+// One agent-browser session per run (`<BROWSER_CHECK_SESSION_PREFIX>check-layout-<pid>`,
+// shared with the other browser checks): a fixed name would share (and close)
+// the session of a run in another checkout, and a just-closed session of the
+// same name may still be shutting down.
+const SESSION = sessionName("check-layout");
+
+/** What the app marks as still loading: a `Skeleton`, or a busy region. */
+export const LOADING_MARKER = '[data-slot="skeleton"], [aria-busy="true"]';
+
+/**
+ * Runs in the page before the probes: waits (8s at most) until the visible
+ * `<main>` shows no loading marker and its content stops growing for half a
+ * second. On a real stack the footer (or a sub-nav) is there before the rows
+ * arrive, so a page measured as soon as its `ready` selector shows can grow
+ * after the probe scrolled to its end. A skeleton can hold one height for a
+ * while before the data comes, so reads while a marker is present never count
+ * as still. Returns (JSON-encoded, as every page script) "settled", or why it
+ * was not: "loading" (a marker was still there after 8s) or "changing" (the
+ * height kept moving). Self-contained: no closures.
+ */
+export const SETTLED = `(async () => {
+  const main = [...document.querySelectorAll("main")].find((el) => el.checkVisibility());
+  if (!main) return JSON.stringify("settled");
+  let last = -1;
+  let still = 0;
+  let loading = false;
+  for (let i = 0; i < 80 && still < 5; i++) {
+    const height = main.scrollHeight;
+    loading = !!main.querySelector(${JSON.stringify(LOADING_MARKER)});
+    still = !loading && height === last ? still + 1 : 0;
+    last = loading ? -1 : height;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return JSON.stringify(still >= 5 ? "settled" : loading ? "loading" : "changing");
+})()`;
 
 /** What the in-page probe reports. Pure data, so `judgeLayout` is testable. */
 export interface Probe {
@@ -324,9 +359,7 @@ function closeBrowser(): void {
 }
 
 async function evalJson<T>(script: string): Promise<T> {
-  let value: unknown = JSON.parse(await browser(["eval", "--stdin"], script));
-  if (typeof value === "string") value = JSON.parse(value);
-  return value as T;
+  return parseEvalOutput(await browser(["eval", "--stdin"], script)) as T;
 }
 
 async function waitFor(url: string, ms: number): Promise<void> {
@@ -422,8 +455,16 @@ async function main(): Promise<number> {
           await browser(["eval", CONSENT_DECIDED]);
           await browser(["open", `${base}${page.path}`]);
           await browser(["wait", page.ready]);
-          await browser(["wait", "500"]);
           const label = `${page.name} ${w}×${h}`;
+          const settled = await evalJson<"settled" | "loading" | "changing">(SETTLED);
+          if (settled !== "settled") {
+            failures.push(
+              settled === "loading"
+                ? `${label}: still showing a loading skeleton after 8s, so it was not measured; check that its data loads`
+                : `${label}: the content kept changing for 8s, so it was not measured`,
+            );
+            continue;
+          }
           const probe = await evalJson<Probe>(PROBE);
           failures.push(...judgeLayout(label, probe, page.expect));
           failures.push(...judgeReserve(label, await evalJson<ReserveProbe | null>(RESERVE_PROBE)));

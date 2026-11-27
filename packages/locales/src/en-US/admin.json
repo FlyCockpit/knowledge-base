@@ -334,6 +334,8 @@
     "roleLabel": "Role",
     "roleUser": "User",
     "roleAdmin": "Admin",
+    "localeLabel": "Email language",
+    "localeDescription": "The invite and every later email use this language. They can change it in their settings.",
     "sendInvite": "Send invite",
     "inviting": "Inviting…",
     "revealTitle": "Invite sent",

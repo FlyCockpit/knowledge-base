@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { type AuthSessionStateInput, getAuthSessionState } from "./auth-session-state";
+import {
+  type AuthSessionStateInput,
+  getAuthSessionState,
+  rememberConfirmedAnonymous,
+} from "./auth-session-state";
 
 type TestSession = { user: { id: string } };
 
@@ -16,6 +20,7 @@ function input(
     error: null,
     isOnline: true,
     refetch: vi.fn().mockResolvedValue(undefined),
+    confirmedAnonymous: false,
     ...overrides,
   };
 }
@@ -95,5 +100,61 @@ describe("getAuthSessionState", () => {
     expect(result.actions.refetch).toBe(refetch);
     await result.actions.retry();
     expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  // Better Auth 1.7 sets `isPending: data === null` on every request, so a
+  // refocus refetch of an anonymous session is indistinguishable from the
+  // first load without memory (dist/client/query.mjs, onRequest).
+  it("keeps a settled anonymous visitor anonymous while Better Auth refetches", () => {
+    const result = getAuthSessionState(
+      input({ isPending: true, isRefetching: true, confirmedAnonymous: true }),
+    );
+
+    expect(result.state).toEqual({ status: "anonymous" });
+    expect(result.meta.isRefetching).toBe(true);
+  });
+
+  it("still gates the first load, before anything settled", () => {
+    const result = getAuthSessionState(
+      input({ isPending: true, isRefetching: true, confirmedAnonymous: false }),
+    );
+
+    expect(result.state).toEqual({ status: "pending" });
+  });
+
+  it("keeps a settled anonymous visitor anonymous through a failed refetch", () => {
+    const result = getAuthSessionState(
+      input({ error: new Error("server unreachable"), confirmedAnonymous: true }),
+    );
+
+    expect(result.state).toEqual({ status: "anonymous" });
+    expect(result.meta.isDegraded).toBe(false);
+  });
+
+  it("lets a confirmed session replace remembered anonymity", () => {
+    const result = getAuthSessionState(input({ data: confirmedSession, confirmedAnonymous: true }));
+
+    expect(result.state).toEqual({ status: "authenticated", session: confirmedSession });
+  });
+});
+
+describe("rememberConfirmedAnonymous", () => {
+  it("remembers anonymity until a session is confirmed", () => {
+    let memory = false;
+    memory = rememberConfirmedAnonymous(memory, { status: "pending" });
+    expect(memory).toBe(false);
+    memory = rememberConfirmedAnonymous(memory, { status: "error" });
+    expect(memory).toBe(false);
+    memory = rememberConfirmedAnonymous(memory, { status: "anonymous" });
+    expect(memory).toBe(true);
+    memory = rememberConfirmedAnonymous(memory, { status: "pending" });
+    expect(memory).toBe(true);
+    memory = rememberConfirmedAnonymous(memory, { status: "error" });
+    expect(memory).toBe(true);
+    memory = rememberConfirmedAnonymous(memory, {
+      status: "authenticated",
+      session: confirmedSession,
+    });
+    expect(memory).toBe(false);
   });
 });

@@ -44,7 +44,10 @@ import { PageHeader, PageShell } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
+import { announceArchivedWithUndo } from "@/hooks/archive-undo";
 import { useEntityMutation } from "@/hooks/use-entity-mutation";
+import { isSupportedLocale, type Locale, SUPPORTED_LOCALES } from "@/i18n/config";
+import { LOCALE_LABELS } from "@/i18n/labels";
 import { pageHead } from "@/lib/page-title";
 import { orpc } from "@/utils/orpc";
 
@@ -68,6 +71,7 @@ function buildInviteSchema() {
     email: z.email(),
     name: z.string().trim().min(1).max(100),
     role: z.enum(["user", "admin"]),
+    locale: z.enum(SUPPORTED_LOCALES),
   });
 }
 
@@ -119,20 +123,32 @@ function AdminUsers() {
     { invalidateKey: orpc.users.key(), successMessage: t("admin:users.roleUpdated") },
   );
 
-  const archive = useEntityMutation(
-    {
-      ...orpc.users.archive.mutationOptions(),
-      meta: { errorFallbackKey: "admin:users.archiveFailed" },
-    },
-    { invalidateKey: orpc.users.key(), successMessage: t("admin:users.userArchived") },
-  );
-
   const unarchive = useEntityMutation(
     {
       ...orpc.users.unarchive.mutationOptions(),
       meta: { errorFallbackKey: "admin:users.restoreFailed" },
     },
     { invalidateKey: orpc.users.key(), successMessage: t("admin:users.userRestored") },
+  );
+
+  // Archive is confirmed first; its toast offers Undo, which is the row's
+  // Restore (users.unarchive): sign-in comes back, revoked tokens do not.
+  const archive = useEntityMutation(
+    {
+      ...orpc.users.archive.mutationOptions({
+        onSuccess: (_data, variables) => {
+          announceArchivedWithUndo({
+            message: t("admin:users.userArchived"),
+            undoLabel: t("common:actions.undo"),
+            onUndo: () => {
+              unarchive.mutate({ userId: variables.userId });
+            },
+          });
+        },
+      }),
+      meta: { errorFallbackKey: "admin:users.archiveFailed" },
+    },
+    { invalidateKey: orpc.users.key() },
   );
 
   const remove = useEntityMutation(
@@ -473,11 +489,19 @@ function InviteUserDialog({
   onOpenChange: (next: boolean) => void;
   onInvited: (reveal: InviteReveal) => void;
 }) {
-  const { t } = useTranslation(["admin", "common"]);
+  const { t, i18n } = useTranslation(["admin", "common"]);
+  // The invitee's language defaults to the admin's own; the admin changes it
+  // when the invitee reads another one.
+  const adminLocale: Locale = isSupportedLocale(i18n.language) ? i18n.language : "en-US";
   const invite = useMutation(orpc.users.invite.mutationOptions());
 
   const form = useForm({
-    defaultValues: { email: "", name: "", role: "user" as "user" | "admin" },
+    defaultValues: {
+      email: "",
+      name: "",
+      role: "user" as "user" | "admin",
+      locale: adminLocale,
+    },
     validators: { onChange: buildInviteSchema() },
     onSubmit: async ({ value }) => {
       const result = await invite.mutateAsync(value);
@@ -549,6 +573,21 @@ function InviteUserDialog({
                   { value: "user", label: t("admin:users.roleUser") },
                   { value: "admin", label: t("admin:users.roleAdmin") },
                 ]}
+              />
+            )}
+          </form.Field>
+
+          <form.Field name="locale">
+            {(field) => (
+              <SelectField
+                field={field}
+                label={t("admin:users.localeLabel")}
+                description={t("admin:users.localeDescription")}
+                className="space-y-1.5"
+                options={SUPPORTED_LOCALES.map((locale) => ({
+                  value: locale,
+                  label: LOCALE_LABELS[locale],
+                }))}
               />
             )}
           </form.Field>

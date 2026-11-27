@@ -340,3 +340,38 @@ describe("ID-token social sign-in guard", () => {
     expect(response.status).not.toBe(403);
   });
 });
+
+// Admin invites (packages/api users.invite) create the account server-side
+// under the "admin-invite" grant, whose locale is the invitee's language. A
+// server-side createUser carries no locale header, so the grant must win.
+describe("user-create hook locale", () => {
+  type Before = (
+    user: Record<string, unknown>,
+    context: { path?: string; headers?: Headers } | null,
+  ) => Promise<{ data: Record<string, unknown> }>;
+  const before = () => auth.options.databaseHooks?.user?.create?.before as unknown as Before;
+  const user = { email: "invitee@example.test", name: "Invitee", emailVerified: true };
+
+  it("seeds an invited user's locale from the grant, unverified", async () => {
+    const { runWithAllowedUserCreation } = await import("./user-creation-policy");
+    const { ADMIN_CREATE_USER_PATH } = await import("./user-columns");
+    const result = await runWithAllowedUserCreation(
+      "admin-invite",
+      () => before()(user, { path: ADMIN_CREATE_USER_PATH, headers: new Headers() }),
+      { locale: "es-MX" },
+    );
+    expect(result.data).toMatchObject({ locale: "es-MX", emailVerified: false });
+  });
+
+  it("keeps the client's locale header for a sign-up without a grant locale", async () => {
+    const { APP_LOCALE_HEADER } = await import("@knowledge-base/config/locales");
+    const headers = new Headers({ [APP_LOCALE_HEADER]: "es-MX" });
+    const result = await before()(user, { path: "/sign-up/email", headers });
+    expect(result.data).toMatchObject({ locale: "es-MX", emailVerified: true });
+    const { runWithAllowedUserCreation } = await import("./user-creation-policy");
+    const bootstrap = await runWithAllowedUserCreation("admin-bootstrap", () =>
+      before()(user, { path: "/sign-up/email", headers }),
+    );
+    expect(bootstrap.data).toMatchObject({ locale: "es-MX" });
+  });
+});

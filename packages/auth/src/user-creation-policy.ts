@@ -1,8 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Locale } from "@knowledge-base/config/locales";
 
 export type UserCreationMode = "admin-bootstrap" | "admin-invite";
 
-const userCreationModeStorage = new AsyncLocalStorage<UserCreationMode>();
+// One grant per wrapped call. `locale` is the language the server chose for
+// the new account (an admin invite picks the invitee's); the user.create hook
+// seeds `User.locale` from it instead of the request.
+type UserCreationGrant = { mode: UserCreationMode; locale?: Locale };
+
+const userCreationModeStorage = new AsyncLocalStorage<UserCreationGrant>();
 
 // Single source of truth for the signup-disabled rejection message. The
 // Better-Auth database hook throws it, the admin-invite error translation in
@@ -22,12 +28,22 @@ export function getUserCreationBlockReason(opts: { signupEnabled: boolean }): st
 }
 
 export function getAllowedUserCreationMode(): UserCreationMode | undefined {
-  return userCreationModeStorage.getStore();
+  return userCreationModeStorage.getStore()?.mode;
 }
 
 export function runWithAllowedUserCreation<T>(
   mode: UserCreationMode,
   fn: () => T | Promise<T>,
+  options: { locale?: Locale } = {},
 ): T | Promise<T> {
-  return userCreationModeStorage.run(mode, fn);
+  return userCreationModeStorage.run({ mode, locale: options.locale }, fn);
+}
+
+/**
+ * The locale the current grant chose for the account being created, if any.
+ * Server-chosen (an admin invite's language field), so it beats the request's
+ * locale header, which on a server-side `auth.api.createUser` call is absent.
+ */
+export function getGrantedUserLocale(): Locale | undefined {
+  return userCreationModeStorage.getStore()?.locale;
 }

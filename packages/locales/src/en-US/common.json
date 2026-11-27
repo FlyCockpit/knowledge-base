@@ -26,6 +26,7 @@
   },
   "actions": {
     "back": "Back",
+    "undo": "Undo",
     "cancel": "Cancel",
     "clear": "Clear",
     "close": "Close",

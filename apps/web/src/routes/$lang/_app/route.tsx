@@ -12,8 +12,10 @@ import { OfflineBand } from "@/components/offline-band";
 import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { useDocumentLang } from "@/hooks/use-document-lang";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import { useReloadOnIdentityChange } from "@/hooks/use-reload-on-identity-change";
 import { useUserLocaleSync } from "@/hooks/use-user-locale-sync";
+import { markAppShellHydrated } from "@/lib/app-shell-hydration";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { SessionUnconfirmed } from "@/lib/session-unconfirmed";
 
@@ -78,6 +80,9 @@ function AppShellPending() {
 function AppShellFrame({ children }: { children: ReactNode }) {
   const mobileKeyboardOpen = useMobileKeyboard();
   const { t } = useTranslation("nav");
+  // The first effect of a hydrated (or client-rendered) frame: from here on a
+  // route guard may change the URL (lib/app-shell-hydration.ts).
+  useMountEffect(markAppShellHydrated);
   return (
     <>
       {/* First tab stop: past the header and sidebar to the page (WCAG 2.4.1). */}
@@ -100,6 +105,9 @@ function AppShellFrame({ children }: { children: ReactNode }) {
           paddingLeft: "var(--safe-area-left)",
           paddingRight: "var(--safe-area-right)",
         }}
+        // APP_SHELL_ATTRIBUTE: what a guard looks for to know a server-rendered
+        // shell may still be hydrating.
+        data-app-shell=""
       >
         <div>
           <Header />

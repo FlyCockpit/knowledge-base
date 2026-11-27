@@ -116,7 +116,10 @@ function TwoFactorSetupRequired() {
     <div className="flex min-h-[80vh] items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">{t("twoFactor.requiredTitle")}</CardTitle>
+          {/* It replaces the page, so its title is the page's one h1. */}
+          <CardTitle className="text-2xl">
+            <h1>{t("twoFactor.requiredTitle")}</h1>
+          </CardTitle>
           <CardDescription>{t("twoFactor.requiredDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

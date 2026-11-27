@@ -1,5 +1,6 @@
 import type { Session } from "@knowledge-base/auth";
 import { getAdminMutationActor } from "@knowledge-base/auth/session-authority";
+import { getGrantedUserLocale } from "@knowledge-base/auth/user-creation-policy";
 import { createRouterClient, ORPCError } from "@orpc/server";
 import type { MockInstance } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -175,12 +176,12 @@ describe("usersRouter", () => {
       const client = createRouterClient(usersRouter, {
         context: buildContext({ user: { role: "user" } }),
       });
-      await expect(client.invite({ email: "x@example.com", name: "X" })).rejects.toSatisfy(
-        (e: ORPCError) => {
-          expect(e.code).toBe("NOT_FOUND");
-          return true;
-        },
-      );
+      await expect(
+        client.invite({ email: "x@example.com", name: "X", locale: "en-US" }),
+      ).rejects.toSatisfy((e: ORPCError) => {
+        expect(e.code).toBe("NOT_FOUND");
+        return true;
+      });
       expect(authApi.api.createUser).not.toHaveBeenCalled();
     });
   });
@@ -306,7 +307,12 @@ describe("usersRouter", () => {
         expect(getAdminMutationActor()).toBeUndefined();
       });
       const client = createRouterClient(usersRouter, { context: buildContext() });
-      await client.invite({ email: "new@example.com", name: "New User", role: "admin" });
+      await client.invite({
+        email: "new@example.com",
+        name: "New User",
+        role: "admin",
+        locale: "en-US",
+      });
       expect(getAdminMutationActor()).toBeUndefined();
       expect(sendEmailMock).toHaveBeenCalledOnce();
     });
@@ -320,6 +326,7 @@ describe("usersRouter", () => {
         email: "NEW@example.com",
         name: "New User",
         role: "user",
+        locale: "en-US",
       });
 
       expect(res.userId).toBe("new-user-id");
@@ -340,14 +347,21 @@ describe("usersRouter", () => {
       );
     });
 
-    it("mails a one-time, expiring, localized set-password link", async () => {
-      authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
-      db.user.findUnique.mockResolvedValue({ locale: "es-MX" });
+    it("mails a one-time, expiring set-password link in the invitee's chosen language", async () => {
+      // The chosen language reaches the user-create hook through the grant
+      // (packages/auth seeds `User.locale` from it), not a read-back.
+      authApi.api.createUser.mockImplementationOnce(async () => {
+        expect(getGrantedUserLocale()).toBe("es-MX");
+        return { user: { id: "new-user-id" } };
+      });
       sendEmailMock.mockResolvedValue(undefined);
       const before = Date.now();
 
       const client = createRouterClient(usersRouter, { context: buildContext() });
-      await client.invite({ email: "new@example.com", name: "New User" });
+      await client.invite({ email: "new@example.com", name: "New User", locale: "es-MX" });
+      expect(authApi.api.createUser).toHaveBeenCalledOnce();
+      expect(db.user.findUnique).not.toHaveBeenCalled();
+      expect(getGrantedUserLocale()).toBeUndefined();
 
       // A Better Auth reset token: single use, consumed with the password write.
       expect(createVerificationValue).toHaveBeenCalledOnce();
@@ -373,17 +387,35 @@ describe("usersRouter", () => {
       expect(landing.pathname).toBe("/es-MX/reset-password");
       expect(landing.searchParams.get("invite")).toBe("1");
       expect(rendered).not.toHaveProperty("tempPassword");
+      expect(rendered?.locale).toBe("es-MX");
+    });
+
+    it("requires a supported invitee language", async () => {
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      for (const locale of [undefined, "fr-FR"]) {
+        await expect(
+          client.invite({
+            email: "new@example.com",
+            name: "New User",
+            locale: locale as "en-US",
+          }),
+        ).rejects.toSatisfy((e: ORPCError) => {
+          expect(e.code).toBe("BAD_REQUEST");
+          return true;
+        });
+      }
+      expect(authApi.api.createUser).not.toHaveBeenCalled();
     });
 
     it("returns emailSent=false when SMTP throws but the user was still created", async () => {
       authApi.api.createUser.mockResolvedValue({ user: { id: "new-user-id" } });
       sendEmailMock.mockRejectedValue(new Error("SMTP not configured"));
-      db.user.findUnique.mockResolvedValue({ locale: "en-US" });
 
       const client = createRouterClient(usersRouter, { context: buildContext() });
       const res = await client.invite({
         email: "new@example.com",
         name: "New User",
+        locale: "en-US",
       });
 
       expect(res.emailSent).toBe(false);
@@ -397,12 +429,12 @@ describe("usersRouter", () => {
       authApi.api.createUser.mockRejectedValue(new Error("User already exists"));
 
       const client = createRouterClient(usersRouter, { context: buildContext() });
-      await expect(client.invite({ email: "dup@example.com", name: "Dup" })).rejects.toSatisfy(
-        (e: ORPCError) => {
-          expect(e.code).toBe("CONFLICT");
-          return true;
-        },
-      );
+      await expect(
+        client.invite({ email: "dup@example.com", name: "Dup", locale: "en-US" }),
+      ).rejects.toSatisfy((e: ORPCError) => {
+        expect(e.code).toBe("CONFLICT");
+        return true;
+      });
       expect(sendEmailMock).not.toHaveBeenCalled();
     });
 
@@ -412,13 +444,13 @@ describe("usersRouter", () => {
       );
 
       const client = createRouterClient(usersRouter, { context: buildContext() });
-      await expect(client.invite({ email: "new@example.com", name: "New User" })).rejects.toSatisfy(
-        (e: ORPCError) => {
-          expect(e.code).toBe("BAD_REQUEST");
-          expect(e.message).toMatch(/account creation is disabled/i);
-          return true;
-        },
-      );
+      await expect(
+        client.invite({ email: "new@example.com", name: "New User", locale: "en-US" }),
+      ).rejects.toSatisfy((e: ORPCError) => {
+        expect(e.code).toBe("BAD_REQUEST");
+        expect(e.message).toMatch(/account creation is disabled/i);
+        return true;
+      });
       expect(sendEmailMock).not.toHaveBeenCalled();
     });
   });

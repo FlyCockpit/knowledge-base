@@ -17,13 +17,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   config: undefined as Record<string, unknown> | undefined,
   routeContext: {} as Record<string, unknown>,
+  search: {} as Record<string, unknown>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({
     options,
     useParams: () => ({ lang: "en-US" }),
-    useSearch: () => ({}),
+    useSearch: () => fixture.search,
     useRouteContext: () => fixture.routeContext,
   }),
   // Vitest runs the router plugin, which splits route components out into
@@ -70,6 +71,9 @@ vi.mock("@/server/auth-session", () => ({
 const { Route: LoginRoute } = await import("@/routes/$lang/_app/login");
 const { Route: SignupRoute } = await import("@/routes/$lang/_app/signup");
 const { Route: LandingRoute } = await import("@/routes/$lang/_public/index");
+const { Route: ForgotPasswordRoute } = await import("@/routes/$lang/_app/forgot-password");
+const { Route: ResetPasswordRoute } = await import("@/routes/$lang/_app/reset-password");
+const { Route: VerifyEmailRoute } = await import("@/routes/$lang/_app/verify-email");
 
 const i18n = createInstance();
 beforeAll(async () => {
@@ -85,6 +89,7 @@ beforeAll(async () => {
 beforeEach(() => {
   fixture.config = undefined;
   fixture.routeContext = {};
+  fixture.search = {};
 });
 
 const OPEN = { signupEnabled: true, adminBootstrapSignupEnabled: false };
@@ -255,5 +260,30 @@ describe("landing page", () => {
     expect(signupLinks(html)).toEqual([]);
     expect(loginLinks(html)).toHaveLength(1);
     expect(html).not.toContain(enCommon.home.inviteOnly);
+  });
+});
+
+/** The text of every h1 in the markup; no ARIA stand-ins for a heading. */
+function h1s(html: string): string[] {
+  expect(html).not.toContain('role="heading"');
+  return [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)].map(([, inner = ""]) =>
+    inner.replace(/<[^>]*>/g, ""),
+  );
+}
+
+describe("one h1 per auth page: the card's title", () => {
+  it.each([
+    ["sign-in", LoginRoute, OPEN, {}, enAuth.login.signinTitle],
+    ["sign-up, open", SignupRoute, OPEN, {}, enAuth.login.createAccount],
+    ["sign-up, bootstrap", SignupRoute, BOOTSTRAP, {}, enAuth.signupMode.setupTitle],
+    ["sign-up, closed", SignupRoute, CLOSED, {}, enAuth.signupMode.closedTitle],
+    ["forgot password", ForgotPasswordRoute, OPEN, {}, enAuth.forgotPassword.title],
+    ["reset password", ResetPasswordRoute, OPEN, { token: "t" }, enAuth.resetPassword.title],
+    ["reset password, bad link", ResetPasswordRoute, OPEN, {}, enAuth.resetPassword.invalidTitle],
+    ["verify email", VerifyEmailRoute, OPEN, {}, enAuth.verifyEmail.pendingTitle],
+  ])("%s", async (_name, route, config, search, title) => {
+    fixture.config = config;
+    fixture.search = search;
+    expect(h1s(await render(route))).toEqual([title]);
   });
 });

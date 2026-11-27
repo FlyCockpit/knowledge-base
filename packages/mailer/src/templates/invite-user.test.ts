@@ -22,6 +22,11 @@ describe("renderInviteUser", () => {
     expect(html).toContain("Email"); // label
     expect(html).toContain("Set your password"); // CTA
     expect(html).toContain("expires in 72 hours");
+    // The one link also confirms the address (no second verify mail), and an
+    // expired one has two ways forward.
+    expect(html).toContain("confirms your email address, so you can sign in right after");
+    expect(html).toContain("ask the admin to resend the invite");
+    expect(html).toContain("Forgot password?");
     // An invitation never carries a password.
     expect(html).not.toMatch(/temporary password/i);
   });
@@ -36,6 +41,8 @@ describe("renderInviteUser", () => {
     expect(html).toContain("jane@example.com");
     expect(html).toContain("https://example.com/en-US/reset-password?token=abc&amp;invite=1");
     expect(html).toContain("72 horas");
+    expect(html).toContain("podrás iniciar sesión enseguida");
+    expect(html).toContain("te reenvíe la invitación");
     // The en-US CTA literal should not survive (would indicate fallback to
     // en-US per-key, i.e. unpopulated bundle).
     expect(html).not.toContain("Set your password");

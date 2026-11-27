@@ -28,6 +28,7 @@ import { resolveSignupLocale } from "./signup-locale.js";
 import { markUserCreatedInRequest, neutralSignUpResponse } from "./signup-response.js";
 import { TWO_FACTOR_ALLOW_PASSWORDLESS_ENROLLMENT } from "./two-factor-policy.js";
 import { ADMIN_CREATE_USER_PATH } from "./user-columns.js";
+import { getGrantedUserLocale } from "./user-creation-policy.js";
 import { withVerificationCallback } from "./verification-callback.js";
 import { sendVerificationMailAfterCommit } from "./verification-mail.js";
 
@@ -384,7 +385,9 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user, context) => {
-          const locale = resolveSignupLocale(context?.headers);
+          // An admin invite chooses the invitee's language; a sign-up uses the
+          // locale the client is rendering.
+          const locale = getGrantedUserLocale() ?? resolveSignupLocale(context?.headers);
           // Locale, and admin-created accounts start unverified (only the
           // emailed set-password link proves the mailbox). First-admin
           // selection, role assignment, signup-disabled enforcement and the

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import { compile } from "tailwindcss";
@@ -67,6 +67,25 @@ function contrast(a: Rgb, b: Rgb): number {
 }
 
 const AA = 4.5;
+
+const ui = resolve(import.meta.dirname, "../../../../packages/ui/src");
+const themeScopes = [":root", ".dark"] as const;
+/** Every ui control that draws a field-like border, focus ring or invalid state. */
+const controls = [
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "checkbox",
+  "toggle",
+  "input-group",
+  "switch",
+  "radio-group",
+  "tabs",
+  "command",
+  "combobox",
+].filter((file) => existsSync(resolve(ui, `components/${file}.tsx`)));
+const source = (file: string) => readFileSync(resolve(ui, `components/${file}.tsx`), "utf8");
 
 const buttonSource = readFileSync(
   resolve(import.meta.dirname, "../../../../packages/ui/src/components/button.tsx"),
@@ -260,14 +279,87 @@ describe("theme token contrast (WCAG AA)", () => {
     },
   );
 
-  it("draws dropdown menus on an opaque popover surface", () => {
-    // A translucent menu (bg-popover/70 + blur) let a banner tint it (CTX-14).
-    const menu = readFileSync(
-      resolve(import.meta.dirname, "../../../../packages/ui/src/components/dropdown-menu.tsx"),
-      "utf8",
-    );
-    expect(menu).toContain(" bg-popover ");
-    expect(menu).not.toMatch(/bg-popover\/\d+|backdrop-blur/);
+  it.each(themeScopes)("%s focus is clearly stronger than the resting outline", (scope) => {
+    // WCAG 2.4.13 style: the focused border (border-ring) must differ from the
+    // resting --input outline, not only the 2px ring around it (they were
+    // 1.33:1 light and 1.50:1 dark).
+    expect(
+      contrast(token(scope, "ring"), token(scope, "input")),
+      `${scope} ring vs input`,
+    ).toBeGreaterThanOrEqual(2);
+    expect(contrast(token(scope, "sidebar-ring"), token(scope, "input"))).toBeGreaterThanOrEqual(2);
+    // The focused border also sits next to the field's own fill (dark bg-input/30).
+    if (scope === ".dark") {
+      for (const surface of ["background", "card", "popover"]) {
+        const fill = over(token(scope, "input"), 0.3, token(scope, surface));
+        expect(
+          contrast(token(scope, "ring"), fill),
+          `${scope} ring on input fill over ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it.each(themeScopes)(
+    "%s invalid borders reach 3:1 on the surface and the field fill",
+    (scope) => {
+      // The border is opaque --destructive in both themes (no dark /50).
+      for (const surface of ["background", "card", "popover", "muted"]) {
+        const bg = token(scope, surface);
+        const fills = scope === ".dark" ? [bg, over(token(scope, "input"), 0.3, bg)] : [bg];
+        for (const fill of fills) {
+          expect(
+            contrast(token(scope, "destructive"), fill),
+            `${scope} destructive border over ${surface}`,
+          ).toBeGreaterThanOrEqual(3);
+        }
+      }
+    },
+  );
+
+  it("controls draw opaque invalid borders and outline buttons use the field outline", () => {
+    expect(controls).toEqual(expect.arrayContaining(["button", "input", "select", "checkbox"]));
+    for (const file of controls) {
+      expect(source(file), file).not.toMatch(/border-destructive\/\d+/);
+    }
+    // The outline button's border is its only edge (theme toggle, Sign In):
+    // --input (3:1) in both themes, never the decorative --border (1.25:1).
+    const outline = /outline:\s*"([^"]*)"/.exec(buttonSource)?.[1] ?? "";
+    expect(outline).toMatch(/(?:^|\s)border-input(?:\s|$)/);
+    expect(outline).not.toMatch(/border-border|dark:border-/);
+  });
+
+  it("draws every menu and popup on an opaque popover surface", () => {
+    // A translucent menu (bg-popover/70 + blur) let a banner tint it (CTX-14),
+    // and select kept it after dropdown-menu was fixed. Every class string that
+    // paints a popover surface (text-popover-foreground) is checked, in every
+    // ui component, so a new menu, combobox or picker is covered too.
+    const surfaces: string[] = [];
+    for (const file of readdirSync(resolve(ui, "components"))) {
+      if (!file.endsWith(".tsx") || file.endsWith(".test.tsx")) continue;
+      const text = readFileSync(resolve(ui, "components", file), "utf8");
+      for (const match of text.matchAll(/"([^"\n]*text-popover-foreground[^"\n]*)"/g)) {
+        const literal = match[1] ?? "";
+        surfaces.push(file);
+        expect(literal, file).toMatch(/(?:^|\s)bg-popover(?:\s|$)/);
+        expect(literal, file).not.toMatch(/bg-popover\/\d+|backdrop-/);
+      }
+      expect(text, file).not.toMatch(/bg-popover\/\d+/);
+    }
+    for (const file of ["dropdown-menu.tsx", "select.tsx", "popover.tsx", "command.tsx"]) {
+      expect(surfaces, file).toContain(file);
+    }
+  });
+
+  it("measures the old focus and invalid colours as failing, so the checks discriminate", () => {
+    const old = { ":root": [0.55, 0.021, 213.5], ".dark": [0.66, 0.021, 213.5] } as const;
+    for (const scope of themeScopes) {
+      const [l, c, h] = old[scope];
+      expect(contrast(oklchToSrgb(l, c, h), token(scope, "input"))).toBeLessThan(2);
+    }
+    // The old dark invalid border (destructive/50) on the field fill over a card.
+    const fill = over(token(".dark", "input"), 0.3, token(".dark", "card"));
+    expect(contrast(over(token(".dark", "destructive"), 0.5, fill), fill)).toBeLessThan(3);
   });
 
   it("measures known-failing tokens as failing, so the check discriminates", () => {
@@ -517,5 +609,56 @@ describe("switch size", () => {
     );
     expect(source).not.toMatch(/data-\[size=[a-z]+\]:[hw]-\[[\d.]+px\]/);
     expect(source).not.toMatch(/translate-x-\[calc\(100%-\d+px\)\]/);
+  });
+});
+
+describe("toast placement and touch targets", () => {
+  const root = postcss.parse(css);
+  // Every declaration of `prop` in rules matching `selector`, with the
+  // @media params it sits under ("" at the top level or in @layer).
+  function find(selector: string, prop: string) {
+    const found: { value: string; media: string }[] = [];
+    root.walkRules((rule) => {
+      if (rule.selector !== selector) return;
+      let media = "";
+      for (let parent = rule.parent; parent && parent.type !== "root"; parent = parent.parent) {
+        if (parent.type === "atrule" && parent.name === "media") media = parent.params;
+      }
+      rule.walkDecls(prop, (declaration) => {
+        found.push({ value: declaration.value, media });
+      });
+    });
+    return found;
+  }
+
+  it("bottom toasts sit above the phone bottom nav, and above the safe area without one", () => {
+    expect(find(':root [data-sileo-viewport][data-position^="bottom"]', "bottom")).toEqual([
+      { value: "max(var(--bottom-nav-height), var(--safe-area-bottom))", media: "" },
+    ]);
+    // 0 unless a bottom nav is on screen, which is only below md (48rem).
+    expect(find(":root", "--bottom-nav-height")).toEqual([{ value: "0px", media: "" }]);
+    expect(find(":root:has([data-bottom-nav])", "--bottom-nav-height")).toEqual([
+      { value: "calc(var(--bottom-nav-bar) + var(--safe-area-bottom))", media: "(width < 48rem)" },
+    ]);
+    // The nav draws its bar at --bottom-nav-bar, hides from md, and pads the
+    // safe area itself, so the offset is exactly the room it takes.
+    expect(find(":root", "--bottom-nav-bar")).toEqual([{ value: "3.5rem", media: "" }]);
+    const nav = readFileSync(resolve(import.meta.dirname, "../components/bottom-nav.tsx"), "utf8");
+    const bars = [...nav.matchAll(/<nav\b[\s\S]*?<div className="([^"]*)"/g)].map((m) => m[1]);
+    expect(bars.length).toBe(2);
+    for (const bar of bars) expect(bar).toContain("h-(--bottom-nav-bar)");
+    expect(nav.match(/data-bottom-nav\b/g)?.length).toBe(2);
+    expect(nav.match(/md:hidden/g)?.length).toBe(2);
+    expect(nav.match(/paddingBottom: "var\(--safe-area-bottom\)"/g)?.length).toBe(2);
+  });
+
+  it("a toast's action button is at least 44px tall on a touch screen", () => {
+    // sileo draws it 1.75rem (28px) tall with a fixed `height`.
+    expect(find(":root [data-sileo-viewport] [data-sileo-button]", "min-height")).toEqual([
+      { value: "44px", media: "(pointer: coarse)" },
+    ]);
+    expect(find(":root [data-sileo-viewport] [data-sileo-button]", "height")).toEqual([
+      { value: "auto", media: "(pointer: coarse)" },
+    ]);
   });
 });

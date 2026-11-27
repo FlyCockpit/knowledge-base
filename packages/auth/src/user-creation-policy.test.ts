@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getAllowedUserCreationMode,
+  getGrantedUserLocale,
   getUserCreationBlockReason,
   runWithAllowedUserCreation,
   SIGNUP_DISABLED_MESSAGE,
@@ -18,6 +19,25 @@ describe("user creation policy context", () => {
       expect(getAllowedUserCreationMode()).toBe("admin-bootstrap");
     });
     expect(getAllowedUserCreationMode()).toBeUndefined();
+  });
+});
+
+describe("granted locale", () => {
+  it("carries the server-chosen locale only inside its grant", async () => {
+    expect(getGrantedUserLocale()).toBeUndefined();
+    await runWithAllowedUserCreation(
+      "admin-invite",
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(getGrantedUserLocale()).toBe("es-MX");
+        expect(getAllowedUserCreationMode()).toBe("admin-invite");
+      },
+      { locale: "es-MX" },
+    );
+    await runWithAllowedUserCreation("admin-bootstrap", () => {
+      expect(getGrantedUserLocale()).toBeUndefined();
+    });
+    expect(getGrantedUserLocale()).toBeUndefined();
   });
 });
 

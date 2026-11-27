@@ -37,6 +37,14 @@ export type AuthSessionStateInput<TSession> = {
   error: unknown | null;
   isOnline: boolean;
   refetch: AuthSessionRefetch;
+  /**
+   * An earlier snapshot in this document already settled anonymous (see
+   * {@link rememberConfirmedAnonymous}). Better Auth marks every refetch of an
+   * empty session `isPending` again (each request sets `isPending: data ===
+   * null`), so a refocus looks exactly like the first load; only this memory
+   * tells them apart.
+   */
+  confirmedAnonymous: boolean;
 };
 
 function isUnauthorizedError(error: unknown): boolean {
@@ -73,6 +81,15 @@ export function getAuthSessionState<TSession>(
     return { state: { status: "anonymous" }, actions, meta };
   }
 
+  // A visitor already confirmed anonymous stays anonymous while Better Auth
+  // revalidates (window focus, another tab's sign-in announcement) and through
+  // a failed revalidation, just as confirmed data survives one above. Only the
+  // first load waits: otherwise every refocus would unmount whatever the
+  // anonymous state renders (the sign-in form and its typed values).
+  if (input.confirmedAnonymous && (input.error !== null || input.isPending)) {
+    return { state: { status: "anonymous" }, actions, meta };
+  }
+
   if (input.error !== null) {
     return { state: { status: "error" }, actions, meta };
   }
@@ -82,4 +99,18 @@ export function getAuthSessionState<TSession>(
   }
 
   return { state: { status: "anonymous" }, actions, meta };
+}
+
+/**
+ * The memory {@link AuthSessionStateInput.confirmedAnonymous} reads: true once
+ * a snapshot settled anonymous, false again once one is authenticated, and
+ * unchanged by pending and error snapshots.
+ */
+export function rememberConfirmedAnonymous(
+  previous: boolean,
+  state: AuthSessionStateValue<unknown>,
+): boolean {
+  if (state.status === "anonymous") return true;
+  if (state.status === "authenticated") return false;
+  return previous;
 }
